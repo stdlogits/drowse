@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import warnings
 from collections import OrderedDict
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass, replace
 from types import TracebackType
 from typing import TYPE_CHECKING, Any, Protocol
@@ -29,12 +29,21 @@ from drowse.errors import (
     ConcurrentGenerationError,
     ManifoldArityError,
     RoleBaselineMismatchWarning,
+    SteeringCompositionError,
     SteeringExprError,
 )
 from drowse.events import EventBus, SteeringApplied, SteeringCleared
 from drowse.geometry.fold import fold_directions_to_subspace, project_profile
 from drowse.geometry.inject import synthesize_subspace
-from drowse.steering.grammar import AblationTerm, ManifoldTerm, ProjectedTerm
+from drowse.model.layers import format_layer_indices, resolve_layer_selector
+from drowse.steering.grammar import (
+    AblationTerm,
+    LayerScope,
+    ManifoldTerm,
+    ProjectedTerm,
+    format_layer_clause,
+    split_layer_clause,
+)
 from drowse.steering.hooks import SteeringManager, SteeringPlan
 from drowse.steering.terms import (
     Steering,
@@ -95,6 +104,57 @@ def _fires_in_prefill(trigger: Trigger) -> bool:
     no post-forward score yet).
     """
     return trigger.prompt and trigger.gate is None
+
+
+def select_term_layers(
+    term: str,
+    fitted: Iterable[int],
+    scope: LayerScope,
+    *,
+    n_layers: int,
+) -> tuple[int, ...] | None:
+    """The layers a steering term acts on, or ``None`` for all it is fitted at.
+
+    ``scope`` is the term's :data:`~drowse.steering.grammar.LayerScope`.  An
+    index scope must lie inside ``fitted``; ``workspace`` resolves against the
+    model depth ``n_layers`` and intersects ``fitted``.  A layer outside the
+    fit, or an empty workspace intersection, raises
+    :class:`~drowse.errors.SteeringCompositionError` (422) naming the term and
+    its fitted layers.
+    """
+    if scope is None:
+        return None
+    have = sorted({int(layer) for layer in fitted})
+    have_text = format_layer_indices(have) if have else "none"
+    if scope == "workspace":
+        band = resolve_layer_selector(
+            "workspace", range(n_layers), n_layers=n_layers,
+        )
+        chosen = tuple(sorted(set(band) & set(have)))
+        if not chosen:
+            band_text = format_layer_indices(band) if band else "none"
+            raise SteeringCompositionError(
+                f"steering term {term!r} selects the workspace band (layers "
+                f"{band_text}) but is fitted at layers {have_text}"
+            )
+        return chosen
+    missing = sorted(set(scope) - set(have))
+    if missing:
+        raise SteeringCompositionError(
+            f"steering term {term!r} selects layer(s) "
+            f"{format_layer_indices(missing)} it is not fitted at; fitted "
+            f"layers: {have_text}"
+        )
+    return tuple(scope)
+
+
+def _restrict(
+    tensors: dict[int, torch.Tensor], layers: tuple[int, ...] | None,
+) -> dict[int, torch.Tensor]:
+    """``tensors`` limited to ``layers`` (all of them when ``None``)."""
+    if layers is None:
+        return tensors
+    return {L: tensors[L] for L in layers}
 
 
 def affine_manifold_push(
@@ -185,9 +245,10 @@ def resolve_scope_role(
     """
     role_variants: set[str] = set()
     any_plain_term = False
-    for key, entry in entries.items():
+    for scoped_key, entry in entries.items():
         if not isinstance(entry, (tuple, ProjectedTerm)):
             continue
+        key = split_layer_clause(scoped_key)[0]
         if ":" not in key:
             any_plain_term = True
             continue
@@ -450,7 +511,7 @@ class SteeringComposer:
             if isinstance(val, AblationTerm):
                 target = artifacts.concretize_key(val.target)
                 artifacts.ensure_profile_registered(target, role="ablation target")
-                entries[f"!{target}"] = (
+                entries[f"!{target}{format_layer_clause(val.layers)}"] = (
                     val if target == val.target else replace(val, target=target)
                 )
                 continue
@@ -473,8 +534,11 @@ class SteeringComposer:
                 )
                 continue
             alpha, trig = term_entry(val, steering.trigger)
-            key = name if name in artifacts.profiles else artifacts.concretize_key(name)
+            # A plain vector carries its layer clause only in its key.
+            bare, scope = split_layer_clause(name)
+            key = bare if bare in artifacts.profiles else artifacts.concretize_key(bare)
             artifacts.ensure_profile_registered(key)
+            key += format_layer_clause(scope)
             prev = entries.get(key)
             if isinstance(prev, tuple):
                 alpha += prev[0]
@@ -485,9 +549,10 @@ class SteeringComposer:
         """The projected profile the ``~``/``|`` term ``key`` composed with.
 
         ``None`` until a plan using it has been composed.  Projections live
-        here, never in the artifact registry.
+        here, never in the artifact registry, and one projection serves every
+        layer clause on the same operands.
         """
-        memo = self._projections.get(key)
+        memo = self._projections.get(split_layer_clause(key)[0])
         return None if memo is None else memo[3]
 
     # -------------------------------------------------------- stack push / pop
@@ -691,8 +756,11 @@ class SteeringComposer:
 
         A vector lowers through the one push path: folded to a neutral-anchored
         one-pole ray and pushed label-form, exactly like an affine ``%`` term.
-        Ablations slide their axis to the neutral-anchored origin.  ``deps``
-        (when given) collects every registry object read, for the plan cache.
+        Ablations slide their axis to the neutral-anchored origin.  A term's
+        ``{…}`` layer clause (:func:`select_term_layers`) restricts its
+        per-layer fragments, or a curved term's layers, before grouping.
+        ``deps`` (when given) collects every registry object read, for the
+        plan cache.
 
         The neutral baseline is built here if absent: composition runs under
         the push's exclusive lock, so it goes through the unguarded
@@ -712,30 +780,39 @@ class SteeringComposer:
             record((lambda: artifacts.profiles.get(name), prof))
             return prof
 
-        def _projected(name: str, term: ProjectedTerm) -> dict[int, torch.Tensor]:
+        def _projected(key: str, term: ProjectedTerm) -> dict[int, torch.Tensor]:
             base = _profile(term.base, "projection base")
             onto = _profile(term.onto, "projection onto")
-            memo = self._projections.get(name)
+            memo = self._projections.get(key)
             if (
                 memo is not None and memo[0] is base and memo[1] is onto
                 and memo[2] is whitener
             ):
                 return memo[3]
             projected = project_profile(base, onto, term.operator, whitener=whitener)
-            self._projections[name] = (base, onto, whitener, projected)
+            self._projections[key] = (base, onto, whitener, projected)
             return projected
 
+        def _layers(
+            name: str, fitted: Iterable[int], scope: LayerScope,
+        ) -> tuple[int, ...] | None:
+            return select_term_layers(name, fitted, scope, n_layers=n_layers)
+
+        n_layers = len(self._layers)
         plan = SteeringPlan()
         # trigger -> push [(basis_dirs, coord_dirs, coeff)] / ablate [(dirs, coeff)]
         # Ablation coefficients stay attached to their directions into
-        # synthesis (``0.15 !x`` is a partial ablation, not a full one).
+        # synthesis (``0.15 !x`` is a partial ablation, not a full one).  A
+        # term's layer clause restricts its fragments before grouping, so
+        # synthesis and the mean-1 share normalization see only those layers.
         grouped: dict[Trigger, tuple[list[Any], list[Any]]] = {}
         for name, entry in entries.items():
             if isinstance(entry, AblationTerm):
                 ablate_prof = _profile(entry.target, "ablation target")
+                keep = _layers(name, ablate_prof, entry.layers)
                 ablate_dirs = {
                     L: v.to(torch.float32).reshape(-1)
-                    for L, v in ablate_prof.items()
+                    for L, v in _restrict(ablate_prof, keep).items()
                 }
                 grouped.setdefault(entry.trigger, ([], []))[1].append(
                     (ablate_dirs, entry.coeff),
@@ -744,6 +821,7 @@ class SteeringComposer:
             if isinstance(entry, ManifoldTerm):
                 manifold = artifacts.ensure_manifold_loaded(entry.manifold)
                 record((lambda key=entry.manifold: artifacts.manifolds.get(key), manifold))
+                keep = _layers(name, manifold.layers, entry.layers)
                 if manifold.is_affine:
                     # Affine ``%`` joins the merged subspace as a rank-R push
                     # toward the position's per-layer coords.
@@ -751,7 +829,8 @@ class SteeringComposer:
                         manifold, entry.position,
                     )
                     grouped.setdefault(entry.trigger, ([], []))[0].append(
-                        (basis_dirs, coord_dirs, entry.along),
+                        (_restrict(basis_dirs, keep), _restrict(coord_dirs, keep),
+                         entry.along),
                     )
                 else:
                     plan.add_manifold(
@@ -759,16 +838,20 @@ class SteeringComposer:
                         position=entry.position,
                         along=entry.along, onto=entry.onto,
                         trigger=entry.trigger,
+                        layers=keep,
                     )
                 continue
+            bare, scope = split_layer_clause(name)
             if isinstance(entry, ProjectedTerm):
                 alpha, trigger = float(entry.coeff), entry.trigger
-                directions = _projected(name, entry)
+                directions = _projected(bare, entry)
+                scope = entry.layers
             else:
                 alpha, trigger = entry
-                directions = _profile(name, "vector")
+                directions = _profile(bare, "vector")
+            directions = _restrict(directions, _layers(name, directions, scope))
             folded = fold_directions_to_subspace(
-                name, directions, neutral_means, whitener=whitener,
+                bare, directions, neutral_means, whitener=whitener,
             )
             if not folded.layers:
                 continue

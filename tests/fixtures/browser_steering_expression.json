@@ -72,6 +72,34 @@
     {
       "expression": "0.2 neuron/L8n344",
       "selectors": [["neuron", "L8n344", "raw"]]
+    },
+    {
+      "expression": "0.5 honest{12-20}",
+      "selectors": [[null, "honest", "raw"]]
+    },
+    {
+      "expression": "!jlens/Paris{24-30}@response",
+      "selectors": [["jlens", "Paris", "raw"]]
+    },
+    {
+      "expression": "0.4 personas%hacker{workspace}",
+      "selectors": []
+    },
+    {
+      "expression": "0.3 honest~formal{8,10,12}",
+      "selectors": [[null, "honest", "raw"], [null, "formal", "raw"]]
+    },
+    {
+      "expression": "-0.2 formal.casual{4-8,20}",
+      "selectors": [[null, "formal.casual", "raw"]]
+    },
+    {
+      "expression": "0.6,0.3 ns/m:role%0.1,-0.2{ 20, 4 - 6 }@after&when:m@x>0",
+      "selectors": []
+    },
+    {
+      "expression": "0.5 x{ALL} + 0.2 sae/12{5}@first:3 - 0.1 ns/y:sae{0}",
+      "selectors": [[null, "x", "raw"], ["sae", "12", "raw"], ["ns", "y", "sae"]]
     }
   ],
   "rejected": [
@@ -99,6 +127,23 @@
     "x@when:jlens/# 7>0.01",
     "0.3 jlens/fake:sae",
     "0.3 jlens/x:raw",
-    "x@when:sae/#3>0"
+    "x@when:sae/#3>0",
+    "x{}",
+    "x{ }",
+    "x{8-4}",
+    "x{4-8,6}",
+    "x{-1}",
+    "x{1,,2}",
+    "x{a}",
+    "x{sample}",
+    "x{4",
+    "x}",
+    "x{4}{5}",
+    "x{4}~y",
+    "m%a{3}%b",
+    "x@response{4}",
+    "x@when:p>0{4}",
+    "0.2 neuron/L8n344{8}",
+    "!head/L3h1{3}"
   ]
 }

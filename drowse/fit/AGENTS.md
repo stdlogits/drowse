@@ -240,9 +240,10 @@ the fp32 rationale: `store/AGENTS.md`).
 expected_model_fingerprint)` writes `local/<name>` (`fit_mode="baked"`).
 
 - **Grammar.** Only namespace-qualified scalar `+`/`-` terms. `!`, `%`,
-  `~`/`|`, triggers and bare names raise `MergeError` (400): projection is
-  Mahalanobis-only and needs an identity-matched whitener, so an offline
-  stand-in would change semantics.
+  `~`/`|`, triggers, `{…}` layer clauses and bare names raise `MergeError`
+  (400): projection is Mahalanobis-only and needs an identity-matched
+  whitener, so an offline stand-in would change semantics, and a bake is
+  layer-agnostic (scope the baked manifold when steering it).
 - **Components.** Fitted 2-node `pca` manifolds folded to directions.
   `:role-<r>` needs a uniform role, `raw` rejects role fits, and `:from-<src>`
   must match `source_model_id`.

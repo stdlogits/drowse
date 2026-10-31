@@ -145,6 +145,8 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 0.7,0.4 months%january@after
 0.4 warm@when:confident.uncertain>0.4
 0.3 jlens/orange + 0.2 sae/9143
+0.5 honest{12-20} + 0.4 personas%hacker{workspace}
+!jlens/Paris{24-30}@response
 ```
 
 | Syntax | Meaning |
@@ -155,6 +157,7 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 | `\|` | Remove the component shared with another direction (Mahalanobis) |
 | `!` | Mean-ablate a direction; a bare `!x` ablates fully |
 | `%label` or `%x,y,…` | Choose a named node or coordinates on a manifold |
+| `{12-20}`, `{4-8,20}`, `{workspace}` | Act only at these layers (after the selector, before `@`) |
 | `@prompt`, `@response`, `@after`, `@thinking`, … | Restrict the token phase where a term applies |
 | `@first:N`, `@after:N` | Restrict a term to a counted decode window |
 | `@when:<probe><op><value>` | Apply a term only while a live probe gate is true |
@@ -169,6 +172,13 @@ included; `@after` applies only after the thinking block closes. A gate names
 an attached probe, so `confident.uncertain` above reads the bundled probe. The
 larger sets (`personas`, `emotions`, `months`) steer once they are fitted for
 the model.
+
+Without a layer clause a term acts on every layer it is fitted at. A clause
+names layers (`{12-20}`, `{8,10,12}`), the model's 40–90% depth band
+(`{workspace}`, intersected with the fitted layers) or `{all}`; naming a layer
+the term is not fitted at is an error. The coefficient keeps its meaning under
+a clause: a one-layer selection steers about as hard per layer as the whole
+fit. `neuron/` and `head/` atoms carry their own layer and take no clause.
 
 Manifold coefficients use two coordinates: `along` and `onto`. `along` controls
 movement within the manifold toward the target; `onto` reduces the off-surface

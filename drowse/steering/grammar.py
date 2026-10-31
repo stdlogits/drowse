@@ -7,7 +7,9 @@ turns a user-supplied string into the same :class:`Steering` IR.
 Grammar::
 
     expr        := term (("+" | "-") term)*
-    term        := [coeff ["*"]] ["!"] selector ["@" trigger]
+    term        := [coeff ["*"]] ["!"] selector ["{" layers "}"] ["@" trigger]
+    layers      := the layer-selector language of drowse.model.layers:
+                   indices and a-b ranges ("4-8,20"), "all" or "workspace"
     selector    := atom (("~" | "|") atom | "%" position)?
     position    := signed_num ("," signed_num)* | label   # coord list | node label
     label       := NAME                                # a manifold node label
@@ -45,6 +47,13 @@ concepts: the name after the ``/`` is kept verbatim (case-preserving, so
 ``jlens/Paris`` and ``@when:jlens/Paris`` agree and differ from
 ``jlens/paris``), takes no ``:variant``, and never routes through the
 manifold tiers.
+
+A ``{…}`` layer clause scopes the term to exact layers (``0.5 honest{12-20}``,
+``!jlens/Paris{24-30}@response``, ``0.4 personas%hacker{workspace}``).  It
+follows the whole selector, precedes ``@``, and is part of the term's
+identity: the ``Steering.alphas`` key carries the canonical clause, so the
+same selector under two clauses is two terms.  ``neuron/`` and ``head/``
+atoms carry their own layer and take no clause.
 
 ``!`` mean-ablates the selector (``h' = h − α(h·d̂ − μ·d̂)d̂``; bare
 ``!x`` is α=1.0); it does not compose with ``~`` / ``|`` / ``%``.  The
@@ -123,6 +132,11 @@ from dataclasses import dataclass, replace
 from typing import Literal, Optional, TYPE_CHECKING, cast
 
 from drowse.errors import SteeringExprError
+from drowse.model.layers import (
+    LayerSelectorError,
+    format_layer_indices,
+    parse_layer_selector,
+)
 from drowse.naming import RESERVED_NAMESPACES
 from drowse.steering.triggers import Trigger
 
@@ -132,6 +146,16 @@ if TYPE_CHECKING:
 
 # Namespaces whose atom also takes the exact-vocab-id form ``#<int>``.
 _TOKEN_ID_NAMESPACES = frozenset({"jlens", "slens"})
+
+# Unit namespaces whose atom names its own layer, so a layer clause on it has
+# nothing to select.
+_UNIT_NAMESPACES = frozenset({"neuron", "head"})
+
+#: A term's layer scope in the IR.  ``None`` acts on every layer the term is
+#: fitted at; ``"workspace"`` on the model's workspace band intersected with
+#: them; a sorted tuple on exactly those layers.  ``{all}`` canonicalizes to
+#: ``None``.
+LayerScope = tuple[int, ...] | Literal["workspace"] | None
 
 # Default coefficient when a term omits the explicit number — the observed
 # coherent-α sweet spot post-share-baking.
@@ -197,16 +221,18 @@ _TRIGGER_FORMS_HELP = (
 class ProjectedTerm:
     """Runtime projection entry in ``Steering.alphas``.
 
-    Keyed by ``"<base><op><onto>"`` so duplicate references compose.  The
-    steering composer projects the ``base`` profile against ``onto``
-    (``project_profile``) at lowering time and folds the result like a plain
-    vector; the derived direction is never registered as a profile.
+    Keyed by ``"<base><op><onto>[{clause}]"`` so duplicate references
+    compose.  The steering composer projects the ``base`` profile against
+    ``onto`` (``project_profile``) at lowering time and folds the result like
+    a plain vector; the derived direction is never registered as a profile.
+    ``layers`` is the term's :data:`LayerScope`.
     """
     coeff: float
     trigger: Trigger
     operator: Literal["~", "|"]
     base: str
     onto: str
+    layers: LayerScope = None
 
 
 @dataclass(frozen=True)
@@ -216,12 +242,14 @@ class AblationTerm:
     ``SteeringComposer.compose`` lowers it to an ablate fragment that
     ``synthesize_subspace`` folds into the merged affine subspace (per-axis
     ``κ`` on the ablation axes). Stored as a value inside
-    ``Steering.alphas``; the key is ``"!<target>"`` so ablation entries never
-    collide with plain-term entries on the same concept.
+    ``Steering.alphas``; the key is ``"!<target>[{clause}]"`` so ablation
+    entries never collide with plain-term entries on the same concept.
+    ``layers`` is the term's :data:`LayerScope`.
     """
     coeff: float
     trigger: Trigger
     target: str
+    layers: LayerScope = None
 
 
 @dataclass(frozen=True)
@@ -233,9 +261,10 @@ class ManifoldTerm:
     and lowers the term into the steering plan: an affine (flat) fit joins
     the merged push subspace, a curved fit gets its own along/onto injection
     (:func:`~drowse.geometry.inject.subspace_inject`).  Stored as a value
-    inside ``Steering.alphas`` under the key ``"<manifold>%<position>"`` so
-    two positions on the same manifold compose as distinct entries and
-    never collide with plain / projected / ablation keys.
+    inside ``Steering.alphas`` under the key
+    ``"<manifold>%<position>[{clause}]"`` so two positions on the same
+    manifold compose as distinct entries and never collide with plain /
+    projected / ablation keys.  ``layers`` is the term's :data:`LayerScope`.
 
     The two coefficients:
 
@@ -278,6 +307,7 @@ class ManifoldTerm:
     trigger: Trigger
     manifold: str
     position: tuple[float, ...] | str
+    layers: LayerScope = None
 
     @property
     def coeff(self) -> float:
@@ -359,6 +389,17 @@ def _lex(text: str) -> list[_Tok]:
             toks.append(_Tok(_SINGLE_CHAR_TOKENS[c], c, i))
             i += 1
             continue
+        if c == "{":
+            # A layer clause: its body is the layer-selector language of
+            # ``drowse.model.layers``, handed to that parser verbatim.
+            close = text.find("}", i + 1)
+            if close < 0:
+                raise SteeringExprError(
+                    "unterminated layer clause; close it with '}'", col=i,
+                )
+            toks.append(_Tok("LAYERS", text[i + 1:close], i))
+            i = close + 1
+            continue
         if _IDENT_START_RE.match(c):
             start = i
             i += 1
@@ -435,6 +476,10 @@ class _Term:
     # non-manifold code paths read), so existing single-coeff behavior is
     # bit-identical; ``> 1`` on a non-manifold term is a parse-fold error.
     coeffs: tuple[float, ...] = ()
+    # The ``{…}`` layer clause as written: ``None`` without one, else
+    # ``"all"``, ``"workspace"`` or the sorted index tuple.  ``_fold``
+    # canonicalizes ``"all"`` away.
+    layers: tuple[int, ...] | Literal["all", "workspace"] | None = None
 
     def __post_init__(self) -> None:
         if not self.coeffs:
@@ -526,14 +571,70 @@ class _Parser:
                 coeff = float(sign) * DEFAULT_ABLATION_COEFF
                 coeffs = (coeff,)
         selector = self._selector()
+        layers: tuple[int, ...] | Literal["all", "workspace"] | None = None
+        if self._peek().kind == "LAYERS":
+            layers = self._layer_clause(selector)
         trigger: Trigger | None = None
         if self._peek().kind == "AT":
             self._consume()
             trigger = self._parse_trigger()
+            if self._peek().kind == "LAYERS":
+                raise SteeringExprError(
+                    "the layer clause goes before the '@' trigger "
+                    "(e.g. 'x{4-8}@response'); gate probes take no layer clause",
+                    col=self._peek().col,
+                )
         return _Term(
             coeff=coeff, selector=selector, trigger=trigger,
-            ablation=ablation, coeffs=coeffs,
+            ablation=ablation, coeffs=coeffs, layers=layers,
         )
+
+    def _layer_clause(
+        self, selector: _Selector,
+    ) -> tuple[int, ...] | Literal["all", "workspace"]:
+        """Parse a ``{…}`` layer clause through the one layer-selector parser.
+
+        Returns ``"all"``, ``"workspace"`` or the sorted index tuple.  An empty
+        clause, ``sample``, any selector error, a clause on a ``neuron/`` or
+        ``head/`` atom, a second clause, or a selector operator after the
+        clause raises with the failing column.
+        """
+        tok = self._consume()
+        for atom in (selector.base, selector.onto):
+            if atom is not None and atom.namespace in _UNIT_NAMESPACES:
+                raise SteeringExprError(
+                    f"'{atom.namespace}/' atoms carry their own layer and take "
+                    f"no layer clause",
+                    col=tok.col,
+                )
+        body = str(tok.value)
+        try:
+            parsed = parse_layer_selector(body, allow_sample=False)
+        except LayerSelectorError as exc:
+            offset = 0 if exc.offset is None else exc.offset
+            raise SteeringExprError(
+                f"layer clause: {exc}", col=tok.col + 1 + offset,
+            ) from None
+        if parsed is None:
+            raise SteeringExprError(
+                "empty layer clause; name layers ('{4-8,20}'), 'workspace' "
+                "or 'all'",
+                col=tok.col,
+            )
+        nxt = self._peek()
+        if nxt.kind == "LAYERS":
+            raise SteeringExprError(
+                "a term takes one layer clause", col=nxt.col,
+            )
+        if nxt.kind in ("TILDE", "ORTHO", "PERCENT"):
+            raise SteeringExprError(
+                "the layer clause follows the whole selector "
+                "(e.g. 'a~b{4-8}', 'm%x{4-8}')",
+                col=nxt.col,
+            )
+        if isinstance(parsed, list):
+            return tuple(sorted(parsed))
+        return cast(Literal["all", "workspace"], parsed)
 
     def _parse_trigger(self) -> Trigger:
         """Parse the whole ``@`` clause into a :class:`Trigger`.
@@ -881,6 +982,54 @@ def _with_variant(canonical: str, variant: str) -> str:
     return canonical if variant == "raw" else f"{canonical}:{variant}"
 
 
+def format_layer_clause(layers: LayerScope) -> str:
+    """The canonical ``{…}`` clause of a :data:`LayerScope` (``""`` for ``None``).
+
+    Indices render sorted with each run of consecutive layers as ``a-b``
+    (:func:`~drowse.model.layers.format_layer_indices`); ``workspace``
+    renders lower-case.
+    """
+    if layers is None:
+        return ""
+    if layers == "workspace":
+        return "{workspace}"
+    return "{" + format_layer_indices(layers) + "}"
+
+
+def split_layer_clause(key: str) -> tuple[str, LayerScope]:
+    """Split a ``Steering.alphas`` key into its bare key and :data:`LayerScope`.
+
+    ``"honest{12-20}"`` → ``("honest", (12, …, 20))``; a key without a clause
+    returns ``(key, None)``.  A plain vector carries its clause only in its
+    key, so the composer reads it back through here.
+    """
+    if not key.endswith("}"):
+        return key, None
+    start = key.rfind("{")
+    if start < 0:
+        raise SteeringExprError(f"steering key {key!r} has an unopened layer clause")
+    body = key[start + 1:-1]
+    try:
+        parsed = parse_layer_selector(body, allow_sample=False)
+    except LayerSelectorError as exc:
+        raise SteeringExprError(f"steering key {key!r}: layer clause: {exc}") from None
+    if parsed is None:
+        raise SteeringExprError(f"steering key {key!r} has an empty layer clause")
+    scope: LayerScope
+    if parsed == "all":
+        scope = None
+    elif isinstance(parsed, list):
+        scope = tuple(sorted(parsed))
+    else:
+        scope = "workspace"
+    return key[:start], scope
+
+
+def _term_scope(term: _Term) -> LayerScope:
+    """A parsed term's canonical scope: ``{all}`` is no clause."""
+    return None if term.layers in (None, "all") else cast(LayerScope, term.layers)
+
+
 def _resolve_atom(atom: _Atom) -> str:
     """Return the ``alphas_key`` for a **pole** atom.
 
@@ -955,10 +1104,12 @@ def _merge_projected(
     onto: str,
     coeff: float,
     trig: Trigger,
+    layers: LayerScope,
 ) -> None:
     if key not in alphas:
         alphas[key] = ProjectedTerm(
             coeff=coeff, trigger=trig, operator=op, base=base, onto=onto,
+            layers=layers,
         )
         return
     existing = alphas[key]
@@ -972,7 +1123,7 @@ def _merge_projected(
         )
     alphas[key] = ProjectedTerm(
         coeff=existing.coeff + coeff,
-        trigger=trig, operator=op, base=base, onto=onto,
+        trigger=trig, operator=op, base=base, onto=onto, layers=layers,
     )
 
 
@@ -981,10 +1132,13 @@ def _merge_ablation(
     target_key: str,
     coeff: float,
     trig: Trigger,
+    layers: LayerScope,
 ) -> None:
-    key = f"!{target_key}"
+    key = f"!{target_key}{format_layer_clause(layers)}"
     if key not in alphas:
-        alphas[key] = AblationTerm(coeff=coeff, trigger=trig, target=target_key)
+        alphas[key] = AblationTerm(
+            coeff=coeff, trigger=trig, target=target_key, layers=layers,
+        )
         return
     existing = alphas[key]
     if not isinstance(existing, AblationTerm):
@@ -993,11 +1147,12 @@ def _merge_ablation(
         )
     if existing.trigger != trig:
         raise SteeringExprError(
-            f"ablation '!{target_key}' appears with conflicting triggers; "
+            f"ablation '{key}' appears with conflicting triggers; "
             f"merge triggers explicitly or split into separate Steering entries"
         )
     alphas[key] = AblationTerm(
         coeff=existing.coeff + coeff, trigger=trig, target=target_key,
+        layers=layers,
     )
 
 
@@ -1067,13 +1222,14 @@ def _merge_manifold(
     coeffs: tuple[float, float],
     position: tuple[float, ...] | str,
     trig: Trigger,
+    layers: LayerScope,
 ) -> None:
     along, onto = coeffs
-    key = f"{manifold}%{_fmt_position(position)}"
+    key = f"{manifold}%{_fmt_position(position)}{format_layer_clause(layers)}"
     if key not in alphas:
         alphas[key] = ManifoldTerm(
             along=along, onto=onto,
-            trigger=trig, manifold=manifold, position=position,
+            trigger=trig, manifold=manifold, position=position, layers=layers,
         )
         return
     existing = alphas[key]
@@ -1090,7 +1246,7 @@ def _merge_manifold(
     alphas[key] = ManifoldTerm(
         along=existing.along + along,
         onto=existing.onto + onto,
-        trigger=trig, manifold=manifold, position=position,
+        trigger=trig, manifold=manifold, position=position, layers=layers,
     )
 
 
@@ -1106,6 +1262,8 @@ def _fold(
     registered_profiles = profile_names or set()
     for term in terms:
         sel = term.selector
+        scope = _term_scope(term)
+        clause = format_layer_clause(scope)
         # Manifold position terms resolve before ``_resolve_atom`` — a
         # manifold name must not run through concept pole-resolution.
         if sel.manifold_position is not None:
@@ -1118,7 +1276,7 @@ def _fold(
             _merge_manifold(
                 alphas, mfld_key,
                 _expand_along_onto_coeffs(term.coeffs),
-                sel.manifold_position, mfld_trig,
+                sel.manifold_position, mfld_trig, scope,
             )
             continue
         # Bare-atom tier ladder.  A plain term (no projection operator, no
@@ -1144,7 +1302,9 @@ def _fold(
                         "comma-separated coefficients are only valid for "
                         "`manifold % position` terms"
                     )
-                _merge_plain(alphas, profile_key, term.coeff, term.trigger)
+                _merge_plain(
+                    alphas, profile_key + clause, term.coeff, term.trigger,
+                )
                 continue
 
             from drowse.store.selectors import resolve_bare_atom
@@ -1163,7 +1323,7 @@ def _fold(
                 _merge_manifold(
                     alphas, atom.manifold.manifold_key,
                     _expand_along_onto_coeffs(term.coeffs),
-                    atom.manifold.label, mfld_trig,
+                    atom.manifold.label, mfld_trig, scope,
                 )
                 continue
             if atom.kind == "name":
@@ -1174,7 +1334,7 @@ def _fold(
                 _merge_manifold(
                     alphas, atom.manifold_name.manifold_key,
                     _expand_along_onto_coeffs(term.coeffs),
-                    atom.manifold_name.pole_label, mfld_trig,
+                    atom.manifold_name.pole_label, mfld_trig, scope,
                 )
                 continue
             # kind == "pole": fall through to the plain vector path below
@@ -1203,10 +1363,10 @@ def _fold(
                     "ablate the base concept and project separately"
                 )
             effective_trig = trig if trig is not None else Trigger.BOTH
-            _merge_ablation(alphas, base_key, coeff, effective_trig)
+            _merge_ablation(alphas, base_key, coeff, effective_trig, scope)
             continue
         if sel.operator is None:
-            _merge_plain(alphas, base_key, coeff, trig)
+            _merge_plain(alphas, base_key + clause, coeff, trig)
             continue
         # Projection terms.  Projection math is insensitive to the sign of
         # the onto direction (``a|b`` yields the same result as
@@ -1215,10 +1375,10 @@ def _fold(
         onto_key = _resolve_atom(sel.onto)
         effective_trig = trig if trig is not None else Trigger.BOTH
         op: Literal["~", "|"] = cast(Literal["~", "|"], sel.operator)
-        syn_key = f"{base_key}{op}{onto_key}"
+        syn_key = f"{base_key}{op}{onto_key}{clause}"
         _merge_projected(
             alphas, syn_key, op, base_key, onto_key,
-            coeff, effective_trig,
+            coeff, effective_trig, scope,
         )
     return Steering(alphas=alphas)
 
@@ -1255,7 +1415,9 @@ def format_expr(steering: "Steering") -> str:
     Round-trips with :func:`parse_expr` for any IR produced by the parser.
     Entries whose trigger equals :data:`Trigger.BOTH` omit the ``@`` tag;
     entries whose coefficient is negative are emitted via ``-`` separators
-    (first term carries the sign verbatim).
+    (first term carries the sign verbatim).  A layer clause renders in
+    canonical form (:func:`format_layer_clause`); a plain term's rides in its
+    key.
     """
     default_trig = steering.trigger
     parts: list[str] = []
@@ -1293,19 +1455,20 @@ def _fmt_plain(name: str, coeff: float, trig: Trigger) -> str:
 
 
 def _fmt_projected(p: ProjectedTerm) -> str:
-    body = f"{p.coeff:g} {p.base}{p.operator}{p.onto}"
+    body = f"{p.coeff:g} {p.base}{p.operator}{p.onto}{format_layer_clause(p.layers)}"
     if p.trigger != Trigger.BOTH:
         body += "@" + _trigger_name(p.trigger)
     return body
 
 
 def _fmt_ablation(a: AblationTerm) -> str:
+    target = f"{a.target}{format_layer_clause(a.layers)}"
     if a.coeff == 1.0:
-        body = f"!{a.target}"
+        body = f"!{target}"
     elif a.coeff == -1.0:
-        body = f"-!{a.target}"
+        body = f"-!{target}"
     else:
-        body = f"{a.coeff:g} !{a.target}"
+        body = f"{a.coeff:g} !{target}"
     if a.trigger != Trigger.BOTH:
         body += "@" + _trigger_name(a.trigger)
     return body
@@ -1329,7 +1492,7 @@ def _fmt_manifold(m: ManifoldTerm) -> str:
     else:
         onto_lit = -m.onto if m.along < 0 else m.onto
         coeff_str = f"{m.along:g},{onto_lit:g}"
-    body = f"{coeff_str} {m.manifold}%{pos}"
+    body = f"{coeff_str} {m.manifold}%{pos}{format_layer_clause(m.layers)}"
     if m.trigger != Trigger.BOTH:
         body += "@" + _trigger_name(m.trigger)
     return body
@@ -1407,7 +1570,8 @@ def referenced_selectors(
 
     Walks the AST before pole resolution so namespace prefixes survive —
     useful at install time, when the CLI needs to know which pack to fetch
-    for each atom.  Projection terms contribute two entries (base + onto).
+    for each atom.  Projection terms contribute two entries (base + onto);
+    a ``{…}`` layer clause is not part of an atom and never appears.
 
     Concept atoms *only*: a ``%`` manifold term names an artifact, not a
     concept, and is skipped.  A caller preflighting artifacts (rather than
@@ -1435,10 +1599,13 @@ __all__ = [
     "DEFAULT_ABLATION_COEFF",
     "RESERVED_NAMESPACES",
     "AblationTerm",
+    "LayerScope",
     "ManifoldTerm",
     "ProjectedTerm",
     "SteeringExprError",
+    "format_layer_clause",
     "parse_expr",
     "format_expr",
     "referenced_selectors",
+    "split_layer_clause",
 ]

@@ -122,11 +122,15 @@ def _normalize_shares_mean1(raw: dict[int, float]) -> dict[int, float]:
     return {L: s / total * n_layers for L, s in raw.items()}
 
 
-def _manifold_layer_shares(manifold: Manifold) -> dict[int, float]:
+def _manifold_layer_shares(
+    manifold: Manifold, layers: "tuple[int, ...] | None" = None,
+) -> dict[int, float]:
     """A curved manifold's mean-1 per-layer share from its baked Mahalanobis share.
 
-    Full layer coverage is required: the share is cross-layer normalized, so
-    a partial map would compare incommensurable layers.
+    Full layer coverage of the bake is required: the share is cross-layer
+    normalized, so a partial map would compare incommensurable layers.  The
+    mean-1 normalization runs over ``layers`` (a layer-scoped term) or every
+    fitted layer.
     """
     baked = manifold.mahalanobis_share
     missing = set(manifold.layers) - set(baked)
@@ -136,8 +140,9 @@ def _manifold_layer_shares(manifold: Manifold) -> dict[int, float]:
             f"manifold {manifold.name!r} has non-canonical Mahalanobis shares "
             f"(missing={sorted(missing)}, extra={sorted(extra)})"
         )
+    selected = manifold.layers if layers is None else layers
     return _normalize_shares_mean1(
-        {layer_idx: float(baked[layer_idx]) for layer_idx in manifold.layers}
+        {layer_idx: float(baked[layer_idx]) for layer_idx in selected}
     )
 
 
@@ -365,7 +370,8 @@ class CurvedTerm:
     """One curved ``%`` manifold term, as registered on a plan.
 
     ``position`` is the resolved authoring coordinate tuple (labels resolved
-    at registration); ``shares`` the manifold's mean-1 per-layer share.
+    at registration); ``shares`` the manifold's mean-1 per-layer share over
+    the layers the term acts on, which are its keys.
     """
 
     name: str
@@ -444,6 +450,7 @@ class SteeringPlan:
         along: float,
         onto: float,
         trigger: Trigger = Trigger.BOTH,
+        layers: "tuple[int, ...] | None" = None,
     ) -> None:
         """Register a curved-manifold term.
 
@@ -455,7 +462,8 @@ class SteeringPlan:
         clamping to a no-op (the same expression on an affine fit would push
         away — ``fit_mode=auto`` can resolve either way per model).  The loom
         ``inverted`` regen negates ``along``, so inverting a curved term lands
-        here too: a curved position has no opposite.
+        here too: a curved position has no opposite.  ``layers`` restricts
+        the term to a nonempty subset of the fitted layers (``None``: all).
         """
         if along < 0.0 or onto < 0.0:
             raise SteeringCompositionError(
@@ -463,6 +471,13 @@ class SteeringPlan:
                 f"are fractions in [0, 1]; got along={along:g}, onto={onto:g}. "
                 f"A curved position has no opposite, so the term cannot be "
                 f"negated or inverted; steer toward a different position."
+            )
+        if layers is not None and (
+            not layers or not set(layers) <= set(manifold.layers)
+        ):
+            raise SteeringCompositionError(
+                f"manifold {name!r} cannot act on layers {sorted(layers)}; "
+                f"it is fitted at {sorted(manifold.layers)}"
             )
         manifold.validate_runtime_geometry()
         resolved = manifold.resolve_position(position)
@@ -480,7 +495,7 @@ class SteeringPlan:
             along=float(along),
             onto=float(onto),
             trigger=_canonical_trigger(trigger),
-            shares=_manifold_layer_shares(manifold),
+            shares=_manifold_layer_shares(manifold, layers),
         ))
         self._invalidate()
 
@@ -513,7 +528,8 @@ class SteeringPlan:
             target_coord = domain.clamp_position(
                 torch.tensor(term.position, dtype=torch.float32)
             ).to(device)
-            for layer_idx, sub in manifold.layers.items():
+            for layer_idx, share in term.shares.items():
+                sub = manifold.layers[layer_idx]
                 B_new = sub.basis.to(torch.float32)
                 prev = curved_basis_by_layer.get(layer_idx)
                 if prev is not None:
@@ -535,7 +551,6 @@ class SteeringPlan:
                         f"curved manifold {manifold.name!r} has no neutral "
                         f"origin for layer {layer_idx}"
                     )
-                share = term.shares[layer_idx]
                 eff_along = (
                     min(1.0, along * _MANIFOLD_ALONG_GAIN) if periodic
                     else along * share * _MANIFOLD_ALONG_GAIN

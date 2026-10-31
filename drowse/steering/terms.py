@@ -4,7 +4,8 @@ A frozen ``alphas: {key: entry}`` mapping plus an optional ``thinking``
 override and a default ``trigger`` for bare-float entries.  Callers hand
 :meth:`Steering.from_value` an expression string (parsed by
 :mod:`drowse.steering.grammar`) or a pre-built :class:`Steering`; dicts are
-not accepted.  Keys are registry keys — the grammar's canonical form — and
+not accepted.  Keys are registry keys — the grammar's canonical form, ending
+in the term's canonical ``{…}`` layer clause when it has one — and
 resolution to loaded artifacts happens once, in
 :meth:`~drowse.steering.composer.SteeringComposer.resolve`.
 """

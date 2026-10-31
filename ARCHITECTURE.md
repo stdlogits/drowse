@@ -318,6 +318,7 @@ in `drowse/steering/AGENTS.md`. In brief:
 | `a~b`, `a\|b` | keep / remove the Mahalanobis component of `a` shared with `b` |
 | `!a` | mean-ablate `a` (`h' = h − α(h·d̂ − μ·d̂)d̂`) |
 | `along[,onto] M%label`, `M%x,y` | move toward a node or coordinates of a manifold |
+| `x{12-20}`, `x{4-8,20}`, `x{workspace}` | act only at these layers (any term kind) |
 | `@response`, `@after`, `@first:N`, … | restrict the token phase or window |
 | `@when:probe>t` | fire only while a read-side scalar holds |
 | `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces |
@@ -332,6 +333,15 @@ name, then plain key); collisions raise `AmbiguousSelectorError` instead of
 choosing silently. The scope's assistant-role label is resolved from the terms
 (explicit `:role-<id>` keys must agree; implied roles from `%` terms resolve to
 the strongest with a warning).
+
+A term acts on every layer it is fitted at unless a `{…}` layer clause scopes
+it. The clause is the layer-selector language of `model/layers.py` (indices,
+`a-b` ranges, `workspace`, `all`) and part of the term's identity, so the same
+selector under two clauses is two terms. Composition restricts the term's
+per-layer fragments (a curved term's layers) to the selection before
+grouping; `workspace` is the model's depth band intersected with the fitted
+layers, and a selected layer outside the fit, or an empty intersection, is a
+422.
 
 Composition groups terms by trigger. Vectors are folded into neutral-anchored
 rank-1 frames, `~`/`|` results are folded the same way, ablations contribute
@@ -392,9 +402,11 @@ coefficient scale meaningful across very different fits:
   gain calibrates. Every target gets the same whitened budget, linear in α.
 - **Mean-1 share normalization.** The per-layer share is normalized so its
   layer sum equals the layer count, so a 1-layer or 30-layer fit, 2-node or
-  107-node, lands in the same α band. There is no lever, no N correction, and
-  no clamp on affine `along`: a high-share layer is meant to overshoot, bounded
-  by the whitened-unit target.
+  107-node, lands in the same α band. The count is of the layers the trigger
+  group acts on, so a layer clause selecting one layer of a 30-layer fit lands
+  there too. There is no lever, no N correction, and no clamp on affine
+  `along`: a high-share layer is meant to overshoot, bounded by the
+  whitened-unit target.
 
 The recommended affine α is about 0.5, toward 1.0 for stronger expression.
 Curved `along` and `onto` are fractions in `[0, 1]`; the hooks scale them into

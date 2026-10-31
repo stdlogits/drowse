@@ -69,6 +69,15 @@ def test_dynamic_or_multicoeff_term_rejected(expression: str, message: str):
         bake.merge_into_manifold("x", expression, model=None)
 
 
+@pytest.mark.parametrize("clause", ["{4}", "{2-5,9}", "{workspace}", "{all}"])
+def test_layer_clause_rejected(clause: str):
+    """A merge is layer-agnostic: any typed clause, even ``{all}``, is refused."""
+    with pytest.raises(MergeError, match="layer clause"):
+        bake.merge_into_manifold("x", f"0.5 default/happy{clause}", model=None)
+    with pytest.raises(MergeError, match="merge expression: .*layer clause"):
+        bake.merge_into_manifold("x", "0.5 default/happy{8-4}", model=None)
+
+
 def test_empty_expression_rejected():
     with pytest.raises(MergeError):
         bake.merge_into_manifold("x", "", model=None)
