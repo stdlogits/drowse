@@ -748,10 +748,11 @@ export const apiInstruments = {
     const params = new URLSearchParams({
       node_id: nodeId,
       raw_index: String(rawIndex),
-      top_k: String(opts.topK ?? 8),
       steered: String(opts.steered ?? true),
       raw: String(opts.raw ?? false),
     });
+    // The server refuses a width for geometry (a whitened reading has none).
+    if (family !== "geometry") params.set("top_k", String(opts.topK ?? 8));
     if (opts.layers) params.set("layers", opts.layers);
     return request(`${SESSION_BASE(id)}/instruments/${family}/token-readout?${params}`);
   },
