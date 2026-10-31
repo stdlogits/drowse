@@ -722,6 +722,10 @@ class _FitRun:
         self.model_id = fitter._model_id
         self.tokenizer = fitter._tokenizer
         self.residency = residency
+        #: Whether this fit selects its artifact: exactly when the request
+        #: holds ``out`` (the same rule that picked ``residency``), whatever
+        #: sites the published artifact ends up holding.
+        self.selects = lens_selectable(request.sites)
         self.model = model
         self.spec = spec
         self.identity = identity
@@ -921,7 +925,7 @@ class _FitRun:
     def noop(
         self, lens: JacobianLens, sidecar: Mapping[str, Any],
     ) -> JacobianLens:
-        from drowse.lens.store import remove_subsumed_lens_checkpoint
+        from drowse.lens.store import remove_subsumed_lens_checkpoint, select_local_lens
 
         self.note(f"lens already fitted on {lens.n_prompts} prompts — nothing to do")
         # A kill after durable publication but before the checkpoint unlink
@@ -929,6 +933,10 @@ class _FitRun:
         # artifact proves it is not farther ahead or different.
         remove_subsumed_lens_checkpoint(self.model_id, name=self.identity.name)
         selected = lens.select_layers(self.identity.layers)
+        if self.selects:
+            # Select before adopting: the resident is stamped with the
+            # active source's label, and a later refresh resolves it.
+            select_local_lens(self.model_id, self.identity.name)
         if _holds_artifact(lens, sidecar):
             self.adopt(lens, sidecar)
         else:
@@ -986,6 +994,7 @@ class _FitRun:
             merged, self.model_id, self.provenance(),
             reuse_layers={layer for site in lens.sites for layer in lens.layers(site)},
             split_half=_merge_split_half(kept, fitted_split),
+            select=self.selects,
             _verified_reuse_proof=proof,
         )
         remove_lens_checkpoint(self.model_id, self.identity.name)
@@ -1011,7 +1020,10 @@ class _FitRun:
             self.note(f"resuming from {start} prompts ({len(prompts)} remaining)")
 
         def publish(lens: JacobianLens, split_half: Mapping[str, Mapping[int, float]]) -> JacobianLens:
-            save_lens(lens, self.model_id, self.provenance(), split_half=split_half)
+            save_lens(
+                lens, self.model_id, self.provenance(),
+                split_half=split_half, select=self.selects,
+            )
             remove_lens_checkpoint(self.model_id, name)
             return lens
 
@@ -1066,6 +1078,7 @@ class _FitRun:
                 seq_len=self.request.seq_len,
                 d_model=merged.d_model,
                 model_fingerprint=self.identity.model_fingerprint,
+                select=self.selects,
                 _verified_proof=proof_out[0],
             ):
                 sidecar = load_local_lens_sidecar(self.model_id, name)

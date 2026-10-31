@@ -184,6 +184,68 @@ def test_a_fit_drives_its_own_familys_residency_only(make_tiny_session: Any) -> 
     assert "slens/a" in session.registry.profiles
 
 
+def _family_slot(lens: Any, side: str) -> tuple[Any, Any]:
+    """``(runtime, resident refresh)`` of one family's slot."""
+    if side == "input":
+        return lens.input_runtime, lens.resident_input
+    return lens.runtime, lens.resident
+
+
+@pytest.mark.parametrize(("kind", "other", "side"), [("S", "K", "input"), ("R", "J", "output")])
+def test_a_noop_fit_selects_the_lens_it_adopts(
+    make_tiny_session: Any, kind: str, other: str, side: str,
+) -> None:
+    """Regression: a cache-hit fit adopted its artifact without selecting
+    it, so the resident was stamped with the other source's label and the
+    next refresh swapped it back.  A no-op fit holding ``out`` selects
+    ``local:<kind>`` as a fit that does work does."""
+    from drowse.base.source_registry import LOCAL, SourceRef
+    from drowse.lens.sources import LENS_SOURCES
+
+    session = make_tiny_session(warm=False)
+    lens = session.lens
+    runtime, refresh = _family_slot(lens, side)
+    lens.fit(_TINY_PROMPTS, kind=kind, sites=("out",))
+    lens.fit(_TINY_PROMPTS, kind=other, sites=("out",))
+    assert LENS_SOURCES.active(session.model_id, side) == SourceRef(LOCAL, other.lower())
+    assert runtime.lens.key.kind == other
+
+    lens.fit(_TINY_PROMPTS, kind=kind, sites=("out",))  # identical: a no-op
+    assert LENS_SOURCES.active(session.model_id, side) == SourceRef(LOCAL, kind.lower())
+    assert runtime.lens.key.kind == kind
+    assert runtime.source == f"local:{kind.lower()}"
+    assert refresh().key.kind == kind
+
+
+@pytest.mark.parametrize(("kind", "other", "side"), [("S", "K", "input"), ("R", "J", "output")])
+def test_a_mid_only_top_up_leaves_selection_with_residency(
+    make_tiny_session: Any, kind: str, other: str, side: str,
+) -> None:
+    """Regression: a mid-only top-up of an artifact holding ``out`` was
+    selected (``save_lens`` judged the merged artifact) while the fitter,
+    judging the request, adopted nothing: the selection moved and the
+    resident stayed.  A fit without ``out`` now leaves both alone."""
+    from drowse.base.source_registry import LOCAL, SourceRef
+    from drowse.lens.sources import LENS_SOURCES
+    from drowse.lens.store import load_local_lens_sidecar
+
+    session = make_tiny_session(warm=False)
+    lens = session.lens
+    runtime, refresh = _family_slot(lens, side)
+    lens.fit(_TINY_PROMPTS, kind=kind, sites=("out",))
+    lens.fit(_TINY_PROMPTS, kind=other, sites=("out",))
+    resident = runtime.lens
+    assert resident.key.kind == other
+
+    lens.fit(_TINY_PROMPTS, kind=kind, sites=("mid",))  # tops up local:<kind>
+    sidecar = load_local_lens_sidecar(session.model_id, kind.lower())
+    assert sidecar is not None and set(sidecar["sites"]) == {"out", "mid"}
+    assert LENS_SOURCES.active(session.model_id, side) == SourceRef(LOCAL, other.lower())
+    assert runtime.lens is resident
+    assert runtime.source == f"local:{other.lower()}"
+    assert refresh().key.kind == other
+
+
 # -- probes and gates -----------------------------------------------------------
 
 

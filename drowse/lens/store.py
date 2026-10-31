@@ -607,6 +607,7 @@ def save_lens(
     durable: bool = True,
     reuse_layers: Iterable[int] | None = None,
     split_half: SplitHalf | None = None,
+    select: bool | None = None,
     _verified_reuse_proof: _LensPayloadProof | None = None,
 ) -> Path:
     """Persist a fitted lens and atomically point at its layer generations.
@@ -620,10 +621,11 @@ def save_lens(
     recorded for each site it covers at every layer.  Publication makes the
     lens active for its family when it can serve that family
     (:func:`~drowse.lens.key.lens_selectable`: a lens needs the ``out``
-    site), and otherwise leaves the selection alone.
+    site), and otherwise leaves the selection alone.  ``select`` overrides
+    that rule: a fit passes whether its request held ``out``, so a mid-only
+    top-up of an artifact that holds ``out`` leaves the selection where the
+    fit leaves residency.
     """
-    from drowse.lens.sources import LENS_SOURCES
-
     name = lens.kind.lower() if name is None else name
     if local_lens_kind(name) != lens.kind:
         raise ValueError(f"cannot save a {lens.kind} lens as local:{name}")
@@ -637,9 +639,16 @@ def save_lens(
                 checkpoint=False, name=name, reuse_layers=reuse_layers,
                 verified_reuse_proof=_verified_reuse_proof, split_half=split_half,
             )
-    if lens_selectable(lens.sites):
-        LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
+    if lens_selectable(lens.sites) if select is None else select:
+        select_local_lens(model_id, name)
     return path
+
+
+def select_local_lens(model_id: str, name: str) -> None:
+    """Make ``local:<name>`` its family's active lens source."""
+    from drowse.lens.sources import LENS_SOURCES
+
+    LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
 
 
 def save_lens_at(
@@ -1193,6 +1202,7 @@ def promote_lens_checkpoint(
     seq_len: int,
     d_model: int,
     model_fingerprint: str,
+    select: bool | None = None,
     _verified_proof: _LensPayloadProof | None = None,
 ) -> bool:
     """Promote a complete checkpoint to the durable lens without rewriting it.
@@ -1202,10 +1212,9 @@ def promote_lens_checkpoint(
     lens again would duplicate a potentially multi-GiB write.  Promote only
     after cheap exact identity checks (``site_layers`` must name exactly the
     checkpoint's sites and layers); callers fall back to :func:`save_lens`
-    on ``False``.  Selects the promoted lens as :func:`save_lens` does.
+    on ``False``.  Selects the promoted lens as :func:`save_lens` does,
+    ``select`` included.
     """
-    from drowse.lens.sources import LENS_SOURCES
-
     directory = _local_dir(model_id, name)
     checkpoint_anchor = _anchor(directory, checkpoint=True)
     final_anchor = _anchor(directory, checkpoint=False)
@@ -1261,8 +1270,8 @@ def promote_lens_checkpoint(
         fsync_directory(directory)
         _cleanup_unreferenced_generations(directory)
         fsync_directory(directory)
-    if lens_selectable(durable["sites"]):
-        LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
+    if lens_selectable(durable["sites"]) if select is None else select:
+        select_local_lens(model_id, name)
     return True
 
 

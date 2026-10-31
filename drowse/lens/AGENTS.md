@@ -193,9 +193,12 @@ sets, so a pack carrying `split_half` (or a `mid` site) waits on its reader
   families' probes, gates and steering atoms (and the R family's live
   readout) read `out`, so a lens of either family without it is published
   but never displaces, or becomes, its family's selected source. `lens use`
-  selects one explicitly for `read` and `lens top` at `mid`. `save_lens_at(lens, dir,
-  provenance, split_half=None)` writes the same layout anywhere without
-  selecting it; it is the packaging path.
+  selects one explicitly for `read` and `lens top` at `mid`. `select=`
+  overrides the rule: the fitter passes whether its request held `out`, so
+  a mid-only top-up of an artifact that holds `out` selects nothing, as it
+  adopts nothing. `save_lens_at(lens, dir, provenance, split_half=None)`
+  writes the same layout anywhere without selecting it; it is the packaging
+  path.
 
 ## Sources and selection (`sources.py`)
 
@@ -242,7 +245,8 @@ provider name, and carries one or both sites.
   it loads for these weights (409 otherwise), as the R family's live enable
   does.
 - A fit, a promotion or a fetch replaces its family's selection (a fit or
-  promotion only when it holds `out`). Removal unselects only an exact
+  promotion only when its request holds `out`; a no-op fit that does
+  selects too). Removal unselects only an exact
   match. `select_source` evicts that family's resident lens.
 - `matches_loaded_model` decides compatibility. A local fit must match the
   loaded-weight fingerprint exactly. An external lens must match the model id,
@@ -378,8 +382,12 @@ A fit drives its own family's slot (`LensFitter(residency={"output": …,
 "input": …})`; the instrument's `_InputResidency` is the S family's): an R/J
 fit evicts and adopts the R resident and its live readout, an S/K fit the S
 resident, its `slens/` directions and probe layers, and neither touches the
-other family. A fit without the `out` site adopts nothing: its family's
-resident lens, live readout and selection stay as they were.
+other family. Selection follows the same request: a fit holding `out`
+selects `local:<kind>` before adopting (a no-op included, so the resident is
+stamped with its own label and a refresh keeps it), and a fit without the
+`out` site selects and adopts nothing, even when it tops up an artifact that
+holds `out`: its family's resident lens, live readout and selection stay as
+they were.
 
 `prove_lens_fit_noop` proves a no-op without the model. A file corpus is
 identified by its raw digest, a pinned Hub corpus by spec plus prompt count
