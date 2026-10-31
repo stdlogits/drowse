@@ -41,6 +41,7 @@ from drowse.server.response_models import (
     InstrumentFamilyBlock,
     InstrumentLiveState,
     InstrumentSourceJSON,
+    LensProviderJSON,
     LensTokenValidationJSON,
     PreparationStatusJSON,
     SaeFeatureMetaResponse,
@@ -264,7 +265,7 @@ def register_instrument_routes(app: FastAPI) -> None:
 
     lens_fetch = Preparation("fetch", label="J-lens fetch", fields=("source", "live_layers"))
     lens_fit = Preparation(
-        "fit", label="lens fit", fields=("live_layers",),
+        "fit", label="lens fit", fields=("source", "live_layers"),
         cancel_exc=JacobianLensCancelled, progress_unit="prompts", progress_pattern=_FIT_PROGRESS_RE,
     )
     sae_fetch = Preparation("fetch", label="SAE fetch", fields=("release", "info"))
@@ -362,12 +363,20 @@ def register_instrument_routes(app: FastAPI) -> None:
         if not caps.sources:
             _refuse(caps.sources_error, f"{family} has no source lifecycle")
         if family == "lens":
-            from drowse.lens.sources import list_lens_sources
+            from drowse.lens.depth import kind_weights
+            from drowse.lens.sources import lens_providers, list_lens_sources
 
             rows = list_lens_sources(session.model_id)
-            return {"sources": [
-                cast(InstrumentSourceJSON, {k: v for k, v in row.items() if k != "path"}) for row in rows
-            ]}
+            band = session.lens.band
+            weights = kind_weights(len(session.layers), band)
+            return {
+                "sources": [
+                    cast(InstrumentSourceJSON, {k: v for k, v in row.items() if k != "path"}) for row in rows
+                ],
+                "providers": cast(list[LensProviderJSON], lens_providers()),
+                "band": {"lo": band.lo, "hi": band.hi, "weights": [[w_s, w_r] for w_s, w_r in weights]},
+                "fit_documents": DEFAULT_FIT_DOCUMENTS,
+            }
         from drowse.sae.backend import list_sae_releases
         from drowse.sae.sources import list_sae_sources
 
@@ -495,6 +504,7 @@ def register_instrument_routes(app: FastAPI) -> None:
         lens_fit.start(
             lambda: lens_fit_body(body, layers, corpus),
             message="starting…", current=0, total=body.prompts,
+            source=f"local:{body.kind}",
         )
 
     async def sae_fetch_body(body: SaeFetchRequest, source: str, release: str) -> None:

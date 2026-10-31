@@ -398,6 +398,48 @@ class TestSources:
         assert rows[0]["source"] == "local:j"
         assert "path" not in rows[0]  # path stripped
 
+    def test_lens_sources_carry_the_band_providers_and_fit_default(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """The Lens room's data: the session's crossover band as ``[w_S, w_R]``
+        at every layer, the fetchable providers per family, and the server's
+        default fit documents (the dashboard takes it from here)."""
+        from drowse.lens.depth import LensBand, kind_weights
+        from drowse.lens.key import DEFAULT_FIT_DOCUMENTS
+
+        session, client = session_and_client
+        monkeypatch.setattr("drowse.lens.sources.list_lens_sources", lambda _m: [])
+        session.lens.band = LensBand(0.2, 0.4)
+        body = client.get(f"{_BASE}/lens/sources").json()
+        band = body["band"]
+        assert (band["lo"], band["hi"]) == (0.2, 0.4)
+        assert len(band["weights"]) == len(session.layers)
+        expected = kind_weights(len(session.layers), LensBand(0.2, 0.4))
+        flat = [w for pair in band["weights"] for w in pair]
+        assert flat == pytest.approx([w for pair in expected for w in pair])
+        assert all(w_s + w_r == pytest.approx(1.0) for w_s, w_r in band["weights"])
+        assert body["fit_documents"] == DEFAULT_FIT_DOCUMENTS
+        providers = {row["source"]: row for row in body["providers"]}
+        assert providers["rs-r"] == {
+            "source": "rs-r", "lens": "R", "family": "R",
+            "sites": ["out", "mid"], "repo_id": "stdlogits/rs-lenses",
+        }
+        assert providers["rs-s"]["family"] == "S"
+        assert providers["neuronpedia"]["sites"] == ["out"]
+        # R family first, in picker order.
+        assert [row["source"] for row in body["providers"]] == [
+            "rs-r", "workspace-r", "neuronpedia", "workspace-j", "rs-s",
+        ]
+
+    def test_sae_sources_carry_no_lens_extras(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        _session, client = session_and_client
+        monkeypatch.setattr("drowse.sae.sources.list_sae_sources", lambda _m: [])
+        monkeypatch.setattr("drowse.sae.backend.list_sae_releases", lambda _m: [])
+        body = client.get(f"{_BASE}/sae/sources").json()
+        assert not {"band", "providers", "fit_documents"} & set(body)
+
     def test_sae_merges_prepared_and_releases(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
@@ -707,6 +749,8 @@ class TestPreparations:
             "current": 0, "total": 1, "unit": "prompts",
         }
         assert body["cancellable"] is True
+        # The status names the fit's target, so a resumed client knows its family.
+        assert body["source"] == "local:r"
 
         assert started.wait(timeout=2.0)
         try:

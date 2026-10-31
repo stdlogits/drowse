@@ -97,6 +97,10 @@ def test_external_lens_stays_in_provider_cache(
     assert rows[0]["source"] == "neuronpedia"
     assert rows[0]["repo_id"] == "neuronpedia/jacobian-lens"
     assert rows[0]["lens"] == "J" and rows[0]["active"]
+    # A binding's layers and documents come from the binding; an import
+    # records no split-half.
+    assert rows[0]["layers"] == {"out": [0]} and rows[0]["n_prompts"] == 12
+    assert "split_half" not in rows[0]
     assert sources.remove_lens_source(
         "org/model", SourceRef("huggingface", "neuronpedia"),
     )
@@ -134,6 +138,48 @@ def test_local_lens_layout_and_source_selection() -> None:
     }
     rows = list_lens_sources("org/model")
     assert len(rows) == 1 and rows[0]["source"] == "local:j" and rows[0]["active"]
+
+
+def test_local_rows_carry_layers_documents_and_split_half() -> None:
+    """A local row says, per site, which layers it holds and the fit's
+    split-half difference at each (the manifest's ``{layer: value}``)."""
+    from drowse.lens.sources import list_lens_sources
+
+    lens = JacobianLens(
+        {0: torch.eye(3), 2: torch.eye(3)}, n_prompts=64, d_model=3, key=LensKey("R"),
+        mid={0: torch.eye(3), 1: torch.eye(3), 2: torch.eye(3)},
+    )
+    save_lens(lens, "org/model", _PROV, split_half={"out": {0: 0.25, 2: 0.0625}})
+    (row,) = list_lens_sources("org/model")
+    assert row["sites"] == ["out", "mid"]
+    assert row["layers"] == {"out": [0, 2], "mid": [0, 1, 2]}
+    assert row["n_prompts"] == 64
+    # Only the site that recorded one carries it; keys are layer strings.
+    assert row["split_half"] == {"out": {"0": 0.25, "2": 0.0625}}
+    json.dumps(row)  # wire-safe as is
+
+
+def test_local_rows_without_split_half_omit_it() -> None:
+    from drowse.lens.sources import list_lens_sources
+
+    save_lens(JacobianLens({0: torch.eye(3)}, n_prompts=2, d_model=3), "org/model", _PROV)
+    (row,) = list_lens_sources("org/model")
+    assert row["layers"] == {"out": [0]} and row["n_prompts"] == 2
+    assert "split_half" not in row
+
+
+def test_lens_providers_cover_every_fetchable_source_by_family() -> None:
+    from drowse.lens.sources import LENS_PROVIDERS, lens_providers
+
+    rows = lens_providers()
+    assert sorted(row["source"] for row in rows) == sorted(LENS_PROVIDERS)
+    by_name = {row["source"]: row for row in rows}
+    assert by_name["rs-s"] == {
+        "source": "rs-s", "lens": "S", "family": "S",
+        "sites": ["out", "mid"], "repo_id": "stdlogits/rs-lenses",
+    }
+    assert by_name["workspace-j"]["family"] == "R"
+    assert by_name["workspace-j"]["sites"] == ["out"]
 
 
 def test_selection_is_per_side_so_output_and_input_lenses_coexist() -> None:

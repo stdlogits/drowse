@@ -876,12 +876,57 @@ def _sidecar_sites(sidecar: Mapping[str, Any] | None) -> list[str]:
     return [site for site in LENS_SITES if site in sites]
 
 
+def _sidecar_coverage(sidecar: Mapping[str, Any] | None) -> dict[str, Any]:
+    """A source's per-site layers, documents and recorded split-half
+    differences, as its row carries them (nothing for an unreadable one).
+
+    ``split_half`` keys each site that recorded one (a local fit; imports
+    lack it) to ``{layer: difference}``, the manifest's own shape.
+    """
+    from drowse.lens.store import lens_layers, lens_split_half
+
+    if sidecar is None:
+        return {}
+    sites = _sidecar_sites(sidecar)
+    split = {
+        site: {str(layer): value for layer, value in sorted(lens_split_half(sidecar, site).items())}
+        for site in sites
+    }
+    out: dict[str, Any] = {
+        "layers": {site: lens_layers(sidecar, site) for site in sites},
+        "n_prompts": int(sidecar.get("n_prompts", 0)),
+    }
+    if any(split.values()):
+        out["split_half"] = {site: values for site, values in split.items() if values}
+    return out
+
+
+def lens_providers() -> list[dict[str, Any]]:
+    """Every fetchable provider source, R family first, in picker order:
+    its name, kind, family, the sites it publishes and its repository."""
+    rows: list[dict[str, Any]] = []
+    for side in LENS_SIDES:
+        for name in DEFAULT_LENS_SOURCE_ORDER[side]:
+            provider = LENS_PROVIDERS[name]
+            rows.append({
+                "source": name,
+                "lens": provider.kind,
+                "family": lens_family(provider.kind),
+                "sites": [key.site for key in provider.keys],
+                "repo_id": provider.repo,
+            })
+    return rows
+
+
 def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
     """Every prepared source, in default preference order.
 
     Each row names its kind (``lens``), its family (``family``: ``R`` or
-    ``S``, the slot it selects into) and the sites it carries (``sites``;
-    empty for a local artifact whose manifest no longer validates).
+    ``S``, the slot it selects into), the sites it carries (``sites``;
+    empty for a local artifact whose manifest no longer validates), each
+    site's layers (``layers``), its documents (``n_prompts``) and, where
+    the fit recorded one, each site's split-half difference by layer
+    (``split_half``).
     """
     actives = {LENS_SOURCES.active(model_id, side) for side in LENS_SIDES}
     rows: list[dict[str, Any]] = []
@@ -890,13 +935,15 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
 
         ref = SourceRef(LOCAL, name)
         kind = local_lens_kind(name)
+        sidecar = load_local_lens_sidecar(model_id, name)
         rows.append({
             "source": LENS_SOURCES.format(ref),
             "kind": LOCAL,
             "name": name,
             "lens": kind,
             "family": lens_family(kind),
-            "sites": _sidecar_sites(load_local_lens_sidecar(model_id, name)),
+            "sites": _sidecar_sites(sidecar),
+            **_sidecar_coverage(sidecar),
             "active": ref in actives,
             "path": str(LENS_SOURCES.path_of(model_id, ref)),
         })
@@ -912,6 +959,8 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
             "lens": binding.kind,
             "family": lens_family(binding.kind),
             "sites": list(binding.sites),
+            "layers": {site: list(binding.file(site).layers) for site in binding.sites},
+            "n_prompts": binding.n_prompts,
             "provider": binding.provider,
             "repo_id": binding.repo_id,
             "repo_revision": binding.repo_revision,
