@@ -351,3 +351,34 @@ def test_a_binding_view_never_contradicts_itself(
     monkeypatch.setattr(cat.UnitCatalog, "open", classmethod(lambda cls, model_id: None))
     catalog, status = binding.view()
     assert catalog is None and status["bound"] is False and status["reason"]
+
+
+def test_unit_activity_peaks_carry_the_label_of_the_pole_that_peaked(
+    hub: dict[str, Any], monkeypatch: pytest.MonkeyPatch, make_tiny_session: Any,
+) -> None:
+    """The Units room lists a conversation's most active units with their
+    labels and filters to the labelled ones, so each activity peak carries
+    the bound catalog's label of the pole it peaked on (a head's label)."""
+    from drowse.generation.sampling import SamplingConfig
+
+    session = make_tiny_session()
+    monkeypatch.setattr(cat, "CATALOG_MODELS", {
+        **cat.CATALOG_MODELS, session.model_id.lower(): cat.CatalogModel(session.model_id, SLUG),
+    })
+    session.generate("hello", sampling=SamplingConfig(max_tokens=5, seed=0))
+    node_id = session.tree.active_node_id
+    unbound = session.unit_activity(node_id, top=24)
+    assert unbound["top"] and all(peak["label"] is None for peak in unbound["top"])
+    session.units.fetch_catalog()
+    peaks = session.unit_activity(node_id, top=24)["top"]
+    assert [(p["unit"], p["peak"]) for p in peaks] == [(p["unit"], p["peak"]) for p in unbound["top"]]
+    for peak in peaks:
+        label = peak["label"]
+        assert label is not None and label["credit"] == "Labels by Claude Haiku 5.5"
+        if peak["kind"] == "neuron":
+            pole = "+" if peak["peak"] >= 0 else "-"
+            assert label["fires"] == f"L{peak['layer']} n{peak['index']} {pole} fires"
+            assert label["url"].endswith(f"/L{peak['layer']}/n{peak['index']}")
+        else:
+            assert label["attends"] == "the previous token"
+            assert label["url"].endswith(f"/L{peak['layer']}/h{peak['index']}")

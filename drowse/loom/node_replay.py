@@ -116,7 +116,9 @@ class ActivityToken(TypedDict):
 
 class ActivityPeak(TypedDict):
     """One unit's peak over the node: its signed value (over scale) at the
-    token where ``|value|`` peaks."""
+    token where ``|value|`` peaks, and the catalog's label of the pole that
+    peaked (a head's label), ``None`` without a bound catalog or a row (the
+    session fills it; the replay leaves it ``None``)."""
 
     unit: str
     kind: Literal["neuron", "head"]
@@ -124,6 +126,7 @@ class ActivityPeak(TypedDict):
     index: int
     peak: float
     raw_index: int
+    label: dict[str, Any] | None
 
 
 class PopulationLayer(TypedDict):
@@ -1270,6 +1273,7 @@ class NodeReplayer:
                 "index": unit,
                 "peak": round(float(value), 6),
                 "raw_index": int(row),
+                "label": None,
             })
         traces_out: dict[str, list[float]] = {}
         for ref in refs:
