@@ -43,7 +43,7 @@ from drowse.readout.planner import (
     plan_capture,
     resolve_read_demand,
 )
-from drowse.readout.measurements import live_sources
+from drowse.readout.measurements import envelope_sources
 from drowse.readout.types import AGG_TAIL_DEPTH, InstrumentPlan, ProbeReading, ReadRequest
 
 if TYPE_CHECKING:
@@ -744,8 +744,8 @@ class ReadPlane:
             units=dict(units or {}),
             per_token=per_token,
             hidden_states=hidden_states,
-            **live_sources(
-                self._lens.live, self._sae.live,
+            **envelope_sources(
+                self._lens.measurement_sources(), self._sae.live,
                 lens=bool(lens), sae=bool(sae),
             ),
         )

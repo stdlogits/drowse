@@ -1210,7 +1210,7 @@ class TestTokenReadout:
 
     def test_lens_replay_envelope(self, session_and_client: Any) -> None:
         session, client = session_and_client
-        session.lens.source = "local:default"
+        session.lens.runtime.source = "local:default"
         session.lens_replay.return_value = (
             self._token("0.3 formal.casual"), self._LENS_READ,
         )
@@ -1226,7 +1226,7 @@ class TestTokenReadout:
         assert m["scope"] == "replay"
         assert m["provenance"] == "replayed"
         lens = m["instruments"]["lens"]
-        assert lens["binding"]["source"] == "local:default"
+        assert lens["binding"]["sources"] == {"R": "local:default"}
         assert lens["binding"]["steering"] == "0.3 formal.casual"
         assert [row["layer"] for row in lens["readout"]["layers"]] == [12, 18]
         assert lens["readout"]["aggregate"][0]["token"] == " a"

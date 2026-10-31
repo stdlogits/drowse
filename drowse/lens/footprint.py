@@ -226,10 +226,26 @@ def depth_moments_positive(
     return center, var.clamp_min(0.0).sqrt()
 
 
+def footprint_probe_rows(
+    z: torch.Tensor, depths: torch.Tensor, weights: torch.Tensor,
+) -> torch.Tensor:
+    """The ``slens/`` probe reduction of per-layer footprint z ``[L, P]``.
+
+    ``depths`` and ``weights`` are ``[L, 1]``; ``weights`` are the depth
+    rule's ``w_S`` normalized over the layers (:func:`~drowse.lens.depth.s_weights`).
+    Returns ``[3 + L, P]``: the weighted mean ``Σ w_L z_L``, the depth center
+    and spread under mass ``w_L max(z_L, 0)``, then every ``z_L``.
+    """
+    weighted = weights * z
+    center, spread = depth_moments_positive(weighted, depths)
+    return torch.cat([torch.stack([weighted.sum(dim=0), center, spread]), z])
+
+
 __all__ = [
     "TokenEmbeddings",
     "VOCAB_CHUNK",
     "depth_moments_positive",
+    "footprint_probe_rows",
     "pullback_rows",
     "token_mask",
 ]

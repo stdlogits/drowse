@@ -746,7 +746,7 @@ class TestFastBatchOnTinySession:
         _assert_rows_match_serial(session, batch, prompts, "jlens/e")
         for row in batch:
             lens = cast(dict[str, Any], row.measurements)["instruments"]["lens"]
-            assert lens["binding"] == {"source": "local:j", "steering": None}
+            assert lens["binding"] == {"sources": {"R": "local:j"}, "steering": None}
             assert lens["readings"]["jlens/e"]["unit"] == "mean_token_probability"
 
     def test_sae_probe_row_aggregates_match_a_serial_generation(

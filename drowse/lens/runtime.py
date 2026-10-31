@@ -124,7 +124,9 @@ class LensRuntime:
     """The resident lens plus the readout primitives over it.
 
     ``lens`` / ``identity`` are the resident lens and the digest of the
-    artifact pointer it was loaded from (``None`` when nothing is resident).
+    artifact pointer it was loaded from (``None`` when nothing is resident);
+    ``source`` is the public source label it was selected as, stamped at
+    install, the label every measurement binding of its readings carries.
     Only :meth:`install` and :meth:`clear` change them; the caller holds the
     lens-state lock around both.
     """
@@ -145,6 +147,7 @@ class LensRuntime:
         self.n_layers = int(n_layers)
         self.lens: JacobianLens | None = None
         self.identity: str | None = None
+        self.source: str | None = None
         # Only the transport stacks depend on the resident lens; every other
         # cache is keyed by value and survives a lens swap.
         self._stacks: BoundedLRU[tuple[int, str, str, tuple[int, ...]], torch.Tensor] = (
@@ -170,16 +173,20 @@ class LensRuntime:
 
     def install(
         self, lens: JacobianLens, sidecar: Mapping[str, Any] | None,
+        *, source: str | None = None,
     ) -> None:
-        """Make ``lens`` resident under ``sidecar``'s identity."""
+        """Make ``lens`` resident under ``sidecar``'s identity and the public
+        ``source`` label it was selected as."""
         self.lens = lens
         self.identity = lens_identity(sidecar)
+        self.source = source
         self._stacks.clear()
 
     def clear(self) -> None:
         """Drop the resident lens and its device stacks."""
         self.lens = None
         self.identity = None
+        self.source = None
         self._stacks.clear()
 
     def close(self) -> None:

@@ -55,10 +55,12 @@ def fake_readout_family(
     gate_scalars: Callable[..., dict[str, float]] | None = None,
 ) -> Any:
     """A J-lens / SAE instrument fake: names, live state, the finalize
-    aggregate, the bound run's gate scalars and an accept-all gate check."""
+    aggregate, the bound run's gate scalars, an accept-all gate check and
+    (the lens's) per-family measurement sources."""
     return SimpleNamespace(
         names=list(names),
         live=live,
+        measurement_sources=lambda: {"R": None, "S": None},
         score_aggregate=score_aggregate or (lambda _ids, _pooled: {}),
         current_run=SimpleNamespace(
             gate_scalars=gate_scalars or (lambda _step, _hidden, _keys: {}),

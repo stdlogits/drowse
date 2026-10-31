@@ -41,12 +41,15 @@ from drowse.geometry.topology import (
 )
 from drowse.geometry.whitener import LayerWhitener
 from drowse.lens.jlens import JacobianLens, aggregate_readout_from_probabilities, token_readout_stats_from_probabilities
+from drowse.lens.depth import LensBand, s_weights
+from drowse.lens.footprint import footprint_probe_rows
 from drowse.loom.recipe import CastMember, Recipe
 from drowse.loom.tree import LoomTree
 from drowse.readout.measurements import build_measurements
 from drowse.readout.monitor import _depth_stats
 from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.sae.backend import LocalSaeBackend
+from drowse.units.instrument import UnitsInstrument
 from drowse.steering.grammar import SteeringExprError, parse_expr, referenced_selectors
 from drowse.steering.hooks import _lower_affine_subspaces
 from drowse.steering.triggers import TriggerContext
@@ -708,6 +711,35 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         ),
     )
 
+    # The S family's slens/ probe: per-layer footprint z reduced by the
+    # depth rule's S weights (lens/depth.py, lens/footprint.py).
+    slens = fixture["slens"]
+    s_layers = [int(layer) for layer in slens["layers"]]
+    s_rows = footprint_probe_rows(
+        torch.tensor(slens["z"], dtype=torch.float32).reshape(-1, 1),
+        torch.tensor(
+            [layer / (model_layer_count - 1) for layer in s_layers], dtype=torch.float32,
+        ).reshape(-1, 1),
+        torch.tensor(
+            s_weights(s_layers, model_layer_count, LensBand(*slens["band"])),
+            dtype=torch.float32,
+        ).reshape(-1, 1),
+    )
+    slens_reading = ScalarReading(
+        value=float(s_rows[0, 0]),
+        unit="mean_footprint_z",
+        per_layer={layer: float(s_rows[3 + row, 0]) for row, layer in enumerate(s_layers)},
+        depth=DepthSummary((float(s_rows[1, 0]),), (float(s_rows[2, 0]),), "footprint_z"),
+    )
+
+    # The units family: a neuron's activation over its pole's scale.
+    units = fixture["units"]
+    units_reading = UnitsInstrument.readings(
+        cast(Any, SimpleNamespace(_n_layers=model_layer_count)),
+        {units["name"]: {"layer": units["layer"], "kind": "neuron", "unit": units["unit"]}},
+        {units["name"]: (units["activation"] / units["scale"], units["activation"])},
+    )[units["name"]]
+
     sae = fixture["sae"]
     sae_session = SimpleNamespace(
         layers=[object() for _ in range(model_layer_count)],
@@ -745,10 +777,14 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         }
         for layer, row, probability in zip(layers, rows, lens["probabilities"])
     }
+    for layer, z in slens_reading.per_layer.items():
+        per_layer_scores.setdefault(str(layer), {})[slens["name"]] = z
+    for layer, value in units_reading.per_layer.items():
+        per_layer_scores.setdefault(str(layer), {})[units["name"]] = value
     envelope = build_measurements(
         scope="token",
         geometry_readings={geometry["name"]: geometry_reading},
-        lens_readings={lens["name"]: lens_reading},
+        lens_readings={lens["name"]: lens_reading, slens["name"]: slens_reading},
         sae_readings={sae["name"]: sae_reading},
         per_layer_scores=per_layer_scores,
         lens_readout={
@@ -762,7 +798,7 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
             lens_spread,
         )],
         lens_token_ids={layer: [lens["tokenId"]] for layer in layers},
-        lens_source=lens["source"],
+        lens_sources={"R": lens["source"], "S": slens["source"]},
         sae_features=[(
             sae["featureId"],
             sae["activation"],
@@ -771,6 +807,7 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         )],
         sae_source=sae["source"],
         sae_layer=sae["layer"],
+        units_readings={units["name"]: units_reading},
         steering=fixture["steering"],
     )
 

@@ -232,7 +232,9 @@ class StubSession:
         # Public instrument surface — ``probe_measurements_aggregate`` reads
         # both the attached roster and the live source/layer binding off
         # these faces.
-        self.lens = SimpleNamespace(live=None, names=[])
+        self.lens = SimpleNamespace(
+            live=None, names=[], measurement_sources=lambda: {"R": None, "S": None},
+        )
         self.sae = SimpleNamespace(live=None, names=[])
         # End-of-generation readings the stub stamps onto every result, so a
         # test can pin the ``done`` frame's aggregate channel.
@@ -358,8 +360,8 @@ class StubSession:
                             dict(self.stub_probe_readings) or None
                         ),
                         lens_readings=dict(self.stub_lens_readings) or None,
-                        lens_source=(
-                            (self.lens.live or {}).get("source")
+                        lens_sources=(
+                            self.lens.measurement_sources()
                             if self.stub_lens_readings else None
                         ),
                     )),

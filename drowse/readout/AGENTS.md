@@ -29,7 +29,7 @@ other three families (`drowse/units/AGENTS.md`);
 | `monitor_flat.py` | `_FlatEngine`: the batched read over every flat probe |
 | `geometry.py` | `GeometryInstrument`, `GeometryRun` |
 | `roster.py` | `ProbeRoster` and its `GeometryFamily`/`ReadoutFamily` protocols |
-| `measurements.py` | `build_measurements`, `live_sources`, the envelope TypedDicts |
+| `measurements.py` | `build_measurements`, `envelope_sources`, `LENS_FAMILY_BY_UNIT`, the envelope TypedDicts |
 | `analytics.py` | `cross_layer_cosine`, `cosine_matrix` (whitened; used by `server/profile_routes.py`) |
 
 ## Layering
@@ -315,15 +315,23 @@ The one wire record for token frames (`scope="token"`), final aggregates
 (`"aggregate"`) and replays (`"replay"`, `provenance="replayed"`);
 `MEASUREMENTS_VERSION = 1`. Build rules: `None` when nothing was measured; a
 family channel exists only when it has readings or a readout; lens/SAE channels
-always carry `binding` (`source`, `steering`, SAE `layer`), geometry only when
-the caller passes one (replay); `units` (`UnitsChannel`) is exactly `{binding:
+always carry `binding`, geometry only when the caller passes one (replay). The
+SAE binding is `{source, steering, layer}`; the lens channel carries two lens
+families, so its binding is `{sources: {R?, S?}, steering}` (`LensBinding`)
+naming the source of each family that produced its data: `R` for `jlens/`
+readings or the readout, `S` for `slens/` readings, told apart by the
+reading's unit (`LENS_FAMILY_BY_UNIT`; any other unit is a broken invariant).
+`units` `units` (`UnitsChannel`) is exactly `{binding:
 {source: null, steering}, readings}`, present only with readings; `readings` are each family's native
 `to_dict()`; `readout` is the native discovery surface; `scores` is the axis-0
 join rounded to 6 places. The lens readout holds `p_l`, and this is the one
 place it becomes the wire's `logprob` (floored at `1e-45` so JSON stays
 finite). `ProbeReadingDict`'s last five keys are `NotRequired` because
-persisted loom rows may lack them. `live_sources` is the one builder of
-`lens_source`/`sae_source`/`sae_layer`; an aggregate binds a family's source
+persisted loom rows may lack them. `envelope_sources` is the one builder of
+`lens_sources`/`sae_source`/`sae_layer`, from the lens instrument's
+`measurement_sources()` (the source labels its run pinned, stamped on each
+`LensRuntime` when its lens became resident, so no disk read per
+generation) and the SAE live config; an aggregate binds a family's source
 only when it carries that family's readings.
 
 Wire drift is a test failure: `tests/readout/test_measurements_envelope.py`

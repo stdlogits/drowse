@@ -1286,7 +1286,7 @@ def test_lens_token_readout_reads_every_fitted_layer() -> None:
 
     # One capture forward at the producing position over the fitted layers.
     assert rig.captures == [(rig.prompt_len + 3, rig.prompt_len + 2, (0, 1))]
-    assert block["binding"] == {"source": s.lens.active_source, "steering": None}
+    assert block["binding"] == {"sources": {"R": s.lens.active_source}, "steering": None}
     layers = block["readout"]["layers"]
     assert [row["layer"] for row in layers] == [0, 1]  # fitted sources of the toy
     for row in layers:

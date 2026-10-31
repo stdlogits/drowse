@@ -53,7 +53,7 @@ def test_token_payload_builds_measurement_envelope() -> None:
         lens={3: [(" tok", 0.25)]},
         lens_aggregate=[(" tok", 0.2, 0.6, 0.1)],
         lens_token_ids={3: [42]},
-        lens_source="local:default",
+        lens_sources={"R": "local:default"},
         sae=[(7, 3.5, "feature seven", 5.0)],
         sae_source="saelens:release",
         sae_layer=3,
@@ -85,7 +85,7 @@ def test_token_payload_builds_measurement_envelope() -> None:
                 "spread": 0.1,
             }],
         },
-        "binding": {"source": "local:default", "steering": "0.3 calm"},
+        "binding": {"sources": {"R": "local:default"}, "steering": "0.3 calm"},
     }
     assert instruments["sae"] == {
         "readout": {

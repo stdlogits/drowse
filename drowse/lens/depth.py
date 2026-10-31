@@ -50,6 +50,17 @@ def layer_depth(layer: int, n_layers: int) -> float:
     return 0.0 if n_layers <= 1 else int(layer) / (int(n_layers) - 1)
 
 
+def s_weights(
+    layers: "list[int] | tuple[int, ...]", n_layers: int, band: LensBand | None = None,
+) -> list[float]:
+    """``w_S`` at each of ``layers``, normalized to sum 1 over them (all
+    zeros when none has S weight): the ``slens/`` probe's layer weights."""
+    table = kind_weights(n_layers, band)
+    raw = [table[int(layer)][0] for layer in layers]
+    total = sum(raw)
+    return [w / total for w in raw] if total > 0 else [0.0] * len(raw)
+
+
 def kind_weights(
     n_layers: int, band: LensBand | None = None,
 ) -> list[tuple[float, float]]:
@@ -70,4 +81,5 @@ __all__ = [
     "LensBand",
     "kind_weights",
     "layer_depth",
+    "s_weights",
 ]

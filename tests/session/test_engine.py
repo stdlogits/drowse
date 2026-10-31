@@ -261,10 +261,12 @@ def _forbid(name: str) -> Any:
 
 
 def _tap_session(*, lens_live: Any = None, sae_live: Any = None,
-                 lens_step: Any = None, rows: list[Any] | None = None) -> Any:
+                 lens_step: Any = None, rows: list[Any] | None = None,
+                 lens_sources: Any = None) -> Any:
     return SimpleNamespace(
         lens=SimpleNamespace(
             live=lens_live, last_step_readings=None,
+            measurement_sources=lambda: dict(lens_sources or {}),
             live_readout_step=lens_step or _forbid("lens readout"),
         ),
         sae=SimpleNamespace(
@@ -322,11 +324,11 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
         return lens_rows, [(" a", 0.4, 0.5, 0.1)], {3: [7]}
 
     session = _tap_session(
-        lens_live={"layers": [3], "source": "local:default"},
+        lens_live={"layers": [3]}, lens_sources={"R": "local:default"},
         lens_step=_lens_step, rows=rows,
     )
     session.lens.last_step_readings = {
-        "jlens/a": ScalarReading(value=0.25, unit="probability"),
+        "jlens/a": ScalarReading(value=0.25, unit="mean_token_probability"),
     }
     state = GenerationState()
     state.emit_map = [(4, False)]
@@ -352,7 +354,7 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
     assert event.top_alts == alts and event.perplexity == 1.5
     assert event.measurements is not None and event.probe_readings is not None
     lens = event.measurements["instruments"]["lens"]
-    assert lens["binding"] == {"source": "local:default", "steering": "0.3 calm"}
+    assert lens["binding"] == {"sources": {"R": "local:default"}, "steering": "0.3 calm"}
     assert lens["readings"]["jlens/a"]["value"] == 0.25
     assert set(event.probe_readings) == {"jlens/a"}
 
@@ -366,11 +368,11 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
 
 def test_tap_skips_the_compat_projection_unless_the_consumer_asks() -> None:
     session = _tap_session(
-        lens_live={"layers": [3], "source": "local:default"},
+        lens_live={"layers": [3]}, lens_sources={"R": "local:default"},
         lens_step=lambda **_kw: ({3: [(" a", 0.5)]}, [], {3: [7]}),
     )
     session.lens.last_step_readings = {
-        "jlens/a": ScalarReading(value=0.25, unit="probability"),
+        "jlens/a": ScalarReading(value=0.25, unit="mean_token_probability"),
     }
     events: list[TokenEvent] = []
     tap = TokenTap(

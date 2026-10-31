@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import torch
 
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import live_sources
+from drowse.readout.measurements import envelope_sources
 
 if TYPE_CHECKING:
     from drowse.lens.instrument import LensInstrument
@@ -312,7 +312,7 @@ class AuthoredPromptCapture:
         matches = self.matches
         if not matches or not prompt_rows:
             return
-        sources = live_sources(self.lens.live, self.sae.live)
+        sources = envelope_sources(self.lens.measurement_sources(), self.sae.live)
 
         output_rows: list[list[dict[str, Any]]] = [
             [

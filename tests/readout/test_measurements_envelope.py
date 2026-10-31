@@ -26,7 +26,7 @@ from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.readout.measurements import (
     MEASUREMENTS_VERSION,
     build_measurements,
-    live_sources,
+    envelope_sources,
 )
 
 # The eight fields a synthesized ``ProbeReading`` used to ship for every
@@ -124,7 +124,7 @@ class TestTokenFrame:
             lens_readout={12: [(" a", 0.78)], 18: [(" b", 0.6)]},
             lens_aggregate=[(" a", 0.41, 0.31, 0.05)],
             lens_token_ids={12: [5], 18: [7]},
-            lens_source="local:default",
+            lens_sources={"R": "local:default", "S": "rs-s"},
             sae_features=[(42, 3.5, "fruit", 121.1)],
             sae_source="saelens:scope",
             sae_layer=14,
@@ -152,8 +152,9 @@ class TestTokenFrame:
 
     def test_bindings(self) -> None:
         inst = self._envelope()["instruments"]
+        # The S source is known but no slens/ reading came out: R only.
         assert inst["lens"]["binding"] == {
-            "source": "local:default", "steering": "0.3 formal.casual",
+            "sources": {"R": "local:default"}, "steering": "0.3 formal.casual",
         }
         assert inst["sae"]["binding"] == {
             "source": "saelens:scope",
@@ -205,7 +206,7 @@ class TestDoneAggregate:
             geometry_readings={"formal.casual": _geometry_reading()},
             lens_readings={"jlens/fake": _lens_reading()},
             sae_readings={"sae/548": _sae_reading()},
-            lens_source="local:default",
+            lens_sources={"R": "local:default"},
             sae_source="saelens:scope",
             sae_layer=14,
             steering="0.3 formal.casual",
@@ -275,7 +276,7 @@ class TestReplayEnvelopes:
             lens_readout={12: [(" a", 0.78)]},
             lens_aggregate=[(" a", 0.41, 0.31, 0.05)],
             lens_token_ids={12: [5]},
-            lens_source="local:default",
+            lens_sources={"R": "local:default"},
             steering=None,
         )
         assert env is not None
@@ -284,7 +285,7 @@ class TestReplayEnvelopes:
         assert "lens" in env["instruments"]
         assert set(env["instruments"]["lens"]) == {"readout", "binding"}
         assert env["instruments"]["lens"]["binding"] == {
-            "source": "local:default", "steering": None,
+            "sources": {"R": "local:default"}, "steering": None,
         }
 
     def test_sae(self) -> None:
@@ -393,32 +394,35 @@ class TestRejectedKnobs:
 
 
 # ---------------------------------------------------------------------------
-# The live source binding is one expression
+# The envelope source binding is one expression
 # ---------------------------------------------------------------------------
 
-class TestLiveSources:
-    """``live_sources`` is the one reading of the live lens / SAE configs into
-    the envelope's source fields (token rows, authored rows, aggregates)."""
+class TestEnvelopeSources:
+    """``envelope_sources`` is the one reading of the lens families' sources
+    and the live SAE config into the envelope's source fields (token rows,
+    authored rows, aggregates)."""
 
-    _LENS = {"source": "local:j", "layers": [0, 1]}
+    _LENS = {"R": "local:j", "S": "rs-s"}
     _SAE = {"source": "saelens:scope", "layer": 14}
 
-    def test_binds_both_live_readouts(self) -> None:
-        assert live_sources(self._LENS, self._SAE) == {
-            "lens_source": "local:j", "sae_source": "saelens:scope", "sae_layer": 14,
+    def test_binds_both_families(self) -> None:
+        assert envelope_sources(self._LENS, self._SAE) == {
+            "lens_sources": {"R": "local:j", "S": "rs-s"},
+            "sae_source": "saelens:scope", "sae_layer": 14,
         }
 
     def test_an_inactive_readout_binds_nothing(self) -> None:
-        assert live_sources(None, None) == {
-            "lens_source": None, "sae_source": None, "sae_layer": None,
+        assert envelope_sources(None, None) == {
+            "lens_sources": {}, "sae_source": None, "sae_layer": None,
         }
 
     def test_gates_each_family(self) -> None:
-        assert live_sources(self._LENS, self._SAE, lens=False) == {
-            "lens_source": None, "sae_source": "saelens:scope", "sae_layer": 14,
+        assert envelope_sources(self._LENS, self._SAE, lens=False) == {
+            "lens_sources": {}, "sae_source": "saelens:scope", "sae_layer": 14,
         }
-        assert live_sources(self._LENS, self._SAE, sae=False) == {
-            "lens_source": "local:j", "sae_source": None, "sae_layer": None,
+        assert envelope_sources(self._LENS, self._SAE, sae=False) == {
+            "lens_sources": {"R": "local:j", "S": "rs-s"},
+            "sae_source": None, "sae_layer": None,
         }
 
     def test_feeds_the_envelope_binding(self) -> None:
@@ -426,14 +430,58 @@ class TestLiveSources:
             scope="token",
             lens_readout={0: [("a", 0.5)]},
             sae_features=[(3, 1.5, None, None)],
-            **live_sources(self._LENS, self._SAE),
+            **envelope_sources(self._LENS, self._SAE),
         )
         assert env is not None
         lens, sae = env["instruments"].get("lens"), env["instruments"].get("sae")
         assert lens is not None and sae is not None
-        assert lens["binding"]["source"] == "local:j"
+        assert lens["binding"]["sources"] == {"R": "local:j"}
         binding = sae["binding"]
         assert (binding["source"], binding.get("layer")) == ("saelens:scope", 14)
+
+
+class TestLensFamilyAttribution:
+    """Regression: the lens channel's binding named only the R source, so an
+    ``slens/`` reading was attributed to the R lens (and to nothing with the
+    R live readout off).  Each family that produced data is named."""
+
+    @staticmethod
+    def _s_reading() -> ScalarReading:
+        return ScalarReading(
+            value=2.5,
+            unit="mean_footprint_z",
+            per_layer={0: 3.0, 9: 1.0},
+            depth=DepthSummary(center=(0.0,), spread=(0.0,), basis="footprint_z"),
+        )
+
+    def test_s_only(self) -> None:
+        env = build_measurements(
+            scope="aggregate",
+            lens_readings={"slens/owl": self._s_reading()},
+            lens_sources={"R": "rs-r", "S": "rs-s"},
+        )
+        assert env is not None
+        lens = env["instruments"].get("lens")
+        assert lens is not None
+        assert lens["binding"] == {"sources": {"S": "rs-s"}, "steering": None}
+
+    def test_mixed(self) -> None:
+        env = build_measurements(
+            scope="token",
+            lens_readings={"slens/owl": self._s_reading(), "jlens/fake": _lens_reading()},
+            lens_sources={"R": None, "S": "local:s"},
+        )
+        assert env is not None
+        lens = env["instruments"].get("lens")
+        assert lens is not None
+        assert lens["binding"]["sources"] == {"R": None, "S": "local:s"}
+
+    def test_an_unknown_lens_unit_is_a_broken_invariant(self) -> None:
+        with pytest.raises(ValueError, match="no lens family"):
+            build_measurements(
+                scope="token",
+                lens_readings={"x": ScalarReading(value=1.0, unit="raw_activation")},
+            )
 
 
 class TestUnitsChannel:

@@ -305,11 +305,11 @@ cancels a running lens fit (else 409; a fetch is not cancellable) or SAE train
   spawned corpus worker (cancellable, never resolved in the server process).
   Unless `force`, a proven no-op (`session.lens.fit_is_noop`) only selects
   `local:<kind>` as a publishing fit would; otherwise documents stream in the
-  worker and `session.lens.fit` runs. Only an output-kind (r/j) fit that
-  includes the `out` site selects through `select_source` and turns the live
-  readout on afterwards. An input-kind no-op selects its own side only
-  (`lens.sources.use_lens_source`), and a `mid`-only output fit selects
-  nothing: neither turns live readout off or evicts the output resident.
+  worker and `session.lens.fit` runs. A fit or no-op that includes the
+  `out` site selects through `select_source` in its own family's slot
+  (evicting only that family's resident); an R-family (r/j) one turns the
+  live readout on afterwards, an S-family (s/k) one leaves it alone. A
+  `mid`-only fit of either family selects nothing (`key.lens_selectable`).
 - SAE `fetch` takes `local:<name>` or `saelens:<release>` (a bare release is
   400) and loads under the lock. SAE `train` streams `ceil(tokens / seq_len)`
   default-corpus documents, then trains.

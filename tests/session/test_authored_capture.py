@@ -8,7 +8,7 @@ from typing import Any, cast
 import pytest
 import torch
 
-from drowse.readout.types import ProbeReading
+from drowse.readout.types import ProbeReading, ScalarReading
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomTree
 from drowse.session.authored_capture import (
@@ -83,7 +83,7 @@ def _plan(tree: LoomTree, tok: Any, node: str, **overrides: Any) -> Any:
     kwargs: dict[str, Any] = {
         "raw": False,
         "monitor": SimpleNamespace(),
-        "lens": SimpleNamespace(live=None),
+        "lens": SimpleNamespace(live=None, measurement_sources=lambda: {}),
         "sae": SimpleNamespace(live=None),
         "monitor_active": False,
         "lens_active": False,
@@ -206,7 +206,7 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
             {0: [("yes", 0.8)]},
             [("yes", 0.8, 0.5, 0.1)],
             {0: [9]},
-            {"jlens/yes": _reading(0.8)},
+            {"jlens/yes": ScalarReading(value=0.8, unit="mean_token_probability")},
         )
 
     def _sae_capture(_hidden: Any, *, top_k: int) -> Any:
@@ -221,7 +221,8 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
             score_single_token=lambda _hidden: {"formal": _reading(0.25)},
         )),
         lens=cast(Any, SimpleNamespace(
-            live={"source": "local:default"}, authored_capture=_lens_capture,
+            measurement_sources=lambda: {"R": "local:default"},
+            authored_capture=_lens_capture,
         )),
         sae=cast(Any, SimpleNamespace(
             live={"source": "saelens:test", "layer": 0},

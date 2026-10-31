@@ -65,10 +65,10 @@ from drowse.lens.jlens import (
 from drowse.base.exclusive import ExclusiveGuard
 from drowse.base.lru import BoundedLRU
 from drowse.model.layers import LayerSelector
-from drowse.lens.depth import LensBand, kind_weights
+from drowse.lens.depth import LensBand, s_weights
 from drowse.lens.footprint import (
     TokenEmbeddings,
-    depth_moments_positive,
+    footprint_probe_rows,
     pullback_rows,
     token_mask,
 )
@@ -177,6 +177,7 @@ class LensRun:
         bound: bool = False,
         input_lens: Any = None,
         input_pinned: bool = False,
+        sources: "Mapping[str, str | None] | None" = None,
     ) -> None:
         self._instrument = instrument
         self.binding = binding
@@ -187,6 +188,9 @@ class LensRun:
         #: The pinned S-family lens ``slens/`` probes read, and its pin flag.
         self.input_lens = input_lens
         self.input_pinned = input_pinned
+        #: ``{"R": label, "S": label}``: the source each pinned lens was
+        #: selected as, the lens measurement binding (``binding.sources``).
+        self.sources: dict[str, str | None] = dict(sources or {})
         #: ``slens/`` readings of one forward, keyed by ``step``, so the
         #: display step reuses what the gate callback computed.
         self.input_stash: dict[str, Any] | None = None
@@ -514,6 +518,7 @@ class LensInstrument:
                 }
             specs.update(input_specs)
             identity = self.runtime.identity
+            sources = {"R": self.runtime.source, "S": self.input_runtime.source}
             return LensPrep(
                 family=self.family,
                 request=request,
@@ -525,6 +530,7 @@ class LensInstrument:
                 fingerprint=identity,
                 input_lens=input_lens,
                 input_pinned=input_pin,
+                sources=sources,
             )
 
     def bind(self, plan: InstrumentPlan, prep: InstrumentPrep) -> LensRun:
@@ -580,6 +586,7 @@ class LensInstrument:
             bound=True,
             input_lens=prep.input_lens,
             input_pinned=prep.input_pinned,
+            sources=prep.sources,
         )
         self.current_run = run
         return run
@@ -613,6 +620,20 @@ class LensInstrument:
         config."""
         run = self.current_run
         return run.live_state if run.bound else self.live
+
+    def measurement_sources(self) -> dict[str, str | None]:
+        """``{"R": label, "S": label}``: the source labels the lens
+        measurement binding names (``binding.sources``), one per family.
+
+        A bound run's prepare-time snapshot (so its envelopes name the
+        lenses it pinned, live readout on or off); idle, the residents'.
+        No disk read: each label was stamped when its lens became resident.
+        """
+        run = self.current_run
+        if run.bound:
+            return dict(run.sources)
+        with self.state_lock:
+            return {"R": self.runtime.source, "S": self.input_runtime.source}
 
     def _measurement_input_lens(self) -> Any:
         """The S-family lens ``slens/`` probes read: a bound run's pin, else
@@ -836,7 +857,7 @@ class LensInstrument:
             return self.adopt_input(lens, sidecar)
         with self.state_lock:
             previous = live if restore_live else self.live_config()
-            self.runtime.install(lens, sidecar)
+            self.runtime.install(lens, sidecar, source=self._active_label("output"))
             self.step_stash = None
             self.last_step_readings = None
             self._drop_directions()
@@ -862,7 +883,7 @@ class LensInstrument:
         (they re-resolve against it) and ``slens/`` probes take its ``out``
         layers."""
         with self.state_lock:
-            self.input_runtime.install(lens, sidecar)
+            self.input_runtime.install(lens, sidecar, source=self._active_label("input"))
             self.current_run.input_stash = None
             self._registry.evict_prefix("slens/")
             layers = _out_layers(lens)
@@ -1679,11 +1700,7 @@ class LensInstrument:
         z = embeddings.z_of(u, token_ids)                               # [L, P]
         depth = runtime.depth_tensor(layers, z.device)                   # [L, 1]
         weights = self._s_weight_tensor(layers, z.device)                # [L, 1]
-        weighted = weights * z
-        center, spread = depth_moments_positive(weighted, depth)
-        values = torch.cat([
-            torch.stack([weighted.sum(dim=0), center, spread]), z,
-        ]).detach()                                                     # [3 + L, P]
+        values = footprint_probe_rows(z, depth, weights).detach()       # [3 + L, P]
         return _InputBlock(tuple(names), tuple(layers), values)
 
     def _s_weight_tensor(self, layers: "Sequence[int]", device: torch.device) -> torch.Tensor:
@@ -1693,11 +1710,8 @@ class LensInstrument:
         band = self.band
 
         def build() -> torch.Tensor:
-            table = kind_weights(self.input_runtime.n_layers, band)
-            w_s = [table[layer][0] for layer in layer_tuple]
-            total = sum(w_s)
-            scaled = [w / total for w in w_s] if total > 0 else [0.0] * len(w_s)
-            return torch.tensor(scaled, dtype=torch.float32, device=device).reshape(-1, 1)
+            weights = s_weights(layer_tuple, self.input_runtime.n_layers, band)
+            return torch.tensor(weights, dtype=torch.float32, device=device).reshape(-1, 1)
 
         return self._s_weights.get_or_build((str(device), layer_tuple, band), build)
 
@@ -2054,7 +2068,6 @@ class LensInstrument:
                 "J_stack": j_stack,
                 "layer_rows": {l: i for i, l in enumerate(layer_list)},
                 "readout": runtime.readout_modules()[1],
-                "source": self.active_source,
             }
             return list(layers)
 
@@ -2073,17 +2086,23 @@ class LensInstrument:
 
     @property
     def active_source(self) -> str | None:
-        """The active output-side lens source in the public source syntax.
+        """The active R-family lens source in the public source syntax.
 
-        THE resolver — one ``active.json`` read, the same label that stamps
-        every lens measurement binding.  A listing that answered from the
-        prepared-sources scan instead would report ``null`` for an active
+        THE resolver — one ``active.json`` read, the same label a lens is
+        stamped with when it becomes resident (:meth:`_active_label`), which
+        every lens measurement binding carries.  A listing that answered from
+        the prepared-sources scan instead would report ``null`` for an active
         pointer whose artifact is gone while persisted rows still carry its
         label.
         """
+        return self._active_label("output")
+
+    def _active_label(self, side: str) -> str | None:
+        """The active source of ``side``'s slot (``output``: R family,
+        ``input``: S family) in the public source syntax."""
         from drowse.lens.sources import LENS_SOURCES
 
-        active = LENS_SOURCES.active(self.model_id, "output")
+        active = LENS_SOURCES.active(self.model_id, side)
         return None if active is None else LENS_SOURCES.format(active)
 
     @property
@@ -2183,7 +2202,7 @@ class LensInstrument:
                 (str(tok), float(strength), float(com), float(spread))
                 for tok, strength, com, spread in aggregate
             ],
-            lens_source=self.active_source,
+            lens_sources={"R": runtime.source},
             steering=token.steering,
         )
         return {"measurements": measurements}

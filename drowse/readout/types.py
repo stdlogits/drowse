@@ -646,6 +646,9 @@ class LensPrep(InstrumentPrep):
 
     * ``input_lens`` / ``input_pinned`` — the same pin for the S-family
       lens that ``slens/`` probes read (``lens`` is the R family's).
+    * ``sources`` — ``{"R": label, "S": label}``, the public source label
+      each family's resident was selected as, from the same snapshot: the
+      measurement envelope's lens binding (``binding.sources``).
 
     The whole snapshot is taken under the instrument's ``state_lock``
     — the one lens-state boundary that also serializes the getter's
@@ -660,6 +663,7 @@ class LensPrep(InstrumentPrep):
     fingerprint: str | None = None
     input_lens: Any = None
     input_pinned: bool = False
+    sources: Mapping[str, str | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)

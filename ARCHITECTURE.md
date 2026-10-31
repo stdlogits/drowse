@@ -542,7 +542,8 @@ family's discovery surface (the J-lens layer-by-vocabulary matrix and aggregate
 chips, the SAE's active features). The flat `scores` are derived joins for
 cross-family consumers such as token tinting, not separate measurements.
 Bindings record source and steering context, so a historical row stays
-interpretable after the active lens or SAE changes. The shape is pinned by
+interpretable after the active lens or SAE changes; the lens binding names a
+source per lens family (`sources.R`, `sources.S`) that produced the row. The shape is pinned by
 `tests/readout/test_measurements_envelope.py` and the browser golden
 `measurement-envelope-v1.json`.
 

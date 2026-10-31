@@ -268,6 +268,28 @@ def test_slens_gate_and_aggregate_through_a_generation(make_tiny_session: Any) -
     assert sorted(int(L) for L in reading["per_layer"]) == list(range(len(session.layers)))
 
 
+def test_the_lens_binding_names_each_familys_source(make_tiny_session: Any) -> None:
+    """Regression: the lens channel's binding carried only the R live
+    readout's source, so slens/ readings were attributed to the R lens (and
+    to nothing with live readout off).  It names each family that produced
+    data, from the lenses the run pinned."""
+    session = make_tiny_session()
+    session.lens.fit(_TINY_PROMPTS, sites=("out",))  # local:j
+    _install_s_lens(session)  # local:s
+    session.lens.set_live(False)
+    session.add_probe("slens/a")
+
+    def binding() -> Any:
+        result = session.generate(
+            "Say hi.", sampling=SamplingConfig(max_tokens=2), stateless=True, thinking=False,
+        ).first
+        return cast(dict[str, Any], result.measurements)["instruments"]["lens"]["binding"]
+
+    assert binding() == {"sources": {"S": "local:s"}, "steering": None}
+    session.add_probe("jlens/a")
+    assert binding() == {"sources": {"R": "local:j", "S": "local:s"}, "steering": None}
+
+
 def test_slens_gate_refuses_other_channels(make_tiny_session: Any) -> None:
     from drowse.errors import UnsupportedProbeChannelError
 

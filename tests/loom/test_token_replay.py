@@ -145,10 +145,10 @@ def test_unsteered_replay_reads_the_counterfactual(
     assert geometry["readings"]["mood"]["coords"] != pytest.approx(
         live["geometry"]["readings"]["mood"]["coords"], rel=1e-3,
     )
-    for family in ("lens", "sae"):
+    for family, key in (("lens", "sources"), ("sae", "source")):
         replayed = _replay(session, family, node.id, k, apply_steering=False)
         assert replayed["binding"]["steering"] is None
-        assert replayed["binding"]["source"] == live[family]["binding"]["source"]
+        assert replayed["binding"][key] == live[family]["binding"][key]
     # Re-reading the steered replay afterwards still lands on the live
     # reading: the counterfactual left no steering behind.
     again = _replay(session, "geometry", node.id, k)

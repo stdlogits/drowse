@@ -68,7 +68,7 @@ from drowse.generation.token_callback import (
     consumer_options,
 )
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import live_sources
+from drowse.readout.measurements import envelope_sources
 from drowse.generation.types import (
     CallSpec,
     GenerationStream,
@@ -200,7 +200,7 @@ class TokenTap:
         # callback's step-keyed stash when it already read it).
         self._units_step = reads.units_step_readings if plan.units else None
         self._readout_top_k = readout_top_k
-        self._sources = live_sources(lens.live, sae.live)
+        self._sources = envelope_sources(lens.measurement_sources(), sae.live)
         self._recipe_steering = recipe_steering
 
     def mean_logprob(self) -> tuple[float | None, float | None]:

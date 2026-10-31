@@ -647,7 +647,7 @@ class TestWebSocketLoom:
         )
         session.monitor.probe_names = ["calm"]
         session.lens.names = ["jlens/fake"]
-        session.lens.live = {"source": "local:default"}
+        session.lens.measurement_sources = lambda: {"R": "local:default", "S": "rs-s"}
         session.stub_probe_readings = {"calm": reading}
         session.stub_lens_readings = {
             "jlens/fake": ScalarReading(
@@ -666,7 +666,8 @@ class TestWebSocketLoom:
         assert result["measurements"]["scope"] == "aggregate"
         assert set(instruments["geometry"]["readings"]) == {"calm"}
         assert set(instruments["lens"]["readings"]) == {"jlens/fake"}
-        assert instruments["lens"]["binding"]["source"] == "local:default"
+        # Only the family that produced readings is named.
+        assert instruments["lens"]["binding"]["sources"] == {"R": "local:default"}
 
     def test_done_omits_measurements_without_probes(
         self, session_and_client: Any,

@@ -15,9 +15,9 @@ Shape::
       "instruments": {
         "geometry": {"readings": {name: ProbeReading.to_dict()}},
         "lens": {
-          "binding": {"source": ..., "steering": ...},
-          "readings": {name: ...},                # attached jlens/<word> probes
-          "readout": {"layers": [...], "aggregate": [...]}   # native top-k
+          "binding": {"sources": {"R": ..., "S": ...}, "steering": ...},
+          "readings": {name: ...},                # attached jlens/ and slens/ probes
+          "readout": {"layers": [...], "aggregate": [...]}   # native top-k (R)
         },
         "sae": {
           "binding": {"source": ..., "steering": ..., "layer": N},
@@ -38,7 +38,10 @@ and ``per_layer_scores`` stay envelope-level because their consumers
 name — they are flat views derived from the same readings, never extra
 data.  ``binding`` records what the family was measuring (source
 identity + recipe steering) so historical rows stay interpretable after
-a source switch.
+a source switch.  The lens channel carries two lens families, so its
+binding names a source per family that produced its data
+(``sources.R``: the ``jlens/`` readings and the native readout;
+``sources.S``: the ``slens/`` readings), told apart by the reading's unit.
 """
 
 from __future__ import annotations
@@ -48,8 +51,14 @@ from typing import Any, Literal, Mapping, cast
 
 from typing_extensions import NotRequired, TypedDict
 
-from drowse.readout.types import Reading, ScalarReading, reading_axis0
-from drowse.readout.types import ProbeReading
+from drowse.readout.types import (
+    UNIT_MEAN_FOOTPRINT_Z,
+    UNIT_MEAN_TOKEN_PROBABILITY,
+    ProbeReading,
+    Reading,
+    ScalarReading,
+    reading_axis0,
+)
 
 MEASUREMENTS_VERSION = 1
 
@@ -71,6 +80,23 @@ class MeasurementBinding(TypedDict):
     source: str | None
     steering: str | None
     layer: NotRequired[int | None]
+
+
+class LensBinding(TypedDict):
+    """What the lens channel was measuring: the source of each lens family
+    that produced its data, keyed ``R`` (``jlens/`` readings, the native
+    readout) and ``S`` (``slens/`` readings), present only for a family that
+    did; and the recipe steering."""
+
+    sources: dict[str, str | None]
+    steering: str | None
+
+
+#: Which lens family produced a lens-channel reading, by its unit.
+LENS_FAMILY_BY_UNIT = {
+    UNIT_MEAN_TOKEN_PROBABILITY: "R",
+    UNIT_MEAN_FOOTPRINT_Z: "S",
+}
 
 
 class DepthSummaryDict(TypedDict):
@@ -169,7 +195,7 @@ class GeometryChannel(TypedDict):
 
 
 class LensChannel(TypedDict):
-    binding: MeasurementBinding
+    binding: LensBinding
     readings: NotRequired[dict[str, ScalarReadingDict]]
     readout: NotRequired[LensReadout]
 
@@ -249,7 +275,7 @@ def build_measurements(
     lens_readout: Mapping[int, list[tuple[str, float]]] | None = None,
     lens_aggregate: list[tuple[str, float, float, float]] | None = None,
     lens_token_ids: Mapping[int, list[int]] | None = None,
-    lens_source: str | None = None,
+    lens_sources: Mapping[str, str | None] | None = None,
     sae_features: list[tuple[int, float, str | None, float | None]] | None = None,
     sae_source: str | None = None,
     sae_layer: int | None = None,
@@ -260,10 +286,12 @@ def build_measurements(
 
     JSON-safe throughout (floats rounded/floored exactly as the historical
     ``captured`` serializers did, so persisted loom rows stay comparable
-    across the 5.x boundary).
+    across the 5.x boundary).  ``lens_sources`` is ``{"R": label, "S":
+    label}``; the lens binding keeps the families that produced data.
     """
     instruments: dict[str, Any] = {}
     scores: dict[str, float] = {}
+    lens_families: set[str] = set()
 
     if geometry_readings:
         scores.update(_axis0(geometry_readings))
@@ -282,7 +310,13 @@ def build_measurements(
     if lens_readings:
         scores.update(_axis0(lens_readings))
         lens_channel["readings"] = _readings_dict(lens_readings)
+        for reading in lens_readings.values():
+            family = LENS_FAMILY_BY_UNIT.get(reading.unit)
+            if family is None:
+                raise ValueError(f"no lens family reads unit {reading.unit!r}")
+            lens_families.add(family)
     if lens_readout or lens_aggregate:
+        lens_families.add("R")
         id_rows = lens_token_ids or {}
         layers: list[dict[str, Any]] = []
         for layer, row in sorted(lens_readout.items() if lens_readout else ()):
@@ -314,8 +348,9 @@ def build_measurements(
             ],
         }
     if lens_channel:
+        known = lens_sources or {}
         lens_channel["binding"] = {
-            "source": lens_source,
+            "sources": {family: known.get(family) for family in sorted(lens_families)},
             "steering": steering,
         }
         instruments["lens"] = lens_channel
@@ -373,35 +408,35 @@ def build_measurements(
     return envelope
 
 
-class LiveSources(TypedDict):
-    """The source fields a live lens / SAE readout binds into an envelope:
-    :func:`build_measurements`' ``lens_source`` / ``sae_source`` /
-    ``sae_layer`` keywords."""
+class EnvelopeSources(TypedDict):
+    """The source fields an envelope binds: :func:`build_measurements`'
+    ``lens_sources`` / ``sae_source`` / ``sae_layer`` keywords."""
 
-    lens_source: str | None
+    lens_sources: dict[str, str | None]
     sae_source: str | None
     sae_layer: int | None
 
 
-def live_sources(
-    lens_live: Mapping[str, Any] | None,
+def envelope_sources(
+    lens_sources: Mapping[str, str | None] | None,
     sae_live: Mapping[str, Any] | None,
     *,
     lens: bool = True,
     sae: bool = True,
-) -> LiveSources:
-    """The envelope source fields of the live lens and SAE readouts.
+) -> EnvelopeSources:
+    """The envelope source fields of the lens families and the live SAE.
 
-    ``lens_live`` / ``sae_live`` are the instruments' live configs (``None``
-    while that readout is off).  ``lens`` / ``sae`` gate each family: the
-    aggregate envelope binds a family's source only when it carries that
-    family's readings.  An inactive or gated-off family binds nothing.
+    ``lens_sources`` is the lens instrument's
+    ``measurement_sources()`` (``{"R": label, "S": label}``, the lenses its
+    run pinned); ``sae_live`` the SAE's live config (``None`` while off).
+    ``lens`` / ``sae`` gate each family: the aggregate envelope binds a
+    family's sources only when it carries that family's readings.  An
+    inactive or gated-off family binds nothing.
     """
-    lens_cfg = lens_live if lens and isinstance(lens_live, Mapping) else None
     sae_cfg = sae_live if sae and isinstance(sae_live, Mapping) else None
     layer = sae_cfg.get("layer") if sae_cfg is not None else None
     return {
-        "lens_source": lens_cfg.get("source") if lens_cfg is not None else None,
+        "lens_sources": dict(lens_sources or {}) if lens else {},
         "sae_source": sae_cfg.get("source") if sae_cfg is not None else None,
         "sae_layer": int(layer) if layer is not None else None,
     }
@@ -409,14 +444,16 @@ def live_sources(
 
 __all__ = [
     "DepthSummaryDict",
+    "EnvelopeSources",
     "GeometryChannel",
     "Instruments",
+    "LENS_FAMILY_BY_UNIT",
     "LensAggregateToken",
+    "LensBinding",
     "LensChannel",
     "LensReadout",
     "LensReadoutLayer",
     "LensReadoutToken",
-    "LiveSources",
     "MEASUREMENTS_VERSION",
     "MeasurementBinding",
     "MeasurementProvenance",
@@ -430,5 +467,5 @@ __all__ = [
     "ScalarReadingDict",
     "UnitsChannel",
     "build_measurements",
-    "live_sources",
+    "envelope_sources",
 ]
