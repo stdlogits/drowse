@@ -36,6 +36,7 @@ class _FakeLens(LensInstrument):
         self.fit = MagicMock()  # type: ignore[method-assign]
         self.select_source = MagicMock()  # type: ignore[method-assign]
         self._require = MagicMock(return_value=object())  # type: ignore[method-assign]
+        self.resident_input = MagicMock(return_value=object())  # type: ignore[method-assign]
         self.runtime.resolve_layers = MagicMock(  # type: ignore[method-assign]
             return_value=[12, 18],
         )
@@ -449,6 +450,19 @@ class TestSourceSwitch:
         assert resp.status_code == 200
         assert resp.json() == {"source": "rs-s", "live_layers": [3, 4]}
         assert session.lens.disable_calls == 0 and session.lens.enable_calls == []
+        session.lens.select_source.assert_called_once_with("rs-s")
+
+    def test_s_family_switch_to_an_unloadable_source_is_a_409(
+        self, session_and_client: Any,
+    ) -> None:
+        """Regression: an S-family switch only selected, so a source that
+        cannot load for these weights answered 200 and failed on first use;
+        it now answers 409 like an unloadable R-family switch."""
+        session, client = session_and_client
+        session.lens.resident_input.return_value = None
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "rs-s"})
+        assert resp.status_code == 409
+        assert "cannot load" in resp.json()["detail"]
         session.lens.select_source.assert_called_once_with("rs-s")
 
     def test_unfitted_lens_switch_is_a_409(self, session_and_client: Any) -> None:

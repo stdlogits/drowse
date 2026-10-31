@@ -126,6 +126,13 @@ def lens_source_side(ref: SourceRef) -> str:
     return LENS_PROVIDERS[ref.name].side
 
 
+def lens_family(kind: str) -> str:
+    """A kind's family as users see it: ``R`` (J/R, what a vector is
+    disposed to say) or ``S`` (K/S, what it has read).  ``output``/``input``
+    is the internal slot name (:func:`lens_source_side`)."""
+    return "R" if LensKey(kind).side == "output" else "S"
+
+
 def _lens_side(model_id: str, ref: SourceRef) -> str:
     del model_id
     return lens_source_side(ref)
@@ -872,9 +879,9 @@ def _sidecar_sites(sidecar: Mapping[str, Any] | None) -> list[str]:
 def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
     """Every prepared source, in default preference order.
 
-    Each row names its kind (``lens``), the family slot it selects into
-    (``side``) and the sites it carries (``sites``; empty for a local
-    artifact whose manifest no longer validates).
+    Each row names its kind (``lens``), its family (``family``: ``R`` or
+    ``S``, the slot it selects into) and the sites it carries (``sites``;
+    empty for a local artifact whose manifest no longer validates).
     """
     actives = {LENS_SOURCES.active(model_id, side) for side in LENS_SIDES}
     rows: list[dict[str, Any]] = []
@@ -888,7 +895,7 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
             "kind": LOCAL,
             "name": name,
             "lens": kind,
-            "side": LensKey(kind).side,
+            "family": lens_family(kind),
             "sites": _sidecar_sites(load_local_lens_sidecar(model_id, name)),
             "active": ref in actives,
             "path": str(LENS_SOURCES.path_of(model_id, ref)),
@@ -903,7 +910,7 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
             "kind": HUGGINGFACE,
             "name": name,
             "lens": binding.kind,
-            "side": LensKey(binding.kind).side,
+            "family": lens_family(binding.kind),
             "sites": list(binding.sites),
             "provider": binding.provider,
             "repo_id": binding.repo_id,

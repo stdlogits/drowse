@@ -39,9 +39,10 @@ def test_ls_and_show_name_each_sources_kind_and_sites(capsys: pytest.CaptureFixt
     assert lines == ["* local:r  R-lens  out", "* local:s  S-lens  mid"]
     main(["lens", "ls", "org/model", "-j"])
     rows = json.loads(capsys.readouterr().out)
-    assert [(row["source"], row["side"], row["sites"]) for row in rows] == [
-        ("local:r", "output", ["out"]), ("local:s", "input", ["mid"]),
+    assert [(row["source"], row["family"], row["sites"]) for row in rows] == [
+        ("local:r", "R", ["out"]), ("local:s", "S", ["mid"]),
     ]
+    assert all("side" not in row for row in rows)
     main(["lens", "show", "org/model", "local:s"])
     shown = capsys.readouterr().out
     assert "S-lens local:s for org/model (S family) (active)" in shown

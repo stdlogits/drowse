@@ -303,12 +303,21 @@ def register_instrument_routes(app: FastAPI) -> None:
         """Select ``source`` in its family's slot.  An R-family source turns
         the live readout back on over it; an S-family source only selects
         (there is no live S readout), leaving the R family's live state and
-        source alone, and answers the current live layers."""
+        source alone, and answers the current live layers.  Either way a
+        source that cannot load for this model's weights raises
+        ``LensNotFittedError`` (the caller's 409), as the R family's live
+        enable does."""
         from drowse.lens.sources import LENS_SOURCES, lens_source_side
 
         async with session_lock(app):
             if lens_source_side(LENS_SOURCES.parse(source)) == "input":
                 await select_lens_source(source, live_off=False)
+                if await run_in_thread(session.lens.resident_input) is None:
+                    raise LensNotFittedError(
+                        f"S-family lens source {source} is selected but cannot "
+                        f"load for {session.model_id}: its artifact is missing "
+                        f"or does not match the loaded weights"
+                    )
                 return list(session.lens.live_layers or ())
             await select_lens_source(source)
             return await enable_lens_live()

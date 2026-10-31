@@ -208,7 +208,7 @@ def run_use(args: argparse.Namespace) -> None:
 
 
 def run_show(args: argparse.Namespace) -> None:
-    from drowse.lens.sources import LENS_SOURCES, load_lens_source_sidecar
+    from drowse.lens.sources import LENS_SOURCES, lens_family, load_lens_source_sidecar
     from drowse.lens.store import lens_artifact_size, lens_layers
 
     ref = _lens_source(args.model, args.source)
@@ -230,7 +230,7 @@ def run_show(args: argparse.Namespace) -> None:
         sidecar["estimator_policy"]["skip_first_positions"] if ref.local
         else sidecar.get("skip_first_positions", "?")
     )
-    family = "R" if LensKey(sidecar["kind"]).side == "output" else "S"
+    family = lens_family(sidecar["kind"])
     print(
         f"{sidecar['kind']}-lens {label} for {args.model} ({family} family)"
         f"{' (active)' if is_active else ''}"

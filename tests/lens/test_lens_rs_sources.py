@@ -269,11 +269,11 @@ def test_listing_names_family_and_sites(
     rows = sources.list_lens_sources("org/model")
     assert [row["source"] for row in rows] == ["rs-r", "rs-s", "local:s"]
     by = {row["source"]: row for row in rows}
-    assert (by["rs-r"]["side"], by["rs-r"]["sites"], by["rs-r"]["active"]) == ("output", ["out"], True)
+    assert (by["rs-r"]["family"], by["rs-r"]["sites"], by["rs-r"]["active"]) == ("R", ["out"], True)
     assert by["rs-r"]["checkpoints"] == {"out": "model/r-lens/lens.pt"}
-    assert (by["rs-s"]["side"], by["rs-s"]["sites"], by["rs-s"]["active"]) == ("input", ["mid"], False)
-    assert (by["local:s"]["side"], by["local:s"]["sites"], by["local:s"]["active"]) == (
-        "input", ["mid"], True,
+    assert (by["rs-s"]["family"], by["rs-s"]["sites"], by["rs-s"]["active"]) == ("S", ["mid"], False)
+    assert (by["local:s"]["family"], by["local:s"]["sites"], by["local:s"]["active"]) == (
+        "S", ["mid"], True,
     )
 
 
