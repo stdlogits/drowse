@@ -457,12 +457,13 @@ class TestUnitsChannel:
         )
         assert env is not None
         assert set(env["instruments"]) == {"units"}
-        channel = env["instruments"]["units"]
+        channel = env["instruments"].get("units")
+        assert channel is not None
         assert set(channel) == {"binding", "readings"}
         assert channel["binding"] == {"source": None, "steering": "!head/L2h1"}
         reading = channel["readings"]["neuron/L8n344"]
         assert set(reading) == {"value", "unit", "per_layer", "depth", "meta"}
-        assert reading["meta"] == {"unit": "neuron/L8n344", "activation": -0.75}
+        assert reading.get("meta") == {"unit": "neuron/L8n344", "activation": -0.75}
         assert env.get("scores") == {"neuron/L8n344": -1.5}
 
     def test_no_units_readings_no_channel(self) -> None:
