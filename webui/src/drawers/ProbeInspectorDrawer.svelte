@@ -15,14 +15,15 @@
   //   rank 2   -> a 2D scatter of node centroids (+ curve overlay if 1-D)
   //   rank 3+  -> a drag-orbit 3D scatter on the top-3 subspace PCs (+ curve / surface overlay)
   //
-  // The share-by-layer bars choose the plotted layer; geometry is fetched once (all layers) and
-  // reprojected client-side. The live point and its trail ride the probe's per-token
+  // The share-by-layer bars (or, on a touch screen, the layer stepper beside them) choose the plotted
+  // layer; geometry is fetched once (all layers) and reprojected client-side. The live point and its trail ride the probe's per-token
   // ``subspace_coords_per_layer``, stored across all layers so changing layer is a pure read.
   // Everything draws at the probe's depth on the ramp (--tint), which only fills.
 
   import {
     detachProbe,
     highlightState,
+    instrumentFamily,
     probeRack,
     setHighlightTarget,
   } from "../lib/stores.svelte";
@@ -51,7 +52,8 @@
   import { nodeCoordExtent, parseProbeTarget } from "../lib/tokens";
   import { polesOf } from "../lib/concepts";
   import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
-  import { replyLayers, replyTrace } from "../panels/rack/probeTrace";
+  import { probeTitle } from "../panels/rack/probeRows";
+  import { readsShare, replyLayers, replyTrace } from "../panels/rack/probeTrace";
   import type {
     GeometryProbeInfo,
     ProbeGeometryResponse,
@@ -63,9 +65,16 @@
   let { params: input }: { params?: unknown; onclose?: () => void } = $props();
   const params = $derived(input as { name?: string } | null);
   const probeName = $derived(params?.name ?? "");
-  const displayName = $derived(probeName.split("/").pop() ?? probeName);
   const entry = $derived(probeRack.entries.get(probeName) ?? null);
   const info = $derived(entry?.info ?? null);
+  /** The resident SAE's hook layer (the layer a feature's ID carries, as its row writes it). */
+  const saeLayer = $derived.by((): number | null => {
+    const live = instrumentFamily("sae")?.live;
+    return live && "layer" in live ? live.layer : null;
+  });
+  /** The probe's ID as its row writes it: ``L20 f7``, a lens word, a geometry probe's name. */
+  const title = $derived(probeTitle(info, probeName, saeLayer));
+  const displayName = $derived(title.text);
   const geometric = $derived(info?.family === "geometry");
   const geo = $derived(geometric ? (info as GeometryProbeInfo) : null);
   const liveTrailAvailability = runtimeOperationAvailability(
@@ -89,16 +98,18 @@
   const geoReading = $derived(geometric ? (latest as ProbeReadingJSON | null) : null);
   const scalarReading = $derived(geometric ? null : (latest as ScalarReadingJSON | null));
   const sparkline = $derived(entry?.sparkline ?? []);
-  /** The latest reply token by token (what the reply is tinted by), else the live buffer. */
-  const tokenTrace = $derived((probeName ? replyTrace(probeName) : null) ?? sparkline);
   const affine = $derived(geo?.is_affine ?? false);
+  /** A curved probe reads the share on its surface: its trace, its layers and "reads" all follow it. */
+  const share = $derived(readsShare(info));
+  /** The latest reply token by token, else the live buffer (the same primary reading). */
+  const tokenTrace = $derived((probeName ? replyTrace(probeName, { share }) : null) ?? sparkline);
   /** The token the By-token scrubber rests on (null: the latest). */
   let pickedToken = $state<number | null>(null);
   /** By layer: the picked token's per-layer reading from the reply, else the live latest. */
   const perLayer = $derived.by((): Record<string, number> => {
     const live = entry?.perLayer ?? {};
     if (pickedToken === null && Object.keys(live).length > 0) return live;
-    return (probeName ? replyLayers(probeName, pickedToken) : null) ?? live;
+    return (probeName ? replyLayers(probeName, pickedToken, { share }) : null) ?? live;
   });
   const layerKeys = $derived(Object.keys(perLayer).map(Number).filter(Number.isFinite).sort((a, b) => a - b));
   const deepest = $derived(Math.max(0, ...(geo?.layers ?? []), ...layerKeys));
@@ -212,6 +223,12 @@
       ? (geom.layers[String(selectedLayer)] ?? null)
       : null,
   );
+  const selectedIndex = $derived(layerList.findIndex((l) => l.layer === selectedLayer));
+  /** Step the plotted layer (the touch screen's way to choose one; a bar is a few pixels wide). */
+  function stepLayer(by: number): void {
+    const next = layerList[Math.max(0, Math.min(layerList.length - 1, selectedIndex + by))];
+    if (next) selectedLayer = next.layer;
+  }
   const maxShare = $derived(
     layerList.reduce((m, l) => Math.max(m, Math.abs(l.mahalanobis_share)), 0),
   );
@@ -446,11 +463,11 @@
     <p class="meta">This probe is no longer attached.</p>
   {:else}
     <div class="dw-sec">
-      <h2 class="dw-title" data-tip={probeName}>{displayName}</h2>
+      <h2 class="dw-title" data-tip={probeName}>{#if title.lead}<span class="dw-ws">·</span>{/if}{displayName}</h2>
       <div class="dw-facts">
         {#if value !== null}<span>reads <b><MorphText text={readingText(value, { signed: affine, percent })} /></b></span>{/if}
         {#if geo}<span>{affine ? "flat" : "curved"}, {rankLabel}</span>{/if}
-        {#if depthCom !== null}<span>depth <b>{depthCom.toFixed(2)}</b>{#if depthSpread !== null} ± {depthSpread.toFixed(2)}{/if}</span>{/if}
+        {#if depthCom !== null}<span>depth <b>{depthCom.toFixed(2)}</b>{depthSpread === null ? "" : ` ± ${depthSpread.toFixed(2)}`}</span>{/if}
         {#if !affine && residual !== null && Number.isFinite(residual)}<span>residual <b>{residual.toFixed(2)}</b></span>{/if}
         {#if geom && !geom.rank_uniform}<span>rank varies by layer</span>{/if}
       </div>
@@ -463,7 +480,7 @@
     <section class="dw-sec">
       <div class="dw-sec-head"><span class="head">By token</span></div>
       {#if tokenTrace.length > 1}
-        <TraceDetail points={tokenTrace} percentage={percent} onpick={(i) => (pickedToken = i)} />
+        <TraceDetail points={tokenTrace} percentage={percent} signed={affine} onpick={(i) => (pickedToken = i)} />
       {:else}
         <p class="meta">No reading yet.</p>
       {/if}
@@ -527,6 +544,11 @@
             {/each}
           </div>
           <div class="ends"><span>L{layerList[0].layer}</span><span>L{layerList[layerList.length - 1].layer}</span></div>
+          <div class="step" role="group" aria-label="Plotted layer">
+            <button type="button" class="dw-text" disabled={selectedIndex <= 0} onclick={() => stepLayer(-1)} aria-label="Plot the layer before">earlier</button>
+            <span class="meta"><MorphText text={`L${selectedLayer}`} /></span>
+            <button type="button" class="dw-text" disabled={selectedIndex >= layerList.length - 1} onclick={() => stepLayer(1)} aria-label="Plot the layer after">later</button>
+          </div>
 
           <div class="well" class:orbit={canOrbit}>
             <canvas
@@ -549,8 +571,6 @@
               <span class="meta"><MorphText text={`${trailPoints.length} trail points`} /></span>
             {:else if !liveTrailAvailability.available}
               <span class="meta" {...{ "aria-description": (liveTrailAvailability.reason ?? undefined) }}>live trail unavailable here</span>
-            {:else}
-              <span class="meta">the live trail draws as the model writes</span>
             {/if}
             {#if canOrbit}
               <span class="meta">drag · scroll or pinch</span>
@@ -610,6 +630,12 @@
   .share i { display: block; width: 100%; border-radius: 2px; background: var(--tint); opacity: 0.4; transition: opacity var(--fast) var(--ease), height var(--glide) var(--ease); }
   .share:hover i { opacity: 0.7; }
   .share[aria-pressed="true"] i { opacity: 1; }
+  /* On a touch screen a bar is a few pixels wide, so a stepper chooses the layer instead. */
+  .step { display: none; align-items: center; justify-content: space-between; gap: var(--s3); }
+  .step .dw-text { min-height: 44px; padding: 0 var(--s2); }
+  @media (max-width: 720px), (pointer: coarse) {
+    .step { display: flex; }
+  }
 
   /* The plot: a square wash the geometry draws on. */
   .well {
@@ -639,6 +665,7 @@
   @media (max-width: 720px) {
     .coord { grid-template-columns: 64px minmax(0, 1fr) 44px; }
     .coord:has(.pole) { grid-template-columns: 64px minmax(0, 1fr) 44px 64px; }
-    .plot-controls button { min-height: 44px; }
+    .plot-controls { gap: 0; }
+    .plot-controls button { min-width: 44px; min-height: 44px; }
   }
 </style>

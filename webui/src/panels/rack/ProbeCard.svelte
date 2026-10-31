@@ -2,16 +2,18 @@
   // A geometry probe as one row of the Instruments: its name and the layer it reads at, its
   // reading token by token (bars on its depth's place on the ramp), and the latest value. A flat
   // probe reads its signed axis-0 coordinate, a curved one the share of the activation on its
-  // surface. Choosing the row tints the reply by it and shows the probe in the Inspector, where its
-  // trace, layers, coordinates and geometry live (drawers/ProbeInspectorDrawer.svelte).
+  // surface (0 to 1), and the trace, the bar's scale and the value all read that one quantity.
+  // Choosing the row tints the reply by it and shows the probe in the Inspector, where its trace,
+  // layers, coordinates and geometry live (drawers/ProbeInspectorDrawer.svelte).
   import type { GeometryProbeInfo, ProbeReadingJSON, ProbeRackEntry } from "../../lib/types";
   import Bar from "../../lib/charts/Bar.svelte";
   import Trace from "../../lib/charts/Trace.svelte";
   import { depthTint, readingText } from "../../lib/charts/depth";
+  import { MorphText } from "@stdlogits/ledger";
   import { nodeCoordExtent, parseProbeTarget } from "../../lib/tokens";
   import { highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
-  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   import InstrumentRow from "./InstrumentRow.svelte";
+  import { probeTitle } from "./probeRows";
   import { replyTrace } from "./probeTrace";
 
   let { name, entry }: { name: string; entry: ProbeRackEntry } = $props();
@@ -20,12 +22,13 @@
   const affine = $derived(info.is_affine);
   /** Where a full bar sits: the most extreme node on axis 0 for a flat probe, 1 for a share. */
   const scale = $derived(affine ? nodeCoordExtent(info.node_coords, 0) : 1);
-  const displayName = $derived(name.split("/").pop() ?? name);
+  const displayName = $derived(probeTitle(info, name).text);
 
   const latest = $derived((entry.aggregate ?? entry.reading) as ProbeReadingJSON | null);
   const sparkline = $derived(entry.sparkline ?? []);
-  /** The latest reply token by token (what the reply is tinted by), else the live buffer. */
-  const trace = $derived(replyTrace(name) ?? sparkline);
+  /** The latest reply token by token (a curved probe's share, from each token's reading), else the
+   *  live buffer (the same primary reading). */
+  const trace = $derived(replyTrace(name, { share: !affine }) ?? sparkline);
   const reading = $derived.by((): number | null => {
     if (latest !== null || sparkline.length > 0) return entry.current;
     if (affine) return entry.savedCoordinates?.[0] ?? entry.savedAggregate ?? null;
@@ -60,12 +63,12 @@
   {/snippet}
   {#snippet mark()}
     {#if trace.length > 1}
-      <Trace values={trace} limit={24} {scale} label={`${displayName} by token`} />
+      <Trace values={trace} limit={20} {scale} label={`${displayName} by token`} />
     {:else if reading !== null}
       <Bar value={reading} max={scale} width={140} height={4} bipolar={affine} title={`${displayName} ${readingText(reading, { signed: affine })}`} />
     {/if}
   {/snippet}
   {#snippet value()}
-    {#if reading !== null}<RollingNumber value={reading} digits={2} signed={affine} />{:else}–{/if}
+    {#if reading !== null}<MorphText text={readingText(reading, { signed: affine })} />{:else}–{/if}
   {/snippet}
 </InstrumentRow>

@@ -6,8 +6,7 @@
   // tinted by it and the Inspector shows its trace. Unpinned (a word the live readout found), its
   // marker pins it.
   import { tokenParts } from "@stdlogits/ledger";
-  import { chartValue } from "../../lib/charts/chartValues";
-  import { depthTint, layerDepth } from "../../lib/charts/depth";
+  import { depthTint, layerDepth, readingText } from "../../lib/charts/depth";
   import Trace from "../../lib/charts/Trace.svelte";
   import { detachProbe, highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
@@ -84,7 +83,7 @@
     {/if}
   {/snippet}
   {#snippet value()}
-    {#if strength === null}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>{:else}{chartValue(strength, true)}{/if}
+    {#if strength === null}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>{:else}{readingText(strength, { percent: true })}{/if}
   {/snippet}
   {#snippet action()}
     <ProbePinButton

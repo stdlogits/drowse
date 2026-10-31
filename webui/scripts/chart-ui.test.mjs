@@ -56,6 +56,13 @@ try {
   assert.match(trace, /height: 100%; background: var\(--deep\)/, "a bar takes the colour it is given");
   assert.match(trace, /class="[^"]*\bneg"[^>]*style="height: 50%;"/, "a negative bar keeps faint ink, not a depth colour");
   assert.match(trace, /class="[^"]*\bmissing"/);
+  // The By-token readout writes a reading as the rows and the facts do: two decimals, a true minus.
+  const { default: TraceDetail } = await server.ssrLoadModule("/src/lib/charts/TraceDetail.svelte");
+  const detail = render(TraceDetail, { props: { points: [0.5, -6.808], signed: true } }).body;
+  assert.match(detail, /−6\.81/, "a true minus and two decimals");
+  assert.doesNotMatch(detail, /-6\.808/);
+  assert.match(detail, /aria-valuetext="token 2"/, "the scrubber names the token, as its readout does");
+  assert.match(render(TraceDetail, { props: { points: [0.1, 0.5], signed: true } }).body, /\+0\.50/);
   const { default: Bar } = await server.ssrLoadModule("/src/lib/charts/Bar.svelte");
   const negative = render(Bar, { props: { value: -0.5, max: 1, bipolar: true } }).body;
   assert.match(negative, /left: 25%; width: 25%/);

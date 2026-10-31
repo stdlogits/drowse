@@ -5,13 +5,14 @@
   // on the panel's shared scale, so meters and numbers rank alike. Pinned (a persistent ``sae/<id>``
   // probe), the row can be chosen: the reply is tinted by it and the Inspector shows its trace.
   // Unpinned (a feature the live readout found), its marker pins it.
-  import { Meter } from "@stdlogits/ledger";
+  import { Meter, MorphText } from "@stdlogits/ledger";
+  import { readingText } from "../../lib/charts/depth";
   import { detachProbe, highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
   import { userFacingError } from "../../lib/runtime/userFacingError";
-  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   import InstrumentRow from "./InstrumentRow.svelte";
   import ProbePinButton from "./ProbePinButton.svelte";
+  import { probeTitle } from "./probeRows";
 
   interface Props {
     /** Feature index into the resident SAE's dictionary. */
@@ -43,6 +44,7 @@
   }: Props = $props();
 
   const name = $derived(probeName ?? `sae/${id}`);
+  const title = $derived(probeTitle({ family: "sae", feature_id: id }, name, layer).text);
   const isHighlight = $derived(highlightState.target === name);
   /** Normalized 0..1 strength when the unit is known; null keeps raw. */
   const strength = $derived(
@@ -78,7 +80,7 @@
 
 <InstrumentRow pressed={pinned && isHighlight} onselect={pinned ? choose : undefined} title={name}>
   {#snippet lead()}
-    <span class="n is-id">{layer === null ? "" : `L${layer} `}f{id}</span>
+    <span class="n is-id">{title}</span>
   {/snippet}
   {#snippet sub()}{label ?? ""}{/snippet}
   {#snippet mark()}
@@ -89,7 +91,7 @@
   {/snippet}
   {#snippet value()}
     {#if !measured}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>
-    {:else}<RollingNumber value={strength ?? rawValue} digits={strength !== null ? 2 : 1} />{/if}
+    {:else}<MorphText text={readingText(strength ?? rawValue)} />{/if}
   {/snippet}
   {#snippet action()}
     <ProbePinButton
