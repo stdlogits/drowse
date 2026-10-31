@@ -364,6 +364,11 @@ def test_top_by_fires_reads_the_read_directions(lensed: Any) -> None:
 
     with pytest.raises(RequestError, match="by must be"):
         session.units.top("a", by="says")
+    # Regression: a string spec goes through the one layer parser (ranges too).
+    ranged = session.units.top("a", layers="1-2", k=2)
+    assert set(ranged.layers) == {1, 2}
+    with pytest.raises(RequestError, match="bad layers"):
+        session.units.top("a", layers="1-")
 
 
 def test_find_recovers_a_neuron_write(lensed: Any) -> None:

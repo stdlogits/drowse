@@ -462,7 +462,10 @@ def test_tokens_in_decomposition_finds_the_footprint(make_tiny_session: Any) -> 
         assert share == pytest.approx(1.0, abs=1e-3)
         assert tokens[0][0] == session.tokenizer.decode([a])
     with pytest.raises(RequestError, match="dictionary"):
-        session.lens.decompose("slens/a", dictionary="neurons")
+        session.lens.decompose("slens/a", dictionary="heads")
+    # neurons needs no lens: each layer's neuron writes, signed.
+    neurons = session.lens.decompose("slens/a", k=2, dictionary="neurons", layers=[1])
+    assert set(neurons) == {1} and neurons[1][1][0][0].startswith("neuron/L1n")
     # tokens-out still reads the R family, which this session lacks.
     with pytest.raises(LensNotFittedError):
         session.lens.decompose("slens/a", dictionary="tokens-out")

@@ -109,5 +109,7 @@ def test_decompose_takes_the_dictionary(
     payload = json.loads(capsys.readouterr().out)
     assert payload["dictionary"] == "tokens-in"
     assert created[0].lens.calls[0][1]["dictionary"] == "tokens-in"
+    main(["lens", "decompose", "x", "-m", "m/x", "--dictionary", "neurons", "-j"])
+    assert json.loads(capsys.readouterr().out)["dictionary"] == "neurons"
     with pytest.raises(SystemExit):
-        main(["lens", "decompose", "x", "-m", "m/x", "--dictionary", "neurons"])
+        main(["lens", "decompose", "x", "-m", "m/x", "--dictionary", "heads"])

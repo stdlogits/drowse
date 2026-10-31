@@ -1346,7 +1346,7 @@ class UnitReader:
             raise RequestError(f"by must be 'writes' or 'fires', got {by!r}")
         k = self._check_k(k)
         selected = resolve_layer_selector(
-            layers, list(range(self.n_layers)), n_layers=self.n_layers, allow_sample=False,
+            _selector(layers), list(range(self.n_layers)), n_layers=self.n_layers, allow_sample=False,
         )
         for layer in selected:
             if not 0 <= int(layer) < self.n_layers:
@@ -1505,7 +1505,7 @@ class UnitReader:
         k = self._check_k(k)
         if isinstance(target, str):
             label = target
-            out = self.lens.decompose(target, k=k, layers=layers, dictionary="neurons")
+            out = self.lens.decompose(target, k=k, layers=_selector(layers), dictionary="neurons")
         else:
             if isinstance(target, torch.Tensor):
                 if layer is None:
@@ -1522,7 +1522,7 @@ class UnitReader:
                         f"find takes residual-width vectors (d = {width}), got shape {tuple(value.shape)}"
                     )
             label = "vector"
-            out = self.lens.decompose_neurons(directions, k=k, layers=layers, label=label)
+            out = self.lens.decompose_neurons(directions, k=k, layers=_selector(layers), label=label)
         catalog = self.catalog.get()
         rows: dict[int, dict[str, Any]] = {}
         for at, (share, atoms) in sorted(out.items()):
@@ -1555,6 +1555,19 @@ class UnitReader:
             }
             _drain(self.device)
         return covered
+
+
+def _selector(layers: "Sequence[int] | str | None") -> Any:
+    """A layer selector as the one parser reads it: a string spec
+    (``"20-31"``, ``"3,7"``, ``workspace``) is parsed, anything else passes."""
+    if not isinstance(layers, str):
+        return None if layers is None else [int(layer) for layer in layers]
+    from drowse.model.layers import parse_layer_selector
+
+    try:
+        return parse_layer_selector(layers)
+    except ValueError as exc:
+        raise RequestError(f"bad layers {layers!r}: {exc}") from None
 
 
 def _num(value: float) -> float | None:

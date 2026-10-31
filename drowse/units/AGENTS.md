@@ -14,11 +14,15 @@ with the other steering hooks in `steering/hooks.py`.
 | `runtime.py` | `UnitsRuntime` (block description once, `check`, `site`, `write_profile`, `stats`), `UnitSite`, `UnitsUnavailableError` (422), `unit_ref` |
 | `capture.py` | `UnitTap` (one forward hook per touched module, a device ring, post-forward values), `TapUnit`, `SCALE_FLOOR` |
 | `instrument.py` | `UnitsInstrument` (`session.units`), `UnitsRun` |
+| `reads.py` | `UnitReader` (static reads, `top`, `find`, `stats`), the results (`NeuronRead`/`NeuronPoleRead`, `HeadRead`, `PlaceRead`/`UnitHalf`, `Firing`, `TopResult`/`TopHit`, `FindResult`), `ContrastCache`/`ContrastStats`, `own_token_z`, `copy_score`, `logit_moments`, `token_logits` |
+| `catalog.py` | the neuron-lens catalog: `CATALOG_REPO`/`CATALOG_REVISION`/`CATALOG_MODELS`, `fetch_catalog`, `catalog_status`, `list_catalogs`, `remove_catalog`, `UnitCatalog` (rows, labels, `url`), `CatalogBinding` (the session's view), `unit_url`, `LABEL_CREDIT`, the errors |
 
 Layer 7, beside `lens` and `sae` (`tests/invariants/test_layering.py`): it
-imports `model`, `store`, `readout` and below, never `steering.composer`,
-`generation` or the session. The composer (layer 8) reaches it through its
-`UnitSource` protocol; the session wires everything.
+imports `model`, `store`, `readout`, `lens` and below, never
+`steering.composer`, `generation` or the session. The composer (layer 8)
+reaches it through its `UnitSource` protocol; the session wires everything
+(the reader gets the lens instrument, the catalog binding and the weights
+fingerprint).
 
 ## The units
 
@@ -151,9 +155,101 @@ every family's roster).
   batch with a unit ablation runs on the serial loop. Details and routing:
   `drowse/steering/AGENTS.md`.
 
+## Static reads (`reads.py`)
+
+What a unit is about, from its weights, by the four-lens rule
+(`drowse/lens/read.py`): the site comes from where the vector sits, the kind
+from the depth, so every place returns an S half and an R half with the depth
+rule's weights (`session.lens.band`); the light half is still returned for
+the UI to fade. Direction reads are uncentred (only residual reads centre on
+the neutral mean). `session.units.read(unit, k=8, hide_hubs=False)`:
+
+- **neuron**, per pole: `writes` reads `±w` (`neuron_write`, Gemma's
+  post-feedforward gain and layer scalar included) at `out` of its layer,
+  `fires_on` reads `â ± b̂` at `mid`, both through
+  `LensInstrument.read`. The last block's `out` is the final residual, where
+  the R read is exactly the logit lens (`J = I`); a lens that stops a layer
+  short gets it there, labelled `logit`. Scalars as neuron-lens: `w_norm`,
+  `cos_ab`, `null_share` (squared-norm share in the bottom 1% of
+  right-singular directions of `W_U diag(γ_final)`, the basis built once per
+  session), per pole the logit-lens skew (the `−` pole's is negated) and
+  kurtosis over the token mask, the neutral mean act.
+- **head**: `copies` / `suppresses` (at `mid`) are the top and bottom of each
+  token's own-column z in the OV map `M[u, v] = A_u · B_v`, `B_v = W_V^h X_v`
+  with `X_v = K^{out}_{L−1} ẽ_v` (the embedding at L0), `A_u` the R
+  (`(γ_f ⊙ W_U[u]) J^{mid}_L W_O^h`) or S (`ẽ_u K^{mid⊤}_L W_O^h`) read of
+  `u`; `copy_score` is `Σλ/Σ|λ|` of `Bᵀ A` per family. The map is never
+  built (the mean and covariance of `A`'s rows). `inputs` (at `L − 1` out)
+  ranks, per projection (query, key, value), tokens by the share of their unit
+  direction the projection keeps, `‖W^h x̂_v‖` (S: the footprint; R: the
+  direction that says `v`), as a z over the mask (`energy_z`). Without an S
+  lens the OV read is absent (its input side reads through it).
+- **hidden hubs** (`hide_hubs=True`, the UI's "Hide hub tokens"): each half
+  ranks by neuron-lens's layer-contrastive `_z`, the token's score z-scored
+  across the layer's population. Neurons: R over the lens logits of the `+`
+  writes (the `−` pole's z is minus it) and of each pole's read directions
+  separately; S over the raw scores of unit covectors (`û · ẽ_v`) of the `+`
+  writes and of both poles' read directions together; standard deviations
+  are population ones floored as neuron-lens floors them. Heads: each token's
+  z across the layer's heads (unbiased std). Units read `layer_z`.
+
+`ContrastCache` keeps these per-layer statistics (per token mean and std,
+and for R each row's `logsumexp`, which `top` needs for probabilities) under
+`models/<id>/units/contrast/<family>-<lens identity>…/L<layer>.safetensors`,
+a derived cache: a shard whose record (format, lens, place, token-mask
+digest, weights fingerprint) differs is recomputed, never migrated. The
+first hidden-hub read or `top` of a layer pays its population pass (the
+whole layer's units through both lenses); later reads load the shard.
+
+`top(token, by="writes"|"fires", layers=None, k=20)` scores every pole of
+each layer by the token's layer-contrastive z through each present family,
+`Σ w_f z_f / Σ w_f` with the depth weights (comparable across families and
+layers), and lists the best `k` with each half's z, its raw read (R
+probability, S footprint z) and the catalog label. Neurons only; a head's
+"writes a token" is a copy of it and waits for the head population stats.
+`find(selector | vector, layer=, k=16, layers=)` is `lens.decompose(...,
+dictionary="neurons")` (`NeuronWrites`: each layer's writes, signed, in the
+whitened metric) with each neuron's pole and label. `stats(unit)` is the
+firing block alone.
+
+**Firing.** `Firing.neutral` is drowse's own statistics (a pole's
+`act_top`, the mean, the document count; a head's write `act_top` and mean
+`‖z_h‖`). The neutral cache has no firing rate, so "fires on X% of tokens"
+(`rate`: the catalog's share of tokens with `|act| > act_top / 4` over its
+13M-token corpora) comes from a bound catalog, else is absent with the
+reason.
+
+## The catalog (`catalog.py`)
+
+`stdlogits/neuron-lens` (the dataset neuron-lens publishes) catalogues every
+pole and head of `Qwen/Qwen3-8B` and `google/gemma-4-12B` (the base model; an
+instruction-tuned checkpoint has other neurons and gets none). `unit fetch`
+binds it at `CATALOG_REVISION`, copying `neurons/labels/L<LL>.parquet` and
+`heads/labels.parquet` whole and the `acts` and `legible` tables projected to
+their scalar columns (`NEURON_COLUMNS`/`HEAD_COLUMNS`), read over HTTP ranges
+so the bulk columns never download; never `reads`, `drivers`, media or the
+causal sample. The binding is staged and promoted to
+`models/<id>/units/catalog/` with `catalog.json` (format 1: repository,
+commit, slug, per file the upstream LFS sha256, the columns kept, the row
+count and the local sha256). A binding of another format, repository or
+commit is not read (fetch again with `-f`). Labels are data: every label
+carries `LABEL_CREDIT` ("Labels by Claude Haiku 5.5") and the unit's page,
+`https://neuron-lens.com/<slug>/L<layer>/n<index>` or `/h<index>` (the
+explorer's route). An uncatalogued model is `NoUnitCatalogError` (404);
+reading or fetching needs pyarrow (`drowse.ai[hf]`), else
+`UnitCatalogDependencyError` (503). `CatalogBinding` opens the binding lazily
+and reopens after a fetch or removal.
+
 ## Testing
 
-`tests/units/`: `test_unit_stats.py` (the accumulator against a hand
+`tests/units/test_unit_reads.py` (every read against a hand computation on a
+tiny session with hand-built R and S lenses at both sites: writes and fires
+on, the scalars, the last layer's logit read, hidden hubs, the contrast cache
+following the lens, heads' OV, copy score and inputs, top, find, refusals),
+`test_unit_catalog.py` (fetch, projection, provenance, rows, links, the 404,
+pyarrow missing, the session's views over a monkeypatched Hub with tiny
+parquets), `test_unit_routes.py` (the HTTP routes and the fetch preparation),
+`test_unit_stats.py` (the accumulator against a hand
 computation on llama and Gemma 3, the cache, the unavailable path, v4
 recompute), `test_unit_probes.py` (the tap by hand on llama, Gemma 3 and
 Gemma 4's mixed head widths, probes through a real tiny session and a tiny
