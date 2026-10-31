@@ -22,7 +22,6 @@
     steerRack,
   } from "../lib/stores.svelte";
   import HeatmapCell from "../lib/charts/HeatmapCell.svelte";
-  import Button from "../lib/ui/Button.svelte";
   import { omittedAnalyticsProbes } from "../lib/profileAnalytics";
   import { userFacingError } from "../lib/runtime/userFacingError";
 
@@ -82,52 +81,43 @@
 <aside class="drawer" aria-label="Correlation matrix">
   <header class="drawer-header">
     <div class="title">
-      <h2 class="eyebrow">Direction correlations</h2>
-      <div class="name-row">
-        <span class="meta">
-          {names.length} comparable {names.length === 1 ? "direction" : "directions"}
-          {#if omissions.length > 0}
-            · {omissions.length} unsupported {omissions.length === 1 ? "probe" : "probes"} omitted
-          {/if}
-        </span>
+      <h2 class="dw-title">Correlations</h2>
+      <div class="dw-facts">
+        <span><b>{names.length}</b> {names.length === 1 ? "direction" : "directions"}</span>
+        {#if omissions.length > 0}<span><b>{omissions.length}</b> omitted</span>{/if}
       </div>
     </div>
     <div class="actions">
-      <Button
-        size="sm"
-        onclick={() => void reload()}
-        disabled={loading}
-        title="refresh"
-      >{loading ? "…" : "refresh"}</Button>
+      <button type="button" class="dw-text" onclick={() => void reload()} disabled={loading}>{loading ? "Refreshing…" : "Refresh"}</button>
       <IconButton icon="close" label="Close" onclick={onClose} />
     </div>
   </header>
 
   {#if data && omissions.length > 0}
-    <div class="omissions" role="note">
-      <span>Omitted unsupported probes:</span>
+    <p class="omissions meta" role="note">
+      <span>Omitted:</span>
       {#each omissions as omission, index (omission.name)}
         {#if index > 0}<span aria-hidden="true">, </span>{/if}
-        <code {...{ "aria-description": (omission.reason) }}>{omission.name}</code>
-        <span class="omission-reason"> ({omission.reason})</span>
+        <span class="omitted" {...{ "aria-description": (omission.reason) }}>{omission.name}</span>
+        <span> ({omission.reason})</span>
       {/each}
-    </div>
+    </p>
   {/if}
 
   <div class="body" aria-busy={loading}>
     {#if error}
-      <div class="empty err" role="alert">Correlation failed: {error}</div>
+      <p class="empty" role="alert">Correlation failed: {error}</p>
     {:else if loading && !data}
-      <div class="empty loading-pulse loading-placeholder" role="status">Loading correlations…</div>
+      <div class="dw-blocks" role="status" aria-label="Loading correlations"><i></i><i></i></div>
     {:else if !data || names.length === 0}
-      <div class="empty">No single-direction profiles are available for correlation.</div>
+      <p class="empty">No single-direction profiles to correlate</p>
     {:else}
       <p class="focused-cell" role="status"><MorphText text={focusedCell} numbers={false} /></p>
       <div class="grid-scroll">
         <table class="grid" style="--cell: {CELL_SIZE}px;">
           <thead>
             <tr>
-              <th class="corner" scope="col">name</th>
+              <th class="corner" scope="col"><span class="sr-only">name</span></th>
               {#each names as col (col)}
                 <th class="col-label" scope="col" {...{ "aria-description": (col) }}>
                   <span>{col}</span>
@@ -162,159 +152,26 @@
 </aside>
 
 <style>
+  /* A square of cosines between saved directions: labels in the text face, the cell in view named
+   * above the grid. */
+  .drawer { display: flex; flex-direction: column; gap: var(--s4); height: 100%; min-height: 0; padding: var(--s5) var(--s6) 0; color: var(--ink2); }
+  .drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s5); }
+  .title { display: grid; gap: var(--s1); min-width: 0; }
+  .actions { display: flex; flex: none; align-items: center; gap: var(--s4); }
+  .omissions { margin: 0; }
+  .omitted { color: var(--ink2); }
+  .body { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: var(--s6); }
+  .empty { color: var(--ink3); font: var(--type-small); }
+  .focused-cell { min-height: 20px; margin: 0 0 var(--s3); color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
   .matrix-pick { display: grid; place-items: center; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; cursor: crosshair; }
-  .focused-cell { min-height: 2em; font: var(--text-sm)/1.5 var(--font-mono); overflow-wrap: anywhere; }
-  /* v2 sheet interior — the host paints the sheet surface (glass hairline,
-   * radius, --bg-alt fill), so the root is transparent; chrome speaks sans
-   * and every value/identifier/expression sits in mono. */
-  .drawer {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
-  }
-
-  .drawer-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .eyebrow {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .name-row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-  .meta {
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    white-space: nowrap;
-  }
-  .actions {
-    display: flex;
-    gap: var(--space-3);
-    align-items: center;
-    flex: none;
-  }
-  .omissions {
-    margin: 0 var(--space-6);
-    padding: var(--surface-padding);
-    border-radius: var(--radius);
-    background: var(--surface-sheen), var(--glass);
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    line-height: 1.6;
-  }
-  .omissions code {
-    color: var(--fg-dim);
-  }
-  .omission-reason {
-    color: var(--fg-subtle);
-  }
-
-  .body {
-    flex: 1 1 auto;
-    overflow: auto;
-    min-height: 0;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .empty {
-    color: var(--fg-muted);
-    padding: var(--space-6) 0;
-    line-height: 1.5;
-    max-width: 62ch;
-  }
-  .empty.err {
-    color: var(--accent-red);
-  }
-
-  /* Data well — recessed matrix.  Every column/row label here IS an
-   * identifier (vector/probe name), not a category header, so the whole
-   * grid speaks mono (matches the probes tab in TokenDrilldownDrawer). */
-  .grid-scroll {
-    overflow: auto;
-    max-height: 100%;
-    border-radius: var(--radius);
-    background: var(--bg);
-  }
-  .grid {
-    border-collapse: separate;
-    border-spacing: 1px;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-  .grid th,
-  .grid td {
-    padding: 0;
-    margin: 0;
-    background: var(--bg);
-  }
-  .grid thead th {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    box-shadow: var(--shadow-sticky);
-  }
-  .grid .row-label {
-    position: sticky;
-    inset-inline-start: 0;
-    z-index: 1;
-    text-align: end;
-    padding: 0 var(--space-3) 0 var(--space-2);
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    box-shadow: var(--shadow-sticky-inline);
-    white-space: nowrap;
-  }
-  .grid .corner {
-    position: sticky;
-    top: 0;
-    inset-inline-start: 0;
-    z-index: 3;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    text-align: start;
-    padding: var(--space-1) var(--space-3);
-    box-shadow: var(--shadow-sticky), var(--shadow-sticky-inline);
-  }
-  .grid .col-label {
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    padding: 0;
-    height: 7em;
-    vertical-align: bottom;
-    width: var(--cell);
-    min-width: var(--cell);
-    max-width: var(--cell);
-  }
-  .grid .col-label > span {
-    display: inline-block;
-    transform: rotate(-60deg);
-    transform-origin: left bottom;
-    white-space: nowrap;
-    padding-bottom: var(--space-2);
-  }
-  .grid .cell-td {
-    line-height: 0;
-  }
-
+  .grid-scroll { max-height: 100%; overflow: auto; }
+  .grid { border-collapse: separate; border-spacing: 1px; font-variant-numeric: tabular-nums; }
+  .grid th, .grid td { margin: 0; padding: 0; background: var(--paper); }
+  .grid thead th { position: sticky; top: 0; z-index: 2; }
+  .grid .row-label { position: sticky; inset-inline-start: 0; z-index: 1; padding: 0 var(--s3) 0 var(--s2); color: var(--ink2); font: var(--type-meta); text-align: end; white-space: nowrap; }
+  .grid .corner { position: sticky; top: 0; inset-inline-start: 0; z-index: 3; }
+  .grid .col-label { width: var(--cell); min-width: var(--cell); max-width: var(--cell); height: 112px; padding: 0; color: var(--ink2); font: var(--type-meta); vertical-align: bottom; }
+  .grid .col-label > span { display: inline-block; padding-bottom: var(--s2); white-space: nowrap; transform: rotate(-60deg); transform-origin: left bottom; }
+  .grid .cell-td { line-height: 0; }
+  @media (max-width: 720px) { .drawer { padding: var(--s4) var(--s4) 0; } }
 </style>

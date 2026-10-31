@@ -15,14 +15,14 @@
     "tintText": "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)"
   },
   "totals": {
-    "bridge": 3895,
-    "border": 162,
+    "bridge": 2514,
+    "border": 108,
     "outline": 0,
-    "shadow": 72,
-    "mono": 152,
-    "uppercase": 42,
-    "tracking": 38,
-    "easing": 12,
+    "shadow": 41,
+    "mono": 114,
+    "uppercase": 26,
+    "tracking": 24,
+    "easing": 4,
     "loop": 0,
     "colour": 2,
     "mix": 0,
@@ -34,30 +34,6 @@
       "border": 3,
       "shadow": 1,
       "mono": 1
-    },
-    "src/drawers/CastDrawer.svelte": {
-      "bridge": 90,
-      "border": 4,
-      "shadow": 1,
-      "mono": 3
-    },
-    "src/drawers/CompareDrawer.svelte": {
-      "bridge": 52,
-      "shadow": 3,
-      "mono": 3,
-      "uppercase": 1,
-      "tracking": 1
-    },
-    "src/drawers/CorrelationDrawer.svelte": {
-      "bridge": 49,
-      "shadow": 3,
-      "mono": 2,
-      "uppercase": 1,
-      "tracking": 1
-    },
-    "src/drawers/DownloadChatDrawer.svelte": {
-      "bridge": 36,
-      "border": 1
     },
     "src/drawers/DrawerOutlet.svelte": {
       "bridge": 3
@@ -77,12 +53,6 @@
       "shadow": 1,
       "mono": 2
     },
-    "src/drawers/LoadConversationDrawer.svelte": {
-      "bridge": 124,
-      "shadow": 7,
-      "mono": 1,
-      "easing": 5
-    },
     "src/drawers/ManifoldBuilderDrawer.svelte": {
       "bridge": 14
     },
@@ -98,13 +68,6 @@
       "uppercase": 2,
       "tracking": 2
     },
-    "src/drawers/NodeCompareDrawer.svelte": {
-      "bridge": 151,
-      "shadow": 2,
-      "mono": 5,
-      "uppercase": 8,
-      "tracking": 8
-    },
     "src/drawers/ProbeInspectorDrawer.svelte": {
       "bridge": 98,
       "border": 4,
@@ -119,14 +82,6 @@
       "mono": 9,
       "uppercase": 7,
       "tracking": 7
-    },
-    "src/drawers/SaveConversationDrawer.svelte": {
-      "bridge": 63,
-      "shadow": 3,
-      "mono": 1,
-      "uppercase": 1,
-      "tracking": 1,
-      "easing": 3
     },
     "src/drawers/SessionAdminDrawer.svelte": {
       "bridge": 54,
@@ -151,11 +106,6 @@
       "border": 5,
       "shadow": 1,
       "mono": 7
-    },
-    "src/drawers/TranscriptDrawer.svelte": {
-      "bridge": 81,
-      "border": 8,
-      "mono": 5
     },
     "src/drawers/UnavailableRuntimeDrawer.svelte": {
       "bridge": 9
@@ -322,9 +272,6 @@
       "shadow": 1,
       "mono": 1
     },
-    "src/lib/ui/ConversationAutosave.svelte": {
-      "bridge": 5
-    },
     "src/lib/ui/ManifoldJobProgress.svelte": {
       "bridge": 17,
       "mono": 1
@@ -350,11 +297,6 @@
       "border": 1,
       "mono": 1
     },
-    "src/panels/PendingBubbles.svelte": {
-      "bridge": 24,
-      "border": 3,
-      "mono": 2
-    },
     "src/panels/ProbeRack.svelte": {
       "bridge": 7
     },
@@ -376,31 +318,6 @@
       "bridge": 30,
       "border": 1,
       "mono": 1
-    },
-    "src/panels/loom/LoomDialog.svelte": {
-      "bridge": 58,
-      "border": 4,
-      "mono": 2
-    },
-    "src/panels/loom/LoomNode.svelte": {
-      "bridge": 195,
-      "border": 7,
-      "shadow": 6,
-      "mono": 4,
-      "uppercase": 2,
-      "tracking": 1
-    },
-    "src/panels/loom/LoomSidebar.svelte": {
-      "bridge": 404,
-      "border": 19,
-      "shadow": 6,
-      "mono": 10,
-      "uppercase": 3,
-      "tracking": 2
-    },
-    "src/panels/loom/LoomWeave.svelte": {
-      "bridge": 49,
-      "border": 8
     },
     "src/panels/manifold/ManifoldMiniMap.svelte": {
       "bridge": 16,

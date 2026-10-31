@@ -351,6 +351,23 @@ try {
   assert.equal(zoomed.zoom, LOOM_MAX_ZOOM);
   assert.equal((anchor.x - zoomed.x) / zoomed.zoom, anchor.x - 100);
   assert.equal((anchor.y - zoomed.y) / zoomed.zoom, anchor.y - 60);
+
+  // A per-token diff repeats one side's token while the other side catches up (the server's
+  // byte-offset walk), so each pane shows its tokens once, in order, keyed by their own index.
+  const { diffSideTokens } = await server.ssrLoadModule("/src/panels/loom/loomDiff.ts");
+  const span = (a_index, b_index, a_text, b_text, aligned = false) => ({ a_index, b_index, a_text, b_text, aligned, reading_deltas: [] });
+  const drift = [
+    span(0, 0, "The", "The", true),
+    span(1, 1, " sun", " su", false),
+    span(1, 2, " sun", "n", false),
+    span(2, 3, " rose", " rose", true),
+    span(3, -1, ".", ""),
+    span(-1, 4, "", "!"),
+  ];
+  assert.deepEqual(diffSideTokens(drift, "a").map(row => row.a_text), ["The", " sun", " rose", "."]);
+  assert.deepEqual(diffSideTokens(drift, "b").map(row => row.b_text), ["The", " su", "n", " rose", "!"]);
+  assert.equal(new Set(diffSideTokens(drift, "a").map(row => row.a_index)).size, 4, "no repeated A keys");
+  assert.deepEqual(diffSideTokens([], "b"), []);
   console.log("loom layout passed");
 } finally {
   await server.close();

@@ -1,7 +1,6 @@
 <script lang="ts">
   import { Switch } from "@stdlogits/ledger";
   import { MorphText } from "@stdlogits/ledger";
-  import { glide } from "@stdlogits/ledger";
   import { IconButton } from "@stdlogits/ledger";
   // Transcript export / import drawer — phase 5.  Two tabs:
   //
@@ -183,40 +182,33 @@
 
 <section class="drawer-shell" aria-label="Transcript drawer">
   <header class="header">
-    <h2 class="title">Conversation transcript</h2>
-    <div
-      class="tabs"
-      use:glide
-      role="tablist"
-      aria-label="Transcript action"
-    >
-      <button
-        id="transcript-export-tab"
-        type="button"
-        class="tab"
-        class:active={tab === "export"}
-        role="tab"
-        aria-selected={tab === "export"}
-        aria-controls="transcript-export-panel"
-        tabindex={tab === "export" ? 0 : -1}
-        onclick={() => selectTab("export")}
-        onkeydown={onTabKeydown}
-      >export</button>
-      <button
-        id="transcript-import-tab"
-        type="button"
-        class="tab"
-        class:active={tab === "import"}
-        role="tab"
-        aria-selected={tab === "import"}
-        aria-controls="transcript-import-panel"
-        tabindex={tab === "import" ? 0 : -1}
-        onclick={() => selectTab("import")}
-        onkeydown={onTabKeydown}
-      >import</button>
-    </div>
+    <h2 class="dw-title">Transcript</h2>
     <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
+  <div class="tabs" role="tablist" aria-label="Transcript action">
+    <button
+      id="transcript-export-tab"
+      type="button"
+      class="tab"
+      role="tab"
+      aria-selected={tab === "export"}
+      aria-controls="transcript-export-panel"
+      tabindex={tab === "export" ? 0 : -1}
+      onclick={() => selectTab("export")}
+      onkeydown={onTabKeydown}
+    >Export</button>
+    <button
+      id="transcript-import-tab"
+      type="button"
+      class="tab"
+      role="tab"
+      aria-selected={tab === "import"}
+      aria-controls="transcript-import-panel"
+      tabindex={tab === "import" ? 0 : -1}
+      onclick={() => selectTab("import")}
+      onkeydown={onTabKeydown}
+    >Import</button>
+  </div>
 
   <div class="body">
     {#if tab === "export"}
@@ -227,29 +219,20 @@
         aria-labelledby="transcript-export-tab"
         tabindex="0"
       >
-      <p class="hint">
-        Export the active conversation path, or end at a specific node.
-      </p>
-
       <label class="field">
-        <span class="label">end at node <span class="optional">optional</span></span>
+        <span class="meta">End at</span>
         <input
           type="text"
-          class="input"
           bind:value={exportTargetId}
-          placeholder={`Active node · ${loomTree.active_node_id?.slice(0, 12) ?? "-"}`}
+          placeholder={`the active turn, ${loomTree.active_node_id?.slice(0, 12) ?? "none"}`}
           autocomplete="off"
           spellcheck="false"
         />
       </label>
 
-      <div class="form-actions">
-        <button
-          type="button"
-          class="btn primary"
-          onclick={runExport}
-          disabled={exportBusy}
-        ><MorphText text={exportBusy ? "preparing…" : "preview YAML"} /></button>
+      <div class="dw-row">
+        <button type="button" class="dw-button" onclick={runExport} disabled={exportBusy}
+        ><MorphText text={exportBusy ? "Preparing…" : "Preview YAML"} /></button>
       </div>
 
       {#if exportError}
@@ -264,10 +247,9 @@
           value={exportYaml}
           aria-label="Rendered transcript YAML"
         ></textarea>
-        <div class="form-actions">
-          <button type="button" class="btn" data-cursor="copy" onclick={copyYaml}><span role="status"><MorphText text={copied ? "Copied" : "Copy"} numbers={false} /></span></button>
-          <button type="button" class="btn primary" onclick={downloadYaml}
-            >download .yaml</button>
+        <div class="dw-row">
+          <button type="button" class="dw-quiet" data-cursor="copy" onclick={copyYaml}><span role="status"><MorphText text={copied ? "Copied" : "Copy"} numbers={false} /></span></button>
+          <button type="button" class="dw-quiet" onclick={downloadYaml}>Download .yaml</button>
         </div>
       {/if}
       </div>
@@ -279,25 +261,20 @@
         aria-labelledby="transcript-import-tab"
         tabindex="0"
       >
-      <p class="hint">
-        Import a Drowse transcript from a local YAML file or pasted text.
-      </p>
-
       <div class="field" role="radiogroup" aria-labelledby="import-mode-label">
-        <span class="label" id="import-mode-label">place imported turns</span>
-        <Radio bind:group={importMode} value="default" label="start a new path at the root" />
-        <Radio bind:group={importMode} value="here" label="continue from the active node" />
-        <Radio bind:group={importMode} value="merge" label="merge after the deepest matching turn" />
+        <span class="meta" id="import-mode-label">Place the turns</span>
+        <Radio bind:group={importMode} value="default" label="On a new path from the root" />
+        <Radio bind:group={importMode} value="here" label="After the active turn" />
+        <Radio bind:group={importMode} value="merge" label="After the deepest matching turn" />
       </div>
 
-      <span class="mode-opt">
-        <Switch checked={importStrict} onchange={(on) => (importStrict = on)} label="Require matching reading settings" />
-      </span>
+      <Switch checked={importStrict} onchange={(on) => (importStrict = on)} label="Require matching reading settings" />
 
       <label class="field">
-        <span class="label">file</span>
+        <span class="meta">File</span>
         <input
           type="file"
+          class="file"
           accept=".yaml,.yml,application/x-yaml,text/yaml"
           bind:this={fileInputRef}
           onchange={onFileChange}
@@ -308,18 +285,14 @@
         class="yaml"
         rows="14"
         bind:value={importYaml}
-        placeholder="paste transcript YAML here…"
+        placeholder="Or paste transcript YAML"
         spellcheck="false"
         aria-label="Transcript YAML to import"
       ></textarea>
 
-      <div class="form-actions">
-        <button
-          type="button"
-          class="btn primary"
-          onclick={runImport}
-          disabled={importBusy}
-        ><MorphText text={importBusy ? "importing…" : "import"} /></button>
+      <div class="dw-row">
+        <button type="button" class="dw-button" onclick={runImport} disabled={importBusy}
+        ><MorphText text={importBusy ? "Importing…" : "Import"} /></button>
       </div>
 
       {#if importError}
@@ -328,222 +301,44 @@
 
       {#if importGuards.length > 0}
         <div class="banner">
-          <span class="banner-title">guards</span>
+          <span class="head">Guards, kept as notes on the root</span>
           <ul>
             {#each importGuards as g (g)}
               <li>{g}</li>
             {/each}
           </ul>
-          <p class="hint">saved as root notes</p>
         </div>
       {/if}
       {#if importLeafId && !importError}
-        <p class="ok">
-          imported · leaf
-          <code>{importLeafId.slice(0, 12)}</code>
-        </p>
+        <p class="ok">Imported, ending at {importLeafId.slice(0, 12)}</p>
       {/if}
       </div>
     {/if}
   </div>
-
-  <footer class="footer">
-    <button type="button" class="btn" onclick={closeDrawer}>close</button>
-  </footer>
 </section>
 
 <style>
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    margin: 0;
-    min-width: 0;
-    color: var(--fg);
-    letter-spacing: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-  .tabs {
-    display: flex;
-    gap: var(--space-2);
-    flex: 1 1 auto;
-    justify-content: center;
-  }
-  @media (max-width: 680px) {
-    .header { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-    .tabs { grid-column: 1 / -1; grid-row: 2; justify-content: flex-start; }
-    .tab { flex: 1; }
-  }
-  .tab {
-    background: var(--glass);
-    color: var(--fg-dim);
-    border: 1px solid transparent;
-    padding: var(--space-1) var(--space-4);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    min-height: var(--control-target);
-    border-radius: var(--radius-sm);
-  }
-  .tab:hover {
-    color: var(--fg-strong);
-  }
-  .tab.active {
-    color: var(--accent);
-    border-color: var(--accent);
-    background: var(--accent-subtle);
-  }
-  .body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    min-height: 0;
-  }
-  .tab-panel {
-    display: flex;
-    flex-direction: column;
-    gap: var(--drawer-gutter-block);
-  }
-  .hint {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    margin: 0;
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .label {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    text-transform: lowercase;
-  }
-  .optional {
-    color: var(--fg-subtle);
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    margin-inline-start: var(--space-2);
-  }
-  .input {
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    min-height: var(--control-field);
-  }
-  .input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .yaml {
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    padding: var(--surface-padding);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    resize: vertical;
-    min-height: 8em;
-    white-space: pre;
-    overflow: auto;
-  }
-  .mode-opt {
-    display: inline-flex;
-    gap: var(--space-2);
-    align-items: center;
-    color: var(--fg-strong);
-    font-size: var(--text-sm);
-    margin: var(--space-1) 0;
-  }
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    gap: var(--drawer-gutter-block);
-  }
-  .error {
-    color: var(--accent-red);
-    font-size: var(--text-sm);
-    margin: 0;
-  }
-  .ok {
-    color: var(--ink);
-    font-size: var(--text-sm);
-    margin: 0;
-  }
-  .banner {
-    background: color-mix(in oklab, var(--accent-amber) 14%, transparent);
-    border: 1px solid transparent;
-    padding: var(--surface-padding);
-    color: var(--accent-yellow);
-    font-size: var(--text-sm);
-  }
-  .banner-title {
-    text-transform: lowercase;
-    font-weight: var(--weight-medium);
-    display: block;
-    margin-bottom: var(--space-1);
-  }
-  .banner ul {
-    margin: var(--space-1) 0 var(--space-1) var(--space-sm);
-    padding: 0;
-  }
-  .footer {
-    display: flex;
-    justify-content: flex-end;
-    flex-wrap: wrap;
-    gap: var(--drawer-gutter-block);
-    padding: 0 var(--drawer-gutter-inline) var(--drawer-gutter-block);
-    color: var(--fg-muted);
-  }
-  .btn {
-    background: var(--glass);
-    color: var(--fg-strong);
-    border: 1px solid transparent;
-    padding: var(--space-2) var(--space-5);
-    font: inherit;
-    font-family: var(--font-mono);
-    cursor: pointer;
-    min-height: var(--control-target);
-    border-radius: var(--radius-sm);
-  }
-  .btn:hover:not(:disabled) {
-    background: var(--glass-strong);
-  }
-  .btn:disabled {
-    color: var(--fg-muted);
-    cursor: not-allowed;
-  }
-  .btn.primary {
-    background: var(--action-bg);
-    color: var(--action-ink);
-    border-color: transparent;
-  }
-  .btn.primary:hover:not(:disabled) {
-    background: var(--action-hover);
-  }
-  .btn.primary:disabled {
-    background: var(--bg-elev);
+  .drawer-shell { display: flex; flex-direction: column; gap: var(--s3); height: 100%; min-height: 0; padding: var(--s5) var(--s6) 0; color: var(--ink2); font: var(--type-small); }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
+  /* Export and import as Ledger's tabs: text only, the chosen one in ink. */
+  .tabs { display: flex; gap: var(--s1) 20px; }
+  .tab { height: 32px; padding: 0; border: 0; background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease); }
+  .tab[aria-selected="true"] { color: var(--ink); }
+  @media (hover: hover) { .tab:hover { color: var(--ink); } }
+  .body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s6); }
+  .tab-panel { display: flex; flex-direction: column; gap: var(--s4); }
+  .tab-panel:focus { outline: none; }
+  .field { display: grid; gap: var(--s1); }
+  .field input[type="text"] { width: 100%; height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-small); }
+  .file { color: var(--ink2); font: var(--type-small); }
+  .file::file-selector-button { height: 36px; margin-right: var(--s3); padding: 0 var(--s4); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-control); cursor: pointer; transition: background-color var(--fast) var(--ease); }
+  .file::file-selector-button:hover { background: var(--wash2); }
+  .yaml { width: 100%; min-height: 200px; padding: var(--s3) var(--s4); border: 0; border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-small); line-height: 22px; resize: vertical; white-space: pre; overflow-wrap: normal; overflow-x: auto; tab-size: 2; }
+  .error, .ok { color: var(--ink); }
+  .banner { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .banner ul { display: grid; gap: 2px; }
+  @media (max-width: 720px) {
+    .drawer-shell { padding: var(--s4) var(--s4) 0; }
+    .field input[type="text"], .yaml { font-size: 16px; }
   }
 </style>
