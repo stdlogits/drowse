@@ -56,4 +56,6 @@
 
 <style>
   .inspector { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); min-width: 0; align-content: start; }
+  /* The tools shown here sit flush with the crumbs (their own gutters are for a dialog). */
+  .inspector { --drawer-gutter-inline: 0px; --drawer-gutter-block: 0px; }
 </style>

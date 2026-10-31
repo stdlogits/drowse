@@ -106,6 +106,8 @@
 .dw-room-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s5); }
 .dw-empty { display: grid; gap: var(--s3); justify-items: start; max-width: 520px; padding: var(--s6); border-radius: var(--r-row); background: var(--wash); }
 .dw-empty p { color: var(--ink2); font: var(--type-small); }
+/* On a wash, the pieces that sit on a wash step up to wash2. */
+.dw-empty .dw-quiet { background: var(--wash2); }
 .dw-blocks { display: grid; gap: var(--s3); }
 .dw-blocks > i { display: block; height: 44px; border-radius: var(--r-box); background: var(--wash); }
 

@@ -120,7 +120,7 @@
     flex: none;
     display: flex;
     flex-direction: column;
-    height: min(380px, 46dvh);
+    height: min(380px, 40dvh);
     border-radius: var(--r-row) var(--r-row) 0 0;
     background: var(--wash);
     transition: height var(--glide) var(--ease);
