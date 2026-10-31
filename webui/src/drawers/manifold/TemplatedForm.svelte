@@ -44,7 +44,6 @@
   import Select from "../../lib/Select.svelte";
   import AdvancedSection from "../../lib/builder/AdvancedSection.svelte";
   import ValidationBlock from "../../lib/builder/ValidationBlock.svelte";
-  import Button from "../../lib/ui/Button.svelte";
   import FitMethodPicker from "./FitMethodPicker.svelte";
   import {
     defaultTuning,
@@ -143,9 +142,7 @@
 
   function sharedNameInput(): HTMLInputElement | null {
     const body = formRegion?.closest(".mb-form");
-    return body?.querySelector<HTMLInputElement>(
-      ":scope > .grid2 > .field:nth-child(2) input",
-    ) ?? null;
+    return body?.querySelector<HTMLInputElement>('input[data-identity="name"]') ?? null;
   }
 
   async function focusFirstInvalid(): Promise<void> {
@@ -296,15 +293,13 @@
   aria-label="Build manifold from template"
   aria-busy={submitting}
 >
-  <section class="step">
-    <h2 class="step-title">template</h2>
+  <section class="step" aria-label="Template">
+    <h3 class="step-title"><span class="n">2</span>Template</h3>
     {#if loadingTemplates}
-      <p class="muted">loading…</p>
-    {:else if templates.length === 0}
-      <p class="muted">no templates yet</p>
-    {:else}
+      <div class="dw-blocks" role="status" aria-label="Loading templates"><i></i></div>
+    {:else if templates.length > 0}
       <label bind:this={templateField} class="field template-source">
-        <span class="label">source *</span>
+        <span class="sr-only">Template source</span>
         <Select
           value={selectedKey}
           options={[{ value: "", label: "Choose a template" }, ...options]}
@@ -331,19 +326,20 @@
       class="add-node"
       onclick={openTemplateLab}
     >
-      author a template…
+      {templates.length === 0 && !loadingTemplates ? "Write the first template" : "Write a template"}
     </button>
   </section>
 
   <FitMethodPicker
     {tuning}
+    step={3}
     linearOnly={browserMode}
     onchange={(fitMode) => (tuning.fitMode = fitMode)}
   />
 
   <AdvancedSection bind:expanded={advancedOpen}>
-    <label bind:this={maxDimField} class="field">
-      <span class="label">max dim</span>
+    <label bind:this={maxDimField} class="field max-dim">
+      <span class="label">Dimensions at most</span>
       <NumberInput
         value={maxDim}
         min={1}
@@ -358,64 +354,39 @@
       {#if maxDimError}
         <span id="templated-max-dim-error" class="field-error">{maxDimError}</span>
       {:else if maxDimLimit !== null}
-        <span class="dim-note">
-          hosted browser limit · <strong>{maxDimLimit}</strong> dimensions
-        </span>
+        <span class="dim-note">at most <strong>{maxDimLimit}</strong> in the browser</span>
       {/if}
     </label>
     <div class="check-stack">
-      <Switch checked={alsoFit} onchange={(on) => (alsoFit = on)} label="fit now" />
+      <Switch checked={alsoFit} onchange={(on) => (alsoFit = on)} label="Fit now" />
     </div>
   </AdvancedSection>
-
-  <p class="progress form-status" role="status" aria-live="polite" aria-atomic="true">
-    <MorphText text={progress} />
-  </p>
 
   <ValidationBlock
     verb="building"
     messages={validationAttempted ? validation.messages : []}
   />
 
-  <div class="form-actions">
-    {#if hostedController && fittingActive}
-      <Button variant="ghost" disabled={cancelling} onclick={cancelFit}>
-        <MorphText text={cancelling ? "cancelling…" : "cancel"} numbers={false} />
-      </Button>
-    {/if}
+  <div class="submit">
     <button
       type="button"
-      class="save-btn"
+      class="dw-button"
       disabled={submitting}
       onclick={save}
     >
-      <MorphText text={submitting ? "building…" : alsoFit ? "build + fit" : "build"} numbers={false} />
+      <MorphText text={submitting ? "Building…" : alsoFit ? "Build and fit" : "Build"} numbers={false} />
     </button>
+    {#if hostedController && fittingActive}
+      <button type="button" class="dw-text" disabled={cancelling} onclick={cancelFit}>
+        <MorphText text={cancelling ? "cancelling…" : "cancel"} numbers={false} />
+      </button>
+    {/if}
+    <p class="progress form-status" role="status" aria-live="polite" aria-atomic="true">
+      <MorphText text={progress} />
+    </p>
   </div>
 </div>
 
 <style>
-  .field-error {
-    color: var(--accent-red);
-    font-size: var(--text-xs);
-    line-height: 1.4;
-  }
-
-  .form-status:empty {
-    display: none;
-  }
-
-  .form-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-3);
-  }
-
-  .form-actions .save-btn {
-    flex: 1;
-  }
-
-  .template-source :global(.sk-select-trigger[aria-invalid="true"]) {
-    border-color: var(--accent-red);
-  }
+  .max-dim { max-width: 240px; }
 </style>

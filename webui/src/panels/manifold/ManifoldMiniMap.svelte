@@ -197,65 +197,16 @@
 </figure>
 
 <style>
-  .map {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    margin: 0;
-  }
-  .canvas {
-    display: block;
-    width: var(--map-size);
-    height: var(--map-size);
-    background: var(--glass-strong);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius);
-  }
-  .grid {
-    stroke: var(--glass-line);
-    stroke-width: 1;
-  }
-  .trajectory {
-    /* Green live/probe hue: the per-token path is a streaming quantity.
-     * Translucent + thin so the path reads as historical context, not a
-     * foreground feature. */
-    stroke: var(--tint);
-    stroke-width: 1.5;
-    stroke-opacity: 0.55;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-  }
-  .node circle {
-    fill: var(--fg-subtle);
-    stroke: var(--bg-deep);
-    stroke-width: 1;
-  }
-  .node text {
-    fill: var(--fg-muted);
-    font-size: var(--text-2xs);
-    font-family: var(--font-ui);
-  }
-  .cursor {
-    /* Live head of the green trajectory — follows the path's hue so the
-     * moving cursor doesn't clash with the line it caps. */
-    fill: var(--tint);
-    fill-opacity: 0.7;
-    stroke: var(--bg-deep);
-    stroke-width: 1;
-  }
-  .settled {
-    fill: var(--tint);
-    stroke: var(--accent-light);
-    stroke-width: 1;
-  }
-  .axes {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: space-between;
-    gap: var(--space-3);
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-    font-family: var(--font-mono);
-  }
-  .node-readout { flex-basis: 100%; min-height: 1.5em; }
+  /* The domain on a wash: the origin's cross in wash2, the nodes in faint ink, the path taken in the
+   * depth tint and where it settled as a tint dot ringed in paper. */
+  .map { display: grid; justify-items: start; gap: var(--s2); margin: 0; min-width: 0; }
+  .canvas { display: block; width: var(--map-size); height: var(--map-size); border-radius: var(--r-box); background: var(--wash); }
+  .grid { stroke: var(--wash2); stroke-width: 1; }
+  .trajectory { stroke: var(--tint); stroke-width: 1.5; stroke-opacity: 0.55; stroke-linecap: round; stroke-linejoin: round; }
+  .node circle { fill: var(--ink3); }
+  .node text { fill: var(--ink3); font: var(--type-meta); }
+  .cursor { fill: var(--tint); fill-opacity: 0.7; stroke: var(--paper); stroke-width: 1.5; }
+  .settled { fill: var(--tint); stroke: var(--paper); stroke-width: 2; }
+  .axes { display: flex; flex-wrap: wrap; justify-content: space-between; gap: var(--s1) var(--s3); width: var(--map-size); max-width: 100%; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .node-readout { flex-basis: 100%; min-height: 16px; color: var(--ink2); }
 </style>

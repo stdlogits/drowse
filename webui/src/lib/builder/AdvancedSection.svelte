@@ -5,6 +5,7 @@
   // drawers so the secondary-fields surface reads identically.
 
   import type { Snippet } from "svelte";
+  import { untrack } from "svelte";
   import { Expander } from "@stdlogits/ledger";
 
   interface Props {
@@ -19,25 +20,20 @@
     summary = "Advanced options",
     children,
   }: Props = $props();
+
+  let openings = $state(0);
+  $effect(() => { if (expanded) untrack(() => (openings += 1)); });
 </script>
 
-<div class="sk-advanced">
-  <Expander bind:open={expanded} label={summary}>
+<Expander bind:open={expanded} label={summary}>
+  <!-- Remounted on each opening: a gliding thumb inside measures itself only once it is visible. -->
+  {#key openings}
     <div class="sk-advanced-body">
       {@render children()}
     </div>
-  </Expander>
-</div>
+  {/key}
+</Expander>
 
 <style>
-  .sk-advanced {
-    /* Match the extract/manifold "field" rhythm — a small bottom margin
-     * keeps the section anchored above the submit button. */
-    margin: var(--space-3) 0;
-  }
-  .sk-advanced-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
+  .sk-advanced-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
 </style>

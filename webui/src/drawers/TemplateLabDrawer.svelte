@@ -5,10 +5,9 @@
   import { ToolError } from "../lib/webmcp/types";
 
   import TemplatePreview from "../lib/ui/TemplatePreview.svelte";
-  import { MorphText } from "@stdlogits/ledger";
-  import { Icon } from "@stdlogits/ledger";
+  import { Icon, IconButton, MorphText } from "@stdlogits/ledger";
   import Select from "../lib/Select.svelte";
-  import { IconButton } from "@stdlogits/ledger";
+  import "./manifold/form.css";
   // TemplateLabDrawer — the standalone templated-completion artifact.
   //
   // Two tabs:
@@ -33,7 +32,6 @@
   import { closeDrawer } from "../lib/stores.svelte";
   import { pushToast } from "../lib/stores/toasts.svelte";
   import { Segmented } from "@stdlogits/ledger";
-  import Button from "../lib/ui/Button.svelte";
   import type {
     ChoiceScores,
     TemplateContextSpec,
@@ -43,6 +41,7 @@
   } from "../lib/types";
 
   let { params }: { params?: unknown } = $props();
+  const embedded = $derived((params as { embedded?: unknown } | null)?.embedded === true);
 
   type Tab = "score" | "build";
   // Opening tab: ``score`` unless a caller deep-linked the editor.  Read
@@ -58,8 +57,8 @@
   );
 
   const TAB_ITEMS: Array<{ value: Tab; label: string; title: string }> = [
-    { value: "score", label: "score", title: "restricted-choice scores" },
-    { value: "build", label: "build", title: "new template" },
+    { value: "score", label: "Score", title: "The model's preference among a fixed set of answers" },
+    { value: "build", label: "Build", title: "A new template" },
   ];
 
   // ----- shared: template catalog --------------------------------------
@@ -305,123 +304,138 @@
   }));
 </script>
 
-<section class="drawer-shell" aria-label="Template lab">
-  <header class="header">
-    <div class="title">
-      <h2 class="eyebrow">Prompt template lab</h2>
-    </div>
-    <IconButton icon="close" label="Close" onclick={closeDrawer} />
-  </header>
+<section class="mf-tool" class:dialog={!embedded} aria-label="Template lab">
+  {#if !embedded}
+    <header class="mf-head">
+      <h2 class="dw-title">Templates</h2>
+      <IconButton icon="close" label="Close" onclick={closeDrawer} />
+    </header>
+  {/if}
 
-  <div class="toolbar">
+  <div class="views">
     <Segmented label="Template lab view" value={tab} onchange={(next) => (tab = next)} options={TAB_ITEMS.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
   </div>
 
-  <div class="body">
+  <div class="mb-form lab">
     {#if tab === "score"}
-      <p class="hint">Compare the model's preference among a fixed set of answers.</p>
-
       {#if loading}
-        <p class="muted loading-pulse loading-placeholder" role="status">Loading templates…</p>
+        <div class="dw-blocks loading-placeholder" role="status" aria-label="Loading templates"><i></i></div>
       {:else if templates.length === 0}
-        <p class="muted">no templates</p>
-      {:else}
-        <label class="field">
-          <span class="label">template</span>
-          <Select bind:value={selectedKey} disabled={scoring} ariaLabel="Template"
-            options={[{ value: "", label: "Select…" }, ...templates.map(t => ({
-              value: `${t.namespace}/${t.name}`, label: `${t.namespace}/${t.name} · ${t.n_values} values × ${t.n_contexts} ctx`,
-            }))]} />
-        </label>
-
-        {#if previewTemplate}
-          {#each previewTemplate.contexts as context, index (index)}
-            <TemplatePreview sentence={context.assistant} slot={previewTemplate.slot} values={previewTemplate.values} />
-          {/each}
-        {:else if previewError}<p class="hint">{previewError}</p>{/if}
-        <label class="field">
-          <span class="label">steering</span>
-          <input type="text" placeholder="0.5 patient.hurried" bind:value={steerExpr}
-            disabled={scoring} autocomplete="off" spellcheck="false" />
-        </label>
-
-        <div class="controls">
-          <label class="byrow">
-            <span class="label">rank by</span>
-            <Select bind:value={scoreBy} ariaLabel="Rank by" options={[{ value: "sum", label: "sum" }, { value: "mean", label: "mean" }]} />
-          </label>
-          {#if hostedController && scoring}
-            <Button variant="ghost" disabled={cancellingScore} onclick={cancelScore}>
-              <MorphText text={cancellingScore ? "cancelling…" : "cancel"} />
-            </Button>
-          {/if}
-          <Button variant="solid" busy={scoring} disabled={!selectedTemplate || scoring} onclick={runScore}>
-            <MorphText text={scoring ? "scoring…" : "score"} />
-          </Button>
+        <div class="dw-empty">
+          <p>No templates yet.</p>
+          <button type="button" class="dw-quiet" onclick={() => (tab = "build")}>Write one</button>
         </div>
+      {:else}
+        <section class="step" aria-label="Score a template">
+          <div class="grid2">
+            <label class="field">
+              <span class="label">Template</span>
+              <Select bind:value={selectedKey} disabled={scoring} ariaLabel="Template"
+                options={[{ value: "", label: "Choose a template" }, ...templates.map(t => ({
+                  value: `${t.namespace}/${t.name}`, label: `${t.namespace}/${t.name} · ${t.n_values} × ${t.n_contexts}`,
+                }))]} />
+            </label>
+            <label class="field">
+              <span class="label">Steering</span>
+              <input type="text" class="input" placeholder="0.5 patient.hurried" bind:value={steerExpr}
+                disabled={scoring} autocomplete="off" spellcheck="false" />
+            </label>
+          </div>
+
+          {#if previewTemplate}
+            {#each previewTemplate.contexts as context, index (index)}
+              <TemplatePreview sentence={context.assistant} slot={previewTemplate.slot} values={previewTemplate.values} />
+            {/each}
+          {:else if previewError}<p class="dim-note">{previewError}</p>{/if}
+
+          <div class="submit">
+            <button type="button" class="dw-button" aria-busy={scoring} disabled={!selectedTemplate || scoring} onclick={runScore}>
+              <MorphText text={scoring ? "Scoring…" : "Score"} />
+            </button>
+            {#if hostedController && scoring}
+              <button type="button" class="dw-text" disabled={cancellingScore} onclick={cancelScore}>
+                <MorphText text={cancellingScore ? "cancelling…" : "cancel"} />
+              </button>
+            {/if}
+            <span class="rank">
+              <Segmented label="Rank by" value={scoreBy} onchange={(next) => (scoreBy = next)}
+                options={[{ value: "sum", label: "Sum", hint: "Rank by the summed probability of each answer's tokens" }, { value: "mean", label: "Mean", hint: "Rank by the mean probability of each answer's tokens" }]} />
+            </span>
+          </div>
+        </section>
 
         {#if baseline && scoredKey === selectedKey && !scoring}
           {#each baseline as _ctx, ci (ci)}
-            <div class="ctx-card">
-              <div class="ctx-head">context {ci + 1}{steered ? " · base → steered" : ""}</div>
-              <div class="mass-row"><span>Baseline mass</span><div class="mass-bar" role="img" aria-label={rows(ci).map(r => `${r.label}: ${(r.base * 100).toFixed(1)}%`).join(", ")}>{#each rows(ci) as r, index (r.label)}<span style:width={`${r.base * 100}%`} style:opacity={.35 + (index % 4) * .2} {...{ "aria-description": (`${r.label}: ${(r.base * 100).toFixed(1)}%`) }}></span>{/each}</div></div>
-              {#if steered}<div class="mass-row"><span>Steered mass</span><div class="mass-bar" role="img" aria-label={rows(ci).map(r => `${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`).join(", ")}>{#each rows(ci) as r, index (r.label)}<span style:width={`${(r.steer ?? 0) * 100}%`} style:opacity={.35 + (index % 4) * .2} {...{ "aria-description": (`${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`) }}></span>{/each}</div></div>{/if}
-              {#each rows(ci) as r (r.label)}
-                <div class="bar-row">
-                  <span class="bar-label" {...{ "aria-description": (r.label) }}>{r.label}</span>
-                  <div class="bars">
-                    <div class="bar base" style={`width:${(r.base * 100).toFixed(1)}%`}></div>
-                    {#if r.steer !== null}
-                      <div class="bar steer" style={`width:${(r.steer * 100).toFixed(1)}%`}></div>
-                    {/if}
+            <section class="mf-sec result rise" style:--i={ci} aria-label={`Context ${ci + 1}`}>
+              <div class="mf-sec-head"><h3 class="head">Context {ci + 1}</h3>{#if steered}<span class="meta">base → steered</span>{/if}</div>
+              <div class="mass-row"><span class="meta">{steered ? "Base" : "Share"}</span><div class="mass-bar" class:is-base={!!steered} role="img" aria-label={`Baseline mass: ${rows(ci).map(r => `${r.label}: ${(r.base * 100).toFixed(1)}%`).join(", ")}`}>{#each rows(ci) as r, index (r.label)}<span style:flex-grow={r.base} style:opacity={.35 + (index % 4) * .2} data-tip={`${r.label}: ${(r.base * 100).toFixed(1)}%`}></span>{/each}</div></div>
+              {#if steered}<div class="mass-row"><span class="meta">Steered</span><div class="mass-bar" role="img" aria-label={`Steered mass: ${rows(ci).map(r => `${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`).join(", ")}`}>{#each rows(ci) as r, index (r.label)}<span style:flex-grow={r.steer ?? 0} style:opacity={.35 + (index % 4) * .2} data-tip={`${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`}></span>{/each}</div></div>{/if}
+              <div class="bar-rows">
+                {#each rows(ci) as r (r.label)}
+                  <div class="bar-row">
+                    <span class="bar-label" {...{ "aria-description": (r.label) }}>{r.label}</span>
+                    <div class="bars" class:is-pair={r.steer !== null}>
+                      <span class="bar base"><i style:transform={`scaleX(${Math.max(0, Math.min(1, r.base))})`}></i></span>
+                      {#if r.steer !== null}
+                        <span class="bar steer"><i style:transform={`scaleX(${Math.max(0, Math.min(1, r.steer))})`}></i></span>
+                      {/if}
+                    </div>
+                    <span class="bar-num">
+                      <MorphText text={`${(r.base * 100).toFixed(0)}%`} />{#if r.steer !== null}<span class="arrow">→</span><MorphText text={`${(r.steer * 100).toFixed(0)}%`} />{/if}
+                    </span>
                   </div>
-                  <span class="bar-num">
-                    <MorphText text={`${(r.base * 100).toFixed(0)}%`} />{#if r.steer !== null}<span class="arrow">→</span><MorphText text={`${(r.steer * 100).toFixed(0)}%`} />{/if}
-                  </span>
-                </div>
-              {/each}
-            </div>
+                {/each}
+              </div>
+            </section>
           {/each}
         {/if}
       {/if}
 
     {:else}
-      <form bind:this={buildForm} class="form" aria-busy={building} onsubmit={submitBuild}>
-        <label class="field">
-          <span class="label">name</span>
-          <input type="text" placeholder="weekday" bind:value={bName} disabled={building}
-            autocomplete="off" spellcheck="false"
-            aria-invalid={buildSubmitted && nameInvalid}
-            aria-describedby={validationDescription(nameInvalid)} />
-        </label>
-        <label class="field">
-          <span class="label">slot token</span>
-          <input type="text" placeholder="[DAY]" bind:value={bSlot} disabled={building}
-            autocomplete="off" spellcheck="false"
-            aria-invalid={buildSubmitted && slotInvalid}
-            aria-describedby={validationDescription(slotInvalid)} />
-        </label>
-        <label class="field">
-          <span class="label">values</span>
-          <textarea rows="3" placeholder={"Monday\nTuesday\nWednesday"}
-            bind:value={bValuesText} disabled={building}
-            aria-invalid={buildSubmitted && valuesInvalid}
-            aria-describedby={validationDescription(valuesInvalid)}></textarea>
-        </label>
+      <form bind:this={buildForm} class="form-stack" aria-busy={building} onsubmit={submitBuild}>
+        <section class="step" aria-label="Template">
+          <h3 class="step-title"><span class="n">1</span>Answers</h3>
+          <div class="grid2">
+            <label class="field">
+              <span class="label">Name</span>
+              <input type="text" class="input" placeholder="weekday" bind:value={bName} disabled={building}
+                autocomplete="off" spellcheck="false"
+                aria-invalid={buildSubmitted && nameInvalid}
+                aria-describedby={validationDescription(nameInvalid)} />
+            </label>
+            <label class="field">
+              <span class="label">Slot</span>
+              <input type="text" class="input" placeholder="[DAY]" bind:value={bSlot} disabled={building}
+                autocomplete="off" spellcheck="false"
+                aria-invalid={buildSubmitted && slotInvalid}
+                aria-describedby={validationDescription(slotInvalid)} />
+            </label>
+          </div>
+          <label class="field">
+            <span class="label">Values, one per line</span>
+            <textarea class="input" rows="3" placeholder={"Monday\nTuesday\nWednesday"}
+              bind:value={bValuesText} disabled={building}
+              aria-invalid={buildSubmitted && valuesInvalid}
+              aria-describedby={validationDescription(valuesInvalid)}></textarea>
+          </label>
+        </section>
 
-        <fieldset class="contexts">
-          <legend>contexts <span class="optional">({bContexts.length})</span></legend>
+        <section class="step" aria-labelledby="template-contexts-title">
+          <div class="mf-sec-head">
+            <h3 id="template-contexts-title" class="step-title"><span class="n">2</span>Contexts</h3>
+            <span class="meta"><MorphText text={bContexts.length} /></span>
+          </div>
           {#each bContexts as ctx, ci (ci)}
-            <div class="ctx-build">
-              <div class="ctx-build-head">
-                <span>context {ci + 1}</span>
+            <div class="mf-wash ctx-build">
+              <div class="mf-sec-head">
+                <span class="head">Context {ci + 1}</span>
                 {#if bContexts.length > 1}
                   <button
                     type="button"
-                    class="mini"
+                    class="dw-text"
                     aria-label={`Remove context ${ci + 1}`}
                     onclick={() => removeContext(ci)}
-                  >remove</button>
+                  >Remove</button>
                 {/if}
               </div>
               {#each ctx.turns as turn, ti (ti)}
@@ -432,9 +446,9 @@
                     ariaLabel={`Context ${ci + 1}, turn ${ti + 1} role`}
                     invalid={buildSubmitted && contextInvalid(ci)}
                     ariaDescribedby={validationDescription(contextInvalid(ci))}
-                    options={[{ value: "user", label: "user" }, { value: "assistant", label: "assistant" }, { value: "system", label: "system" }]}
+                    options={[{ value: "user", label: "User" }, { value: "assistant", label: "Assistant" }, { value: "system", label: "System" }]}
                   />
-                  <input type="text" placeholder="turn content" bind:value={turn.content}
+                  <input type="text" class="input" placeholder="Turn" bind:value={turn.content}
                     disabled={building} autocomplete="off"
                     aria-invalid={buildSubmitted && contextInvalid(ci)}
                     aria-describedby={validationDescription(contextInvalid(ci))}
@@ -442,7 +456,7 @@
                   {#if ctx.turns.length > 1}
                     <button
                       type="button"
-                      class="mini"
+                      class="node-remove"
                       aria-label={`Remove turn ${ti + 1} from context ${ci + 1}`}
                       onclick={() => removeTurn(ci, ti)}
                     ><Icon name="close" /></button>
@@ -451,13 +465,13 @@
               {/each}
               <button
                 type="button"
-                class="mini add"
+                class="add-node"
                 aria-label={`Add turn to context ${ci + 1}`}
                 onclick={() => addTurn(ci)}
-              >+ turn</button>
-              <label class="field assistant-field">
-                <span class="label">assistant · slot</span>
-                <input type="text" placeholder={`today is ${bSlot}`} bind:value={ctx.assistant}
+              >Add turn</button>
+              <label class="field">
+                <span class="label">Assistant, with the slot</span>
+                <input type="text" class="input" placeholder={`Today is ${bSlot}`} bind:value={ctx.assistant}
                   disabled={building} autocomplete="off"
                   aria-invalid={buildSubmitted && contextInvalid(ci)}
                   aria-describedby={validationDescription(contextInvalid(ci))} />
@@ -465,270 +479,90 @@
               <TemplatePreview sentence={ctx.assistant} slot={bSlot} values={bValuesText.split("\n").map(value => value.trim()).filter(Boolean)} />
             </div>
           {/each}
-          <button type="button" class="mini add" onclick={addContext}>+ context</button>
-        </fieldset>
+          <button type="button" class="add-node" onclick={addContext}>Add context</button>
+        </section>
 
         {#if buildSubmitted && buildValidation.length}
-          <ul id="template-build-errors" class="errs" role="status" aria-live="polite">
+          <ul id="template-build-errors" class="sk-errs" role="status" aria-live="polite">
             {#each buildValidation as e (e)}<li>{e}</li>{/each}
           </ul>
         {/if}
 
-        <footer class="foot">
-          <Button variant="ghost" onclick={closeDrawer}>cancel</Button>
-          <Button
-            type="submit"
-            variant="solid"
-            busy={building}
-            disabled={building}
-          >
-            <MorphText text={building ? "creating…" : "create template"} />
-          </Button>
-        </footer>
+        <div class="submit">
+          <button type="submit" class="dw-button" aria-busy={building} disabled={building}>
+            <MorphText text={building ? "Creating…" : "Create template"} />
+          </button>
+          <button type="button" class="dw-text" onclick={closeDrawer}>Cancel</button>
+        </div>
       </form>
     {/if}
 
     {#if templates.length > 0}
-      <div class="catalog">
-        <div class="catalog-head">installed</div>
-        {#each templates as t (`${t.namespace}/${t.name}`)}
-          <div class="cat-row">
-            <span class="cat-name">{t.namespace}/{t.name}</span>
-            <span class="cat-sub">{t.slot} · {t.n_values}×{t.n_contexts}</span>
-            {#if deleteCandidate === `${t.namespace}/${t.name}`}
-              <div class="delete-confirmation">
-                <p>Delete {t.namespace}/{t.name}? This removes the saved template and cannot be undone.</p>
-                <Button variant="ghost" size="sm" disabled={deleting} onclick={() => (deleteCandidate = null)}>Cancel</Button>
-                <Button variant="danger" size="sm" disabled={deleting} onclick={() => deleteTemplate(t)}><MorphText text={deleting ? "Deleting…" : "Delete template"} /></Button>
-              </div>
-            {:else}
-              <Button
-                variant="danger"
-                size="sm"
-                disabled={deleting}
-                ariaLabel={`Delete template ${t.namespace}/${t.name}`}
-                onclick={() => (deleteCandidate = `${t.namespace}/${t.name}`)}
-              >Delete…</Button>
-            {/if}
-          </div>
-        {/each}
-      </div>
+      <section class="mf-sec" aria-labelledby="template-catalog-title">
+        <div class="mf-sec-head"><h3 id="template-catalog-title" class="head">Installed</h3><span class="meta">{templates.length}</span></div>
+        <ul class="mf-rows" role="list">
+          {#each templates as t, i (`${t.namespace}/${t.name}`)}
+            <li class="mf-row stack rise" style:--i={i}>
+              <span class="mf-id">
+                <span class="mf-name">{t.namespace}/{t.name}</span>
+                <span class="meta">{t.slot} · {t.n_values} values × {t.n_contexts} contexts</span>
+              </span>
+              <span class="mf-end">
+                {#if deleteCandidate === `${t.namespace}/${t.name}`}
+                  <span class="meta">Delete for good?</span>
+                  <button type="button" class="dw-quiet" disabled={deleting} onclick={() => deleteTemplate(t)}><MorphText text={deleting ? "Deleting…" : "Delete template"} /></button>
+                  <button type="button" class="dw-text" disabled={deleting} onclick={() => (deleteCandidate = null)}>Cancel</button>
+                {:else}
+                  <button
+                    type="button"
+                    class="dw-text"
+                    disabled={deleting}
+                    aria-label={`Delete template ${t.namespace}/${t.name}`}
+                    onclick={() => (deleteCandidate = `${t.namespace}/${t.name}`)}
+                  >Delete</button>
+                {/if}
+              </span>
+            </li>
+          {/each}
+        </ul>
+      </section>
     {/if}
   </div>
 </section>
 
 <style>
-  .mass-row { display: grid; grid-template-columns: 8em 1fr; align-items: center; gap: var(--space-2); font-size: var(--text-xs); margin-block: var(--space-2); }
-  .mass-bar { display: flex; height: 12px; overflow: hidden; border-radius: var(--radius-pill); }
-  .mass-bar span { background: var(--accent); }
-  .delete-confirmation { grid-column: 1 / -1; }
-  .delete-confirmation p { margin: 0 0 var(--space-3); line-height: 1.5; overflow-wrap: anywhere; }
-  /* v2 sheet interior — the host paints the sheet surface, so the root
-   * stays transparent and chrome speaks sans (values/identifiers stay
-   * mono). Templates carry no pillar hue — chrome stays achromatic. */
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
-  }
-  .header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .eyebrow {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
+  .views { display: flex; min-width: 0; }
+  .lab { max-width: 760px; }
+  .rank { margin-left: auto; }
 
-  .toolbar {
-    padding: var(--space-5) var(--drawer-gutter-inline);
-  }
+  /* The restricted-choice read: each answer's share before and after steering, as meters on the
+   * ramp. Without steering the share is the data, so it takes the tint; with it, the base steps
+   * back to faint ink and the steered share takes the tint. */
+  .result { gap: var(--s2); }
+  .mass-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: var(--s3); }
+  /* Each answer grows by its share of what the gaps leave, so the shares fill the bar exactly. */
+  .mass-bar { display: flex; gap: 2px; height: 8px; overflow: hidden; border-radius: 2px; }
+  .mass-bar span { flex: 0 1 0; min-width: 0; border-radius: 2px; background: var(--tint); transition: flex-grow var(--glide) var(--ease); }
+  .mass-bar.is-base span { background: var(--ink3); }
+  .bar-rows { display: grid; gap: 2px; margin-top: var(--s2); }
+  .bar-row { display: grid; grid-template-columns: minmax(64px, 160px) minmax(0, 1fr) 88px; align-items: center; gap: var(--s3); min-height: 32px; padding: 0 var(--s3); border-radius: var(--r-col); transition: background-color var(--fast) var(--ease); }
+  @media (hover: hover) { .bar-row:hover { background: var(--wash); } }
+  .bar-label { overflow: hidden; color: var(--ink); font: var(--type-small); white-space: nowrap; text-overflow: ellipsis; }
+  .bars { display: grid; gap: 2px; }
+  .bar { position: relative; display: block; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
+  .bar i { position: absolute; inset: 0; border-radius: 2px; background: var(--tint); transform-origin: left; transition: transform var(--glide) var(--ease); }
+  .is-pair .bar.base i { background: var(--ink3); opacity: 0.6; }
+  .bar-num { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: end; white-space: nowrap; }
+  .arrow { margin: 0 var(--s1); color: var(--ink3); }
 
-  .body {
-    flex: 1;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--drawer-section-gap);
-  }
-  .hint {
-    font-size: var(--text-sm);
-    color: var(--fg-muted);
-    margin: 0;
-    line-height: 1.5;
-    max-width: 62ch;
-  }
-  .muted { color: var(--fg-muted); font-size: var(--text-sm); }
-  .field { display: flex; flex-direction: column; gap: var(--space-2); }
-  .label { font-size: var(--text-sm); color: var(--fg-muted); }
-  .optional { color: var(--fg-subtle); }
-  input,
-  textarea {
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-  input:focus,
-  textarea:focus {
-    outline: none;
-    border-color: var(--fg-muted);
-  }
-  textarea { resize: vertical; }
-  .controls { display: flex; align-items: flex-end; gap: var(--space-5); }
-  .byrow { display: flex; flex-direction: column; gap: var(--space-2); flex: 1; }
+  .ctx-build { gap: var(--s2); }
+  .turn-row { display: grid; grid-template-columns: 128px minmax(0, 1fr) auto; align-items: center; gap: var(--s2); }
+  .sk-errs { display: grid; gap: var(--s1); margin: 0; padding: var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-small); list-style: none; }
 
-  /* Data well — the per-context restricted-choice distribution. */
-  .ctx-card {
-    border-radius: var(--radius);
-    background: var(--bg);
-    padding: var(--surface-padding);
-  }
-  .ctx-head {
-    font-size: var(--text-xs);
-    color: var(--fg-muted);
-    margin-bottom: var(--space-3);
-  }
-  .bar-row {
-    display: grid;
-    grid-template-columns: 5.5em 1fr 4.5em;
-    align-items: center;
-    gap: var(--space-3);
-    margin: var(--space-1) 0;
-  }
-  .bar-label {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .bars { display: flex; flex-direction: column; gap: var(--data-mark-gap); }
-  .bar { height: 7px; border-radius: var(--radius-sm); min-width: 1px; }
-  /* Achromatic before/after: the steered bar reads brighter above the
-   * muted baseline — no pillar hue borrowed for a non-pillar surface. */
-  .bar.base { background: var(--fg-muted); }
-  .bar.steer { background: var(--accent); }
-  .bar-num {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    color: var(--fg-dim);
-    text-align: end;
-    font-variant-numeric: tabular-nums;
-  }
-  .arrow { color: var(--fg-subtle); margin: 0 var(--space-1); }
-
-  .form { display: flex; flex-direction: column; gap: var(--space-4); }
-  .contexts {
-    border-radius: var(--radius);
-    background: var(--glass);
-    box-shadow: var(--shadow-well);
-    padding: var(--surface-padding);
-    margin: 0;
-  }
-  legend {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    padding: 0 var(--space-2);
-  }
-  .ctx-build {
-    padding: var(--space-4) 0;
-  }
-  .ctx-build-head {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: var(--text-xs);
-    color: var(--fg-muted);
-    margin-bottom: var(--space-3);
-  }
-  .turn-row {
-    display: grid;
-    grid-template-columns: 6em 1fr auto;
-    gap: var(--space-2);
-    margin: var(--space-2) 0;
-  }
-  .assistant-field { margin-top: var(--space-3); }
-
-  /* Compact row actions use the shared small-control shape. */
-  .mini {
-    background: var(--glass);
-    border: 1px solid transparent;
-    color: var(--fg-muted);
-    border-radius: var(--radius-sm);
-    padding: var(--space-2) var(--space-4);
-    cursor: pointer;
-    font: inherit;
-    font-size: var(--text-2xs);
-    line-height: 1;
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out);
-  }
-  .mini:hover {
-    color: var(--fg);
-    background: var(--glass-strong);
-  }
-  .mini.add { margin-top: var(--space-3); }
-  .errs {
-    color: var(--accent-red);
-    font-size: var(--text-sm);
-    margin: 0;
-    padding-inline-start: var(--space-sm);
-  }
-  .foot { display: flex; justify-content: flex-end; gap: var(--space-3); }
-
-  .catalog {
-    padding-top: var(--space-4);
-  }
-  .catalog-head {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: var(--space-3);
-  }
-  .cat-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-2) 0;
-    font-size: var(--text-sm);
-  }
-  .cat-name { font-family: var(--font-mono); color: var(--fg); overflow-wrap: anywhere; }
-  .cat-sub {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
-  @media (max-width: 600px) {
-    .cat-row { grid-template-columns: minmax(0, 1fr) auto; }
-    .cat-name { grid-column: 1 / -1; }
+  @media (max-width: 520px) {
+    .rank { margin-left: 0; }
+    .bar-row { grid-template-columns: 88px minmax(0, 1fr) 76px; padding: 0 var(--s2); }
+    .turn-row { grid-template-columns: minmax(0, 1fr) auto; }
+    .turn-row > :global(:first-child) { grid-column: 1 / -1; }
   }
 </style>
