@@ -202,7 +202,9 @@ a layer type), `n_layers`, `d_model`, `d_ff` (the widest block's) and `vocab`.
 - **Refusals** raise `UnsupportedBlockError` (422, in `errors.py`) naming the
   layer (`layer` is `None` for the model-level part) and what was found: a
   mixture-of-experts MLP or block, a fused gate-up or qkv projection, a
-  linear-attention layer (hybrid stacks), attention sinks or any other
+  projection holding quantized (non-floating) weights (bitsandbytes 4/8-bit
+  subclass `nn.Linear` but pack their weights), a linear-attention layer
+  (hybrid stacks), attention sinks or any other
   attention tensor, KV sharing, non-causal or NoPE attention, a norm that is
   not an RMSNorm with a `w` or `1 + w` weight, an activation other than SiLU
   or tanh-GELU, any unrecognized submodule (Gemma 4's per-layer inputs), a

@@ -19,11 +19,11 @@ the exclusive guard, adopt/evict) is in `session/AGENTS.md`.
 | `pipeline.py` | `ManifoldExtractionPipeline`, `prepare_manifold_capture_identity`/`CaptureIdentity`, `prepare_capture_rows`, `offline_fit_identity`, `FitInputs.accepts` (cache key), `MANIFOLD_CAPTURE_VERSION` |
 | `publish.py` | Folder transactions: `fit_target_lock`, `take_authoring_snapshot`, `load_published_fit`, `publish_fit_if_current`, `ManifoldAuthoringChangedError` (409) |
 | `preflight.py` | `preflight_manifold_fit_noop`: weight-free proof a fit is already exact |
-| `capture.py` | Pooled residual capture, `_LENGTH_DIRECTIVE`, prompt/neutral corpus loaders, `compute_neutral_activations`, `compute_dls_axes` |
+| `capture.py` | Pooled residual capture, `_LENGTH_DIRECTIVE`, prompt/neutral corpus loaders, `compute_neutral_activations` (+ its `ChunkObserver`), `compute_dls_axes` |
 | `node_stats.py` | `compute_manifold_node_stats` (centroids + optional row spool), `compute_store_reduced_covariances` (σ-field input) |
 | `capture_cache.py` | `CaptureCache`: content-addressed per-layer capture shards |
 | `corpus.py` | `CorpusGenerator`, `KIND_TEMPLATES`, `system_for`, `role_for`, `split_composite_source` |
-| `neutral.py` | `load_or_compute_neutral_activations[_with_metadata]` (compute half; `store/neutral.py` is the IO) |
+| `neutral.py` | `load_or_compute_neutral_cache` (activations + unit statistics + sidecar) and its `load_or_compute_neutral_activations[_with_metadata]` views (compute half; `store/neutral.py` is the IO) |
 | `bake.py` | `merge_into_manifold`, `shared_models` |
 | `transfer.py` | `load_or_fit_transfer_alignment` → `TransferAlignment` |
 | `naturalness.py` | `preflight`, `evaluate` (`experiment naturalness`) |
@@ -226,13 +226,28 @@ which a real load bound to the source fingerprint.
 
 ## Neutral activations
 
-`load_or_compute_neutral_activations` is single-flight under
-`neutral_fit_lock`, spanning recheck, capture and publish. A stale cache is
-recomputed, and a corrupt one warns and is recomputed. It renders the neutral
-pairs (`response[i] ↔ prompt[i % k]`), captures every layer with the same
-batched path as node capture, and returns fp32 CPU `[N, D]` per layer.
-`session/neutral.py` derives the means and the whitener from it (format and
-the fp32 rationale: `store/AGENTS.md`).
+`load_or_compute_neutral_cache` is single-flight under `neutral_fit_lock`,
+spanning recheck, capture and publish. A stale cache (an older format
+included: neutral cache v5 is never migrated) is recomputed, and a corrupt one
+warns and is recomputed. It renders the neutral pairs (`response[i] ↔
+prompt[i % k]`), captures every layer with the same batched path as node
+capture, and returns fp32 CPU `[N, D]` per layer, the unit statistics and the
+validated sidecar. `session/neutral.py` derives the means, the whitener and
+the resident `UnitStats` from it (format and the fp32 rationale:
+`store/AGENTS.md`).
+
+The same forward measures the **unit statistics**
+(`units/stats.py::UnitStatsAccumulator`, definitions in
+`drowse/units/AGENTS.md`): one down-projection pre-hook and one
+output-projection forward hook per block, fp32 sums and running top-k buffers
+on the device, framed per chunk through `compute_neutral_activations`'
+`observer` (`begin_chunk(lengths)` / `commit_chunk` / `discard_chunk` on an
+out-of-memory retry, `abandon(reason)` when one strikes at batch size 1: the
+hooks come off and the rows re-run without them). Units never fail the pass:
+a model `model_spec` refuses, a hook that raises anything but an
+out-of-memory error, or an out-of-memory error at batch size 1, publishes the
+cache with `units` unavailable and the reason. A cached units record whose tensor
+names are not the current set recomputes.
 
 ## Bake
 
@@ -311,7 +326,8 @@ calibration are in `steering/AGENTS.md`. Observed on fitted bundled manifolds
 `ModelHandle`. Elsewhere: extraction glue `tests/support/extraction.py`,
 corpora `tests/session/test_generate_responses.py`, session bake
 `tests/session/test_session_bake.py`, neutral cache
-`tests/store/test_neutral_cache.py`, DLS golden
+`tests/store/test_neutral_cache.py`, neutral unit statistics
+`tests/units/test_unit_stats.py`, DLS golden
 `tests/browser/test_browser_parity.py`, GPU `tests/gpu/test_smoke.py` and
 `tests/gpu/test_session.py`.
 

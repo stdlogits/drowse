@@ -472,6 +472,15 @@ def _activation_kind(act: Any, layer: int) -> ActivationKind:
 def _linear(module: Any, what: str, layer: int) -> nn.Linear:
     if not isinstance(module, nn.Linear):
         raise UnsupportedBlockError(f"{what} is missing or not an nn.Linear", layer=layer)
+    weight = module.weight
+    if not weight.is_floating_point():
+        # bitsandbytes' Linear4bit / Linear8bitLt subclass nn.Linear but hold
+        # packed integer weights: reading their rows would read bytes.
+        raise UnsupportedBlockError(
+            f"{what} holds quantized weights ({type(module).__name__}, "
+            f"{weight.dtype}); the description reads real weights",
+            layer=layer,
+        )
     return module
 
 

@@ -587,8 +587,8 @@ def test_sae_feature_meta_rejects_noncanonical_id(
 def test_stream_aggregate_keeps_lens_and_sae_probe_readings() -> None:
     # ``probe_reading_aggregate`` filters result readings to attached probes;
     # lens/SAE probes live on their own session registries (readout channels,
-    # not the Monitor), so the filter must union all three rosters — it used
-    # to drop their end-of-gen aggregates from every streaming done frame.
+    # not the Monitor), so the filter must union every family's roster — it
+    # used to drop their end-of-gen aggregates from every streaming done frame.
     from drowse.readout.types import ProbeReading
     from drowse.server.compat import probe_reading_aggregate
 
@@ -600,8 +600,10 @@ def test_stream_aggregate_keeps_lens_and_sae_probe_readings() -> None:
     }
     session = SimpleNamespace(
         monitor=SimpleNamespace(probe_names=("confident.uncertain",)),
-        lens=SimpleNamespace(names=["jlens/fake"]),
-        sae=SimpleNamespace(names=["sae/548"]),
+        instruments={
+            "lens": SimpleNamespace(names=["jlens/fake"]),
+            "sae": SimpleNamespace(names=["sae/548"]),
+        },
     )
     result = SimpleNamespace(probe_readings=readings)
     out = probe_reading_aggregate(session, result)  # type: ignore[arg-type]

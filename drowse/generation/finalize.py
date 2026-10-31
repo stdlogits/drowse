@@ -39,8 +39,8 @@ class FinalReads:
     """One generation's end-of-generation reads, already scored.
 
     Each family keeps its native reading type (geometry ``ProbeReading``,
-    lens/SAE ``ScalarReading``).  ``per_token`` is the geometry axis-0 coord
-    stream (``None`` when nothing kept one), ``hidden_states`` the
+    lens/SAE/units ``ScalarReading``).  ``per_token`` is the geometry axis-0
+    coord stream (``None`` when nothing kept one), ``hidden_states`` the
     ``return_hidden`` stack, and the three source fields the live sources the
     aggregate envelope reports beside the lens/SAE readings.
     """
@@ -48,6 +48,7 @@ class FinalReads:
     geometry: dict[str, ProbeReading] = field(default_factory=dict)
     lens: dict[str, ScalarReading] = field(default_factory=dict)
     sae: dict[str, ScalarReading] = field(default_factory=dict)
+    units: dict[str, ScalarReading] = field(default_factory=dict)
     per_token: dict[str, list[float]] | None = None
     hidden_states: dict[int, torch.Tensor] | None = None
     lens_source: str | None = None
@@ -98,8 +99,10 @@ def finalize_generation(
     geometry_aggregates = reads.geometry
     lens_aggregates = reads.lens
     sae_aggregates = reads.sae
+    units_aggregates = reads.units
     manifold_aggregates: dict[str, Any] = {
         **geometry_aggregates, **lens_aggregates, **sae_aggregates,
+        **units_aggregates,
     }
     measurement_envelope = build_measurements(
         scope="aggregate",
@@ -109,6 +112,7 @@ def finalize_generation(
         lens_source=reads.lens_source,
         sae_source=reads.sae_source,
         sae_layer=reads.sae_layer,
+        units_readings=units_aggregates or None,
         steering=applied_steering,
     )
     # ``Measurements`` is a TypedDict describing the wire shape, while the

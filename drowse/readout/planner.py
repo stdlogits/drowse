@@ -105,13 +105,16 @@ class GateDemand:
     ``monitor_keys`` are the exact scalar keys naming an attached geometry
     probe and ``monitor_probes`` those probes' names; ``lens_keys`` /
     ``sae_keys`` the channel-validated keys naming an attached J-lens / SAE
-    probe.  A gate naming no attached probe lands in none of them.
+    probe; ``units_keys`` the keys naming an attached unit probe or any unit
+    (a unit gate needs no attached probe).  A gate naming no attached probe
+    (and no unit) lands in none of them.
     """
 
     monitor_keys: frozenset[str] = frozenset()
     monitor_probes: frozenset[str] = frozenset()
     lens_keys: frozenset[str] = frozenset()
     sae_keys: frozenset[str] = frozenset()
+    units_keys: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,7 +137,8 @@ class ReadDemand:
     - ``gating_only_probes`` — the gated probe names when gating is the sole
       per-token consumer; the step sink then scores just that subset.
     - ``gating_probe_keys`` / ``lens_gating_probe_keys`` /
-      ``sae_gating_probe_keys`` — the exact gate scalar keys per family.
+      ``sae_gating_probe_keys`` / ``units_gating_probe_keys`` — the exact
+      gate scalar keys per family.
     - ``lean_per_token`` — the live consumers read only axis-0 coords, so
       per-token scoring drops nearest / assignment / per-layer work.
     - ``final_probe_aggregate`` — an end-of-generation aggregate is wanted.
@@ -150,6 +154,7 @@ class ReadDemand:
     gating_probe_keys: frozenset[str] = frozenset()
     lens_gating_probe_keys: frozenset[str] = frozenset()
     sae_gating_probe_keys: frozenset[str] = frozenset()
+    units_gating_probe_keys: frozenset[str] = frozenset()
     lean_per_token: bool = False
     final_probe_aggregate: bool = True
     live_lens_active: bool = True
@@ -219,6 +224,7 @@ def resolve_read_demand(
         gating_probe_keys=gates.monitor_keys,
         lens_gating_probe_keys=gates.lens_keys,
         sae_gating_probe_keys=gates.sae_keys,
+        units_gating_probe_keys=gates.units_keys,
         lean_per_token=lean_per_token,
         final_probe_aggregate=final_probe_aggregate,
         live_lens_active=live_lens_active,

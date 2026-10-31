@@ -109,6 +109,19 @@ CAPABILITIES: dict[str, FamilyCapabilities] = {
             "preparation (POST .../instruments/sae/preparations with operation='fetch')",
         ),
     ),
+    "units": FamilyCapabilities(
+        sources=False,
+        preparations=(),
+        token_readout=True,
+        source_switch=False,
+        sources_error=(
+            404,
+            "units have no source lifecycle (neurons and heads are the model's "
+            "own parts; their statistics ride the neutral cache)",
+        ),
+        source_switch_error=(404, "units have no source to switch"),
+        preparations_error=(404, "units have no background preparations"),
+    ),
 }
 
 

@@ -46,8 +46,8 @@ The engine has two deliberately separate planes:
 - The **steering plane** resolves an expression, composes every compatible
   term into one update per affected layer, and injects it.
 - The **read plane** plans hidden-state retention, binds frozen per-generation
-  instrument state, and produces geometry, J-lens and SAE readings without
-  touching the steering representation.
+  instrument state, and produces geometry, J-lens, SAE and unit readings
+  without touching the steering representation.
 
 They meet at **gates**: a steering trigger may depend on a read-side scalar, so
 the capture plan must retain and score exactly the channels needed before the
@@ -66,7 +66,7 @@ next steered forward.
 | Steering math (synthesis, the kernel, fold, projection) | `geometry/inject.py`, `geometry/fold.py` |
 | Read contract, Monitor, capture planning, envelope | `readout/` |
 | Applying the read plan to one generation | `generation/read_plane.py::ReadPlane` |
-| J-lens and SAE families | `lens/`, `sae/` |
+| J-lens, SAE and units families | `lens/`, `sae/`, `units/` (block description and unit directions in `model/blocks.py`, `model/units.py`) |
 | Extraction and fitting | `fit/` (`pipeline.py`, `corpus.py`, `capture.py`, `node_stats.py`, `publish.py`, `preflight.py`) |
 | Artifact formats, selectors, distribution | `store/` |
 | Conversation tree, recipes, replay, transcripts | `loom/` |
@@ -255,9 +255,12 @@ family that fails it falls back to the template path.
 
 ### 5.3 Neutral anchoring and the Mahalanobis metric
 
-Neutral activations are cached fp32 per model (`store/neutral.py`). This is a
-range invariant: late-layer residual channels overflow fp16 and would poison
-every covariance-derived read.
+Neutral activations are cached fp32 per model (`store/neutral.py`, format 5).
+This is a range invariant: late-layer residual channels overflow fp16 and
+would poison every covariance-derived read. The same forward measures the
+unit statistics the units family reads in and ablates toward (one hook pair
+per block, streamed; `drowse/units/AGENTS.md`), stored in the same shards; a
+model whose blocks `BlockSpec` refuses gets the cache with units unavailable.
 
 `geometry/whitener.py::LayerWhitener` keeps the centered neutral rows and a
 Woodbury form of the regularized inverse covariance. It applies `Σ⁻¹`, computes
@@ -326,7 +329,7 @@ in `drowse/steering/AGENTS.md`. In brief:
 | `@response`, `@after`, `@first:N`, … | restrict the token phase or window |
 | `@when:probe>t` | fire only while a read-side scalar holds |
 | `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces |
-| `neuron/L8n344`, `!head/L20h17` | model units: a neuron push along its write, a unit mean-ablation (`UnitAblationTerm`) |
+| `neuron/L8n344`, `!head/L20h17` | model units: a neuron push along its write (a one-layer profile through the one kernel), a unit mean-ablation (`UnitAblationTerm` → a `UnitOp` pre-hook replacing the unit's activation by its neutral mean) |
 
 ### 6.2 Resolution and composition
 
@@ -443,9 +446,9 @@ Channel units and semantics: `drowse/readout/AGENTS.md`.
 
 ## 7. The read plane
 
-### 7.1 Three instrument families
+### 7.1 Four instrument families
 
-`session.instruments` registers three families behind one contract
+`session.instruments` registers four families behind one contract
 (`readout/protocol.py::Instrument`):
 
 | Family | Facade | Reading | Unit |
@@ -453,13 +456,21 @@ Channel units and semantics: `drowse/readout/AGENTS.md`.
 | `geometry` | `session.geometry` (`GeometryInstrument` over `Monitor`) | `ProbeReading` | domain coordinate; Mahalanobis fraction and label distance; curved membership and assignment |
 | `lens` | `session.lens` (`LensInstrument`) | `ScalarReading` | mean fitted-layer probability of one vocabulary token |
 | `sae` | `session.sae` (`SaeInstrument`) | `ScalarReading` | feature activation over Neuronpedia's `maxActApprox` when known, else raw activation |
+| `units` | `session.units` (`UnitsInstrument`) | `ScalarReading` | a neuron's activation over its pole's neutral `act_top` (signed), a head's write norm over its `act_top` |
+
+The units family reads the model's own parts rather than the residual: its
+bound run owns a tap (one forward hook per touched down or output projection,
+present only while a probe or gate consumes it) and its statistics come from
+the neutral pass (neutral cache v5: a neuron's mean activation and per-pole
+`act_top`, a head's mean `z_h` and write-norm `act_top`). A gate on a unit
+needs no attached probe. `drowse/units/AGENTS.md` owns the definitions.
 
 Geometry readings carry coordinates, fraction, nearest labels, residual,
 membership/assignment, per-layer traces and depth summaries. Every geometry
 probe is a fitted `Manifold`, flat or curved, read in the whitened metric and
 reported in its domain frame (a rank-1 probe reads `1.0` at its positive node).
 Live token reads, aggregates and replays come from the same scorer, so they are
-directly comparable. Lens and SAE readings
+directly comparable. Lens, SAE and unit readings
 carry one value with an explicit unit, a per-layer trace and a depth summary.
 The `ProbeReading` projection of a scalar reading exists only at the vendor
 extension boundary (`TokenEvent.probe_readings` and the OpenAI/Ollama
@@ -487,7 +498,7 @@ generation: it binds the runs, applies the capture plan, arms the step sinks,
 builds the gate callback, and runs the finalize reads. The decode loop computes
 one `step_id = len(generated_ids)` per forward and hands the same value to the
 capture sink, the gate callback and the token tap. Within a forward, gate and
-display reads share work through the geometry sink row or the lens/SAE
+display reads share work through the geometry sink row or the lens/SAE/units
 step-keyed stash, so one forward is never scored twice.
 
 ### 7.3 Capture planning
@@ -520,7 +531,8 @@ replay endpoints:
   instruments: {
     geometry: {binding?, readings},
     lens:     {binding, readings?, readout?},
-    sae:      {binding, readings?, readout?}
+    sae:      {binding, readings?, readout?},
+    units:    {binding, readings}
   }
 }
 ```
@@ -821,11 +833,12 @@ Change the narrow owner first:
   results bumps `MANIFOLD_FIT_POLICY_VERSION` and may regenerate goldens.
 - **A read channel or family**: `readout/types.py` and the protocol, the
   family, the planner union, the envelope (and its browser golden), the server
-  schema and the webui types. A fourth family also needs a
+  schema and the webui types. A new family also needs a
   `session.instruments` entry, `generation/token_payloads.py::_FAMILY_SLOTS`
   and `server/instrument_routes.py::CAPABILITIES` (both pinned to the registry
-  by test), and edits where `ProbeRoster`, `ReadPlane` and the engine's
-  `TokenTap` still name the three families.
+  by test), and edits where `ProbeRoster`, `ReadPlane`, `FinalReads` and the
+  engine's `TokenTap` name the families (the units family is the worked
+  example: `drowse/units/`).
 - **A model architecture**: `model/arch.py` discovers blocks structurally, so
   a new block location is one `_LAYER_PATHS` entry; "tested" means a
   `TESTED_ARCHS` entry plus dispatch and numerics cases; role and scene
@@ -848,10 +861,14 @@ executable statement of why a boundary is strict.
 ## 16. Known boundaries
 
 - J-lens atoms and probes name one tokenizer token; multi-token words raise
-  `MultiTokenWordError`. `slens` and `neuron` pushes parse but raise
-  `ProfileNotRegisteredError`, and `!neuron/…`/`!head/…` parse to
-  `UnitAblationTerm` but raise `SteeringCompositionError` until unit
-  interventions are wired.
+  `MultiTokenWordError`. `slens` pushes parse but raise
+  `ProfileNotRegisteredError`.
+- Unit ablation rewrites a projection's input through a module pre-hook, so a
+  steered generation with `!neuron/…`/`!head/…` (or a unit probe's tap) runs
+  the eager module on a compiled session. Unit statistics measure the neutral
+  corpus only (96 documents, so `act_top` is the median of the top quarter of
+  document maxima), and a mean-ablation replaces every position, the
+  attention sink included.
 - `BlockSpec` (`model/blocks.py`) describes dense decoders only: llama,
   mistral, qwen2/3 and gemma2/3/4 without per-layer inputs, KV sharing or MoE.
   MoE, fused gate-up or qkv projections, hybrid linear-attention stacks,
@@ -875,7 +892,7 @@ executable statement of why a boundary is strict.
   regenerated neutral corpus leave existing fits in place unless forced
   (`drowse/fit/AGENTS.md`).
 - Recipe receipts stamp geometry probes only; transcript headers hash all
-  three families.
+  four families.
 - CPU works but is not the intended interactive path for large models.
 - `drowse serve` is a trusted-local or lab server, not a hardened multi-tenant
   inference platform.

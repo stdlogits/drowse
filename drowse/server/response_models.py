@@ -431,7 +431,22 @@ class SaeProbeInfo(TypedDict):
     max_act: float | None
 
 
-ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo
+class UnitsProbeInfo(TypedDict):
+    """One attached unit probe: an MLP neuron or attention head, read at its
+    own layer in units of its neutral ``act_top``."""
+
+    family: Literal["units"]
+    name: str
+    unit: str
+    kind: Literal["neuron", "head"]
+    layer: int
+    index: int
+    layers: list[int]
+    intrinsic_dim: int
+    feature_space: str
+
+
+ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo | UnitsProbeInfo
 
 
 class ProbeListResponse(TypedDict):

@@ -1142,7 +1142,7 @@ class TestSessionInfoInstrumentFields:
         _session, client = session_and_client
         info = client.get("/drowse/v1/sessions/default").json()
         assert {row["family"] for row in info["instruments"]} == {
-            "geometry", "lens", "sae",
+            "geometry", "lens", "sae", "units",
         }
         for gone in (
             "live_lens_layers", "live_sae", "live_probe_scores",

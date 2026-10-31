@@ -195,18 +195,22 @@ def test_projection_defaults_without_depth():
 # --------------------------------------------------------------------------
 
 def test_session_facades_are_the_instruments(make_tiny_session: Any) -> None:
-    """``session.lens`` / ``session.sae`` are the instrument objects
-    themselves — the typed public faces of ``session.instruments``."""
+    """``session.lens`` / ``session.sae`` / ``session.units`` are the
+    instrument objects themselves — the typed public faces of
+    ``session.instruments``."""
     from drowse import GeometryInstrument, LensInstrument, SaeInstrument
+    from drowse.units.instrument import UnitsInstrument
 
     session = make_tiny_session(warm=False)
     inst = session.instruments
-    assert set(inst) == {"geometry", "lens", "sae"}
+    assert set(inst) == {"geometry", "lens", "sae", "units"}
     assert isinstance(inst["geometry"], GeometryInstrument)
     assert isinstance(inst["lens"], LensInstrument)
     assert isinstance(inst["sae"], SaeInstrument)
+    assert isinstance(inst["units"], UnitsInstrument)
     assert session.lens is inst["lens"]
     assert session.sae is inst["sae"]
+    assert session.units is inst["units"]
 
 
 #: The instrument/run surface the session, composer, and server exercise

@@ -49,8 +49,12 @@ Internal order: `domains`, `rbf` → `subspace` → `invert`, `manifold`, `tube`
   channels, so it is a wrong answer, not a degraded one. The deliberate
   Euclidean code: `pca_basis` without a whitener (the behavior-space fit in
   `fit/naturalness.py`, which lives in output-distribution space, and tests),
-  `Profile.projected_away` (plain Gram-Schmidt, no in-repo caller), and a
-  whitener layer whose neutrals are exactly zero (λ = 1, Σ_reg = I).
+  `Profile.projected_away` (plain Gram-Schmidt, no in-repo caller), a
+  whitener layer whose neutrals are exactly zero (λ = 1, Σ_reg = I), and a
+  head's write norm `‖W_O^h z_h‖` (`units/stats.py`, `units/capture.py`):
+  neuron-lens's definition of a head's firing, a scalar read only in units of
+  that head's own neutral `act_top` and never compared geometrically across
+  units or against a direction (`drowse/units/AGENTS.md`).
 - **μ-center the scatter, never anchor-center it.** `pca_basis` takes centroids
   minus their own mean. Centering on neutral injects the neutral offset as a
   spurious axis and breaks PCA@2 ≡ difference-of-means.

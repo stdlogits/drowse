@@ -336,12 +336,13 @@ class TestNeutralBaselineLazy:
 
         from drowse.session.neutral import NeutralBaseline
         from drowse.fit import neutral as neutral_store
+        from drowse.store.neutral import NeutralCache, NeutralUnits
 
-        def _load(*args: Any, **kwargs: Any) -> dict[int, torch.Tensor]:
+        def _load(*args: Any, **kwargs: Any) -> NeutralCache:
             calls.append(kwargs["model_id"])
-            return acts
+            return NeutralCache(acts, NeutralUnits(None, 0, "test"), {})
 
-        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_activations", _load)
+        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_cache", _load)
         return NeutralBaseline(
             model=object(), tokenizer=object(), layers=[], model_id="test/model",
             exclusive=lambda *_a, **_kw: nullcontext(), steered=lambda: False,
@@ -389,7 +390,7 @@ class TestNeutralBaselineLazy:
         def _boom(*_args: Any, **_kwargs: Any) -> Any:
             raise OSError("neutral cache unreadable")
 
-        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_activations", _boom)
+        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_cache", _boom)
         assert baseline.whitener() is None
         with pytest.raises(DrowseError, match="neutral layer means") as info:
             baseline.layer_means()

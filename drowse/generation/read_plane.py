@@ -54,6 +54,7 @@ if TYPE_CHECKING:
     from drowse.readout.monitor import Monitor
     from drowse.readout.types import GateRef
     from drowse.sae.instrument import SaeInstrument
+    from drowse.units.instrument import UnitsInstrument
 
 GateScoreCallback = Callable[[int], dict[str, float]]
 
@@ -69,19 +70,22 @@ class ReadPlane:
         geometry: "GeometryInstrument",
         lens: "LensInstrument",
         sae: "SaeInstrument",
+        units: "UnitsInstrument",
         layers: Any,
         tokenizer: Any,
         gate_refs: Callable[[], "list[tuple[str, GateRef]]"],
     ) -> None:
         """``layers`` are the model's decoder layers (transient hooks attach
         there); ``gate_refs`` returns the active steering's probe-gate
-        references (the composer's stack)."""
-        #: The hidden-state buffers every family reads.
+        references (the composer's stack).  The units family reads no
+        residual capture: its bound run owns its own hooks."""
+        #: The hidden-state buffers the geometry, lens and SAE families read.
         self.capture = capture
         self._monitor = monitor
         self._geometry = geometry
         self._lens = lens
         self._sae = sae
+        self._units = units
         self._layers = layers
         self._tokenizer = tokenizer
         self._gate_refs = gate_refs
@@ -100,8 +104,14 @@ class ReadPlane:
         geometry_request: ReadRequest,
         lens_request: ReadRequest,
         sae_request: ReadRequest,
+        units_request: ReadRequest | None = None,
     ) -> tuple[InstrumentPlan, InstrumentPlan, InstrumentPlan]:
         """Run the uniform instrument transaction: close → prepare → plan → bind.
+
+        Returns the residual-reading families' plans (geometry, lens, SAE),
+        the capture planner's input.  The units family binds in the same
+        transaction (``units_request``, default: nothing per token, no
+        aggregate) and needs no residual capture.
 
         The defensive close comes first: a stale pin would short-circuit the
         lens disk refresh inside ``prepare``, and a stale binding would keep
@@ -117,12 +127,18 @@ class ReadPlane:
         geometry_prep = self._geometry.prepare(geometry_request)
         lens_prep = self._lens.prepare(lens_request)
         sae_prep = self._sae.prepare(sae_request)
+        units_prep = self._units.prepare(
+            units_request if units_request is not None
+            else ReadRequest(final_aggregate=False)
+        )
         geometry_plan = self._geometry.plan(geometry_prep)
         lens_plan = self._lens.plan(lens_prep)
         sae_plan = self._sae.plan(sae_prep)
+        units_plan = self._units.plan(units_prep)
         self._geometry.bind(geometry_plan, geometry_prep)
         self._lens.bind(lens_plan, lens_prep)
         self._sae.bind(sae_plan, sae_prep)
+        self._units.bind(units_plan, units_prep)
         return geometry_plan, lens_plan, sae_plan
 
     def close_runs(self) -> None:
@@ -130,11 +146,30 @@ class ReadPlane:
 
         Every capture transaction that binds runs must reach this in its
         ``finally``: a bound run leaking past its transaction pins a stale
-        lens and freezes SAE units past their generation.
+        lens, freezes SAE units past their generation and leaves unit hooks
+        on the model.
         """
         self._geometry.close_run()
         self._lens.close_run()
         self._sae.close_run()
+        self._units.close_run()
+
+    @property
+    def transient_hooks(self) -> bool:
+        """Whether this generation's reads hold transient hooks on the model
+        (residual capture or the units tap): the compiled-clean routing gate."""
+        return self.capture.is_transient() or self._units.hooks_attached
+
+    @property
+    def has_unit_probes(self) -> bool:
+        """Whether unit probes are attached (the batched fast path cannot read
+        them, so a batch wanting readings runs serially)."""
+        return bool(self._units.names)
+
+    def units_step_readings(self, step_id: int) -> "dict[str, Any]":
+        """The token tap's unit readings for this forward (empty when the
+        units run has no per-token consumer)."""
+        return self._units.step_readings(step_id)
 
     # ---------------------------------------------------------------- demand
 
@@ -150,6 +185,14 @@ class ReadPlane:
         if not refs:
             return GateDemand()
         attached = set(self._monitor.probe_names)
+        units = self._units
+        units_keys: set[str] = set()
+        for key, ref in refs:
+            # An attached unit probe, or any unit (checked: a bad index is a
+            # 400 here, at preflight).
+            if units.gate_unit(ref):
+                units.validate_gate(ref)
+                units_keys.add(key)
         return GateDemand(
             monitor_keys=frozenset(
                 key for key, ref in refs if ref.probe in attached
@@ -159,6 +202,7 @@ class ReadPlane:
             ),
             lens_keys=_family_gate_keys(self._lens, refs),
             sae_keys=_family_gate_keys(self._sae, refs),
+            units_keys=frozenset(units_keys),
         )
 
     def resolve_demand(
@@ -203,16 +247,18 @@ class ReadPlane:
         *,
         widen: bool = False,
         persistent_buffers: "dict[int, torch.Tensor] | None" = None,
+        units_live: bool = False,
     ) -> bool:
         """Bind the instrument runs and attach this generation's capture.
 
-        Returns whether capture is attached.  ``demand`` ``None`` is the
-        all-defaults demand (full per-token scoring, a final aggregate, both
-        live readouts on, no gates).  ``widen`` (``return_hidden``) covers
-        every model layer with full retention.  ``persistent_buffers`` are
-        the compile-clean capture buffers, passed only when this generation
-        may ride them (compiled clean route, steering lowered to offsets or
-        absent).
+        Returns whether residual capture is attached.  ``demand`` ``None`` is
+        the all-defaults demand (full per-token scoring, a final aggregate,
+        both live readouts on, no gates).  ``widen`` (``return_hidden``)
+        covers every model layer with full retention.  ``persistent_buffers``
+        are the compile-clean capture buffers, passed only when this
+        generation may ride them (compiled clean route, steering lowered to
+        offsets or absent).  ``units_live``: a per-token consumer reads the
+        attached unit probes (the units tap then runs every forward).
         """
         demand = ReadDemand() if demand is None else demand
         geometry_plan, lens_plan, sae_plan = self.bind_runs(
@@ -231,6 +277,12 @@ class ReadPlane:
                 gate_keys=demand.sae_gating_probe_keys,
                 live=demand.live_sae_active,
                 per_token_consumers=demand.per_token_full_consumer,
+                final_aggregate=demand.final_probe_aggregate,
+            ),
+            ReadRequest(
+                gate_keys=demand.units_gating_probe_keys,
+                live=units_live,
+                per_token_consumers=units_live,
                 final_aggregate=demand.final_probe_aggregate,
             ),
         )
@@ -344,8 +396,10 @@ class ReadPlane:
         )
 
     def end(self) -> None:
-        """Detach the capture hooks (buffers stay readable for finalize)."""
+        """Detach the capture hooks and the units tap (buffers and the tap's
+        ring stay readable for finalize)."""
         self.capture.detach()
+        self._units.end_capture()
 
     def reset(self) -> None:
         """Back to the between-generations state: FULL, no rows."""
@@ -402,7 +456,8 @@ class ReadPlane:
         monitor_gate_keys = set(gates.monitor_keys)
         lens_gate_keys = set(gates.lens_keys)
         sae_gate_keys = set(gates.sae_keys)
-        lens, sae = self._lens, self._sae
+        units_gate_keys = set(gates.units_keys)
+        lens, sae, units = self._lens, self._sae, self._units
         plans: dict[tuple[frozenset[str], frozenset[str] | None], Any] = {}
 
         def _score_monitor_keys(
@@ -466,6 +521,12 @@ class ReadPlane:
                     out = {**out, **scalars}
             if sae_gate_keys:
                 scalars = sae.current_run.gate_scalars(step_id, None, sae_gate_keys)
+                if scalars:
+                    out = {**out, **scalars}
+            if units_gate_keys:
+                # One host transfer for every tapped unit, stashed by step
+                # for the token tap.
+                scalars = units.current_run.gate_scalars(step_id, None, units_gate_keys)
                 if scalars:
                     out = {**out, **scalars}
             return out
@@ -598,6 +659,12 @@ class ReadPlane:
             self._sae.score_aggregate(generated_ids, _pooled())
             if want_readouts and self._sae.names else {}
         )
+        # The units read their own ring by the aggregate's forward index (the
+        # residual slice carries no unit activation).
+        units = (
+            self._units.score_aggregate(agg_fwd)
+            if want_readouts and self._units.names else {}
+        )
 
         hidden_states: dict[int, torch.Tensor] | None = None
         if return_hidden and generated_ids and stack:
@@ -609,7 +676,7 @@ class ReadPlane:
                 elif rows.shape[0] < n:
                     continue
                 hidden_states[layer] = rows.detach().to("cpu")
-        return self._reads(geometry, lens, sae, per_token, hidden_states)
+        return self._reads(geometry, lens, sae, per_token, hidden_states, units)
 
     def begin_batch(self, want_readings: bool) -> bool:
         """Bind the runs and arm the batched ``[B, D]`` tail ring.
@@ -617,7 +684,9 @@ class ReadPlane:
         The ``generate_batch`` fast path's capture: one request serves all
         three families (the lens prepare pins one lens for every row), and
         the ring covers the union of their declared layers.  Returns whether
-        any family will read a per-row aggregate.
+        any family will read a per-row aggregate.  The units family binds
+        with no demand: its tap reads one row, so a batch wanting unit
+        readings runs serially (:attr:`has_unit_probes`).
         """
         captures = want_readings and bool(
             self._geometry.names or self._lens.names or self._sae.names
@@ -665,12 +734,14 @@ class ReadPlane:
         sae: dict[str, Any],
         per_token: dict[str, list[float]] | None,
         hidden_states: dict[int, torch.Tensor] | None,
+        units: dict[str, Any] | None = None,
     ) -> FinalReads:
         """Package the reads with the live sources the envelope reports."""
         return FinalReads(
             geometry=geometry,
             lens=lens,
             sae=sae,
+            units=dict(units or {}),
             per_token=per_token,
             hidden_states=hidden_states,
             **live_sources(

@@ -57,7 +57,10 @@ from drowse.steering.triggers import Trigger
 
 if TYPE_CHECKING:
     from drowse.geometry.manifold import Manifold
+    from drowse.naming import UnitRef
     from drowse.readout.types import GateRef
+    from drowse.units.runtime import UnitSite
+    from drowse.units.stats import UnitStats
 
 
 # Plans retained by stack head.  A ``generate(steering=…)`` composes twice
@@ -92,9 +95,23 @@ class NeutralSource(Protocol):
     @property
     def resident_whitener(self) -> Any: ...
 
+    @property
+    def unit_stats(self) -> "UnitStats | None": ...
+
     def ensure(self) -> None: ...
 
     def require_means(self) -> dict[int, torch.Tensor]: ...
+
+
+class UnitSource(Protocol):
+    """The model's units, as unit ablation resolves them
+    (:class:`~drowse.units.runtime.UnitsRuntime`)."""
+
+    def check(self, ref: "UnitRef") -> "UnitRef": ...
+
+    def stats(self) -> "UnitStats": ...
+
+    def site(self, ref: "UnitRef", *, stats: "UnitStats | None" = None) -> "UnitSite": ...
 
 
 def _fires_in_prefill(trigger: Trigger) -> bool:
@@ -417,14 +434,18 @@ class SteeringComposer:
         events: EventBus,
         generation_phase: Callable[[], str | None],
         on_prefill_steering_change: Callable[[], None],
+        units: "UnitSource | None" = None,
     ) -> None:
         """
         ``generation_phase`` returns the phase name while a generation is
         mid-step (``RUNNING`` / ``FINALIZING``) and ``None`` otherwise; a
         stack mutation then is callback re-entry and is refused.
         ``on_prefill_steering_change`` runs when a push or pop leaves the
-        prompt prefill steered (the cached prefix is unsteered).
+        prompt prefill steered (the cached prefix is unsteered).  ``units``
+        resolves ``!neuron/…`` / ``!head/…`` ablation sites (``None``: unit
+        ablation is unavailable, a 422 at composition).
         """
+        self._units = units
         self._artifacts = artifacts
         self._neutral = neutral
         self._manager = manager
@@ -510,8 +531,11 @@ class SteeringComposer:
         entries: dict[str, SteeringStackEntry] = {}
         for name, val in steering.alphas.items():
             if isinstance(val, UnitAblationTerm):
-                # Nothing to load: a unit is resolved against the model when
-                # its ablation is lowered.
+                # Nothing to load; the unit is checked against the model here
+                # (a bad layer or index is a 400 before the scope is entered)
+                # and its site resolves at composition.
+                if self._units is not None:
+                    self._units.check(val.unit)
                 entries[name] = val
                 continue
             if isinstance(val, AblationTerm):
@@ -814,10 +838,24 @@ class SteeringComposer:
         grouped: dict[Trigger, tuple[list[Any], list[Any]]] = {}
         for name, entry in entries.items():
             if isinstance(entry, UnitAblationTerm):
-                raise SteeringCompositionError(
-                    f"unit ablation is not wired yet ({name!r}): '!neuron/' and "
-                    "'!head/' parse but cannot be composed"
+                # A module pre-hook replacing the unit's activation by its
+                # neutral mean, blended by the coefficient: never a residual
+                # direction, so it joins no affine group.
+                units = self._units
+                if units is None:
+                    raise SteeringCompositionError(
+                        f"unit ablation {name!r} needs the model's units, which "
+                        "this composer was built without"
+                    )
+                unit_stats = units.stats()
+                record((lambda: neutral.unit_stats, unit_stats))
+                site = units.site(entry.unit, stats=unit_stats)
+                plan.add_unit_ablation(
+                    name, module=site.module, start=site.start, stop=site.stop,
+                    width=site.width, mean=site.mean, coeff=entry.coeff,
+                    trigger=entry.trigger,
                 )
+                continue
             if isinstance(entry, AblationTerm):
                 ablate_prof = _profile(entry.target, "ablation target")
                 keep = _layers(name, ablate_prof, entry.layers)

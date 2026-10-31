@@ -49,6 +49,7 @@ so keep test modules exactly one directory deep.
 | `steering/` | expression grammar, triggers, steering scopes, hooks, installation, subspace/manifold steering, ablation |
 | `readout/` | monitor, probe roster, read planner, captures, measurements envelope, instrument types, geometry replay, `score_hidden` |
 | `lens/`, `sae/` | lens math, the transport estimator (against the autograd oracle), RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
+| `units/` | neutral unit statistics (against a hand computation), the tap, unit probes and gates through a tiny session, replay, unit ablation against hand-patched forwards, neuron pushes, refusals |
 | `generation/` | decode loop, sampling, logits, prefix cache, render, results, scoring, token payloads |
 | `fit/` | extraction pipeline, capture, bake, monopolar fits, preflight, naturalness, transfer alignment |
 | `loom/` | tree, ops, diff, filter, transcript, recipe overrides, token rows, token replay, joint logprobs, concurrency |
@@ -66,7 +67,7 @@ so keep test modules exactly one directory deep.
 |---|---|---|
 | `gpu` | Needs CUDA or MPS; may download weights. CI deselects it. | `tests/gpu/` except `test_gpu_model.py` (CPU tests of the skip helper); the `mps` params of `tests/model/test_model_numerics.py` and `tests/generation/test_generation_metadata.py`; `tests/generation/test_scoring.py::test_real_forward_score_choices_distribution`. A test that requests `gpu_session` is marked automatically. |
 | `gpu_gemma` | Needs explicit gated Gemma model and artifact access. | `tests/gpu/test_sae_lens_smoke.py` (also `gpu`, and opt-in via `DROWSE_TEST_SAELENS`). |
-| `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s) and `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower). Both are also `gpu`. |
+| `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s), `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower) and `test_throughput_with_unit_ablation` (8 neurons and 2 heads mean-ablated ≥ 80%). All are also `gpu`. |
 
 GPU modules load with `device="auto"` (cuda > mps > cpu) and skip without CUDA
 or MPS. `load_or_skip_inaccessible` skips when loading fails on access (a gated
@@ -141,10 +142,11 @@ set session privates.
 | Module | Provides |
 |---|---|
 | `composer.py` | `SteeringRig`: a real `SteeringComposer` with its `ArtifactRegistry`, `NeutralBaseline` and `SteeringManager`, no model; `attach_engine()` adds a `GenerationEngine` on the rig's lock. |
-| `read_plane.py` | `ReadRig`: a real `ReadPlane`, the three instruments and the `ProbeRoster` over a swappable `CaptureSlot` (any instrument can be replaced by a fake); `finalize` runs the finalize reads through `finalize_generation` as the engine does; `gate_refs(expr)`; `fake_readout_family`; `geometry_instrument`. |
+| `read_plane.py` | `ReadRig`: a real `ReadPlane`, the four instruments (units over a model-less runtime) and the `ProbeRoster` over a swappable `CaptureSlot` (any instrument can be replaced by a fake); `finalize` runs the finalize reads through `finalize_generation` as the engine does; `gate_refs(expr)`; `fake_readout_family`; `geometry_instrument`. |
 | `engine.py` | `engine_over(host, ...)`: a `GenerationEngine` with an inert runtime, for call composition without a model. |
 | `lens.py` | `LensHarness` (a `LensInstrument` on the toy model, recording `on_change` and exclusive sections), `lens_instrument`/`lens_kwargs` (constructor arguments with inert defaults), `FakeCapture`. |
 | `sae.py` | `MockSaeBackend` (identity encode/decode by default), `sae_instrument` (a real `SaeInstrument` + `SaeRuntime`; registry effects land on `.effects`), `make_resident` (installs a residency without the load path). |
+| `units.py` | `inert_units_instrument` (a real `UnitsInstrument` over a model-less runtime, for rigs), `random_unit_stats(spec)`, `patched_forward_logits(model, ids, {module: patch})` (the hand-patched forward unit hooks are checked against). |
 | `replay.py` | `ReplayRig` (a real `TokenReplayer` over the toy model and a real `LoomTree`, recording renders, scopes, exclusive sections and capture forwards; hand `rig.replay` to the instrument under test), `unwired_replay` (fails loudly if called). |
 | `geometry.py` | `stub_geometry_instrument(stub)`: a real `GeometryInstrument` reading a hand-built stub's attributes per call. For the remaining stub suites; new tests use `tiny_session`. |
 | `capture.py` | `install_capture` (swaps `fit.capture._encode_and_capture_all_batch` for a synthetic per-row encoder and pins the baseline prompts to one), `StubHandle` (identity layers + a covering synthetic whitener), for model-free `ManifoldExtractionPipeline` tests. |
@@ -164,7 +166,7 @@ set session privates.
 
 **Route tests.** `mock_session(**overrides)` is
 `create_autospec(DrowseSession, instance=True)` shaped as an idle session: idle
-tree, the three instrument faces idle with no probes, the Monitor, a working
+tree, the four instrument faces idle with no probes, the Monitor, a working
 event bus. A name the class does not define raises `AttributeError` and every
 method call is signature-checked, so a route that calls a removed or renamed
 method fails. Overrides apply last; `script_generate(session, tokens)` makes

@@ -1,7 +1,7 @@
 # drowse/readout — AGENTS.md
 
 The read side's lower half: the shared read vocabulary, the instrument
-contract all three read families implement, the geometry family (the whitened
+contract all four read families implement, the geometry family (the whitened
 `Monitor` and its `GeometryInstrument` adapter), the hidden-state capture
 buffers, the pure capture planner, the probe roster, the versioned measurement
 envelope, and Mahalanobis cosine analytics. The narrative of how reads fit a
@@ -11,7 +11,8 @@ contract an editor needs.
 Lives elsewhere: `generation/read_plane.py::ReadPlane` applies capture plans,
 arms the step sinks, builds the gate callback and runs the finalize reads;
 `loom/replay.py::TokenReplayer` implements the `TokenReplay` protocol;
-`lens/instrument.py` and `sae/instrument.py` are the other two families;
+`lens/instrument.py`, `sae/instrument.py` and `units/instrument.py` are the
+other three families (`drowse/units/AGENTS.md`);
 `geometry/whitener.py` is the metric; `session/session.py` wires it all.
 
 ## Module map
@@ -33,9 +34,10 @@ arms the step sinks, builds the gate callback and runs the finalize reads;
 
 ## Layering
 
-`readout` sits above `steering.{grammar,terms,triggers}` and below `lens`/`sae`
-(`tests/invariants/test_layering.py`; `TYPE_CHECKING` imports count). It must
-not import `lens`, `sae`, `steering.composer`/`hooks`, `generation` or
+`readout` sits above `steering.{grammar,terms,triggers}` and below
+`lens`/`sae`/`units` (`tests/invariants/test_layering.py`; `TYPE_CHECKING`
+imports count). It must not import `lens`, `sae`, `units`,
+`steering.composer`/`hooks`, `generation` or
 anything above; collaborators from those layers are typed against the
 Protocols here (`LatestSlices`, `TokenReplay`, `GeometryFamily`,
 `ReadoutFamily`). `monitor_attach.py` must never import `monitor.py`.
@@ -69,7 +71,14 @@ bind` per family (`ReadPlane.bind_runs`) and reaches `close_runs` in a
 out-of-generation reads. There is no per-run reading memo: within one forward
 the decode loop passes the same `step_id` (`len(generated_ids)` before the
 forward) to the capture sink, the gate callback and the token tap, and reuse
-is the sink's row (geometry) or the lens/SAE step-keyed stash.
+is the sink's row (geometry) or the lens/SAE/units step-keyed stash.
+
+The units family reads no residual capture: its bound run owns a tap of its
+own (`units/capture.py::UnitTap`, forward hooks on the down and output
+projections, present only while a probe or gate reads them), so its plan
+declares no layers and `plan_capture` never sees it. Its finalize read takes
+the aggregate's forward index (`UnitsInstrument.score_aggregate`), not the
+pooled residual slice.
 
 **Locks.** Each family's `state_lock` is a reentrant leaf: roster mutation and
 the coherent read surfaces (`names`, `specs`, `plan`/`bind` roster reads, idle
@@ -84,10 +93,13 @@ generation fails fast with `ConcurrentExtractionError` (409, "retry shortly").
 a family cannot honor raises `RequestError` (400), never silently ignored:
 geometry rejects `top_k` and `layers`, SAE rejects `layers`.
 
-**`validate_gate`** guards channels a family can never produce. Lens and SAE
-accept only the strength axis (`validate_gate_channels`); geometry accepts
-everything. It runs at generation preflight in `ReadPlane.resolve_gates`, for
-gates naming an attached lens/SAE probe.
+**`validate_gate`** guards channels a family can never produce. Lens, SAE and
+units accept only the strength axis (`validate_gate_channels`); geometry
+accepts everything. It runs at generation preflight in
+`ReadPlane.resolve_gates`, for gates naming an attached lens/SAE/units probe,
+and for every gate naming a unit: a unit gate needs no attached probe
+(`UnitsInstrument.gate_unit` checks the unit against the model, a 400 for an
+unknown one, and the tap reads it for the gate alone).
 
 `session.instruments` is the family enumeration. `generation/token_payloads.py::_FAMILY_SLOTS`
 and `server/instrument_routes.py::CAPABILITIES` are pinned to it by test, so a
@@ -113,11 +125,15 @@ and labels, and `:` splits only on the two exact channel words. The runtime
 gate lookup stays a plain `dict.get` on the verbatim string; `GateRef` is for
 preflight and planning.
 
-Readings: geometry produces `ProbeReading`; lens and SAE produce `ScalarReading`
-(`value` + explicit `unit` — `mean_token_probability`, `mean_footprint_z`
-(`slens/` probes), `activation_over_max`, `raw_activation` — + `per_layer` +
-`DepthSummary`). `DepthSummary.basis` travels
-with the numbers because the three families weight depth by unrelated masses;
+Readings: geometry produces `ProbeReading`; lens, SAE and units produce
+`ScalarReading` (`value` + explicit `unit` — `mean_token_probability`,
+`mean_footprint_z` (`slens/` probes), `activation_over_max`,
+`raw_activation`, `activation_over_scale` — + `per_layer` + `DepthSummary` +
+optional `meta`). A unit reading is a neuron's activation over its pole's
+neutral `act_top` (signed) or a head's write norm over its `act_top`, at one
+layer (basis `single_layer`), with the raw firing in `meta`.
+`DepthSummary.basis` travels with the numbers because the families weight
+depth by unrelated masses;
 never compare centers across bases. `as_probe_reading` /
 `ScalarReading.to_probe_reading` is a compatibility projection used only for
 `TokenEvent.probe_readings` and the OpenAI/Ollama `x-drowse-probe-readings`
@@ -137,6 +153,8 @@ trailing special tokens to the last content token.
 (the engine masks every per-token geometry consumer when the geometry live
 toggle is off):
 
+- `units_gating_probe_keys` (from `GateDemand.units_keys`) = gates naming an
+  attached unit probe or any unit; the units tap reads them, nothing here.
 - `per_token_full_consumer` = (live scores on and loom attached) or live token
   scores or persisted per-layer scores or persisted probe row or persisted
   inspector coords.
@@ -282,10 +300,10 @@ mean/basis/node coords. `token_readout` captures the roster's layer union
 
 ## ProbeRoster
 
-`jlens/…` and `slens/…` route to the lens, `sae/…` to the SAE, anything else
-to geometry.
-`detach` asks lens, then SAE, then geometry, and an unknown name is a no-op (the
-server 404s first). Digests are cached per family until `forget`; `changed`
+`jlens/…` and `slens/…` route to the lens, `sae/…` to the SAE, `neuron/…` and
+`head/…` to the units, anything else to geometry. `detach` asks lens, then SAE,
+then units, then geometry, and an unknown name is a no-op (the server 404s
+first). Digests are cached per family until `forget`; `changed`
 drops them and runs `on_change` (the session invalidates analytics; the prefix
 cache survives). Names are not checked for uniqueness across families; a
 collision shadows (hash and detach consult lens first; the flat `scores` join
@@ -298,7 +316,8 @@ The one wire record for token frames (`scope="token"`), final aggregates
 `MEASUREMENTS_VERSION = 1`. Build rules: `None` when nothing was measured; a
 family channel exists only when it has readings or a readout; lens/SAE channels
 always carry `binding` (`source`, `steering`, SAE `layer`), geometry only when
-the caller passes one (replay); `readings` are each family's native
+the caller passes one (replay); `units` (`UnitsChannel`) is exactly `{binding:
+{source: null, steering}, readings}`, present only with readings; `readings` are each family's native
 `to_dict()`; `readout` is the native discovery surface; `scores` is the axis-0
 join rounded to 6 places. The lens readout holds `p_l`, and this is the one
 place it becomes the wire's `logprob` (floored at `1e-45` so JSON stays

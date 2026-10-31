@@ -520,6 +520,78 @@ class TestAblationPerformance:
         finally:
             session.close()
 
+    @pytest.mark.perf
+    def test_throughput_with_unit_ablation(
+        self, model_and_tokenizer: Any, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Eight neurons and two heads mean-ablated (``UnitOp`` pre-hooks on
+        down and output projections) stay >= 80% of vanilla tok/s."""
+        from drowse.generation.sampling import SamplingConfig
+        from drowse.session.session import DrowseSession
+
+        monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
+        model, tokenizer = model_and_tokenizer
+        session = DrowseSession(model, tokenizer, probes=[])
+        try:
+            spec = session.units.runtime.spec()
+            n_layers, d_ff = spec.n_layers, spec.d_ff
+            n_heads = spec.blocks[0].n_heads
+            neurons = [
+                f"!neuron/L{layer}n{(97 * layer) % d_ff}"
+                for layer in range(2, n_layers, max(1, (n_layers - 2) // 8))
+            ][:8]
+            heads = [
+                f"!head/L{n_layers // 3}h{1 % n_heads}",
+                f"!head/L{2 * n_layers // 3}h{5 % n_heads}",
+            ]
+            assert len(neurons) == 8
+            expr = " + ".join(neurons + heads)
+            prompt = "Write a 200-word essay on the history of bicycles."
+            sampling = SamplingConfig(max_tokens=128, temperature=0.0, seed=0)
+
+            def synchronize() -> None:
+                if session.device.type == "cuda":
+                    torch.cuda.synchronize(session.device)
+                elif session.device.type == "mps":
+                    torch.mps.synchronize()
+
+            def timed(steering: str | None) -> float:
+                synchronize()
+                started = time.perf_counter()
+                result = session.generate(
+                    prompt, sampling=sampling, stateless=True, steering=steering,
+                ).first
+                synchronize()
+                return len(result.tokens) / max(time.perf_counter() - started, 0.1)
+
+            # The first steer builds the neutral baseline and its unit
+            # statistics; warm both paths before timing, then balance the
+            # order and compare medians (MPS drifts with warmup and heat).
+            warm = SamplingConfig(max_tokens=2, temperature=0.0, seed=0)
+            session.generate(prompt, sampling=warm, stateless=True)
+            session.generate(prompt, sampling=warm, stateless=True, steering=expr)
+            vanilla: list[float] = []
+            ablated: list[float] = []
+            for steered in (False, True, True, False, False, True):
+                (ablated if steered else vanilla).append(
+                    timed(expr if steered else None),
+                )
+            vanilla_tps = sorted(vanilla)[1]
+            ablated_tps = sorted(ablated)[1]
+            ratio = ablated_tps / vanilla_tps
+            print(  # noqa: T201 — the lane reports these numbers
+                f"unit ablation: vanilla {vanilla_tps:.1f} tok/s, "
+                f"ablated {ablated_tps:.1f} tok/s ({ratio:.0%})"
+            )
+            assert ratio >= 0.80, (
+                f"unit ablation too slow: {ratio:.0%} of vanilla "
+                f"(vanilla={vanilla_tps:.1f} tok/s, ablated={ablated_tps:.1f} tok/s; "
+                f"vanilla samples={vanilla!r}, ablated samples={ablated!r})"
+            )
+        finally:
+            session.close()
+
 
 class TestDiscoverManifoldEndToEnd:
     """End-to-end discover-mode fit on a real model.

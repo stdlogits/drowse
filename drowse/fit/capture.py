@@ -16,12 +16,27 @@ import warnings
 from collections.abc import Callable, Sequence
 from importlib import resources as _resources
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 import torch
 
 from drowse.model.chat import takes_enable_thinking
 from drowse.model.tokens import last_content_index, special_token_ids
+
+
+class ChunkObserver(Protocol):
+    """Frames each neutral capture forward for an observer's own hooks."""
+
+    def begin_chunk(self, lengths: Sequence[int]) -> None: ...
+
+    def commit_chunk(self) -> None: ...
+
+    def discard_chunk(self) -> None: ...
+
+    def abandon(self, reason: str) -> None:
+        """Remove the observer's hooks for the rest of the pass and record
+        ``reason`` (the capture retries without them)."""
+        ...
 
 
 # Rows per batched capture forward.  Capture starts here and halves on OOM
@@ -513,6 +528,7 @@ def compute_neutral_activations(
     *,
     rendered: Sequence[tuple[torch.Tensor, int]] | None = None,
     on_progress: Callable[[str], None] | None = None,
+    observer: "ChunkObserver | None" = None,
 ) -> dict[int, torch.Tensor]:
     """Per-layer ``[N, D]`` stack across the neutral corpus.
 
@@ -532,6 +548,15 @@ def compute_neutral_activations(
     surface ``DrowseSession.fit`` and
     ``generate_responses`` expose), so a caller building the whitener can show
     the neutral pass rather than blocking silently.
+
+    ``observer`` frames every chunk forward for hooks of its own on the same
+    pass (the unit statistics, :mod:`drowse.units.stats`): ``begin_chunk``
+    with the rows' token lengths before the forward, then ``commit_chunk`` on
+    success or ``discard_chunk`` when an out-of-memory retry will re-run the
+    rows.  The observer never fails the pass: an out-of-memory error at batch
+    size 1 with it installed abandons it (its hooks hold memory the capture
+    does not need) and retries the rows without it; only an out-of-memory
+    error at batch size 1 without it propagates.
 
     Storage cost: ~90 · n_layers · hidden_dim · 4B in fp32 (≈ 56MB on
     a 4096-dim, 80-layer model).  Callers persist this through
@@ -555,6 +580,8 @@ def compute_neutral_activations(
             "prepared neutral rows must align with the neutral corpus "
             f"({len(rendered)} != {len(pairs)})"
         )
+    if observer is not None and rendered is None:
+        rendered = _prepare_capture_batch(tokenizer, prompts, responses)
     n = len(pairs)
 
     active_batch = _CAPTURE_BATCH_MAX
@@ -569,6 +596,11 @@ def compute_neutral_activations(
                 on_progress(
                     f"Capturing neutral activations {start + 1}-{end}/{n}..."
                 )
+            if observer is not None:
+                assert rendered is not None
+                observer.begin_chunk(
+                    [int(ids.shape[1]) for ids, _ in rendered[start:end]],
+                )
             try:
                 per_layer = _encode_and_capture_all_batch(
                     model, tokenizer,
@@ -580,14 +612,27 @@ def compute_neutral_activations(
             except RuntimeError as exc:
                 from drowse.errors import is_out_of_memory_error
 
-                if not is_out_of_memory_error(exc) or active_batch <= 1:
+                if observer is not None:
+                    observer.discard_chunk()
+                if not is_out_of_memory_error(exc):
                     raise
-                active_batch = max(1, active_batch // 2)
+                if active_batch > 1:
+                    active_batch = max(1, active_batch // 2)
+                elif observer is not None:
+                    observer.abandon(
+                        "out of memory at capture batch size 1 with the unit "
+                        "statistics hooks installed"
+                    )
+                    observer = None
+                else:
+                    raise
                 if _mps:
                     torch.mps.empty_cache()
                 elif device.type == "cuda":
                     torch.cuda.empty_cache()
                 continue
+            if observer is not None:
+                observer.commit_chunk()
             # Move each chunk's (B, D) to CPU before discarding device rows.
             for idx in range(n_layers):
                 chunks_by_layer[idx].append(per_layer[idx].detach().to("cpu"))

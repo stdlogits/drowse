@@ -24,7 +24,12 @@ from drowse.generation.sampling import SamplingConfig
 from drowse.server.compat.model_names import aliases_for_session, known_model_names
 from drowse.server.errors import ErrorInfo, describe_error
 from drowse.server.request_helpers import strict_model_enabled
-from drowse.server.runtime import run_in_thread, session_lock, stream_events
+from drowse.server.runtime import (
+    attached_probe_names,
+    run_in_thread,
+    session_lock,
+    stream_events,
+)
 from drowse.steering.terms import Steering
 
 if TYPE_CHECKING:
@@ -86,15 +91,15 @@ def probe_reading_aggregate(
 ) -> dict[str, Any]:
     """Attached probes' end-of-generation readings, keyed by probe name.
 
-    The ``x-drowse-probe-readings`` extension both protocols carry.  Pinned
-    J-lens and SAE probes live on their own registries but land in
-    ``result.probe_readings`` alongside Monitor probes, so the attached set
-    unions all three.  Empty when nothing is attached.
+    The ``x-drowse-probe-readings`` extension both protocols carry.  Every
+    read family (geometry, lens, SAE, units) keeps its own roster but lands
+    its probes in ``result.probe_readings``, so the attached set unions every
+    family in ``session.instruments``.  Empty when nothing is attached.
     """
     readings = result.probe_readings if result is not None else None
     if not readings:
         return {}
-    attached = {*session.monitor.probe_names, *session.lens.names, *session.sae.names}
+    attached = attached_probe_names(session)
     return {name: reading.to_dict() for name, reading in readings.items() if name in attached}
 
 

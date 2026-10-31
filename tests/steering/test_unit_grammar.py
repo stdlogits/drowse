@@ -7,7 +7,6 @@ from typing import Any
 
 import pytest
 
-from drowse.errors import ProfileNotRegisteredError, SteeringCompositionError
 from drowse.naming import HeadRef, NeuronRef
 from drowse.steering.grammar import (
     AblationTerm,
@@ -109,15 +108,15 @@ def test_malformed_unit_expressions_fail_with_a_column(text: str, fragment: str,
     assert info.value.col == col
 
 
-def test_a_neuron_push_is_not_steerable_yet(tiny_session: Any) -> None:
-    with pytest.raises(ProfileNotRegisteredError, match="'neuron/' atoms are reserved"):
-        with tiny_session.steering("0.2 neuron/L1n3"):
-            pass
+def test_a_neuron_push_steers_through_the_units_family(tiny_session: Any) -> None:
+    # The full semantics are pinned in tests/units/test_unit_steering.py.
+    with tiny_session.steering("0.2 neuron/L1n3"):
+        assert set(tiny_session._steering.hooks) == {1}
+    assert "neuron/L1n3" in tiny_session.profiles
 
 
 @pytest.mark.parametrize("text", ["!neuron/L1n3", "0.5 !head/L0h1@response"])
-def test_a_unit_ablation_does_not_compose_yet(tiny_session: Any, text: str) -> None:
-    scope = tiny_session.steering(text)  # resolves: nothing to load
-    with pytest.raises(SteeringCompositionError, match="unit ablation is not wired yet"):
-        with scope:
-            pass
+def test_a_unit_ablation_composes_to_a_unit_hook(tiny_session: Any, text: str) -> None:
+    with tiny_session.steering(text):
+        assert tiny_session._steering.unit_hooks
+        assert not tiny_session._steering.hooks
