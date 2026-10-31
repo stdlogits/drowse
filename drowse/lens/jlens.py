@@ -37,7 +37,7 @@ import torch
 
 from drowse.errors import DrowseError, RequestError
 from drowse.lens.decompose import token_atom_norms
-from drowse.lens.key import LensKey
+from drowse.lens.key import LENS_SITES, LensKey
 
 #: Positions before this index are excluded from the Jacobian average — early
 #: positions act as attention sinks with atypical residual statistics.  Part of
@@ -142,50 +142,161 @@ def resolve_word_token(tokenizer: Any, word: str) -> int:
 
 
 class JacobianLens:
-    """One lens's fitted per-layer matrices plus the readout primitives.
+    """One lens: its kind and fp32 per-layer matrices at one or both sites.
 
-    ``jacobians`` maps layer index → ``[d_model, d_model]`` fp32 matrix.
-    ``key`` names what they are (:class:`~drowse.lens.key.LensKey`): for an
-    output-side kind (J/R) each matrix transports that layer's residual into
-    the final-layer basis, which every readout surface below assumes.
+    ``key`` names the kind (:class:`~drowse.lens.key.LensKey`; its site is
+    ``out``, since the object can hold both).  ``jacobians`` are the ``out``
+    site's matrices and ``mid`` the ``mid`` site's; either may be absent, and
+    :meth:`matrices` / :meth:`layers` read a site explicitly.  Orientation
+    follows the kind:
+
+    - **Output kinds (J/R)** hold ``J_L = E[Σ ∂h_final/∂h_L]``, ``[d, d]``.
+      :meth:`transport` maps a residual ``h`` to ``h @ J_Lᵀ`` (into the final
+      basis), the front half of every vocabulary readout.
+    - **Input kinds (K/S)** hold ``K_L = E[Σ ∂h_L/∂e]``, ``[d, d_emb]``, as
+      rs-lenses' ``s-lens/{out,mid}.pt`` store them.  :meth:`pullback` maps a
+      residual covector ``c`` to ``c @ K_L`` (into the embedding basis) and
+      :meth:`footprint` an embedding-space vector ``ẽ`` to ``K_L ẽ`` (the
+      residual direction a token leaves at layer ``L``).
+
+    ``source_layers`` and the token-direction / atom-norm readers default to
+    the ``out`` site, so the output-side readout code keeps reading ``out``.
+    A read at a site the lens does not hold raises
+    :class:`LensNotFittedError`; it never falls back to the other site.
     """
 
     def __init__(
         self,
-        jacobians: Mapping[int, torch.Tensor],
+        jacobians: Mapping[int, torch.Tensor] | None = None,
         *,
         n_prompts: int,
         d_model: int,
         key: LensKey = LensKey("J"),
+        mid: Mapping[int, torch.Tensor] | None = None,
+        d_emb: int | None = None,
     ) -> None:
-        self.jacobians = {int(l): j.to(torch.float32) for l, j in jacobians.items()}
-        self.source_layers = sorted(self.jacobians)
+        if key.site != "out":
+            raise ValueError(
+                f"a lens's key names its kind (site 'out'); pass {key.label} "
+                "matrices as mid="
+            )
+        self.key = key
         self.n_prompts = int(n_prompts)
         self.d_model = int(d_model)
-        self.key = key
-        self._atom_norm_cache: dict[tuple[int, str, str, int, tuple[int, ...]], torch.Tensor] = {}
+        self.d_emb = self.d_model if d_emb is None else int(d_emb)
+        if key.side == "output" and self.d_emb != self.d_model:
+            raise ValueError(f"an output-kind ({key.kind}) lens has no separate d_emb")
+        self._sites: dict[str, dict[int, torch.Tensor]] = {}
+        for site, given in (("out", jacobians), ("mid", mid)):
+            if given is None:
+                continue
+            matrices = {int(l): m.to(torch.float32) for l, m in given.items()}
+            for layer, matrix in matrices.items():
+                if tuple(matrix.shape) != self.matrix_shape:
+                    raise ValueError(
+                        f"{key.kind}:{site} layer {layer} has shape "
+                        f"{tuple(matrix.shape)}; a {key.kind} lens holds "
+                        f"{list(self.matrix_shape)} matrices"
+                    )
+            self._sites[site] = matrices
+        self._atom_norm_cache: dict[tuple[str, int, str, str, int, tuple[int, ...]], torch.Tensor] = {}
+
+    # -- identity and layout ------------------------------------------------
+
+    @property
+    def kind(self) -> str:
+        """``J``, ``R``, ``K`` or ``S``."""
+        return self.key.kind
+
+    @property
+    def sites(self) -> tuple[str, ...]:
+        """The sites this lens holds, in ``LENS_SITES`` order."""
+        return tuple(site for site in LENS_SITES if site in self._sites)
+
+    def site_key(self, site: str) -> LensKey:
+        """The per-site key (``R:mid``) bindings and logs use."""
+        return LensKey(self.kind, site)
+
+    @property
+    def matrix_shape(self) -> tuple[int, int]:
+        """``(d, d)`` for an output kind, ``(d, d_emb)`` for an input kind."""
+        return (self.d_model, self.d_model if self.key.side == "output" else self.d_emb)
+
+    def matrices(self, site: str = "out") -> dict[int, torch.Tensor]:
+        """``{layer: matrix}`` at ``site`` (the live dict, not a copy)."""
+        LensKey(self.kind, site)
+        found = self._sites.get(site)
+        if found is None:
+            held = ", ".join(self.sites) or "none"
+            raise LensNotFittedError(
+                f"this {self.kind} lens has no {site!r} site (it holds: {held}); "
+                f"fit or fetch a {self.kind} lens that carries {site}"
+            )
+        return found
+
+    def layers(self, site: str = "out") -> list[int]:
+        """The fitted layers at ``site``, sorted."""
+        return sorted(self.matrices(site))
+
+    def matrix(self, layer: int, site: str = "out") -> torch.Tensor:
+        """One layer's matrix at ``site``."""
+        matrices = self.matrices(site)
+        if layer not in matrices:
+            fitted = sorted(matrices)
+            raise LensNotFittedError(
+                f"layer {layer} not in fitted {self.kind}:{site} lens layers "
+                f"{fitted[:3]}..{fitted[-3:]}"
+            )
+        return matrices[layer]
+
+    @property
+    def jacobians(self) -> dict[int, torch.Tensor]:
+        """The ``out`` site's matrices."""
+        return self.matrices("out")
+
+    @property
+    def source_layers(self) -> list[int]:
+        """The ``out`` site's fitted layers."""
+        return self.layers("out")
 
     def __repr__(self) -> str:
-        span = (
-            f"[{self.source_layers[0]}..{self.source_layers[-1]}]"
-            if self.source_layers
-            else "[]"
-        )
+        spans = []
+        for site in self.sites:
+            layers = self.layers(site)
+            span = f"[{layers[0]}..{layers[-1]}]" if layers else "[]"
+            spans.append(f"{site}={span} ({len(layers)} layers)")
         return (
-            f"JacobianLens({self.key.label}, d_model={self.d_model}, "
-            f"n_prompts={self.n_prompts}, "
-            f"source_layers={span} ({len(self.source_layers)} layers))"
+            f"JacobianLens({self.kind}, d_model={self.d_model}, "
+            f"n_prompts={self.n_prompts}, {', '.join(spans) or 'no sites'})"
         )
 
-    def transport(self, hidden: torch.Tensor, layer: int) -> torch.Tensor:
-        """Map a layer-``layer`` residual ``[..., d]`` into the final basis."""
-        if layer not in self.jacobians:
-            raise LensNotFittedError(
-                f"layer {layer} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
+    # -- reads ----------------------------------------------------------------
+
+    def _require_side(self, side: str, read: str) -> None:
+        if self.key.side != side:
+            other = "pullback or footprint" if side == "output" else "transport"
+            raise JacobianLensError(
+                f"{read} reads an {side}-kind lens; this is a {self.kind} lens "
+                f"(read it by {other})"
             )
-        J = self.jacobians[layer].to(hidden.device)
+
+    def transport(self, hidden: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
+        """Output kinds: map a residual ``[..., d]`` into the final basis, ``h @ J_Lᵀ``."""
+        self._require_side("output", "transport")
+        J = self.matrix(layer, site).to(hidden.device)
         return hidden.to(torch.float32) @ J.T
+
+    def pullback(self, covector: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
+        """Input kinds: a residual covector ``[..., d]`` into the embedding basis, ``c @ K_L``."""
+        self._require_side("input", "pullback")
+        K = self.matrix(layer, site).to(covector.device)
+        return covector.to(torch.float32) @ K
+
+    def footprint(self, embedding: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
+        """Input kinds: an embedding-space ``[..., d_emb]`` into the residual, ``K_L ẽ``."""
+        self._require_side("input", "footprint")
+        K = self.matrix(layer, site).to(embedding.device)
+        return embedding.to(torch.float32) @ K.T
 
     def token_direction(
         self,
@@ -194,54 +305,70 @@ class JacobianLens:
         *,
         layers: Sequence[int] | None = None,
         output_projection: torch.Tensor | None = None,
+        site: str = "out",
     ) -> dict[int, torch.Tensor]:
-        """Per-layer J-lens direction for one vocab id: ``W_U[v] @ J_l``.
+        """Output kinds: per-layer direction for one vocab id, ``W_U[v] @ J_l``.
 
         Returns fp32 CPU tensors in the ``dict[int, Tensor]`` shape every
         drowse profile consumer (``fold_directions_to_subspace``,
         ``Profile``) expects. With an output projection P (OPT), use
         ``W_U[v] @ P @ J_l`` without materializing the full vocabulary map.
         """
+        self._require_side("output", "a token direction")
         w = unembed[token_id].detach().to(torch.float32).cpu()
         if output_projection is not None:
             w = w @ output_projection.detach().to(device="cpu", dtype=torch.float32)
-        requested = self.source_layers if layers is None else [int(l) for l in layers]
-        missing = [l for l in requested if l not in self.jacobians]
+        matrices = self.matrices(site)
+        requested = sorted(matrices) if layers is None else [int(l) for l in layers]
+        missing = [l for l in requested if l not in matrices]
         if missing:
+            fitted = sorted(matrices)
             raise LensNotFittedError(
-                f"layers {missing} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
+                f"layers {missing} not in fitted {self.kind}:{site} lens layers "
+                f"{fitted[:3]}..{fitted[-3:]}"
             )
-        return {l: w @ self.jacobians[l] for l in requested}
+        return {l: w @ matrices[l] for l in requested}
 
-    def select_layers(self, layers: Sequence[int]) -> "JacobianLens":
-        """Return a view-like lens containing only ``layers``.
+    def select_layers(
+        self, layers: Sequence[int], *, sites: Sequence[str] | None = None,
+    ) -> "JacobianLens":
+        """Return a view-like lens holding only ``layers`` at ``sites``.
 
-        The tensors are shared with ``self``; callers that persist the result
-        will materialize their own fp32 shard through ``save_lens``.
+        ``sites`` defaults to every site the lens holds, and each must carry
+        every requested layer.  The tensors are shared with ``self``; callers
+        that persist the result materialize their own fp32 shards through
+        ``save_lens``.
         """
         requested = sorted(set(int(l) for l in layers))
-        missing = [l for l in requested if l not in self.jacobians]
-        if missing:
-            raise LensNotFittedError(
-                f"layers {missing} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
-            )
+        kept: dict[str, dict[int, torch.Tensor]] = {}
+        for site in self.sites if sites is None else tuple(sites):
+            matrices = self.matrices(site)
+            missing = [l for l in requested if l not in matrices]
+            if missing:
+                fitted = sorted(matrices)
+                raise LensNotFittedError(
+                    f"layers {missing} not in fitted {self.kind}:{site} lens layers "
+                    f"{fitted[:3]}..{fitted[-3:]}"
+                )
+            kept[site] = {layer: matrices[layer] for layer in requested}
+        return self._with_sites(kept)
+
+    def _with_sites(self, sites: Mapping[str, Mapping[int, torch.Tensor]]) -> "JacobianLens":
         return JacobianLens(
-            {layer: self.jacobians[layer] for layer in requested},
+            sites.get("out"),
+            mid=sites.get("mid"),
             n_prompts=self.n_prompts,
             d_model=self.d_model,
+            d_emb=self.d_emb,
             key=self.key,
         )
 
-    def atom_norms(self, layer: int, unembed: torch.Tensor) -> torch.Tensor:
+    def atom_norms(self, layer: int, unembed: torch.Tensor, site: str = "out") -> torch.Tensor:
         """Cached per-token norms of the layer's J-lens dictionary atoms."""
-        if layer not in self.jacobians:
-            raise LensNotFittedError(
-                f"layer {layer} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
-            )
+        self._require_side("output", "token atom norms")
+        matrix = self.matrix(layer, site)
         key = (
+            site,
             int(layer),
             str(unembed.device),
             str(unembed.dtype),
@@ -252,7 +379,7 @@ class JacobianLens:
         if cached is not None:
             return cached
         norms = token_atom_norms(
-            self.jacobians[layer].to(device=unembed.device, dtype=torch.float32),
+            matrix.to(device=unembed.device, dtype=torch.float32),
             unembed,
         )
         self._atom_norm_cache[key] = norms
@@ -260,12 +387,12 @@ class JacobianLens:
 
     @classmethod
     def union_layers(cls, lenses: Sequence["JacobianLens"]) -> "JacobianLens":
-        """Combine same-corpus lenses that cover different source layers.
+        """Combine same-corpus lenses that cover different layers, site by site.
 
         This is not a prompt-weighted average; every input must describe the
-        same prompt set, ``d_model``, and key.  Later inputs replace
-        duplicate layers, which lets a missing-layer top-up overwrite a stale
-        partial layer cleanly.
+        same prompt set, ``d_model``, ``d_emb`` and kind.  Later inputs
+        replace duplicate layers, which lets a missing-layer top-up overwrite
+        a stale partial layer cleanly.
         """
         if not lenses:
             raise ValueError("union_layers() needs at least one lens")
@@ -274,16 +401,15 @@ class JacobianLens:
             if (
                 other.n_prompts != first.n_prompts
                 or other.d_model != first.d_model
+                or other.d_emb != first.d_emb
                 or other.key != first.key
             ):
-                raise ValueError("lenses disagree on n_prompts / d_model / key")
-        union: dict[int, torch.Tensor] = {}
+                raise ValueError("lenses disagree on n_prompts / d_model / d_emb / key")
+        union: dict[str, dict[int, torch.Tensor]] = {}
         for lens in lenses:
-            union.update(lens.jacobians)
-        return cls(
-            union, n_prompts=first.n_prompts, d_model=first.d_model,
-            key=first.key,
-        )
+            for site in lens.sites:
+                union.setdefault(site, {}).update(lens.matrices(site))
+        return first._with_sites(union)
 
 
 @contextmanager

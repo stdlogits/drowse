@@ -616,7 +616,7 @@ class _FitRun:
             # folded in.
             out: list[Any] | None = None if proof_out is None else []
             save_lens_checkpoint(
-                sums, completed, d_model, self.model_id, self.provenance(),
+                {"out": sums}, completed, d_model, self.model_id, self.provenance(),
                 kind=self.request.kind,
                 consumed_prefix_sha256=self.identity.corpus.prefix_sha256(completed),
                 _proof_out=out,
@@ -820,7 +820,7 @@ class _FitRun:
                 self.model_id,
                 name=name,
                 n_prompts=merged.n_prompts,
-                source_layers=merged.source_layers,
+                site_layers={site: merged.layers(site) for site in merged.sites},
                 corpus_sha256=corpus.sha256,
                 corpus_hash_kind=CORPUS_HASH_KIND,
                 seq_len=self.request.seq_len,

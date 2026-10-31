@@ -291,7 +291,7 @@ def _save_checkpoint(
         }, sort_keys=True).encode()).hexdigest(),
     )
     return save_lens_checkpoint(
-        sums, partial.n_prompts, partial.d_model, model_id,
+        {"out": sums}, partial.n_prompts, partial.d_model, model_id,
         LensProvenance(**kwargs), kind=partial.key.kind,
         consumed_prefix_sha256=consumed,
     )
