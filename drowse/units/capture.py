@@ -235,7 +235,7 @@ class UnitTap:
                 last = last.to(acts.dtype)
             slot = self._fwd % self.depth
             torch.index_select(
-                last.view(-1, width), 0, index,
+                last.reshape(-1, width), 0, index,
                 out=acts[slot, entry.start:entry.stop].view(entry.rows, width),
             )
             if entry.norm_col is not None:

@@ -244,7 +244,7 @@ class UnitStatsAccumulator:
             try:
                 z = args[0]
                 b, t = int(z.shape[0]), int(z.shape[1])
-                zh = z.float().view(b, t, acc.n_heads, acc.head_dim)
+                zh = z.float().reshape(b, t, acc.n_heads, acc.head_dim)
                 mask = self._mask.float()
                 total = torch.einsum("bthi,bt->hi", zh, mask)
                 norm = torch.einsum(
