@@ -152,7 +152,7 @@ def test_rejected_argv(argv: list[str]) -> None:
     (["pack", "export", "gguf", "x", "-m", "m"], {"command": "pack export gguf"}),
     (["pack", "push", "x"], {"variant": "raw", "private": False, "dry_run": False}),
     (["pack", "clear", "x"], {"variant": "all"}),
-    (["lens", "fit", "m"], {"kind": "r", "prompts": 25, "sites": ("out", "mid"),
+    (["lens", "fit", "m"], {"kind": "r", "prompts": 64, "sites": ("out", "mid"),
                             "no_split_half": False}),
     (["lens", "fit", "m", "--kind", "j"], {"kind": "j"}),
     (["lens", "fit", "m", "--kind", "s", "--sites", "mid,out"],
