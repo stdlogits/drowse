@@ -218,7 +218,9 @@ class LensFitIdentity:
         """The local artifact directory (``local:<kind>``)."""
         return self.kind.lower()
 
-    def _semantics_match(self, sidecar: Mapping[str, Any]) -> bool:
+    def semantics_match(self, sidecar: Mapping[str, Any]) -> bool:
+        """A sidecar of this fit's semantics (corpus hash kind, sequence
+        length, weights, estimator policy), over any corpus."""
         return (
             sidecar.get("corpus_hash_kind") == CORPUS_HASH_KIND
             and sidecar.get("seq_len") == self.seq_len
@@ -242,7 +244,7 @@ class LensFitIdentity:
         return bool(
             corpus_matches
             and progress > 0
-            and self._semantics_match(sidecar)
+            and self.semantics_match(sidecar)
             and _site_layers_of(sidecar) == {
                 site: frozenset(wanted) for site, wanted in layers.items()
             }
@@ -250,7 +252,7 @@ class LensFitIdentity:
 
     def durable_matches(self, sidecar: Mapping[str, Any] | None) -> bool:
         """A durable artifact fitted on this corpus or a prefix of it."""
-        if sidecar is None or not self._semantics_match(sidecar):
+        if sidecar is None or not self.semantics_match(sidecar):
             return False
         saved_n = int(sidecar.get("n_prompts", 0))
         saved_sha = sidecar.get("corpus_sha256")
@@ -297,9 +299,12 @@ def plan_lens_fit(
 ) -> LensFitPlan:
     """Decide a fit from metadata alone (see the module docstring).
 
-    Raises :class:`JacobianLensError` when extending the corpus would have
-    to drop durable layers the request does not name: one artifact has one
-    corpus identity, so a subset extension cannot keep the other layers.
+    Raises :class:`JacobianLensError` when the fit would publish over a
+    durable artifact and lose part of it: extending the corpus would drop
+    durable layers the request does not name (one artifact has one corpus
+    identity, so a subset extension cannot keep the other layers), or a
+    fit over another corpus would replace an artifact that holds more
+    documents, or a site or layer the request omits.  ``force`` replaces it.
     """
     if force:
         return LensFitPlan("fresh")
@@ -307,7 +312,7 @@ def plan_lens_fit(
     n_usable = identity.corpus.n_usable
     checkpoint_ok = identity.checkpoint_matches(checkpoint, requested)
     checkpoint_n = int(checkpoint["n_prompts"]) if checkpoint_ok and checkpoint else -1
-    if durable is not None and identity.durable_matches(durable):
+    if durable is not None and identity.semantics_match(durable):
         saved_n = int(durable.get("n_prompts", 0))
         durable_layers = _site_layers_of(durable)
         extra = {
@@ -315,49 +320,88 @@ def plan_lens_fit(
             for site, layers in durable_layers.items()
             if layers - set(requested.get(site, ()))
         }
-        if saved_n < n_usable and extra:
-            raise JacobianLensError(
-                f"cannot extend only a subset of an existing {identity.kind} lens: "
-                f"it holds layers the request omits ({extra}). Request every "
-                "site and layer it holds to extend its corpus, or pass "
-                "force=True to replace it with the requested subset."
-            )
-        if checkpoint_ok and checkpoint_n > saved_n:
-            # The checkpoint is farther ahead than the durable artifact.
-            return LensFitPlan("resume", checkpoint=True)
-        covers = _covers(durable_layers, requested)
-        resident_ok = bool(
-            resident is not None
-            and resident.n_prompts == saved_n
-            # A resident stamped with the durable pointer must represent
-            # that whole artifact, not a subset view from an earlier call.
-            and dict(resident.layers) == durable_layers
-            and covers
-            and resident.identity == lens_identity(durable)
-        )
-        if saved_n >= n_usable:
-            if covers:
-                return LensFitPlan(
-                    "noop", durable="resident" if resident_ok else "selective",
+        if not identity.durable_matches(durable):
+            if saved_n > n_usable or extra:
+                # Another corpus, so the plan would publish over the
+                # artifact: never silently trade a fit that may have taken
+                # hours for a smaller or narrower one.
+                raise JacobianLensError(
+                    f"local:{identity.name} already holds a {identity.kind} lens "
+                    f"over {saved_n} documents"
+                    + (f", with layers this request omits ({extra})" if extra else "")
+                    + f"; fitting {n_usable} documents of another corpus would "
+                    "replace it. Request at least its documents of the same "
+                    "corpus, and every site and layer it holds, to keep and "
+                    "extend it, or pass force=True (`-f`) to replace it."
                 )
-            missing = {
-                site: tuple(sorted(set(layers) - durable_layers.get(site, frozenset())))
-                for site, layers in requested.items()
-                if set(layers) - durable_layers.get(site, frozenset())
-            }
-            return LensFitPlan(
-                "topup",
-                durable="full",
-                missing=missing,
-                checkpoint=identity.checkpoint_matches(checkpoint, missing),
+        else:
+            plan = _plan_on_durable(
+                identity, durable, saved_n, durable_layers, extra,
+                checkpoint=checkpoint, checkpoint_n=checkpoint_n, resident=resident,
             )
-        if covers:
-            return LensFitPlan(
-                "resume", durable="resident" if resident_ok else "full",
-            )
+            if plan is not None:
+                return plan
     if checkpoint_ok:
         return LensFitPlan("resume", checkpoint=True)
     return LensFitPlan("fresh")
+
+
+def _plan_on_durable(
+    identity: LensFitIdentity,
+    durable: Mapping[str, Any],
+    saved_n: int,
+    durable_layers: Mapping[str, frozenset[int]],
+    extra: Mapping[str, list[int]],
+    *,
+    checkpoint: Mapping[str, Any] | None,
+    checkpoint_n: int,
+    resident: ResidentLens | None,
+) -> LensFitPlan | None:
+    """The plan over a durable artifact fitted on this corpus or a prefix of
+    it, or ``None`` when it is no use (fall through to the checkpoint)."""
+    requested = identity.layers
+    n_usable = identity.corpus.n_usable
+    if saved_n < n_usable and extra:
+        raise JacobianLensError(
+            f"cannot extend only a subset of an existing {identity.kind} lens: "
+            f"it holds layers the request omits ({dict(extra)}). Request every "
+            "site and layer it holds to extend its corpus, or pass "
+            "force=True to replace it with the requested subset."
+        )
+    if checkpoint_n > saved_n:
+        # The checkpoint is farther ahead than the durable artifact.
+        return LensFitPlan("resume", checkpoint=True)
+    covers = _covers(durable_layers, requested)
+    resident_ok = bool(
+        resident is not None
+        and resident.n_prompts == saved_n
+        # A resident stamped with the durable pointer must represent
+        # that whole artifact, not a subset view from an earlier call.
+        and dict(resident.layers) == dict(durable_layers)
+        and covers
+        and resident.identity == lens_identity(durable)
+    )
+    if saved_n >= n_usable:
+        if covers:
+            return LensFitPlan(
+                "noop", durable="resident" if resident_ok else "selective",
+            )
+        missing = {
+            site: tuple(sorted(set(layers) - durable_layers.get(site, frozenset())))
+            for site, layers in requested.items()
+            if set(layers) - durable_layers.get(site, frozenset())
+        }
+        return LensFitPlan(
+            "topup",
+            durable="full",
+            missing=missing,
+            checkpoint=identity.checkpoint_matches(checkpoint, missing),
+        )
+    if covers:
+        return LensFitPlan(
+            "resume", durable="resident" if resident_ok else "full",
+        )
+    return None
 
 
 def _holds_artifact(lens: JacobianLens, sidecar: Mapping[str, Any]) -> bool:

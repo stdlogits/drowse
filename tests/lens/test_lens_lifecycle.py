@@ -188,6 +188,31 @@ def test_plan_refuses_to_extend_a_subset_of_durable_layers() -> None:
         plan_lens_fit(identity, durable=durable, checkpoint=None, resident=None)
 
 
+def test_plan_refuses_to_replace_a_larger_or_wider_durable_fit() -> None:
+    """A fit over another corpus publishes over the artifact, so it never
+    silently replaces one over more documents (the default count dropped
+    from 100 to 25) or one holding a layer the request omits."""
+    identity = _identity(_ROWS[:2])
+    larger = _sidecar(_identity(_ROWS), n=4, layers=[0, 1])
+    with pytest.raises(JacobianLensError, match="over 4 documents; fitting 2 .* would replace it"):
+        plan_lens_fit(identity, durable=larger, checkpoint=None, resident=None)
+    # A resumable checkpoint of the smaller corpus would publish over it too.
+    partial = _sidecar(identity, n=1, layers=[0, 1], checkpoint=True)
+    with pytest.raises(JacobianLensError, match="would replace it"):
+        plan_lens_fit(identity, durable=larger, checkpoint=partial, resident=None)
+    wider = _sidecar(_identity([[9] * 20] * 4), n=4, layers=[0, 1, 2])
+    with pytest.raises(JacobianLensError, match=r"layers this request omits \({'out': \[2\]}\)"):
+        plan_lens_fit(_identity(_ROWS), durable=wider, checkpoint=None, resident=None)
+    # force replaces it, and an artifact of other semantics is not this fit's.
+    assert plan_lens_fit(
+        identity, durable=larger, checkpoint=None, resident=None, force=True,
+    ) == LensFitPlan("fresh")
+    other_length = _sidecar(_identity(_ROWS), n=4, layers=[0, 1], seq_len=64)
+    assert plan_lens_fit(
+        identity, durable=other_length, checkpoint=None, resident=None,
+    ) == LensFitPlan("fresh")
+
+
 def test_checkpoint_must_cover_exactly_the_requested_layers() -> None:
     identity = _identity(_ROWS)
     wrong_layers = _sidecar(identity, n=3, layers=[0], checkpoint=True)
@@ -876,6 +901,18 @@ def test_fit_tops_up_a_corpus_mix_by_prefix(
     sidecar = load_lens_sidecar(_MODEL_ID)
     assert sidecar is not None and sidecar["corpus_spec"] == spec
     assert sidecar["corpus_spec"].startswith("mix:1*hf:en/web/default@")
+
+
+def test_a_smaller_refit_keeps_the_larger_durable_lens() -> None:
+    """Refitting fewer documents without force would replace hours of
+    compute: it refuses, the artifact stays, and force replaces it."""
+    harness = LensHarness()
+    harness.lens.fit(_PROMPTS, kind="R", sites=["out"], force=True)
+    with pytest.raises(JacobianLensError, match="over 4 documents"):
+        harness.lens.fit(_PROMPTS[:2], kind="R", sites=["out"])
+    sidecar = json.loads(lens_manifest_path(_MODEL_ID, "r").read_text())
+    assert sidecar["n_prompts"] == 4
+    assert harness.lens.fit(_PROMPTS[:2], kind="R", sites=["out"], force=True).n_prompts == 2
 
 
 def test_fit_changed_prefix_restarts_from_zero(

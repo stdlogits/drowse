@@ -431,7 +431,9 @@ GROUP = Verb(
                            "the out site of r/j stops below the last block); "
                            "workspace = the 40-90%% band. An output fit stops at "
                            "its lowest layer, an input fit at its highest"),
-                FORCE.but(help="Restart from zero (default: resume a matching partial fit)"),
+                FORCE.but(help="Restart from zero, replacing the local lens of this kind "
+                               "(default: resume a matching partial fit; without -f a fit "
+                               "never replaces one over more documents or layers)"),
                 MODEL_LOAD,
             ),
         ),

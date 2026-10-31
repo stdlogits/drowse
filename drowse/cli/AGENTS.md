@@ -261,7 +261,10 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   input fit at its highest, so a band trims work. `sample` is rejected.
   `--no-split-half` saves the split-half accumulator; otherwise the result
   prints min/median/max split-half per site.
-  `-f` restarts from zero, otherwise a matching partial fit resumes.
+  `-f` restarts from zero, otherwise a matching partial fit resumes. Without
+  `-f`, a fit that would replace a local lens over more documents, or one
+  holding a site or layer the request omits, exits 2 (a 5.4 default fit
+  holds 100 documents; ask for `--prompts 100`).
 - `fetch` never loads the model: the payload stays in the Hugging Face cache and
   Drowse writes, and activates, a commit-pinned binding. `show` / `rm` default to
   the active output-side source; removing a binding never touches the cache.
