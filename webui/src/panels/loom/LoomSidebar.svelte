@@ -2055,7 +2055,7 @@
   .tree-node-wrap.pinned :global(.node) { box-shadow: 0 0 0 2px var(--ink3); }
 
   /* ---------- path, options, starred: rows and washes in the reading column */
-  .loom-projection { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s5); min-height: 0; overflow: auto; overscroll-behavior: contain; padding-bottom: var(--s6); }
+  .loom-projection { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s5); min-height: 0; margin: 0 -4px; padding: 4px 4px var(--s6); overflow: auto; overscroll-behavior: contain; }
   .row-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 28px; }
   .more { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); font: var(--type-meta); cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
   .more:hover { background: var(--wash2); color: var(--ink); }

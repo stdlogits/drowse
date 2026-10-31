@@ -229,7 +229,7 @@
   .drawer-shell.embedded { height: auto; padding: 0; }
   .header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
   .embedded .dw-title { font: var(--type-lead); letter-spacing: 0; }
-  .body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s4); min-height: 0; overflow-y: auto; }
+  .body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s4); min-height: 0; margin: -4px; padding: 4px; overflow-y: auto; }
   .embedded .body { flex: none; overflow: visible; }
   .name-field { display: grid; gap: var(--s1); min-width: 0; }
   .name-field input { width: 100%; min-width: 0; height: 48px; padding: 0 var(--s4); border: 0; border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-label); }

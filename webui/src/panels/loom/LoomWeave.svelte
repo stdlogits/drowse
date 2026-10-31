@@ -217,7 +217,7 @@
   /* The weave: the path on the left as rows, the branch point's continuations on the right as
    * washes. */
   .weave { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr); gap: var(--s6); flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
-  section { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s6); }
+  section { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; margin: 0 -4px; padding: 0 4px var(--s6); overflow-y: auto; overscroll-behavior: contain; }
   .section-heading, .row-head, footer, .generation-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
   .section-heading, .row-head { justify-content: space-between; }
   .section-heading { min-height: 36px; }

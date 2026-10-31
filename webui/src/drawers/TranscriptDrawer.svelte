@@ -325,7 +325,7 @@
   .tab { height: 32px; padding: 0; border: 0; background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease); }
   .tab[aria-selected="true"] { color: var(--ink); }
   @media (hover: hover) { .tab:hover { color: var(--ink); } }
-  .body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s6); }
+  .body { display: flex; flex: 1 1 auto; flex-direction: column; min-height: 0; margin: 0 -4px; padding: 4px 4px var(--s6); overflow-y: auto; overscroll-behavior: contain; }
   .tab-panel { display: flex; flex-direction: column; gap: var(--s4); }
   .tab-panel:focus { outline: none; }
   .field { display: grid; gap: var(--s1); }

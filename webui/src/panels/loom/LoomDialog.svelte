@@ -558,7 +558,8 @@
   .loom-modal:focus { outline: none; }
   .modal-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
   .modal-header h2 { margin: 0; color: var(--ink); font: var(--type-lead); }
-  .modal-body { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; overflow-y: auto; }
+  /* Inset by the focus ring's reach, so a focused field's ring is not clipped by the scroll box. */
+  .modal-body { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; margin: -4px; padding: 4px; overflow-y: auto; }
   .modal-body label { display: grid; gap: var(--s1); }
   .modal-body input, .modal-body textarea { width: 100%; min-width: 0; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-body); resize: vertical; }
   .modal-body input { height: 40px; }
