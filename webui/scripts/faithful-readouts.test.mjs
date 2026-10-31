@@ -52,23 +52,7 @@ try {
   assert.equal(requests.length, 3, "only the fresh result is reused");
 
   const { ReplayReadout } = await server.ssrLoadModule("/src/drawers/token/readout.svelte.ts");
-  const { readoutBadge } = await server.ssrLoadModule("/src/drawers/token/drilldown.svelte.ts");
   const view = new ReplayReadout();
-  const captured = { layers: [0, 5] };
-  const count = data => data.layers.length;
-  assert.equal(readoutBadge(view, null, true, count), undefined, "missing is not measured zero");
-  assert.equal(readoutBadge(view, captured, true, count), "2", "inactive captured tabs retain their counts");
-  assert.equal(readoutBadge(view, captured, false, count), undefined, "counterfactuals cannot borrow captured counts");
-  view.adopt({ layers: [] }, "test-source");
-  assert.equal(readoutBadge(view, captured, true, count), "0", "a completed empty readout is zero");
-  view.adopt({ layers: [0, 5, 10, 15, 19, 24, 29, 34] }, "test-source");
-  assert.equal(readoutBadge(view, captured, true, count), "8", "displayed results take precedence over capture");
-  view.clear();
-  view.loading = true;
-  assert.equal(readoutBadge(view, captured, true, count), "…", "pending is not a measured count");
-  view.loading = false;
-  view.error = "failed";
-  assert.equal(readoutBadge(view, captured, true, count), undefined, "errors cannot masquerade as captured counts");
   view.clear();
   let attempts = 0;
   replay = async () => {
@@ -160,17 +144,71 @@ try {
   assert.deepEqual(sparklinePaths([NaN, Infinity], 60, 16, 1), { line: "", area: "" });
 
   const { render } = await server.ssrLoadModule("svelte/server");
-  const { default: LogitsTab } = await server.ssrLoadModule("/src/drawers/token/LogitsTab.svelte");
+  const { default: Alternatives } = await server.ssrLoadModule("/src/drawers/token/Alternatives.svelte");
   const chosen = { text: "x", tokenId: 1, logprob: Math.log(0.9996),
     topAlts: [{ text: "x", id: 1, logprob: Math.log(0.9996) }] };
-  const logitHtml = render(LogitsTab, { props: { token: chosen, nodeId: null } }).body;
+  const altProps = { canBranch: true, busy: false, onbranch() {} };
+  const logitHtml = render(Alternatives, { props: { token: chosen, ...altProps } }).body;
   assert.match(logitHtml, /not a measure of factual accuracy/);
-  assert.doesNotMatch(logitHtml, /Only one token remained|choice was certain/);
-  assert.doesNotMatch(render(LogitsTab, { props: { token: { ...chosen, tokenId: 2 }, nodeId: null } }).body,
-    /This token has almost all/, "a top alternative's probability is not the chosen token's probability");
-  const { default: LensTab } = await server.ssrLoadModule("/src/drawers/token/LensTab.svelte");
-  const { default: SaeTab } = await server.ssrLoadModule("/src/drawers/token/SaeTab.svelte");
-  const scalar = { value: 0.25, unit: "mean_token_probability", per_layer: {}, depth: null };
+  assert.doesNotMatch(render(Alternatives, { props: { token: { ...chosen, tokenId: 2 }, ...altProps } }).body,
+    /factual accuracy/, "a top alternative's probability is not the chosen token's probability");
+  assert.doesNotMatch(logitHtml, /Branch with/, "the chosen token offers no branch to itself");
+  const alts = { text: " sky", tokenId: 2, logprob: Math.log(0.3), topAlts: [
+    { text: " moon", id: 1, logprob: Math.log(0.5) }, { text: " sky", id: 2, logprob: Math.log(0.3) },
+  ] };
+  const altHtml = render(Alternatives, { props: { token: alts, ...altProps } }).body;
+  assert.doesNotMatch(altHtml, /Branch with/, "a browser runtime without token replay cannot fork");
+  assert.equal((altHtml.match(/class="alt rise [^"]*chosen/g) ?? []).length, 1, "the chosen alternative is marked once, by id");
+
+  const layers = await server.ssrLoadModule("/src/drawers/token/layers.ts");
+  const read = [
+    { layer: 0, tokens: [{ id: 9, token: " the", logprob: Math.log(0.4) }] },
+    { layer: 1, tokens: [{ id: 2, token: " sky", logprob: Math.log(0.2) }, { id: 9, token: " the", logprob: Math.log(0.1) }] },
+    { layer: 2, tokens: [{ id: 5, token: "sky", logprob: Math.log(0.6) }] },
+    { layer: 3, tokens: [{ id: 2, token: " sky", logprob: Math.log(0.7) }] },
+  ];
+  assert.deepEqual(layers.chosenByDepth(read, 2).map(row => row.p === null ? null : +row.p.toFixed(2)), [null, 0.2, null, 0.7],
+    "a layer that never ranked the token is unmeasured, and a whitespace variant never stands in for it");
+  assert.equal(layers.leadLayer(read, 2), 3, "the lead is where the token stays first to the last layer");
+  assert.equal(layers.leadLayer(read, 9), null, "a token the last layer does not read first has no lead");
+  assert.equal(layers.leadLayer(read, null), null);
+  assert.equal(layers.depthTint(0, 35), "color-mix(in oklch, var(--deep) 100%, var(--late))");
+  assert.equal(layers.depthTint(35, 35), "color-mix(in oklch, var(--deep) 0%, var(--late))");
+  assert.equal(layers.lastLayer(read), 3);
+  const many = Array.from({ length: 36 }, (_, i) => i);
+  const folded = layers.foldedLayers(many, 25);
+  assert.ok(folded.has(0) && folded.has(33) && folded.has(35) && folded.has(25) && !folded.has(1), "every third, the last and the lead");
+  assert.equal(layers.foldedLayers([0, 1, 2], null).size, 3, "a short readout does not fold");
+  assert.equal(layers.formatP(0.4123), "0.41");
+  assert.equal(layers.formatP(0.0042), "0.004");
+  assert.equal(layers.formatP(null), "–");
+  assert.equal(layers.formatSigned(-0.5), "−0.50");
+  assert.equal(layers.formatSigned(0.25), "+0.25");
+  assert.equal(layers.formatSigned(-0.001), "0.00", "a reading that rounds to zero carries no sign");
+
+  const readings = await server.ssrLoadModule("/src/drawers/token/readings.ts");
+  const pin = { value: 0.25, unit: "mean_token_probability", per_layer: {}, depth: null };
+  const recorded = {
+    lens: { binding: { source: "old", steering: null }, readings: { "lens-pin": pin } },
+    sae: { binding: { source: "old", steering: null, layer: 0 }, readings: { "sae-pin": pin } },
+  };
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "captured", sae: "captured" })), ["lens-pin", "sae-pin"],
+    "the pins recorded with the token show beside their capture");
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "replayed", sae: "captured" })), ["sae-pin"],
+    "a replayed lens readout hides the lens pins captured with the token");
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "captured", sae: "replayed" })), ["lens-pin"],
+    "a replayed SAE readout hides the SAE pins captured with the token");
+  assert.deepEqual(readings.pinnedReadings(recorded, { lens: null, sae: null }), {}, "no readout yet, no pins");
+  assert.deepEqual(readings.pinnedReadings(undefined, { lens: "captured", sae: "captured" }), {});
+  assert.equal(readings.probeNote("confident.uncertain", "confident"), "", "a first pole beside its own name says nothing");
+  assert.equal(readings.probeNote("default/Formal.casual", "formal"), "");
+  assert.equal(readings.probeNote("individualist.collectivist", "axis 1"), "axis 1");
+  assert.equal(readings.probeNote("emotions", "joy"), "joy", "a curved probe's nearest node is a reading");
+  assert.equal(readings.probeNote("emotions", ""), "");
+
+  const { default: LensReading } = await server.ssrLoadModule("/src/drawers/token/LensReading.svelte");
+  const { default: ProbeReadings } = await server.ssrLoadModule("/src/drawers/token/ProbeReadings.svelte");
+  const { default: FeatureReadings } = await server.ssrLoadModule("/src/drawers/token/FeatureReadings.svelte");
   const readout = {
     data: { token_id: 2, token_text: " word", steering: null,
       aggregate: [{ token: " word", strength: 0.1, com: 0.5, spread: 0.1 }],
@@ -179,20 +217,48 @@ try {
     },
     origin: "captured", source: "original", progress: null, loading: false, error: null,
   };
-  const props = {
-    readout, steered: true, jlensFitted: true, saeLoaded: true, hasReplayContext: true,
-    replayAvailable: true, modelId: "fixture", pinned: { "original-probe": scalar },
-  };
-  const lensHtml = render(LensTab, { props }).body;
-  assert.match(lensHtml, /original-probe/);
-  assert.match(lensHtml, /0\/1 layers/, "a whitespace variant is not the aggregate token's layer probability");
-  assert.match(render(SaeTab, { props }).body, /original-probe/);
-  readout.origin = "replayed";
-  readout.source = "new-source";
-  assert.doesNotMatch(render(LensTab, { props }).body, /original-probe/);
-  assert.doesNotMatch(render(SaeTab, { props }).body, /original-probe/);
-  readout.data.token_text = "word";
-  assert.doesNotMatch(render(LensTab, { props }).body, /class="badge"[^>]*>generated/);
+  const lensHtml = render(LensReading, { props: {
+    readout, tokenText: " word", jlensFitted: true, hasReplayContext: true, modelId: "fixture", replayAvailable: true,
+  } }).body;
+  assert.match(lensHtml, /in 0\/1 layers/, "a whitespace variant is not the aggregate token's layer probability");
+  assert.match(lensHtml, /Reads as/);
+  assert.doesNotMatch(lensHtml, /Attention added|MLP added/, "the anatomy's other columns wait for their data");
+  assert.match(lensHtml, /below every layer's top 1/, "a token no layer ranked is unmeasured, not zero, and draws no depth");
+  assert.doesNotMatch(lensHtml, /class="bars/);
+  assert.match(lensHtml, /\(this token\)/, "the inspected token is named as such across layers");
+  assert.doesNotMatch(lensHtml, /two reads agree/, "the inspected token does not borrow Token's agreement flag");
+  const unfitted = render(LensReading, { props: {
+    readout: { ...readout, data: null, origin: null }, tokenText: " word", jlensFitted: false, hasReplayContext: true, modelId: "org/fixture", replayAvailable: true,
+  } }).body;
+  assert.match(unfitted, /No lens for fixture/);
+  const scalar = { value: 0.25, unit: "mean_token_probability", per_layer: { 0: 0.1, 1: 0.4 }, depth: null };
+  const geometry = { ...readout, data: { steering: null, readings: {} } };
+  const probeProps = { readout: geometry, hasGeometryProbes: false, hasReplayContext: true, replayAvailable: true,
+    returnToToken: { turnIdx: 0, tokenIdx: 0, isThinking: false } };
+  assert.match(render(ProbeReadings, { props: { ...probeProps, pinned: { "original-probe": scalar } } }).body, /original-probe/);
+  assert.match(render(ProbeReadings, { props: { ...probeProps, pinned: {} } }).body, /Add a probe/, "an empty roster offers to add one");
+  const featureProps = { readout, saeLoaded: true, availability: "available", hasReplayContext: true, replayAvailable: true, lastLayer: 3 };
+  assert.match(render(FeatureReadings, { props: featureProps }).body, /None fired here/);
+  const fired = { ...readout, data: { ...readout.data, layer: 2, features: [
+    { id: 7, activation: 3, label: "night sky", max_act: 6 }, { id: 9, activation: 2, label: null, max_act: null },
+  ] } };
+  const featureHtml = render(FeatureReadings, { props: { ...featureProps, readout: fired } }).body;
+  assert.match(featureHtml, /L2 f7/);
+  assert.match(featureHtml, /night sky/);
+  assert.match(featureHtml, />0\.50</, "a feature with a reference maximum reads relative to it");
+  assert.match(featureHtml, />2\.0</, "a feature without one reads raw");
+  assert.match(render(FeatureReadings, { props: { ...featureProps, readout: { ...readout, data: null }, saeLoaded: false } }).body,
+    /Choose an SAE/, "no SAE leads to the Lens room");
+
+  const { default: TokenLogitsPopover } = await server.ssrLoadModule("/src/lib/ui/TokenLogitsPopover.svelte");
+  const popover = render(TokenLogitsPopover, { props: {
+    token: { text: " sky", tokenId: 2, logprob: Math.log(0.3), topAlts: [{ id: 2, text: " sky", logprob: Math.log(0.3) }] },
+    anchor: {}, isCurrent: () => true, contextChanged: true, onclose() {},
+  } }).body;
+  assert.match(popover, /data-tip="Model token · sampled probabilities, not raw logits"/);
+  assert.match(popover, /data-tip-sub="Recorded before your edit, with the original text before it"/);
+  assert.doesNotMatch(popover, /<p class="meta[^"]*">[^<]*(not raw logits|Recorded before your edit)/,
+    "what the numbers are goes in the title's tip, not a line in the working view");
 
   // A probe's trace is the latest generated reply's token rows (what the reply is tinted by), so it
   // covers the whole reply and survives a reload; its layers follow the token asked for.

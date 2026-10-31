@@ -1,9 +1,8 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { fadeIn, fadeOut, rise } from "@stdlogits/ledger";
+  import { IconButton, fadeIn, fadeOut, rise, stagger, tokenParts } from "@stdlogits/ledger";
   import type { TokenScore } from "../types";
-  import { tokenProbabilityRows, visibleTokenText } from "../tokenProbabilities";
-  import Button from "./Button.svelte";
+  import { tokenProbabilityRows } from "../tokenProbabilities";
   import { samplingState } from "../stores/sampling.svelte";
   import { getRuntimeClient } from "../runtime/registry";
   import { tokenAlternativeDefault } from "../runtime/samplingCapabilities";
@@ -20,7 +19,11 @@
   const uid = $props.id();
   const trigger = untrack(() => anchor);
   const rows = $derived(tokenProbabilityRows(token));
+  const title = $derived(tokenParts(token.text));
   const alternativeCount = tokenAlternativeDefault(getRuntimeClient().mode);
+  /** What the numbers are, for the title's tip and the dialog's description (not a visible line). */
+  const about = $derived(`${source} · sampled probabilities, not raw logits`);
+  const beforeEdit = "Recorded before your edit, with the original text before it";
   let panel: HTMLDivElement;
   let closing = false;
 
@@ -95,7 +98,7 @@
   });
 </script>
 
-<div bind:this={panel} class="token-logits-popover" popover="manual" role="dialog" tabindex="-1" aria-labelledby={`${uid}-title`}
+<div bind:this={panel} class="token-logits-popover" popover="manual" role="dialog" tabindex="-1" aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-about`}
   in:fadeIn|global
   out:fadeOut|global
   onintrostart={() => {
@@ -108,48 +111,54 @@
   onoutrostart={() => { closing = true; panel.inert = true; }}
 >
   <header>
-    <div><span class="source">{source}</span><h2 id={`${uid}-title`}>{visibleTokenText(token.text)}</h2></div>
-    <Button ariaLabel="Close token probabilities" onclick={() => close()}>Close</Button>
+    <!-- A token recorded before an edit keeps the page's dashed mark for it. -->
+    <h2 id={`${uid}-title`} class:context-changed={contextChanged} data-tip={about} data-tip-sub={contextChanged ? beforeEdit : undefined}><span class="ws">{title.lead ? "·" : ""}</span>{title.empty ? "∅" : title.text}</h2>
+    <IconButton icon="close" label="Close token probabilities" onclick={() => close()} />
   </header>
-  {#if contextChanged}<p class="context-note">Recorded before your edit, using the original preceding text.</p>{/if}
+  <p class="sr-only" id={`${uid}-about`}>{about}{contextChanged ? `. ${beforeEdit}` : ""}</p>
   {#if rows.length}
     <table aria-label="Recorded token probabilities">
-      <thead><tr><th scope="col">Token</th><th scope="col">Probability</th></tr></thead>
+      <thead class="sr-only"><tr><th scope="col">Token</th><th scope="col">Probability</th></tr></thead>
       <tbody>{#each rows as row, index (index)}
-        <tr class:chosen={row.chosen}>
-          <td><code>{visibleTokenText(row.text)}</code>{#if row.chosen}<span class="chosen-label">this token</span>{/if}</td>
+        {@const parts = tokenParts(row.text)}
+        <tr class:chosen={row.chosen} in:rise|global={{ delay: stagger(index) }}>
+          <td><span class="tok"><span class="ws">{parts.lead ? "·" : ""}</span>{parts.empty ? "∅" : parts.text}</span>{#if row.chosen}<span class="sr-only"> (this token)</span>{/if}</td>
           <td {...{ "aria-description": (`log probability ${row.logprob.toFixed(4)}`) }}>{Math.exp(row.logprob) >= 0.001 ? Math.exp(row.logprob).toFixed(3) : Math.exp(row.logprob).toExponential(2)}</td>
         </tr>
       {/each}</tbody>
     </table>
   {/if}
-  {#if !token.topAlts?.length}<p class="empty-note">Alternative probabilities weren’t recorded for this token.</p>{/if}
   {#if !token.topAlts?.length && alternativeCount > 0 && samplingState.return_top_k === 0}
-    <Button onclick={() => samplingState.return_top_k = alternativeCount}>Record alternatives for future tokens</Button>
+    <button type="button" class="dw-quiet" onclick={() => samplingState.return_top_k = alternativeCount}>Record alternatives</button>
+  {:else if !token.topAlts?.length}
+    <p class="meta">No alternatives were recorded</p>
   {/if}
-  <p class="provenance">Recorded sampling probabilities, not raw logits.</p>
-  {#if ondetails}<Button onclick={() => { trigger.focus({ preventScroll: true }); ondetails?.(); onclose(); }}>Full token details</Button>{/if}
+  {#if ondetails}<button type="button" class="dw-text" onclick={() => { trigger.focus({ preventScroll: true }); ondetails?.(); onclose(); }}>Full details</button>{/if}
 </div>
 
 <style>
   .token-logits-popover {
-    position: fixed; inset: auto; margin: 0; width: min(22rem, calc(100vw - 16px));
-    box-sizing: border-box; padding: var(--surface-padding); overflow: auto; overscroll-behavior: contain;
-    border: 1px solid var(--popup-border); border-radius: var(--popup-radius);
-    background: var(--popup-bg); color: var(--fg-strong);
-    font-family: var(--font-ui); font-size: var(--text-sm);
+    position: fixed; inset: auto; margin: 0; width: min(20rem, calc(100vw - 16px));
+    display: grid; gap: var(--s3); justify-items: start;
+    box-sizing: border-box; padding: var(--s4); overflow: auto; overscroll-behavior: contain;
+    border: 0; border-radius: var(--r-box);
+    background: var(--wash2); color: var(--ink);
+    font: var(--type-small);
   }
-  header { display: flex; justify-content: space-between; align-items: start; gap: var(--space-sm); }
-  header > div { min-width: 0; }
-  h2 { margin: var(--space-xs) 0 var(--space-sm); font-family: var(--font-mono); font-size: var(--text-md); overflow-wrap: anywhere; }
-  .source, .provenance, .empty-note, .context-note { color: var(--fg-dim); font-size: var(--text-sm); line-height: 1.5; }
-  table { width: 100%; border-collapse: collapse; table-layout: fixed; }
-  th { font-weight: var(--weight-medium); color: var(--fg-dim); text-align: start; }
-  th, td { padding: var(--space-sm) var(--space-xs); }
-  th:last-child, td:last-child { width: 7rem; text-align: end; font-variant-numeric: tabular-nums; }
-  td { border-top: 1px solid var(--glass-line); }
-  code { overflow-wrap: anywhere; font-family: var(--font-mono); }
-  .chosen { color: var(--accent); font-weight: var(--weight-medium); background: var(--accent-subtle); }
-  .chosen-label { display: inline-block; margin-inline-start: var(--space-xs); font-family: var(--font-ui); font-size: var(--text-xs); }
-  .provenance { margin-block: var(--space-sm); }
+  .token-logits-popover:focus { outline: none; }
+  header { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); width: 100%; min-width: 0; }
+  h2 { min-width: 0; margin: 0; color: var(--ink); font: var(--type-lead); font-family: var(--display); font-weight: 600; white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: help; }
+  h2.context-changed { text-decoration: underline dashed var(--ink3); text-underline-offset: 4px; }
+  header :global(.icon) { background: var(--paper); }
+  .ws { color: var(--ink3); }
+  .ws:empty { display: none; }
+  .meta { overflow-wrap: anywhere; }
+  table { width: 100%; border-collapse: separate; border-spacing: 0 2px; table-layout: fixed; }
+  td { padding: 2px var(--s2); color: var(--ink2); }
+  td:first-child { border-radius: var(--r-col) 0 0 var(--r-col); }
+  td:last-child { width: 6rem; border-radius: 0 var(--r-col) var(--r-col) 0; text-align: end; font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .tok { color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* The token that was chosen: the output's tint (the last layer's), as the inspector marks it. */
+  .chosen td { background: color-mix(in oklch, var(--late) 22%, var(--wash2)); color: var(--ink); }
+  .token-logits-popover .dw-quiet { background: var(--paper); }
 </style>

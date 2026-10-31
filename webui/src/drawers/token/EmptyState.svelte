@@ -1,55 +1,24 @@
 <script lang="ts">
-  // Standardized drilldown empty state: what's missing, why, and (when
-  // the caller supplies children) the action that fixes it — every tab
-  // renders absence in this one shape.
-
+  // An absence in the token view: one quiet line for what is missing, an optional second, and the
+  // action that fixes it when the caller has one. drowse.ai's lens-missing state renders this too.
   import type { Snippet } from "svelte";
 
-  let {
-    title,
-    detail = null,
-    children,
-  }: {
+  let { title, detail = null, children }: {
     title: string;
     detail?: string | null;
-    /** Optional action / hint block (a Button, a CLI hint). */
+    /** The fix, when there is one (a quiet button). */
     children?: Snippet;
   } = $props();
 </script>
 
 <div class="empty">
-  <p class="empty-title">{title}</p>
-  {#if detail}
-    <p class="empty-detail">{detail}</p>
-  {/if}
-  {#if children}
-    <div class="empty-action">{@render children()}</div>
-  {/if}
+  <p class="line">{title}</p>
+  {#if detail}<p class="meta">{detail}</p>{/if}
+  {#if children}<div class="dw-row">{@render children()}</div>{/if}
 </div>
 
 <style>
-  .empty {
-    color: var(--fg-muted);
-    padding: var(--space-6) 0;
-    line-height: 1.5;
-    max-width: 62ch;
-  }
-  .empty p {
-    margin: 0;
-  }
-  .empty-title {
-    color: var(--fg-dim);
-  }
-  .empty-detail {
-    font-size: var(--text-sm);
-    margin-top: var(--space-2);
-  }
-  .empty-detail :global(code),
-  .empty-action :global(code) {
-    font-family: var(--font-mono);
-    color: var(--fg-dim);
-  }
-  .empty-action {
-    margin-top: var(--space-4);
-  }
+  .empty { display: grid; gap: var(--s2); justify-items: start; min-width: 0; }
+  .line { color: var(--ink2); font: var(--type-small); }
+  .empty :global(code) { color: var(--ink); }
 </style>

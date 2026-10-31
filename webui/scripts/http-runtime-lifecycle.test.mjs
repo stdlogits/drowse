@@ -77,6 +77,15 @@ try {
       "an incomplete done payload is not a result");
     globalThis.fetch = async () => sse(['event: error\ndata: {"message":"not poised","code":"PoisednessError","status":422}\n\n']);
     await assert.rejects(apiManifoldFitStream("local", "m", {}, () => {}), error => error.status === 422 && /not poised/.test(error.message));
+    // Token-readout replays: geometry takes no top_k (the server refuses one); lens and SAE send theirs.
+    const { apiInstruments } = await server.ssrLoadModule("/src/lib/api.ts");
+    const asked = [];
+    globalThis.fetch = async path => { asked.push(new URL(path, "http://x").searchParams); return Response.json({ measurements: {} }); };
+    await apiInstruments.tokenReadout("geometry", "n", 3, { steered: false });
+    await apiInstruments.tokenReadout("lens", "n", 3, { topK: 5, layers: "all" });
+    assert.equal(asked[0].has("top_k"), false, "a geometry replay carries no top_k");
+    assert.equal(asked[0].get("steered"), "false");
+    assert.equal(asked[1].get("top_k"), "5");
   } finally { globalThis.fetch = previousFetch; }
   console.log("HTTP runtime lifecycle: closed and replaced socket events are ignored; active messages and expected shutdown are preserved; SSE operations stream, resolve, and fail through one path");
 } finally {
