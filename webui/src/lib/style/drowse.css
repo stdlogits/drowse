@@ -12,7 +12,9 @@
   --field: var(--wash);
   --field-hover: var(--wash2);
 }
-.dw-compose, .dw-empty { --field: var(--wash2); --field-hover: var(--paper); }
+/* The wash surfaces that hold fields: the composer, an empty state, the phone's inspector sheet
+ * (Workbench) and the composer's role plan (Chat). */
+.dw-compose, .dw-empty, .sheet, .turn-plan { --field: var(--wash2); --field-hover: var(--paper); }
 
 /* ---------- the header */
 
