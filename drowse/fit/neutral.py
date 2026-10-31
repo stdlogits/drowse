@@ -10,8 +10,11 @@ unit hook that fails, records units as unavailable and never fails the pass.
 The same forward also measures each block's **mid mean** (:class:`MidMeans`:
 the residual after attention, the MLP's input, pooled at the activations'
 own positions), the centring mean of an S-family read at the lens ``mid``
-site; a model the description refuses records it as unavailable.
-The cache file format, validation and publication are pure IO in
+site; a model the description refuses records it as unavailable.  Only
+that refusal lasts: a cache recording units or mid means unavailable for a
+model the description accepts (a failure on that pass, such as an
+out-of-memory error at capture batch size 1) is stale, and the next load
+recomputes it.  The cache file format, validation and publication are pure IO in
 :mod:`drowse.store.neutral`.
 """
 from __future__ import annotations
@@ -129,6 +132,30 @@ def _units_well_formed(units: NeutralUnits) -> bool:
     return all(set(row) == names for row in units.tensors.values())
 
 
+def _failed_on_a_described_model(cache: NeutralCache, model: Any) -> bool:
+    """Whether ``cache`` records its unit statistics or mid means as
+    unavailable for a model the block description accepts.
+
+    Only a refusal (``model_spec`` raises: the blocks are outside the
+    description) is a lasting property of the model.  Anything else that
+    left them unavailable (an out-of-memory error at capture batch size 1, a
+    hook that raised) was a failure of that pass, so the record is stale and
+    the next load recomputes it rather than refusing every unit or ``mid``
+    read for the cache's lifetime.  The check runs block discovery only for
+    such a cache (memoized per live model; the caller holds the section a
+    cache miss would need).
+    """
+    if cache.units.tensors is not None and cache.mid.means is not None:
+        return False
+    from drowse.model.blocks import model_spec
+
+    try:
+        model_spec(model)
+    except Exception:  # noqa: BLE001 — refused (or not describable now): the record stands
+        return False
+    return True
+
+
 def _load_or_compute_neutral_cache_locked(
     model: Any,
     tokenizer: Any,
@@ -194,17 +221,24 @@ def _load_or_compute_neutral_cache_locked(
                     "Neutral cache unit statistics are not the current set; "
                     "recomputing for %s", model_id,
                 )
-            elif neutral_cache_matches(
+            elif not neutral_cache_matches(
                 cache.sidecar, layers=list(range(len(layers))), **identity,
             ):
-                log.debug("Loaded cached neutral activations for %s", model_id)
-                return cache
-            else:
                 log.info(
                     "Neutral activations stale (model/token/corpus/layer identity "
                     "changed); recomputing for %s",
                     model_id,
                 )
+            elif _failed_on_a_described_model(cache, base_model):
+                log.info(
+                    "Neutral cache records unit statistics or mid means as "
+                    "unavailable (%s) for a model the block description "
+                    "accepts; recomputing for %s",
+                    cache.mid.reason or cache.units.reason, model_id,
+                )
+            else:
+                log.debug("Loaded cached neutral activations for %s", model_id)
+                return cache
 
     log.info("Computing neutral activations (one-time per model)...")
     if on_progress is not None:

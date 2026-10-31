@@ -153,6 +153,84 @@ def test_an_undescribed_model_has_no_mid_means_and_mid_reads_refuse(
     assert info.value.user_message()[0] == 422
 
 
+def test_a_failed_mid_pass_on_a_described_model_recomputes_on_the_next_load(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: an out-of-memory error at capture batch size 1 published
+    ``mid: {available: false}`` and every later load reused it, so every S
+    read of a mid residual refused (422) for a model that has mid means.
+    Only the block description's refusal lasts; a failure recomputes."""
+    import drowse.fit.capture as capture_mod
+    from drowse.fit.neutral import MidMeans, load_or_compute_neutral_cache
+
+    def oom(self: MidMeans) -> Any:
+        raise RuntimeError("out of memory at capture batch size 1 (simulated)")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(MidMeans, "finish", oom)
+        failed = load_or_compute_neutral_cache(
+            tiny_session.model, tiny_session.tokenizer, tiny_session.layers,
+            model_id=tiny_session.model_id, force=True,
+        )
+    assert failed.mid.means is None and "simulated" in str(failed.mid.reason)
+    assert failed.sidecar["mid"]["available"] is False
+
+    passes: list[int] = []
+    compute = capture_mod.compute_neutral_activations
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        passes.append(1)
+        return compute(*args, **kwargs)
+
+    monkeypatch.setattr(capture_mod, "compute_neutral_activations", counting)
+    cache = load_or_compute_neutral_cache(
+        tiny_session.model, tiny_session.tokenizer, tiny_session.layers,
+        model_id=tiny_session.model_id,
+    )
+    assert passes == [1]
+    assert cache.mid.means is not None and cache.sidecar["mid"] == {"available": True}
+    # The recomputed cache is reused as is.
+    load_or_compute_neutral_cache(
+        tiny_session.model, tiny_session.tokenizer, tiny_session.layers,
+        model_id=tiny_session.model_id,
+    )
+    assert passes == [1]
+
+
+def test_a_refused_model_reuses_its_unavailable_record(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model the description refuses keeps ``mid`` (and units) unavailable
+    across loads without recomputing: that state is the model's."""
+    import drowse.fit.capture as capture_mod
+    import drowse.model.blocks as blocks_mod
+    from drowse.fit.neutral import load_or_compute_neutral_cache
+
+    def refuse(_model: Any) -> Any:
+        raise UnsupportedBlockError("mixture-of-experts block ('experts')", layer=0)
+
+    monkeypatch.setattr(blocks_mod, "model_spec", refuse)
+    load_or_compute_neutral_cache(
+        tiny_session.model, tiny_session.tokenizer, tiny_session.layers,
+        model_id=tiny_session.model_id, force=True,
+    )
+    passes: list[int] = []
+    compute = capture_mod.compute_neutral_activations
+
+    def counting(*args: Any, **kwargs: Any) -> Any:
+        passes.append(1)
+        return compute(*args, **kwargs)
+
+    monkeypatch.setattr(capture_mod, "compute_neutral_activations", counting)
+    cache = load_or_compute_neutral_cache(
+        tiny_session.model, tiny_session.tokenizer, tiny_session.layers,
+        model_id=tiny_session.model_id,
+    )
+    assert passes == []
+    assert cache.mid.means is None and "experts" in str(cache.mid.reason)
+    assert cache.units.tensors is None
+
+
 def test_site_means_are_the_monitor_mean_at_out_and_the_mid_means_at_mid(
     tiny_session: Any,
 ) -> None:

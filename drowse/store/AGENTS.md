@@ -337,7 +337,9 @@ mutate; the next writer collects old generations once the new pointer is durable
   MLP's input, averaged at the activations' pooled positions on the same
   forward), the centring mean of an S read of a `mid` residual as `X.mean(0)`
   is at `out`; the sidecar's exact `mid` block is `{available: true}` or
-  `{available: false, reason}`. The store validates the tensors generically
+  `{available: false, reason}`; the store reuses either unavailable record as
+  stored, and `fit/neutral.py` recomputes it on a load whose model the block
+  description accepts (only a refusal lasts). The store validates the tensors generically
   (names, shapes, dtype, finiteness); `load_neutral_cache` returns
   `NeutralCache(activations, units: NeutralUnits, mid: NeutralMid, sidecar)`
   from one digest-checked read, `load_validated_neutral_cache` the activations

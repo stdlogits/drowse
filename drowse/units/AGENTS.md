@@ -68,7 +68,9 @@ raises anything but an out-of-memory error, or an out-of-memory error that
 persists at capture batch size 1 (the capture then `abandon`s the accumulator
 and re-runs the rows without its hooks) publishes a complete cache whose
 `units` block reads `{"available": false, "reason": …}`. Reading units
-then raises `UnitsUnavailableError` (422) with that reason.
+then raises `UnitsUnavailableError` (422) with that reason. Only the refusal
+lasts: a later load of a cache whose units are unavailable for a model
+`model_spec` accepts recomputes it (`drowse/fit/AGENTS.md`).
 
 ## The read family (`instrument.py`, `capture.py`)
 

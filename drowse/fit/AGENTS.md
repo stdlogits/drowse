@@ -256,6 +256,15 @@ as one observer (`_Observers`). It needs the block description too, so a model
 `model_spec` refuses, or an abandoned observer, publishes `mid` unavailable
 with the reason; a residual S read at `mid` then raises `NeutralMeansError`.
 
+Only the refusal lasts. A cache hit that records units or `mid` unavailable
+runs block discovery (`_failed_on_a_described_model`, memoized per live
+model): when `model_spec` now accepts the model, the record was a failure of
+that pass (an out-of-memory error at batch size 1, a hook that raised), so the
+cache is stale and recomputes rather than refusing every unit and `mid` read
+for its lifetime. A failure that recurs on a described model therefore costs a
+neutral pass per load; the session's `NeutralBaseline` keeps what one load
+settled until it is invalidated.
+
 ## Bake
 
 `merge_into_manifold(name, expression, model, *, force, strict,
