@@ -391,9 +391,11 @@ def register_instrument_routes(app: FastAPI) -> None:
         from drowse.lens.key import LensKey
 
         kind = body.kind.upper()
-        # The live readout reads the output side; an input-side fit only
-        # publishes and selects.
-        output_side = LensKey(kind).side == "output"
+        source = f"local:{kind.lower()}"
+        # The live readout reads the output side's ``out`` site.  A fit that
+        # does not fit it (an input kind, or an output kind at ``mid`` only)
+        # leaves the output source, the resident lens and live readout alone.
+        reads_out = LensKey(kind).side == "output" and "out" in body.sites
 
         async def enable() -> None:
             lens_fit.state["live_layers"] = await enable_lens_live()
@@ -411,16 +413,24 @@ def register_instrument_routes(app: FastAPI) -> None:
             kind=kind, sites=body.sites, corpus_spec=corpus.spec,
             layers=layers, seq_len=body.seq_len,
         ) is not None:
-            # Nothing to fit: skip the stream and make the proven artifact
-            # the source, as a publishing fit leaves it; live readout is the
-            # same best-effort step as after a fit.
+            # Nothing to fit: skip the stream and select the proven artifact
+            # as a publishing fit would.  An output fit at ``out`` makes it
+            # the live source (live readout is the same best-effort step as
+            # after a fit); an input fit selects its own side only, never
+            # touching the output resident; a ``mid``-only output fit
+            # selects nothing.
             lens_fit.report(
                 "already fitted for this corpus and exact model source — nothing to do",
             )
-            async with session_lock(app):
-                await select_lens_source(f"local:{kind.lower()}")
-            if output_side:
+            if reads_out:
+                async with session_lock(app):
+                    await select_lens_source(source)
                 await enable_live_after(lens_fit, enable)
+            elif LensKey(kind).side == "input":
+                from drowse.lens.sources import use_lens_source
+
+                async with session_lock(app):
+                    await run_in_thread(use_lens_source, session.model_id, source)
             lens_fit.report("done")
             return
         lens_fit.report(f"streaming {body.prompts} documents from {corpus}…")
@@ -435,7 +445,7 @@ def register_instrument_routes(app: FastAPI) -> None:
             force=body.force,
             on_progress=lens_fit.report, cancel_event=lens_fit.cancel_event,
         )
-        if output_side:
+        if reads_out:
             await enable_live_after(lens_fit, enable)
         lens_fit.report("done")
 
