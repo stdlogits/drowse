@@ -1,0 +1,1 @@
+export{K as tick}from"./index-client-CVqwcGP3.js";

@@ -1,0 +1,1 @@
+import{it as e}from"./index-client-CVqwcGP3.js";var t=e({page:`conversation`,sheet:!1,sheetOpen:!1});function n(){t.page=`loom`}function r(){t.page=`conversation`}export{n,t as r,r as t};
