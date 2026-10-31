@@ -862,8 +862,8 @@ def anatomy_envelope(fixture: dict[str, Any]) -> Any:
         assert reads_as is not None and attention is not None and mlp is not None
         layers.append(anatomy_layer(
             L, reads_as, attention, mlp, read(L, row["steering"]),
-            [anatomy_unit("neuron", L, i, c, a) for i, c, a in row["neurons"]],
-            [anatomy_unit("head", L, i, c, w) for i, c, w in row["heads"]],
+            [anatomy_unit("neuron", L, i, c, a, o) for i, c, a, o in row["neurons"]],
+            [anatomy_unit("head", L, i, c, w, o) for i, c, w, o in row["heads"]],
         ))
     token = spec["token"]
     record = token_anatomy_record(
@@ -871,7 +871,7 @@ def anatomy_envelope(fixture: dict[str, Any]) -> Any:
         position=token["position"], prompt_length=token["promptLength"],
         probability=token["probability"], sources=spec["sources"],
         steering=fixture["steering"], layers=layers,
-        units=[anatomy_unit(kind, L, i, c, None) for kind, L, i, c in spec["units"]],
+        units=[anatomy_unit(kind, L, i, c, None, None) for kind, L, i, c in spec["units"]],
         units_absent=None,
         patterns=[
             anatomy_pattern(p["layer"], p["head"], p["contribution"], p["weights"])

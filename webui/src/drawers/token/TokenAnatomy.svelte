@@ -12,6 +12,7 @@
   import { depthTint, foldedLayers, formatP } from "./layers";
   import {
     absentTip,
+    activityText,
     anatomyByDepth,
     anatomyLead,
     columnRead,
@@ -100,11 +101,11 @@
   function poleOf(u: AnatomyUnit): "+" | "-" | null {
     return u.kind === "neuron" && u.activation ? (u.activation > 0 ? "+" : "-") : null;
   }
-  function unitTip(unit: string, contribution: number, kind: "neuron" | "head", pole: "+" | "-" | null, activation: number | null, label: string | undefined): string {
+  function unitTip(unit: string, contribution: number, kind: "neuron" | "head", pole: "+" | "-" | null, activation: number | null, overScale: number | null, label: string | undefined): string {
     const parts = [
       `${unit} · ${formatContribution(contribution)} to the logit`,
-      kind === "neuron" ? (pole ? `${pole === "+" ? "+" : "−"} pole${activation != null ? ` · activation ${activation.toFixed(2)}` : ""}` : "")
-        : activation != null ? `write norm ${activation.toFixed(2)}` : "",
+      kind === "neuron" && pole ? `${pole === "+" ? "+" : "−"} pole` : "",
+      activityText(kind, activation, overScale),
       label ?? "",
     ];
     return parts.filter(Boolean).join(" · ");
@@ -134,10 +135,10 @@
   <button type="button" class="dw-text" onclick={() => (all = !all)}>{all ? "Every third layer" : `All ${layers.length} layers`}</button>
 {/snippet}
 
-{#snippet unitRow(unit: string, kind: "neuron" | "head", layer: number, contribution: number, share: number, pole: "+" | "-" | null, activation: number | null)}
+{#snippet unitRow(unit: string, kind: "neuron" | "head", layer: number, contribution: number, share: number, pole: "+" | "-" | null, activation: number | null, overScale: number | null)}
   {@const label = labels?.label(unit, kind, pole) ?? null}
   <button type="button" class="unit" class:bare={label === null} style:--tint={depthTint(layer, last)}
-    data-tip={unitTip(unit, contribution, kind, pole, activation, label?.tip)} onclick={() => select({ kind: "unit", id: unit })}>
+    data-tip={unitTip(unit, contribution, kind, pole, activation, overScale, label?.tip)} onclick={() => select({ kind: "unit", id: unit })}>
     <span class="uid">{unitShort(unit)}</span>
     {#if label}<span class="ulabel">{label.text}</span>{/if}
     <span class="umeter" class:neg={contribution < 0}><i style:width="{Math.max(2, share * 100)}%"></i></span>
@@ -219,7 +220,7 @@
               {/each}
               {#if own.length > 0}
                 <div class="units">
-                  {#each own as u (u.unit)}{@render unitRow(u.unit, u.kind, u.layer, u.contribution, Math.abs(u.contribution) / peakHere, poleOf(u), u.activation)}{/each}
+                  {#each own as u (u.unit)}{@render unitRow(u.unit, u.kind, u.layer, u.contribution, Math.abs(u.contribution) / peakHere, poleOf(u), u.activation, u.activation_over_scale)}{/each}
                 </div>
               {/if}
             </div>
@@ -236,7 +237,7 @@
         {#if credit}<span class="meta">{credit}</span>{/if}
       </div>
       <div class="units">
-        {#each pushes as row (row.unit)}{@render unitRow(row.unit, row.kind, row.layer, row.contribution, row.share, row.pole, null)}{/each}
+        {#each pushes as row (row.unit)}{@render unitRow(row.unit, row.kind, row.layer, row.contribution, row.share, row.pole, row.activation, row.overScale)}{/each}
       </div>
     </section>
   {:else if data.units_absent}

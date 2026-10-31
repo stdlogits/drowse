@@ -343,7 +343,10 @@ A `replay` envelope may also carry `anatomy` (`TokenAnatomy`, built by
 scope refuses it): one token's per-layer lens reads (`reads_as`, the residual
 with its S half centred; `attention`, `mlp`, `steering`, write deltas read as
 directions; each a `LensReadDict` with its `of` and per-half `centred`), the
-units that pushed the token (`AnatomyUnit`), the top heads' attention rows
+units that pushed the token (`AnatomyUnit`: its contribution, its raw
+`activation` (a head's write norm) and `activation_over_scale`, the units
+family's number for the same unit, over its soft neutral scale, `None` without
+unit statistics and in the cross-layer list), the top heads' attention rows
 (`AnatomyPattern`), the decoded `context` and a lens `binding`. An anatomy
 envelope may have empty `instruments`; it sits beside them because it records
 the replay forward, not a probe.

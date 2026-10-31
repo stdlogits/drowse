@@ -87,6 +87,7 @@ from drowse.readout.measurements import (
 )
 from drowse.steering.triggers import Trigger, TriggerContext
 from drowse.units.capture import SCALE_FLOOR
+from drowse.units.runtime import UnitsUnavailableError
 from drowse.units.stats import UNIT_POSITIONS_FROM, UnitStats
 
 if TYPE_CHECKING:
@@ -676,6 +677,7 @@ def _unit_name(kind: str, layer: int, index: int) -> str:
 
 def anatomy_unit(
     kind: str, layer: int, index: int, contribution: float, activation: float | None,
+    over_scale: float | None,
 ) -> AnatomyUnit:
     """One unit of a token anatomy, rounded as the envelope carries it."""
     return {
@@ -685,6 +687,7 @@ def anatomy_unit(
         "index": int(index),
         "contribution": round(float(contribution), 6),
         "activation": None if activation is None else round(float(activation), 6),
+        "activation_over_scale": None if over_scale is None else round(float(over_scale), 6),
     }
 
 
@@ -880,6 +883,13 @@ class NodeReplayer:
             # The centring mean is resident before the steering scope opens
             # (a neutral build refuses inside one).
             self._lens.neutral_mean("out", 0)
+        # The unit rows' over-scale values need the neutral unit statistics
+        # (loaded, like the means, before the scope opens); a model without
+        # them still has an anatomy, with those values None.
+        try:
+            unit_stats: UnitStats | None = self._units.stats()
+        except UnitsUnavailableError:
+            unit_stats = None
 
         def run(forward: ReplayForward) -> TokenAnatomy:
             segments = self._segments(forward)
@@ -894,6 +904,7 @@ class NodeReplayer:
             with torch.inference_mode():
                 return self._anatomy(
                     spec, taps, forward, k=int(k), units=int(units), patterns=int(patterns),
+                    unit_stats=unit_stats,
                 )
 
         token, anatomy = self._replayer.forward(
@@ -908,7 +919,7 @@ class NodeReplayer:
 
     def _anatomy(
         self, spec: ModelSpec, taps: TokenTaps, forward: ReplayForward,
-        *, k: int, units: int, patterns: int,
+        *, k: int, units: int, patterns: int, unit_stats: UnitStats | None,
     ) -> TokenAnatomy:
         n = len(spec.blocks)
         device = taps.out.device
@@ -929,8 +940,9 @@ class NodeReplayer:
 
         contributions = self._contributions(spec, taps, token_id)
         absent: str | None = None
-        neuron_slots: dict[int, tuple[_Slot, _Slot, _Slot]] = {}
-        head_slots: dict[int, tuple[_Slot, _Slot, _Slot]] = {}
+        # (contribution, index, raw activation[, over the soft scale]) per layer.
+        neuron_slots: dict[int, tuple[_Slot, ...]] = {}
+        head_slots: dict[int, tuple[_Slot, ...]] = {}
         flat = _FlatUnits(())
         top_slots: tuple[_Slot, _Slot] | None = None
         pattern_slots: tuple[_Slot, _Slot, _Slot] | None = None
@@ -939,14 +951,26 @@ class NodeReplayer:
             absent = contributions
         else:
             neuron_c, head_c = contributions
+            # The units family's own number beside the raw one: over the soft
+            # neutral scale, as probes and unit activity read (None without stats).
             for L, c in neuron_c.items():
                 idx = c.abs().topk(min(units, int(c.numel()))).indices
-                neuron_slots[L] = (pack.add(c[idx]), pack.add(idx), pack.add(taps.acts[L][idx]))
+                act = taps.acts[L][idx].float()
+                slots = [pack.add(c[idx]), pack.add(idx), pack.add(act)]
+                if unit_stats is not None:
+                    scale = unit_stats.layer(L).neuron_reading_scale.to(act.device)
+                    pole = torch.where(act >= 0, scale[0][idx], scale[1][idx])
+                    slots.append(pack.add(act / pole.clamp_min(SCALE_FLOOR)))
+                neuron_slots[L] = tuple(slots)
             for L, c in head_c.items():
                 block = spec.blocks[L]
                 idx = c.abs().topk(min(units, int(c.numel()))).indices
-                norms = head_write_norms(block, taps.z[L], taps.attn_out[L])
-                head_slots[L] = (pack.add(c[idx]), pack.add(idx), pack.add(norms[idx]))
+                norms = head_write_norms(block, taps.z[L], taps.attn_out[L])[idx].float()
+                slots = [pack.add(c[idx]), pack.add(idx), pack.add(norms)]
+                if unit_stats is not None:
+                    scale = unit_stats.layer(L).head_reading_scale.to(norms.device)[idx]
+                    slots.append(pack.add(norms / scale.clamp_min(SCALE_FLOOR)))
+                head_slots[L] = tuple(slots)
             groups = [("neuron", L, int(c.numel())) for L, c in neuron_c.items()]
             groups += [("head", L, int(c.numel())) for L, c in head_c.items()]
             flat = _FlatUnits(groups)
@@ -976,16 +1000,18 @@ class NodeReplayer:
             neurons: list[AnatomyUnit] = []
             heads_out: list[AnatomyUnit] = []
             if L in neuron_slots:
-                c, idx, act = (_take(host, slot).tolist() for slot in neuron_slots[L])
+                c, idx, act, *over = (_take(host, slot).tolist() for slot in neuron_slots[L])
+                scaled = over[0] if over else [None] * len(c)
                 neurons = [
-                    anatomy_unit("neuron", L, int(i), v, a)
-                    for v, i, a in zip(c, idx, act, strict=True)
+                    anatomy_unit("neuron", L, int(i), v, a, o)
+                    for v, i, a, o in zip(c, idx, act, scaled, strict=True)
                 ]
             if L in head_slots:
-                c, idx, norm = (_take(host, slot).tolist() for slot in head_slots[L])
+                c, idx, norm, *over = (_take(host, slot).tolist() for slot in head_slots[L])
+                scaled = over[0] if over else [None] * len(c)
                 heads_out = [
-                    anatomy_unit("head", L, int(i), v, w)
-                    for v, i, w in zip(c, idx, norm, strict=True)
+                    anatomy_unit("head", L, int(i), v, w, o)
+                    for v, i, w, o in zip(c, idx, norm, scaled, strict=True)
                 ]
             layers.append(anatomy_layer(
                 L, reads_as, attention, mlp, steering if injected[L] > 0 else None,
@@ -997,7 +1023,7 @@ class NodeReplayer:
             values, flat_idx = (_take(host, slot).tolist() for slot in top_slots)
             for value, index in zip(values, flat_idx, strict=True):
                 kind, L, unit = flat.unit(int(index))
-                top_units.append(anatomy_unit(kind, L, unit, value, None))
+                top_units.append(anatomy_unit(kind, L, unit, value, None, None))
         pattern_rows: list[AnatomyPattern] | None = None
         if pattern_slots is not None:
             rows_host = _take(host, pattern_slots[0])

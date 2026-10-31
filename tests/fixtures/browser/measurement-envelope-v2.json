@@ -87,8 +87,8 @@
           "s": {"lens": "S:out", "tokens": [[23, "owl", 1.75], [9, "quiet", 1.5]]}
         },
         "steering": null,
-        "neurons": [[344, 0.75, -1.5], [12, -0.5, 2.0]],
-        "heads": [[3, -0.25, 2.0]]
+        "neurons": [[344, 0.75, -1.5, -0.75], [12, -0.5, 2.0, 1.25]],
+        "heads": [[3, -0.25, 2.0, 0.5]]
       },
       {
         "layer": 9,
@@ -112,8 +112,8 @@
           "r": {"lens": "R:out", "tokens": [[17, "calm", 0.625]]},
           "s": {"lens": "S:out", "tokens": [[23, "owl", 2.0]]}
         },
-        "neurons": [[7, 1.25, 0.5]],
-        "heads": [[0, 0.375, 1.0]]
+        "neurons": [[7, 1.25, 0.5, 0.25]],
+        "heads": [[0, 0.375, 1.0, 0.125]]
       }
     ],
     "units": [["neuron", 9, 7, 1.25], ["neuron", 4, 344, 0.75], ["head", 9, 0, 0.375]],
@@ -333,7 +333,8 @@
               "layer": 4,
               "index": 344,
               "contribution": 0.75,
-              "activation": -1.5
+              "activation": -1.5,
+              "activation_over_scale": -0.75
             },
             {
               "unit": "neuron/L4n12",
@@ -341,7 +342,8 @@
               "layer": 4,
               "index": 12,
               "contribution": -0.5,
-              "activation": 2.0
+              "activation": 2.0,
+              "activation_over_scale": 1.25
             }
           ],
           "heads": [
@@ -351,7 +353,8 @@
               "layer": 4,
               "index": 3,
               "contribution": -0.25,
-              "activation": 2.0
+              "activation": 2.0,
+              "activation_over_scale": 0.5
             }
           ]
         },
@@ -461,7 +464,8 @@
               "layer": 9,
               "index": 7,
               "contribution": 1.25,
-              "activation": 0.5
+              "activation": 0.5,
+              "activation_over_scale": 0.25
             }
           ],
           "heads": [
@@ -471,7 +475,8 @@
               "layer": 9,
               "index": 0,
               "contribution": 0.375,
-              "activation": 1.0
+              "activation": 1.0,
+              "activation_over_scale": 0.125
             }
           ]
         }
@@ -483,7 +488,8 @@
           "layer": 9,
           "index": 7,
           "contribution": 1.25,
-          "activation": null
+          "activation": null,
+          "activation_over_scale": null
         },
         {
           "unit": "neuron/L4n344",
@@ -491,7 +497,8 @@
           "layer": 4,
           "index": 344,
           "contribution": 0.75,
-          "activation": null
+          "activation": null,
+          "activation_over_scale": null
         },
         {
           "unit": "head/L9h0",
@@ -499,7 +506,8 @@
           "layer": 9,
           "index": 0,
           "contribution": 0.375,
-          "activation": null
+          "activation": null,
+          "activation_over_scale": null
         }
       ],
       "units_absent": null,

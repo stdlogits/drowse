@@ -177,19 +177,32 @@ export interface PushRow {
   share: number;
   /** A neuron's pole, from its activation's sign (null for a head, or when unknown). */
   pole: "+" | "-" | null;
+  /** The raw activation (a head's write norm) and the same over the unit's soft neutral scale,
+   *  from its layer's row (null when unknown). */
+  activation: number | null;
+  overScale: number | null;
+}
+
+/** How hard a unit fired, as its tip says it: first over its neutral scale, the number the Units
+ *  room, the unit view and its probe show for the same unit, then the raw value. */
+export function activityText(kind: "neuron" | "head", activation: number | null, overScale: number | null): string {
+  const raw = activation === null ? "" : `${kind === "neuron" ? "activation" : "write norm"} ${activation.toFixed(2).replace("-", "−")}`;
+  if (overScale === null) return raw;
+  const scaled = `${formatContribution(overScale)} of its scale`;
+  return raw ? `${scaled} (${raw})` : scaled;
 }
 
 /** The units that pushed the token, as signed rows. The cross-layer list carries no activation,
- *  so a neuron's pole comes from its layer's row (a unit in the cross-layer top k is always in its
- *  layer's top k, both ranked by |contribution|). */
+ *  so a neuron's pole and both activity numbers come from its layer's row (a unit in the
+ *  cross-layer top k is always in its layer's top k, both ranked by |contribution|). */
 export function pushRows(units: readonly AnatomyUnit[], layers: readonly AnatomyLayer[]): PushRow[] {
   const peak = Math.max(1e-12, ...units.map(u => Math.abs(u.contribution)));
   const byLayer = new Map(layers.map(row => [row.layer, row]));
   return units.map(u => {
-    let activation = u.activation;
-    if (activation === null && u.kind === "neuron") {
-      activation = byLayer.get(u.layer)?.neurons.find(n => n.unit === u.unit)?.activation ?? null;
-    }
+    const row = byLayer.get(u.layer);
+    const own = (u.kind === "neuron" ? row?.neurons : row?.heads)?.find(n => n.unit === u.unit);
+    const activation = u.activation ?? own?.activation ?? null;
+    const overScale = u.activation_over_scale ?? own?.activation_over_scale ?? null;
     return {
       unit: u.unit,
       short: unitShort(u.unit),
@@ -198,6 +211,8 @@ export function pushRows(units: readonly AnatomyUnit[], layers: readonly Anatomy
       contribution: u.contribution,
       share: Math.abs(u.contribution) / peak,
       pole: u.kind === "neuron" && activation !== null && activation !== 0 ? (activation > 0 ? "+" : "-") : null,
+      activation,
+      overScale,
     };
   });
 }

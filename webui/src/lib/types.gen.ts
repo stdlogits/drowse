@@ -97,7 +97,10 @@ export interface AnatomyToken {
 /**
  * A unit's direct contribution to the anatomy token's logit through the
  * R lens; ``activation`` is a neuron's raw activation or a head's write
- * norm (``None`` in the cross-layer list).
+ * norm, and ``activation_over_scale`` the same over the unit's soft neutral
+ * scale (the units family's unit: the number its probe, unit activity and
+ * the unit view show), ``None`` without unit statistics.  Both are ``None``
+ * in the cross-layer list.
  */
 export interface AnatomyUnit {
   unit: string;
@@ -106,6 +109,7 @@ export interface AnatomyUnit {
   index: number;
   contribution: number;
   activation: number | null;
+  activation_over_scale: number | null;
 }
 
 /** ``CastMember.to_dict()`` plus the server-derived ``origin``. */

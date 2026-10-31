@@ -97,15 +97,21 @@ try {
   // Pushed units: ids as the data writes them, a neuron's pole from its layer's row.
   assert.equal(a.unitShort("neuron/L31n4410"), "L31 n4410");
   assert.equal(a.unitShort("head/L28h12"), "L28 h12");
-  const unit = (u, kind, L, index, contribution, activation) => ({ unit: u, kind, layer: L, index, contribution, activation });
+  const unit = (u, kind, L, index, contribution, activation, over = null) => ({ unit: u, kind, layer: L, index, contribution, activation, activation_over_scale: over });
   const withUnits = [
     layer(2, read(2, 0, [], []), {
-      neurons: [unit("neuron/L2n4", "neuron", 2, 4, -1.5, -3.2)],
-      heads: [unit("head/L2h1", "head", 2, 1, 0.75, 2.0)],
+      neurons: [unit("neuron/L2n4", "neuron", 2, 4, -1.5, -3.2, -2.4)],
+      heads: [unit("head/L2h1", "head", 2, 1, 0.75, 2.0, 0.5)],
     }),
   ];
   const rows = a.pushRows([unit("neuron/L2n4", "neuron", 2, 4, -1.5, null), unit("head/L2h1", "head", 2, 1, 0.75, null)], withUnits);
   assert.deepEqual(rows.map(r => [r.short, r.pole, r.share]), [["L2 n4", "-", 1], ["L2 h1", null, 0.5]]);
+  // One number per unit across views: the cross-layer rows take both activity numbers from their
+  // layer's row, and the tip leads with the value over the unit's scale (the Units room's).
+  assert.deepEqual(rows.map(r => [r.activation, r.overScale]), [[-3.2, -2.4], [2.0, 0.5]]);
+  assert.equal(a.activityText("neuron", -3.2, -2.4), "−2.4 of its scale (activation −3.20)");
+  assert.equal(a.activityText("head", 2.0, 0.5), "+0.50 of its scale (write norm 2.00)");
+  assert.equal(a.activityText("head", 2.0, null), "write norm 2.00", "without unit statistics, the raw value");
   assert.deepEqual(a.layerUnits(withUnits[0], 1).map(u => u.unit), ["neuron/L2n4"]);
   assert.equal(a.formatContribution(-1.53), "−1.5");
   assert.equal(a.formatContribution(0.034), "+0.03");

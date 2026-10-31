@@ -229,6 +229,7 @@ def test_token_anatomy_reads_every_layer_and_its_units(
         (u_brute,) = torch.autograd.grad(logit, h)
     u = unembed_cotangent(spec, taps.out[-1], v)
     torch.testing.assert_close(u, u_brute)
+    unit_stats = session.units.runtime.stats()
     for L, layer in enumerate(anatomy["layers"]):
         assert 0 < len(layer["neurons"]) <= 4 and 0 < len(layer["heads"]) <= 4
         J_out = torch.eye(u.shape[0]) if L == n - 1 else r_lens.matrix(L, "out")
@@ -240,10 +241,17 @@ def test_token_anatomy_reads_every_layer_and_its_units(
             assert unit["unit"] == f"neuron/L{L}n{unit['index']}" and unit["kind"] == "neuron"
             assert unit["contribution"] == pytest.approx(float(neurons[unit["index"]]), abs=1e-5)
             assert unit["activation"] == pytest.approx(float(taps.acts[L][unit["index"]]), abs=1e-5)
+            # The units family's number: the activation over the pole's soft scale.
+            pole = 0 if unit["activation"] >= 0 else 1
+            scale = float(unit_stats.layer(L).neuron_reading_scale[pole, unit["index"]])
+            expected = float(taps.acts[L][unit["index"]]) / scale
+            assert unit["activation_over_scale"] == pytest.approx(expected, abs=1e-5)
         for unit in layer["heads"]:
             assert unit["unit"] == f"head/L{L}h{unit['index']}"
             assert unit["contribution"] == pytest.approx(float(heads[unit["index"]]), abs=1e-5)
             assert unit["activation"] >= 0
+            scale = float(unit_stats.layer(L).head_reading_scale[unit["index"]])
+            assert unit["activation_over_scale"] == pytest.approx(unit["activation"] / scale, rel=1e-4, abs=1e-5)
     # The cross-layer list is the largest |contribution| of every unit.
     every = sorted(
         (abs(u["contribution"]) for layer in anatomy["layers"] for u in layer["neurons"] + layer["heads"]),
