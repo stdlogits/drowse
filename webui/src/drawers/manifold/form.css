@@ -22,10 +22,11 @@
 .mf-sec-head .head { margin: 0; }
 .mf-sec-head .meta { white-space: nowrap; }
 
-/* A wash: the one surface a section sits on when it needs one. On a wash, fields and quiet buttons
- * step up to wash2. */
+/* A wash: the one surface a section sits on when it needs one. On a wash, fields (the Select's
+ * trigger among them) and quiet buttons step up to wash2. */
 .mf-wash { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; padding: var(--s4); border-radius: var(--r-row); background: var(--wash); }
 .mf-wash :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea, select),
+.mf-wash .sk-select .sk-select-trigger,
 .mf-wash .dw-quiet { background: var(--wash2); }
 .mf-wash p { margin: 0; color: var(--ink2); font: var(--type-small); }
 
@@ -41,7 +42,8 @@
 }
 .mf-row:has(input.sr-only:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
 .mf-id { display: grid; gap: 2px; min-width: 0; }
-.mf-name { overflow: hidden; color: var(--ink); font: var(--type-control); white-space: nowrap; text-overflow: ellipsis; }
+/* The ID is what tells one row from the next, so it wraps rather than losing its end. */
+.mf-name { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
 .mf-id .meta { overflow-wrap: anywhere; }
 .mf-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2) var(--s3); }
 
@@ -50,10 +52,6 @@
 .mf-depth > i { width: 6px; height: 4px; border-radius: 1px; background: var(--wash2); transition: background-color var(--glide) var(--ease), opacity var(--glide) var(--ease); }
 .mf-depth.is-fitted > i { background: color-mix(in oklch, var(--deep) var(--p), var(--late)); }
 .mf-depth.is-stale > i { opacity: 0.45; }
-
-/* A meter on the ramp: a wash2 track with a tint fill that slides (the Lens room's fit progress). */
-.mf-meter { position: relative; flex: none; width: 96px; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
-.mf-meter > i { position: absolute; inset: 0; border-radius: 2px; background: var(--tint); transform-origin: left; transition: transform var(--glide) var(--ease); }
 
 /* What went wrong, or what to check: ink on a wash, never a colour. */
 .mf-error { margin: 0; color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
@@ -124,18 +122,21 @@
 
 /* Choices made by rows: the budgets, each a row that washes when chosen. */
 .mb-form .choice-rows { display: grid; gap: 2px; }
-.mb-form .choice { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: var(--s1) var(--s4); min-height: 44px; padding: var(--s2) var(--s3); border-radius: var(--r-box); color: var(--ink2); font: var(--type-small); cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+.mb-form .choice { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: var(--s1) var(--s4); min-height: 44px; padding: var(--s2) var(--s3); border-radius: var(--r-box); color: var(--ink2); font: var(--type-small); cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease), opacity var(--fast) var(--ease); }
 .mb-form .choice:active { scale: 0.99; }
 .mb-form .choice b { color: var(--ink); font: var(--type-control); }
 .mb-form .choice .meta { text-align: right; }
 .mb-form .choice:has(input:checked) { background: var(--wash2); }
 @media (hover: hover) { .mb-form .choice:hover:not(:has(input:checked)) { background: var(--wash); } }
 .mb-form .choice:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
-.mb-form fieldset:disabled .choice { cursor: default; opacity: 0.4; }
+/* Held while a job runs: a disabled field, number, choice, switch or segmented control dims as a
+ * disabled button does (the Select dims itself). */
+.mb-form :is(.input, .sk-number), .mb-form fieldset [role="group"] { transition: opacity var(--fast) var(--ease); }
+.mb-form .input:disabled, .mb-form .sk-number:has(input:disabled) { opacity: 0.4; }
+.mb-form fieldset:disabled :is(.choice, [role="switch"]) { cursor: default; opacity: 0.4; }
+.mb-form fieldset:disabled [role="group"] { opacity: 0.4; pointer-events: none; }
 
 .mb-form .check-stack { display: grid; justify-items: start; gap: var(--s1); }
-.mb-form .role-hint { margin: 0 0 0 36px; color: var(--ink3); font: var(--type-meta); }
-.mb-form .advanced { display: grid; gap: var(--s4); }
 
 /* The last step: the action, and what it is doing. */
 .mb-form .submit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
@@ -146,9 +147,20 @@
   .mb-form .grid2 { grid-template-columns: minmax(0, 1fr); }
   .mb-form .axis-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .mb-form .axis-card .name-field { grid-column: 1 / -1; }
+  .mb-form .node-card { padding: var(--s2); }
   .mb-form .node-coords, .mb-form .node-details, .mb-form .node-card > .field-error { padding-left: 0; }
+  /* A row that stacks: its ID over its actions. */
+  .mf-row.stack { grid-template-columns: minmax(0, 1fr); }
+  .mf-row.stack .mf-end { justify-content: flex-start; }
 }
 @media (max-width: 720px) {
   .mf-tool.dialog { padding: var(--s4); }
   .mf-row, .mb-form .choice { min-height: 48px; }
+  /* Phone sizes: every target 44 px. A text button keeps its size and reaches 44 px through its hit
+   * area, so its row does not grow. */
+  .mb-form :is(.node-expand, .node-remove), .mf-search .clear { width: 44px; height: 44px; }
+  .mb-form .add-node { height: 44px; }
+  .mb-form .input:not(textarea) { min-height: 44px; }
+  .mf-tool .dw-text { position: relative; }
+  .mf-tool .dw-text::after { content: ""; position: absolute; inset: -12px -6px; }
 }

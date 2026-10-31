@@ -412,13 +412,13 @@
               {@const key = selectorOf(m)}
               {@const badge = fitBadge(m)}
               {@const fit = fitState(m)}
-              <li class="mf-row rise" style:--i={i} {...{ "aria-description": (m.description || key) }}>
+              <li class="mf-row stack rise" style:--i={i} {...{ "aria-description": (m.description || key) }}>
                 <span class="mf-id">
                   <span class="mf-name">{key}</span>
                   <span class="meta">{m.domain_label} · {m.node_count} nodes{badge ? ` · ${badge}` : ""}</span>
                 </span>
                 <span class="mf-end">
-                  <span class="meta">{fit.word}</span>
+                  {#if fit.word}<span class="meta">{fit.word}</span>{/if}
                   <span class="mf-depth" class:is-fitted={fit.fitted} class:is-stale={m.stale} role="img" aria-label={fit.tip} data-tip={fit.tip}>
                     {#each DEPTH as p (p)}<i style:--p="{p}%"></i>{/each}
                   </span>
@@ -494,8 +494,4 @@
   .file-action input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
   .file-action.disabled input { cursor: default; }
   .file-action:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
-  @media (max-width: 520px) {
-    .mf-row.stack { grid-template-columns: minmax(0, 1fr); }
-    .stack .mf-end { justify-content: flex-start; }
-  }
 </style>

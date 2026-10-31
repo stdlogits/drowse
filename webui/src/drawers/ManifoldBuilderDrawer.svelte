@@ -96,8 +96,9 @@
   {/if}
 
   <div class="mb-form">
-    <!-- Held still while a job runs (not inert: the gliding thumb hides inside an inert subtree). -->
-    <div class="mode" class:busy aria-disabled={busy || undefined}><Segmented
+    <!-- Held while a job runs: the fieldset disables its buttons, and form.css dims it (not inert: the
+         gliding thumb hides inside an inert subtree). -->
+    <fieldset class="mode" disabled={busy}><Segmented
       value={authoringMode}
       onchange={(mode) => { if (!busy) authoringMode = mode; }}
       options={[
@@ -106,7 +107,7 @@
         { value: "authored", label: "Your examples", hint: "Your own labelled statements, on coordinates you place or a layout drowse finds" },
       ]}
       label="Authoring mode"
-    /></div>
+    /></fieldset>
 
     <section class="step" aria-label="Name">
       <h3 class="step-title"><span class="n">1</span>Name</h3>
@@ -162,7 +163,6 @@
 </section>
 
 <style>
-  .mode { min-width: 0; transition: opacity var(--fast) var(--ease); }
-  .mode.busy { opacity: 0.4; pointer-events: none; }
+  .mode { display: block; min-width: 0; }
   .authoring-form[hidden] { display: none; }
 </style>

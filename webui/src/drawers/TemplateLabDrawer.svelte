@@ -368,8 +368,8 @@
           {#each baseline as _ctx, ci (ci)}
             <section class="mf-sec result rise" style:--i={ci} aria-label={`Context ${ci + 1}`}>
               <div class="mf-sec-head"><h3 class="head">Context {ci + 1}</h3>{#if steered}<span class="meta">base → steered</span>{/if}</div>
-              <div class="mass-row"><span class="meta">{steered ? "Base" : "Share"}</span><div class="mass-bar" class:is-base={!!steered} role="img" aria-label={`Baseline mass: ${rows(ci).map(r => `${r.label}: ${(r.base * 100).toFixed(1)}%`).join(", ")}`}>{#each rows(ci) as r, index (r.label)}<span style:width={`${r.base * 100}%`} style:opacity={.35 + (index % 4) * .2} data-tip={`${r.label}: ${(r.base * 100).toFixed(1)}%`}></span>{/each}</div></div>
-              {#if steered}<div class="mass-row"><span class="meta">Steered</span><div class="mass-bar" role="img" aria-label={`Steered mass: ${rows(ci).map(r => `${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`).join(", ")}`}>{#each rows(ci) as r, index (r.label)}<span style:width={`${(r.steer ?? 0) * 100}%`} style:opacity={.35 + (index % 4) * .2} data-tip={`${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`}></span>{/each}</div></div>{/if}
+              <div class="mass-row"><span class="meta">{steered ? "Base" : "Share"}</span><div class="mass-bar" class:is-base={!!steered} role="img" aria-label={`Baseline mass: ${rows(ci).map(r => `${r.label}: ${(r.base * 100).toFixed(1)}%`).join(", ")}`}>{#each rows(ci) as r, index (r.label)}<span style:flex-grow={r.base} style:opacity={.35 + (index % 4) * .2} data-tip={`${r.label}: ${(r.base * 100).toFixed(1)}%`}></span>{/each}</div></div>
+              {#if steered}<div class="mass-row"><span class="meta">Steered</span><div class="mass-bar" role="img" aria-label={`Steered mass: ${rows(ci).map(r => `${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`).join(", ")}`}>{#each rows(ci) as r, index (r.label)}<span style:flex-grow={r.steer ?? 0} style:opacity={.35 + (index % 4) * .2} data-tip={`${r.label}: ${((r.steer ?? 0) * 100).toFixed(1)}%`}></span>{/each}</div></div>{/if}
               <div class="bar-rows">
                 {#each rows(ci) as r (r.label)}
                   <div class="bar-row">
@@ -540,8 +540,9 @@
    * back to faint ink and the steered share takes the tint. */
   .result { gap: var(--s2); }
   .mass-row { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: center; gap: var(--s3); }
+  /* Each answer grows by its share of what the gaps leave, so the shares fill the bar exactly. */
   .mass-bar { display: flex; gap: 2px; height: 8px; overflow: hidden; border-radius: 2px; }
-  .mass-bar span { flex: none; min-width: 0; border-radius: 2px; background: var(--tint); transition: width var(--glide) var(--ease); }
+  .mass-bar span { flex: 0 1 0; min-width: 0; border-radius: 2px; background: var(--tint); transition: flex-grow var(--glide) var(--ease); }
   .mass-bar.is-base span { background: var(--ink3); }
   .bar-rows { display: grid; gap: 2px; margin-top: var(--s2); }
   .bar-row { display: grid; grid-template-columns: minmax(64px, 160px) minmax(0, 1fr) 88px; align-items: center; gap: var(--s3); min-height: 32px; padding: 0 var(--s3); border-radius: var(--r-col); transition: background-color var(--fast) var(--ease); }
@@ -551,7 +552,7 @@
   .bar { position: relative; display: block; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
   .bar i { position: absolute; inset: 0; border-radius: 2px; background: var(--tint); transform-origin: left; transition: transform var(--glide) var(--ease); }
   .is-pair .bar.base i { background: var(--ink3); opacity: 0.6; }
-  .bar-num { color: var(--ink2); font: var(--type-meta); text-align: end; white-space: nowrap; }
+  .bar-num { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: end; white-space: nowrap; }
   .arrow { margin: 0 var(--s1); color: var(--ink3); }
 
   .ctx-build { gap: var(--s2); }
@@ -559,8 +560,6 @@
   .sk-errs { display: grid; gap: var(--s1); margin: 0; padding: var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-small); list-style: none; }
 
   @media (max-width: 520px) {
-    .mf-row.stack { grid-template-columns: minmax(0, 1fr); }
-    .stack .mf-end { justify-content: flex-start; }
     .rank { margin-left: 0; }
     .bar-row { grid-template-columns: 88px minmax(0, 1fr) 76px; padding: 0 var(--s2); }
     .turn-row { grid-template-columns: minmax(0, 1fr) auto; }

@@ -504,7 +504,7 @@
         hint="Skip the coordinates: the fit derives the layout per model" />
     </span>
     {#if !autoDomain}
-      <Tabs label="Domain shape" value={domainChoice} onchange={pickDomain} options={DOMAIN_CHOICES} />
+      <Tabs label="Domain shape" value={domainChoice} onchange={pickDomain} options={DOMAIN_CHOICES} scroll />
 
       {#if domainKind === "box"}
         <div class="axes">
