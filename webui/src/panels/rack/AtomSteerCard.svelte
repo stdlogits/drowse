@@ -29,6 +29,7 @@
   > = {
     jlens: { accent: "--tint", marker: "square", noun: "j-lens token atom" },
     sae: { accent: "--tint", marker: "triangle", noun: "SAE decoder-row atom" },
+    unit: { accent: "--tint", marker: "square", noun: "unit" },
   };
 
   interface Props {
@@ -90,6 +91,7 @@
         type="button"
         class:active={!entry.ablate}
         aria-pressed={!entry.ablate}
+        disabled={mode === "unit" && name.startsWith("head/")}
         onclick={() => patchSteerEntry(name, { ablate: false }, [mode])}
       >push</button>
       <button
@@ -103,7 +105,7 @@
       <span class="alpha-label">α</span>
       <Slider
         value={entry.alpha}
-        min={0}
+        min={mode === "unit" && !entry.ablate ? -1 : 0}
         max={1}
         step={0.05}
         ariaLabel="alpha for {name}"

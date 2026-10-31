@@ -30,7 +30,7 @@
         </div>
       </div>
     {/if}
-    {#if entry.mode === "jlens" || entry.mode === "sae"}
+    {#if entry.mode === "jlens" || entry.mode === "sae" || entry.mode === "unit"}
       <AtomSteerCard mode={entry.mode} {name} {entry} />
     {:else}
       <SteerCard {name} {entry} />

@@ -32,6 +32,7 @@ import type {
   SaeLiveState,
   SaeProbeInfo,
   ScalarReadingJSON,
+  UnitsProbeInfo,
 } from "./types.gen";
 
 // ---------------------------------------------------------- triggers --
@@ -85,7 +86,9 @@ export interface LensTokenReadoutJSON {
  *  reports. */
 export type PreparationOp = "fetch" | "fit" | "train";
 
-export type InstrumentFamily = "geometry" | "lens" | "sae";
+/** The read families. ``units`` (MLP neurons and attention heads) has probes, a node replay and
+ *  the catalog fetch, but no live switch of its own beside the probes'. */
+export type InstrumentFamily = "geometry" | "lens" | "sae" | "units";
 
 /** Live-readout state, discriminated by family: geometry is an
  *  all-or-nothing switch, the lens resolves a layer list, the SAE reports
@@ -398,7 +401,7 @@ export interface ExtractRequest {
 /** One attached probe row, discriminated by ``family`` — the unified
  *  read-side collection under ``/probes`` (the pre-4.0 split of vector vs
  *  manifold probes collapsed onto one route). */
-export type ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo;
+export type ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo | UnitsProbeInfo;
 
 /** Body for ``POST /drowse/v1/sessions/{id}/probes`` — attach any probe
  *  shape by selector (the same ``[ns/]name[:variant]`` the ``%`` steering
@@ -916,14 +919,26 @@ export interface SaeSteerEntry {
   enabled: boolean;
 }
 
-/** The two single-direction *atom* families — a J-lens token direction
- *  and an SAE decoder row.  Both rack as ``α <prefix><id>`` with one
+/** A unit term (``α neuron/L31n4410``, ``!neuron/…``, ``!head/…``): a neuron's write pushed
+ *  (a negative α pushes its − pole) or a neuron or head mean-ablated. The rack key is the full
+ *  unit reference; a head is only ever ablated. */
+export interface UnitSteerEntry {
+  mode: "unit";
+  ablate: boolean;
+  /** Signed push strength; an ablation's blend (1 is exact mean-ablation). */
+  alpha: number;
+  trigger: Trigger;
+  enabled: boolean;
+}
+
+/** The single-direction *atom* families — a J-lens token direction, an
+ *  SAE decoder row and a unit.  All rack as ``α <prefix><id>`` with one
  *  per-card coefficient and no geometry, so they share a card and a
  *  mutator set; only the key prefix, the accent hue, and the marker
  *  glyph differ. */
-export type AtomMode = "jlens" | "sae";
+export type AtomMode = "jlens" | "sae" | "unit";
 
-export type AtomSteerEntry = JLensSteerEntry | SaeSteerEntry;
+export type AtomSteerEntry = JLensSteerEntry | SaeSteerEntry | UnitSteerEntry;
 
 /** A racked steering term — subspace (flat), manifold (curved), or a
  *  single-direction atom. */
@@ -931,7 +946,8 @@ export type SteerEntry =
   | SubspaceSteerEntry
   | ManifoldSteerEntry
   | JLensSteerEntry
-  | SaeSteerEntry;
+  | SaeSteerEntry
+  | UnitSteerEntry;
 
 // ----------------------------------------------------- probe rack --
 

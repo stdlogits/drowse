@@ -566,7 +566,7 @@ export interface RuntimeInstrumentsService {
    * pack takes effect on the next model load.
    */
   activateInstalledPack(
-    family: Exclude<InstrumentFamily, "geometry">,
+    family: Exclude<InstrumentFamily, "geometry" | "units">,
     body: InstalledInstrumentPackActivationRequest,
     id?: string,
   ): Promise<InstalledInstrumentPackActivationResult>;

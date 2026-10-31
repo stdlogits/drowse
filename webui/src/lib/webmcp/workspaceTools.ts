@@ -457,6 +457,7 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
     } else {
       const entry: SteerEntry = entries.get(selector) ?? (() => {
         if (selector.startsWith("jlens/") || selector.startsWith("sae/")) return { mode: selector.startsWith("jlens/") ? "jlens" : "sae", alpha: 0.3, ablate: false, enabled: true, trigger: "BOTH" };
+        if (selector.startsWith("neuron/") || selector.startsWith("head/")) return { mode: "unit", alpha: selector.startsWith("head/") ? 1 : 0.2, ablate: selector.startsWith("head/"), enabled: true, trigger: "BOTH" };
         else {
           const info = steerRack.catalog.find(row => `${row.namespace}/${row.name}` === selector);
           if (!info) throw new ToolError("NOT_FOUND", "Choose an exact namespace/name from the control catalog.");
@@ -468,8 +469,8 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
       })();
       if (input.enabled !== undefined) entry.enabled = input.enabled as boolean;
       if (input.trigger !== undefined) entry.trigger = input.trigger as Trigger;
-      if (entry.mode === "jlens" || entry.mode === "sae") {
-        if (["coords", "label", "variant", "along", "onto"].some(key => input[key] !== undefined)) throw new ToolError("INVALID_INPUT", "Lens/SAE cards use alpha and ablate, not geometry coordinates or along/onto.");
+      if (entry.mode === "jlens" || entry.mode === "sae" || entry.mode === "unit") {
+        if (["coords", "label", "variant", "along", "onto"].some(key => input[key] !== undefined)) throw new ToolError("INVALID_INPUT", "Lens, SAE and unit cards use alpha and ablate, not geometry coordinates or along/onto.");
         if (input.alpha !== undefined) entry.alpha = input.alpha as number;
         if (input.ablate !== undefined) entry.ablate = input.ablate as boolean;
       } else {

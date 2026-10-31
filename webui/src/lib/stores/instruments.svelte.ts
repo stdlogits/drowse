@@ -253,7 +253,7 @@ export function lensReadoutSnapshot(
   };
 }
 
-/** Merge the three families' attached-probe ``readings`` from a measurement
+/** Merge the four families' attached-probe ``readings`` from a measurement
  *  envelope — the probe rack keys by name across families, so one dict drives
  *  every probe strip. */
 export function mergedReadings(
@@ -263,8 +263,9 @@ export function mergedReadings(
   const g = m.instruments.geometry?.readings;
   const l = m.instruments.lens?.readings;
   const s = m.instruments.sae?.readings;
-  if (!g && !l && !s) return undefined;
-  return { ...(g ?? {}), ...(l ?? {}), ...(s ?? {}) };
+  const u = m.instruments.units?.readings;
+  if (!g && !l && !s && !u) return undefined;
+  return { ...(g ?? {}), ...(l ?? {}), ...(s ?? {}), ...(u ?? {}) };
 }
 
 function _fetchLensHover(

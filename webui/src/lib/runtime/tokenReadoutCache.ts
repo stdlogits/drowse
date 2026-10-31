@@ -36,6 +36,7 @@ const epochs: Record<InstrumentFamily, number> = {
   geometry: 0,
   lens: 0,
   sae: 0,
+  units: 0,
 };
 let active: CacheEntry | null = null;
 

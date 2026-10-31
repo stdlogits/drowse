@@ -11,7 +11,7 @@
   import { sessionState } from "./lib/stores/session.svelte";
   import { attachPersistence } from "./lib/stores/persistence.svelte";
   import { manifoldJobs } from "./lib/stores/manifoldJobs.svelte";
-  import { ROOMS, goto, route, startRouting, type Room } from "./lib/stores/rooms.svelte";
+  import { ROOMS, goto, route, shownRooms, startRouting, type Room } from "./lib/stores/rooms.svelte";
   import { clearSelection, selection } from "./lib/stores/selection.svelte";
   import { workbenchUi } from "./lib/stores/workbench.svelte";
   import { paletteState, closePalette, openPalette } from "./lib/stores/palette.svelte";
@@ -278,7 +278,7 @@
   // ---- the menu ------------------------------------------------------------------------------
 
   const menuGroups = $derived<MenuGroup[]>([
-    ...(phone ? [{ label: "Rooms", items: ROOMS.map(room => ({ label: room.label, current: route.room === room.value, run: () => goto(room.value) })) }] : []),
+    ...(phone ? [{ label: "Rooms", items: shownRooms().map(room => ({ label: room.label, current: route.room === room.value, run: () => goto(room.value) })) }] : []),
     {
       label: "Conversation",
       items: [
@@ -334,7 +334,7 @@
       <button type="button" class="dw-mark mark" onclick={() => pickRoom("workbench")}>drowse</button>
       {#if !phone}
         <nav class="rooms" aria-label="Rooms">
-          <Tabs label="Rooms" options={ROOMS.map(room => ({ value: room.value, label: room.label }))} value={route.room} onchange={pickRoom} />
+          <Tabs label="Rooms" options={shownRooms().map(room => ({ value: room.value, label: room.label }))} value={route.room} onchange={pickRoom} />
         </nav>
       {/if}
       <div class="dw-top-end">

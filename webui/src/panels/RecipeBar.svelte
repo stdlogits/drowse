@@ -15,6 +15,8 @@
   import { openDrawer } from "../lib/stores/drawers.svelte";
   import { pushToast } from "../lib/stores/toasts.svelte";
   import { select, selection } from "../lib/stores/selection.svelte";
+  import { unitLabelFor } from "../lib/stores/units.svelte";
+  import { unitTitle } from "../lib/units";
   import type { SteerEntry } from "../lib/types";
 
   interface Chip {
@@ -55,6 +57,13 @@
           alpha: entry.ablate ? "without" : entry.alpha.toFixed(2),
           label: name.slice(ATOM_PREFIX[entry.mode].length),
           source: entry.mode === "jlens" ? "lens token" : "SAE feature",
+        };
+      case "unit":
+        return {
+          name, when, order: 1, enabled: entry.enabled,
+          alpha: entry.ablate ? "without" : entry.alpha.toFixed(2).replace("-", "−"),
+          label: unitTitle(name),
+          source: unitLabelFor(name) ?? "",
         };
     }
   }

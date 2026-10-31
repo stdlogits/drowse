@@ -1,6 +1,6 @@
 // What the workbench's Inspector shows: whatever is selected. Nothing selected shows the
 // instruments; a token its drilldown; a probe its trace and geometry; a steering term its card;
-// a unit (a neuron or a head, once the engine has them) its view.
+// a unit (a neuron or a head, ``{ kind: "unit", id: "neuron/L8n344" }``) its view.
 //
 // The selection is presentation state only. Opening the token drilldown or the probe inspector
 // (``openDrawer("token_drilldown" | "probe_inspector", params)``) selects instead of opening a
