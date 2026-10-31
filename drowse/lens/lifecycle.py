@@ -522,7 +522,7 @@ class _NoResidency:
 class LensFitRequest:
     """The knobs of one fit call, validated."""
 
-    kind: str = "R"
+    kind: str = "J"
     corpus_spec: str = "custom"
     layers: LayerSelector = None
     sites: tuple[str, ...] = LENS_SITES

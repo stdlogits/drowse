@@ -31,6 +31,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 from drowse.lens.jlens import JacobianLensCancelled, LensNotFittedError
+from drowse.lens.key import DEFAULT_FIT_DOCUMENTS
 from drowse.model.layers import parse_layer_selector
 from drowse.readout.measurements import MeasurementsEnvelope
 from drowse.sae.training import SaeTrainingCancelled
@@ -202,19 +203,20 @@ class LensFetchRequest(NativeRequest):
 
 
 class LensFitRequest(NativeRequest):
-    """Defaults mirror CLI ``lens fit``.  ``kind`` is the estimator (``r`` =
-    the RelP R-lens at ``local:r``, ``j`` = the standard J-lens at
-    ``local:j``).  A matching partial fit resumes unless ``force``;
-    ``hf_corpus`` lists ``REPO[:CONFIG][@REV][,KEY=VALUE…]`` sources (several
-    make a weighted mix), else the default web-text sample."""
+    """Defaults mirror CLI ``lens fit``.  ``kind`` is the lens (``r`` the RelP
+    R-lens, ``j`` the standard J-lens, ``s``/``k`` their input-side S and K),
+    fitted at ``local:<kind>``; ``sites`` picks ``out``, ``mid`` or both.  A
+    matching partial fit resumes unless ``force``; ``hf_corpus`` lists
+    ``REPO[:CONFIG][@REV][,KEY=VALUE…]`` sources (several make a weighted
+    mix), else the default web-text sample."""
 
-    prompts: int = Field(default=100, ge=1, le=5000)
+    prompts: int = Field(default=DEFAULT_FIT_DOCUMENTS, ge=1, le=5000)
     hf_corpus: list[str] | None = Field(default=None, min_length=1, max_length=16)
     seq_len: int | None = Field(default=None, ge=32, le=4096)
-    prompt_batch: int | None = Field(default=None, ge=1, le=64)
     layers: str = "all"
+    sites: list[Literal["out", "mid"]] = Field(default=["out", "mid"], min_length=1, max_length=2)
     force: bool = False
-    kind: Literal["r", "j"] = "r"
+    kind: Literal["r", "j", "s", "k"] = "r"
 
 
 class SaeFetchRequest(NativeRequest):
@@ -237,7 +239,7 @@ class SaeTrainRequest(NativeRequest):
     force: bool = False
 
 
-#: ``fit_jacobian_lens`` per-prompt progress — "prompt 12/100 (…)".
+#: ``fit_lens`` per-document progress — "prompt 12/100 (…)".
 _FIT_PROGRESS_RE = re.compile(r"prompt (\d+)/(\d+)")
 #: ``train_residual_sae`` token progress — "trained 12,345/1,000,000 tokens".
 _TRAIN_PROGRESS_RE = re.compile(r"trained ([\d,]+)/([\d,]+) tokens")
@@ -384,10 +386,14 @@ def register_instrument_routes(app: FastAPI) -> None:
             )
         lens_fetch.start(lambda: lens_fetch_body(body), message="starting…", source=body.source, live_layers=None)
 
-    async def lens_fit_body(body: LensFitRequest, source_layers: list[int] | str, corpus: Any) -> None:
+    async def lens_fit_body(body: LensFitRequest, layers: list[int] | str, corpus: Any) -> None:
         from drowse.lens.corpus import pin_lens_corpus, stream_lens_corpus
+        from drowse.lens.key import LensKey
 
         kind = body.kind.upper()
+        # The live readout reads the output side; an input-side fit only
+        # publishes and selects.
+        output_side = LensKey(kind).side == "output"
 
         async def enable() -> None:
             lens_fit.state["live_layers"] = await enable_lens_live()
@@ -402,8 +408,8 @@ def register_instrument_routes(app: FastAPI) -> None:
         )
         if not body.force and await run_in_thread(
             session.lens.fit_is_noop, body.prompts,
-            kind=kind, corpus_spec=corpus.spec,
-            source_layers=source_layers, seq_len=body.seq_len,
+            kind=kind, sites=body.sites, corpus_spec=corpus.spec,
+            layers=layers, seq_len=body.seq_len,
         ) is not None:
             # Nothing to fit: skip the stream and make the proven artifact
             # the source, as a publishing fit leaves it; live readout is the
@@ -413,7 +419,8 @@ def register_instrument_routes(app: FastAPI) -> None:
             )
             async with session_lock(app):
                 await select_lens_source(f"local:{kind.lower()}")
-            await enable_live_after(lens_fit, enable)
+            if output_side:
+                await enable_live_after(lens_fit, enable)
             lens_fit.report("done")
             return
         lens_fit.report(f"streaming {body.prompts} documents from {corpus}…")
@@ -423,12 +430,13 @@ def register_instrument_routes(app: FastAPI) -> None:
         lens_fit.report("fitting…")
         await run_in_thread(
             session.lens.fit, docs,
-            kind=kind,
-            corpus_spec=spec, source_layers=source_layers, seq_len=body.seq_len,
-            prompt_batch=body.prompt_batch, force=body.force,
+            kind=kind, sites=body.sites,
+            corpus_spec=spec, layers=layers, seq_len=body.seq_len,
+            force=body.force,
             on_progress=lens_fit.report, cancel_event=lens_fit.cancel_event,
         )
-        await enable_live_after(lens_fit, enable)
+        if output_side:
+            await enable_live_after(lens_fit, enable)
         lens_fit.report("done")
 
     def start_lens_fit(fields: dict[str, Any]) -> None:
@@ -436,15 +444,15 @@ def register_instrument_routes(app: FastAPI) -> None:
 
         body = LensFitRequest(**fields)
         corpus = parse_lens_corpus(body.hf_corpus)
-        source_layers = _parse_layers(body.layers) or "workspace"
-        if source_layers == "sample":
+        layers = _parse_layers(body.layers) or "workspace"
+        if layers == "sample":
             raise HTTPException(
                 400,
                 "layers='sample' is not fittable (debug readout only) — "
                 "use 'workspace', 'all', or an explicit csv list",
             )
         lens_fit.start(
-            lambda: lens_fit_body(body, source_layers, corpus),
+            lambda: lens_fit_body(body, layers, corpus),
             message="starting…", current=0, total=body.prompts,
         )
 

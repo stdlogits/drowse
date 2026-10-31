@@ -495,9 +495,15 @@ class TestPreparations:
 
         from drowse.server.instrument_routes import LensFitRequest
 
-        assert LensFitRequest().kind == "r"
-        assert LensFitRequest(kind="j").kind == "j"
-        stale_bodies: list[dict[str, Any]] = [{"kind": "k"}, {"relp": True}]
+        body = LensFitRequest()
+        assert body.kind == "r" and body.sites == ["out", "mid"] and body.prompts == 25
+        for kind in ("j", "s", "k"):
+            assert LensFitRequest(kind=kind).kind == kind
+        assert LensFitRequest(sites=["mid"]).sites == ["mid"]
+        stale_bodies: list[dict[str, Any]] = [
+            {"kind": "q"}, {"relp": True}, {"prompt_batch": 2}, {"sites": []},
+            {"sites": ["top"]},
+        ]
         for stale in stale_bodies:
             with pytest.raises(ValidationError):
                 LensFitRequest(**stale)

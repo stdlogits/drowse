@@ -99,7 +99,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "LensNotFittedError": ("drowse.lens.jlens", "LensNotFittedError"),
     "MultiTokenWordError": ("drowse.lens.jlens", "MultiTokenWordError"),
     "InvalidTokenIdError": ("drowse.lens.jlens", "InvalidTokenIdError"),
-    "RelpUnsupportedError": ("drowse.errors", "RelpUnsupportedError"),
 }
 
 __all__ = [
@@ -193,7 +192,6 @@ __all__ = [
     "LensNotFittedError",
     "MultiTokenWordError",
     "InvalidTokenIdError",
-    "RelpUnsupportedError",
 ]
 
 
@@ -213,7 +211,6 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from drowse.errors import (
-        RelpUnsupportedError as RelpUnsupportedError,
         DrowseError as DrowseError,
     )
     from drowse.events import (

@@ -657,7 +657,7 @@ class LensInstrument:
         self,
         prompts: Sequence[str],
         *,
-        kind: str = "R",
+        kind: str = "J",
         sites: Sequence[str] = ("out", "mid"),
         corpus_spec: str = "custom",
         layers: LayerSelector = None,
@@ -671,8 +671,8 @@ class LensInstrument:
     ) -> Any:
         """Fit (or resume) this model's ``kind`` lens at ``sites``.
 
-        One transport estimator fits every kind: ``R`` (RelP, the default)
-        and ``J`` (standard) read what an activation makes the model say,
+        One transport estimator fits every kind: ``J`` (standard, the
+        library default) and ``R`` (RelP) read what an activation makes the model say,
         ``S`` (RelP) and ``K`` (standard) what put it there; each lands at
         ``local:<kind>``.  ``sites`` is ``out``, ``mid`` or both (default).
         Resume is the default: a matching durable artifact or checkpoint over
@@ -720,7 +720,7 @@ class LensInstrument:
         self,
         prompt_count: int,
         *,
-        kind: str = "R",
+        kind: str = "J",
         sites: Sequence[str] = ("out", "mid"),
         corpus_spec: str,
         layers: LayerSelector = None,

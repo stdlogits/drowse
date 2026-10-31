@@ -399,12 +399,15 @@ def test_lens_preflight_rejects_contiguous_prefix_for_all_layers() -> None:
 
 def test_lens_preflight_resolves_workspace_from_model_depth() -> None:
     sidecar: dict[str, object] = {
+        "kind": "J",
         "sites": {"out": {"layers": [4, 5, 6, 7, 8, 9]}},
         "model_layer_count": 11,
     }
-    assert fit_covers_layers(sidecar, "workspace")
-    sidecar["sites"] = {"out": {"layers": [4, 5, 6]}}
+    assert fit_covers_layers(sidecar, "workspace", sites=["out"])
+    # Each requested site must be covered on its own.
     assert not fit_covers_layers(sidecar, "workspace")
+    sidecar["sites"] = {"out": {"layers": [4, 5, 6]}}
+    assert not fit_covers_layers(sidecar, "workspace", sites=["out"])
 
 
 def test_lens_noop_preflight_requires_exact_model_source(
@@ -449,7 +452,7 @@ def test_lens_noop_preflight_requires_exact_model_source(
     )
     args = argparse.Namespace(
         force=False, model="toy/model", quantize=None, device="cpu",
-        seq_len=None, corpus=None, prompts=100, kind="j",
+        seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
     assert lens_fit_is_noop(args, [0], hf_corpus=corpus)
     shard_path.write_bytes(b"corrupt")
@@ -498,7 +501,7 @@ def test_lens_noop_preflight_rejects_changed_dataset_revision(
     )
     args = argparse.Namespace(
         force=False, model="toy/model", quantize=None, device="cpu",
-        seq_len=None, corpus=None, prompts=100, kind="j",
+        seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
     assert lens_fit_is_noop(args, [0], hf_corpus=old)
     assert not lens_fit_is_noop(args, [0], hf_corpus=new)
@@ -539,7 +542,7 @@ def test_lens_noop_preflight_holds_fit_lock_during_sidecar_read(
     monkeypatch.setattr(lens_io, "load_local_lens_sidecar", read_sidecar)
     args = argparse.Namespace(
         force=False, model="toy/model", quantize=None, device="cpu",
-        seq_len=None, corpus=None, prompts=100, kind="j",
+        seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
 
     assert not lens_fit_is_noop(args, [0])
