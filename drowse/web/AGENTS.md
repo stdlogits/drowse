@@ -255,7 +255,10 @@ depth axis draws the server's crossover band (shown only when the runtime sends 
 hosted section there instead) holds the S and R families, each with its selected source at the
 out and mid sites (layers held and split-half difference per layer), its sources (providers
 still to fetch among them) and a local fit whose documents start at the server's
-`fit_documents`. The Inspector's Sources is one line per family and the SAE, with a link to the
+`fit_documents`. A selected source the server marks not `compatible` says it is not loaded (a
+provider's offers Fetch again), and a failed fit offers Replace only when the status is
+`replaceable`. The room's fit always covers every layer, since each family reads its own span of
+the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is one line per family and the SAE, with a link to the
 room; its Features shows a "Choose an SAE" button that leads there until an SAE is loaded.
 
 Slices import each other directly, never through the barrel. The import graph has cycles

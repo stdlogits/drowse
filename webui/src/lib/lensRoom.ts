@@ -2,7 +2,7 @@
 // a layer (the server's crossover band), each source's coverage and split-half difference per
 // layer, the per-family source list (prepared rows and the providers still to fetch), and the
 // local fit's document ladder around the server's default.
-import type { InstrumentSourceJSON, LensBandJSON, LensProviderJSON } from "./types";
+import type { InstrumentSourceJSON, LensBandJSON, LensProviderJSON, PreparationStatusJSON } from "./types";
 
 export type LensFamily = "R" | "S";
 export type LensSite = "out" | "mid";
@@ -191,6 +191,35 @@ export function layerAt(event: Event): number {
   const column = target?.closest?.("[data-layer]") as HTMLElement | null;
   const layer = Number(column?.dataset.layer);
   return Number.isInteger(layer) ? layer : -1;
+}
+
+/** Whether a family's selected source fails to load for these weights: the server says so on the
+ *  active row (``compatible``); a runtime that does not say counts as loaded. */
+export function unloaded(row: InstrumentSourceJSON | null | undefined): boolean {
+  return row?.active === true && row.compatible === false;
+}
+
+/** The body a local fit sent, so a refused one can be sent again with ``force``. */
+export type FitBody = { prompts: number; kind: string; sites: string[] };
+
+/** The artifact a failed fit may replace (``local:r``): only when the server marked the failure as
+ *  the refusal to replace it (``replaceable``) and the fit is the one this view sent. Any other
+ *  failure (an unreachable Hub, a cancelled fit) offers nothing. */
+export function replaceTarget(
+  status: Pick<PreparationStatusJSON, "state" | "source" | "replaceable"> | null | undefined,
+  sent: FitBody | null,
+): string | null {
+  if (!status || !sent || status.state !== "error" || status.replaceable !== true) return null;
+  const target = `local:${sent.kind}`;
+  return status.source === target ? target : null;
+}
+
+/** A running fit's line: its stage until the first document is fitted ("Streaming 64 documents
+ *  from …"), then the documents done. */
+export function fitProgressText(current: number, total: number, message: string | null | undefined): string {
+  const stage = (message ?? "").trim();
+  if (current <= 0 && stage) return stage.charAt(0).toUpperCase() + stage.slice(1);
+  return `${current} of ${total} documents`;
 }
 
 /** The documents a local fit can average over: the server's default doubled and halved, from an

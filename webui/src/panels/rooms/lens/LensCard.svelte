@@ -15,6 +15,7 @@
     rangeText,
     siteSeries,
     spanText,
+    unloaded,
     type LensFamily,
     type LensSite,
     type Span,
@@ -36,7 +37,8 @@
   const series = $derived(siteSeries(row, site, n));
   const held = $derived(series.covered.some(Boolean));
   // A local fit's name already says so ("local:r"); a provider's names its repository.
-  const meta = $derived([row?.kind === "local" ? "" : originText(row, provider), foreignKind(row?.lens, family), documentsText(row?.n_prompts)].filter(Boolean).join(" · "));
+  // A selected source that does not load for these weights says so first: it reads nothing.
+  const meta = $derived([unloaded(row) ? "not loaded for this model" : "", row?.kind === "local" ? "" : originText(row, provider), foreignKind(row?.lens, family), documentsText(row?.n_prompts)].filter(Boolean).join(" · "));
   const where = $derived(span ? `${site} · used ${spanText(span)}` : site);
 
   const cols = $derived(series.covered.map((covered, layer) => {

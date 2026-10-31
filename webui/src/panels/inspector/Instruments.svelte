@@ -14,7 +14,7 @@
   import { onMount } from "svelte";
   import { saeLoaded, sessionState } from "../../lib/stores/session.svelte";
   import { lensSourceState, refreshLensSources } from "../../lib/stores/instruments.svelte";
-  import { sitesText } from "../../lib/lensRoom";
+  import { sitesText, unloaded } from "../../lib/lensRoom";
   import {
     genStatus,
     openDrawer,
@@ -42,10 +42,14 @@
     const of = (family: string) => blocks.find(block => block.family === family)?.source ?? null;
     const lensRow = (family: "R" | "S") => lensSourceState.sources.find(row => row.family === family && row.active === true) ?? null;
     const r = of("lens");
+    const rRow = lensSourceState.sources.find(row => row.source === r) ?? null;
     const s = lensRow("S");
+    // A selected source that does not load for these weights says so (the R family's from the
+    // session's jlens_fitted, which every runtime sends; the S family's from its row).
+    const rLoads = !(r && sessionState.info?.jlens_fitted === false) && !unloaded(rRow);
     return [
-      { key: "R-lens", value: r, meta: sitesText(lensSourceState.sources.find(row => row.source === r)?.sites) },
-      { key: "S-lens", value: s?.source ?? null, meta: sitesText(s?.sites) },
+      { key: "R-lens", value: r, meta: rLoads ? sitesText(rRow?.sites) : "not loaded for this model" },
+      { key: "S-lens", value: s?.source ?? null, meta: unloaded(s) ? "not loaded for this model" : sitesText(s?.sites) },
       { key: "SAE", value: of("sae"), meta: "" },
     ];
   });

@@ -135,14 +135,14 @@ export async function useLensSource(source: string): Promise<void> {
     invalidateTokenReadoutCache("lens");
     await refreshSession();
     await refreshLensSources();
-    pushToast(`J-lens · ${source}`, { kind: "info" });
+    pushToast(`Lens · ${source}`, { kind: "info" });
   } catch (e) {
     lensSourceState.error = userFacingError(
       e,
       "Word insights could not start. Close and reopen the model after changing its tools.",
     );
     pushToast(
-      `J-lens source: ${lensSourceState.error}`,
+      `Lens source: ${lensSourceState.error}`,
       { kind: "error" },
     );
   } finally {
@@ -681,9 +681,9 @@ export async function setLiveLens(enabled: boolean): Promise<void> {
 }
 
 export const lensFetch = createPreparationSlice("lens", "fetch", {
-  label: "J-lens fetch",
+  label: "Lens fetch",
   intervalMs: 1000,
-  successMessage: "J-lens active · live",
+  successMessage: "Lens fetched",
   onSettled: async () => {
     await refreshSession();
     await refreshLensSources();

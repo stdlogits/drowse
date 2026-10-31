@@ -12,12 +12,16 @@
     familyItems,
     familySpan,
     familyWeights,
+    fitProgressText,
     foreignKind,
     rangeText,
+    replaceTarget,
     siteSeries,
     sitesText,
     sourceFamily,
     stepDocuments,
+    unloaded,
+    type FitBody,
     type LensFamily,
   } from "../../../lib/lensRoom";
   import { etaLabel, remainingWorkMs, type WorkSample } from "../../../lib/manifoldProgress";
@@ -79,10 +83,10 @@
   ]);
 
   // A fit that would shrink an artifact already here (fewer documents, another corpus, fewer sites)
-  // fails rather than replace it; the failure offers the same fit again, replacing it.
-  let lastFit = $state<{ prompts: number; kind: string; sites: string[] } | null>(null);
-  const replaces = $derived(fitError && lastFit && lensSourceState.sources.some(row => row.source === `local:${lastFit?.kind}`)
-    ? `local:${lastFit.kind}` : null);
+  // fails rather than replace it, and the server marks that refusal (``replaceable``); only then does
+  // the failure offer the same fit again, replacing it. Any other failure offers nothing.
+  let lastFit = $state<FitBody | null>(null);
+  const replaces = $derived(fitError ? replaceTarget(lensFit.state.latest, lastFit) : null);
 
   function startFit(force = false): void {
     if (!allowFit || busy || documents === null) return;
@@ -92,6 +96,7 @@
   }
 
   function itemMeta(item: (typeof items)[number]): string {
+    if (unloaded(item.row)) return "not loaded for this model";
     if (item.row) return [foreignKind(item.row.lens, family), documentsText(item.row.n_prompts), sitesText(item.row.sites)].filter(Boolean).join(" · ");
     const provider = item.provider;
     return provider ? [foreignKind(provider.lens, family), sitesText(provider.sites), provider.repo_id].filter(Boolean).join(" · ") : "";
@@ -109,7 +114,7 @@
       <span class="head">Sources</span>
       <div class="items">
         {#each items as item, i (item.source)}
-          {#if item.row}
+          {#if item.row && !unloaded(item.row)}
             <button type="button" class="item rise" style:--i={i} aria-pressed={item.row.active === true}
               disabled={busy && item.row.active !== true} onclick={() => { if (!item.row?.active) void useLensSource(item.source); }}>
               <span class="l1">{item.source}</span>
@@ -117,12 +122,14 @@
               <span class="meta">{rangeText(siteSeries(item.row, "out", n).split)}</span>
             </button>
           {:else}
-            <div class="item rise" style:--i={i}>
-              <span class="l1 todo">{item.source}</span>
-              <span class="meta im"><MorphText text={fetching === item.source ? (lensFetch.state.message ?? "Fetching") : itemMeta(item)} /></span>
-              {#if allowFetch}
+            <!-- A provider still to fetch, or the selected source when it does not load for these
+                 weights (a provider's offers to fetch it again; a local fit's is fitted again below). -->
+            <div class="item rise" class:sel={item.row !== null} style:--i={i} aria-current={item.row ? "true" : undefined}>
+              <span class="l1" class:todo={!item.row}>{item.source}</span>
+              <span class="meta im">{#if fetching === item.source}<MorphText text={lensFetch.state.message ?? "Fetching"} />{:else}{itemMeta(item)}{/if}</span>
+              {#if allowFetch && item.provider}
                 <button type="button" class="dw-text act" disabled={busy} onclick={() => void lensFetch.start({ source: item.source })}>
-                  {fetching === item.source ? "Fetching" : "Fetch"}
+                  {fetching === item.source ? "Fetching" : item.row ? "Fetch again" : "Fetch"}
                 </button>
               {/if}
             </div>
@@ -136,8 +143,9 @@
                 aria-valuemax={Math.max(lensFit.state.total, 1)} aria-valuenow={lensFit.state.current}>
                 <i style:--lens-fill={family === "S" ? "var(--deep)" : "var(--late)"} style:width={`${(fitShare * 100).toFixed(1)}%`}></i>
               </span>
-              <span class="meta"><MorphText text={`${lensFit.state.current} of ${lensFit.state.total} documents`} /></span>
+              <span class="meta"><MorphText text={fitProgressText(lensFit.state.current, lensFit.state.total, lensFit.state.message)} /></span>
               {#if left}<span class="meta"><MorphText text={left} /></span>{/if}
+              <span class="meta">Generation pauses while documents are fitted</span>
             </span>
             <button type="button" class="dw-text act" disabled={lensFit.state.cancelling} onclick={() => void lensFit.cancel()}>Cancel</button>
           </div>
@@ -153,6 +161,7 @@
     {#if allowFit && !fitting && documents !== null}
       <div class="dw-sec tight">
         <span class="head">Fit locally</span>
+        <p class="meta note">Generation pauses while documents are fitted; a large fit can take hours.</p>
         <div class="fitctl">
           <div class="step" role="group" aria-label="Documents">
             <IconButton icon="left" label="Fewer documents" disabled={documents <= ladder[0]}
@@ -197,15 +206,18 @@
   }
   button.item { cursor: pointer; }
   button.item:hover:not(:disabled) { background: var(--wash); }
-  .item[aria-pressed="true"], .item[aria-pressed="true"]:hover { background: var(--wash2); cursor: default; }
+  .item[aria-pressed="true"], .item[aria-pressed="true"]:hover, .item.sel { background: var(--wash2); cursor: default; }
   button.item:active:not(:disabled) { scale: 0.99; }
   button.item:disabled { cursor: default; }
   button.item:disabled:not([aria-pressed="true"]) { opacity: 0.5; }
   .l1 { overflow: hidden; color: var(--ink); font: var(--type-control); white-space: nowrap; text-overflow: ellipsis; }
   .l1.todo { color: var(--ink2); }
   .im { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  /* A morphing fetch message ellipsizes inside the morph, as plain metadata does. */
+  .im :global(.morph-text) { display: block; overflow: hidden; text-overflow: ellipsis; }
   .act { font: var(--type-meta); }
   .err { color: var(--ink2); }
+  .note { margin: 0; }
   .replace { justify-self: start; }
 
   .prog { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); min-width: 0; }
@@ -218,9 +230,14 @@
   .num { color: var(--ink); font: var(--type-label); font-variant-numeric: tabular-nums; }
   .go { margin-left: auto; }
 
+  /* Phone sizes (the Phone canvas): every target 44 px. The stepper's buttons grow; a segment keeps
+   * its 36 px pill inside a 44 px group, with a hit area to the group's edges. */
   @media (max-width: 720px) {
     .fam { grid-row: auto; grid-template-rows: none; }
     .item { grid-template-columns: 88px minmax(0, 1fr) auto; min-height: 44px; }
-    .act { min-height: 44px; }
+    .act { min-width: 44px; min-height: 44px; }
+    .step :global(button.icon) { width: 44px; height: 44px; }
+    .fitctl :global(.seg > button) { position: relative; height: 36px; }
+    .fitctl :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }
   }
 </style>

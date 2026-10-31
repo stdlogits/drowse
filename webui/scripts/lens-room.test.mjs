@@ -93,12 +93,35 @@ try {
   assert.equal(lens.stepDocuments(ladder, 100, -1), 64, "an off-ladder count steps to the nearest rung");
   assert.deepEqual(lens.documentLadder(2), [1, 2, 4, 8, 16, 32]);
 
+  // A refused fit offers its replacement only for the server's refusal to replace, never for an
+  // unrelated failure (an unreachable Hub) or another family's fit.
+  const sent = { prompts: 64, kind: "r", sites: ["out", "mid"] };
+  const refused = { state: "error", source: "local:r", replaceable: true };
+  assert.equal(lens.replaceTarget(refused, sent), "local:r");
+  assert.equal(lens.replaceTarget({ ...refused, replaceable: false }, sent), null, "ConnectionError: no replace");
+  assert.equal(lens.replaceTarget({ state: "error", source: "local:r" }, sent), null, "a runtime that does not mark it offers none");
+  assert.equal(lens.replaceTarget({ ...refused, state: "running" }, sent), null);
+  assert.equal(lens.replaceTarget({ ...refused, source: "local:s" }, sent), null, "another fit's refusal");
+  assert.equal(lens.replaceTarget(refused, null), null, "nothing sent from this view, nothing to resend");
+
+  // A running fit names its stage until the first document is in, then counts.
+  assert.equal(lens.fitProgressText(0, 8, "streaming 8 documents from wikitext…"), "Streaming 8 documents from wikitext…");
+  assert.equal(lens.fitProgressText(3, 8, "prompt 3/8 (12 tokens)"), "3 of 8 documents");
+  assert.equal(lens.fitProgressText(0, 8, null), "0 of 8 documents");
+
+  // A selected source that does not load for these weights.
+  assert.equal(lens.unloaded({ source: "rs-r", active: true, compatible: false }), true);
+  assert.equal(lens.unloaded({ source: "rs-r", active: true, compatible: true }), false);
+  assert.equal(lens.unloaded({ source: "rs-r", active: true }), false, "a runtime that does not say counts as loaded");
+  assert.equal(lens.unloaded({ source: "rs-r", active: false, compatible: false }), false);
+  assert.equal(lens.unloaded(null), false);
+
   // The pointer's layer: the closest column carrying data-layer.
   const column = { dataset: { layer: "7" } };
   assert.equal(lens.layerAt({ target: { closest: () => column } }), 7);
   assert.equal(lens.layerAt({ target: { closest: () => null } }), -1);
   assert.equal(lens.layerAt({ target: null }), -1);
-  console.log("Lens room: band spans, site series, family sources and the fit ladder passed");
+  console.log("Lens room: band spans, site series, family sources, the fit ladder and the fit's status passed");
 } finally {
   await server.close();
 }
