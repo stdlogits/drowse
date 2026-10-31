@@ -109,7 +109,8 @@ class ConsumerPlan:
 
     ``live_scores_on`` is the geometry instrument's live toggle (off masks
     every per-token monitor consumer at the source).  ``lens`` / ``sae`` mean
-    the family's live readout is on and the callback asked for it.
+    the family's live readout is on and the callback asked for it; ``units``
+    that attached unit probes tick per token (loom row or live scores).
     ``need_tap`` is false when nothing would consume a per-token callback, so
     the decode loop skips the tap (and the per-step log-softmax it forces).
     """
@@ -124,6 +125,7 @@ class ConsumerPlan:
     sae: bool
     perplexity_requested: bool
     need_tap: bool
+    units: bool = False
 
 
 class TokenTap:
@@ -194,6 +196,9 @@ class TokenTap:
         self._sae = sae
         self._lens_step = lens.live_readout_step if plan.lens else None
         self._sae_step = sae.live_readout_step if plan.sae else None
+        # Unit probes: the units run's reading for this forward (the gate
+        # callback's step-keyed stash when it already read it).
+        self._units_step = reads.units_step_readings if plan.units else None
         self._readout_top_k = readout_top_k
         self._sources = live_sources(lens.live, sae.live)
         self._recipe_steering = recipe_steering
@@ -263,6 +268,14 @@ class TokenTap:
                 self._sae.last_step_readings, family="sae",
                 per_layer=self._per_layer,
             )
+        if self._units_step is not None:
+            units_readings = self._units_step(step_id)
+            if units_readings:
+                if payload is None:
+                    payload = TokenProbePayload()
+                payload.merge_readings(
+                    units_readings, family="units", per_layer=self._per_layer,
+                )
 
         lens_payload = lens_step[0] if lens_step is not None else None
         lens_aggregate = lens_step[1] if lens_step is not None else None
@@ -758,6 +771,15 @@ class GenerationEngine:
             live and spec.return_probe_readings and not spec.stateless
             and has_monitor_probes
         )
+        # Unit probes tick per token for the loom row or a live-scores
+        # consumer, behind the units family's own live switch.
+        units = bool(
+            session.units.is_live and session.units.names
+            and (
+                (spec.return_probe_readings and not spec.stateless)
+                or (on_token is not None and options.live_scores)
+            )
+        )
         return ConsumerPlan(
             live_scores_on=live,
             has_monitor_probes=has_monitor_probes,
@@ -780,6 +802,7 @@ class GenerationEngine:
                 session.sae.live is not None
                 and on_token is not None and options.sae_readout
             ),
+            units=units,
             perplexity_requested=bool(on_token is not None and options.perplexity),
             # Without a consumer, logprobs, a loom probe row or a stop list
             # the tap would be a no-op whose presence still forces the
@@ -789,6 +812,7 @@ class GenerationEngine:
                 on_token is not None
                 or spec.collect_logprobs
                 or persists_probe_row
+                or units
                 or spec.stop_list is not None
             ),
         )
@@ -872,6 +896,7 @@ class GenerationEngine:
                     demand,
                     widen=spec.want_hidden,
                     persistent_buffers=self._persistent_capture_buffers(),
+                    units_live=plan.units,
                 )
                 if plan.need_tap:
                     tap = TokenTap(
@@ -1057,14 +1082,15 @@ class GenerationEngine:
         # Compiled routing (CUDA/MPS).  The graph was traced with only the
         # persistent offset + capture hooks attached, so the compiled module
         # is correct exactly when the live hook topology matches: no
-        # transient capture hooks and either unsteered or steering lowered to
-        # the persistent offsets.  Everything else runs the eager original
-        # (same persistent hooks, so offsets and capture still apply) on a
-        # DynamicCache, which also avoids a Dynamo retrace per hook topology.
+        # transient capture or unit-tap hooks and either unsteered or
+        # steering lowered to the persistent offsets.  Everything else runs
+        # the eager original (same persistent hooks, so offsets and capture
+        # still apply) on a DynamicCache, which also avoids a Dynamo retrace
+        # per hook topology.
         gen_model: Any = session.model
         uses_offsets = bool(steering.uses_compiled_offsets)
         if runtime.compiled_on(session.device):
-            compiled_clean = not capture.is_transient() and (
+            compiled_clean = not reads.transient_hooks and (
                 uses_offsets or steering.all_fast_path()
             )
             if compiled_clean and runtime.graph_thread_safe():
@@ -1116,7 +1142,7 @@ class GenerationEngine:
             step_callback=step_callback,
             use_static_cache=use_static_cache,
             forced_prefix=spec.forced_prefix,
-            steering_active=bool(steering.hooks or uses_offsets),
+            steering_active=bool(steering.hooks or steering.unit_hooks or uses_offsets),
             want_perplexity=want_perplexity,
             traits=session.chat_traits,
         )

@@ -125,7 +125,8 @@ def test_reserved_but_unsteerable_namespaces_refuse_to_resolve(
     from drowse.errors import ProfileNotRegisteredError
 
     session = make_tiny_session(warm=False)
-    for key in ("slens/owl", "neuron/L8n344", "head/L20h17"):
+    # ``neuron/`` atoms resolve through the units family (tests/units/).
+    for key in ("slens/owl", "head/L20h17"):
         with pytest.raises(ProfileNotRegisteredError, match="reserved"):
             session.registry.ensure_profile_registered(key)
 

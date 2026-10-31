@@ -968,10 +968,11 @@ def test_decode_keeps_the_static_cache_on_a_static_prefix_hit(
         runtime=CompiledRuntime(static_cache_active=True),
         steering=cast(Any, SimpleNamespace(
             all_fast_path=lambda: True, static_steerable=lambda: False,
-            uses_compiled_offsets=False, ctx=None, hooks={},
+            uses_compiled_offsets=False, ctx=None, hooks={}, unit_hooks={},
         )),
         reads=cast(Any, SimpleNamespace(
             capture=SimpleNamespace(is_transient=lambda: False),
+            transient_hooks=False,
             step_callback=lambda: (lambda _step: None),
         )),
         release=lambda: None,

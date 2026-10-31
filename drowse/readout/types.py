@@ -43,10 +43,10 @@ from typing import Any, ClassVar, Literal, Mapping, Union
 from drowse.errors import UnsupportedProbeChannelError
 
 
-#: The three read families.  THE enumeration — ``session.instruments`` is
+#: The four read families.  THE enumeration — ``session.instruments`` is
 #: keyed by it, the server validates ``{family}`` against that registry, and
 #: the payload layer's per-family slots are pinned to it by test.
-InstrumentFamily = Literal["geometry", "lens", "sae"]
+InstrumentFamily = Literal["geometry", "lens", "sae", "units"]
 
 
 #: Depth of the bounded capture tail ring finalize aggregates pool from —
@@ -229,6 +229,9 @@ UNIT_MEAN_TOKEN_PROBABILITY = "mean_token_probability"
 UNIT_ACTIVATION_OVER_MAX = "activation_over_max"
 #: The SAE strength unit with no metadata (offline / unlisted feature).
 UNIT_RAW_ACTIVATION = "raw_activation"
+#: The units family's strength unit: a neuron's activation over its pole's
+#: neutral ``act_top`` (signed), a head's write norm over its ``act_top``.
+UNIT_ACTIVATION_OVER_SCALE = "activation_over_scale"
 
 
 @dataclass
@@ -359,7 +362,11 @@ class ScalarReading:
       Neuronpedia ``maxActApprox`` corpus max, ~``[0, 1]``;
     * ``"raw_activation"`` — SAE activation with no metadata available
       (offline / unlisted feature), comparable across tokens for one
-      feature only.
+      feature only;
+    * ``"activation_over_scale"`` — a unit probe: a neuron's activation over
+      its pole's neutral typical high (signed; ``meta.activation`` is the
+      raw value), a head's write norm over its neutral typical high
+      (``meta.write_norm``).
     """
 
     value: float
@@ -525,6 +532,13 @@ class LensLiveState(LiveState):
             "enabled": bool(self.enabled),
             "layers": list(self.layers) if self.layers is not None else None,
         }
+
+
+@dataclass(frozen=True)
+class UnitsLiveState(LiveState):
+    """The units family's per-token readings switch — all-or-nothing."""
+
+    family: ClassVar[InstrumentFamily] = "units"
 
 
 @dataclass(frozen=True)
@@ -696,8 +710,10 @@ __all__ = [
     "SaeLiveState",
     "ScalarReading",
     "UNIT_ACTIVATION_OVER_MAX",
+    "UNIT_ACTIVATION_OVER_SCALE",
     "UNIT_MEAN_TOKEN_PROBABILITY",
     "UNIT_RAW_ACTIVATION",
+    "UnitsLiveState",
     "as_probe_reading",
     "parse_gate_ref",
     "reading_axis0",

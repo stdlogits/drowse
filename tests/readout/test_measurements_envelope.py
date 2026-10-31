@@ -436,6 +436,40 @@ class TestLiveSources:
         assert (binding["source"], binding.get("layer")) == ("saelens:scope", 14)
 
 
+class TestUnitsChannel:
+    """The units channel: readings plus a source-less binding, nothing else."""
+
+    @staticmethod
+    def _reading() -> ScalarReading:
+        return ScalarReading(
+            value=-1.5,
+            unit="activation_over_scale",
+            per_layer={8: -1.5},
+            depth=DepthSummary(center=(0.25,), spread=(0.0,), basis="single_layer"),
+            meta={"unit": "neuron/L8n344", "activation": -0.75},
+        )
+
+    def test_channel_keys_and_scores(self) -> None:
+        env = build_measurements(
+            scope="aggregate",
+            units_readings={"neuron/L8n344": self._reading()},
+            steering="!head/L2h1",
+        )
+        assert env is not None
+        assert set(env["instruments"]) == {"units"}
+        channel = env["instruments"]["units"]
+        assert set(channel) == {"binding", "readings"}
+        assert channel["binding"] == {"source": None, "steering": "!head/L2h1"}
+        reading = channel["readings"]["neuron/L8n344"]
+        assert set(reading) == {"value", "unit", "per_layer", "depth", "meta"}
+        assert reading["meta"] == {"unit": "neuron/L8n344", "activation": -0.75}
+        assert env.get("scores") == {"neuron/L8n344": -1.5}
+
+    def test_no_units_readings_no_channel(self) -> None:
+        env = build_measurements(scope="token", units_readings={})
+        assert env is None
+
+
 # ---------------------------------------------------------------------------
 # The family enumeration is one list
 # ---------------------------------------------------------------------------

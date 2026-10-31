@@ -2,7 +2,7 @@
 
 :func:`mock_session` returns a ``MagicMock`` wired with the session surface
 the OpenAI, Ollama and native routes read on every request: model identity
-and info, a sampling config, an idle loom tree, the three instrument faces
+and info, a sampling config, an idle loom tree, the four instrument faces
 (idle, no probes), the Monitor, the generation state and a working event bus.
 It is an autospec of ``DrowseSession``: a name the class does not define
 reads as ``AttributeError`` and method calls are signature-checked.  Keyword
@@ -25,7 +25,12 @@ from drowse.events import EventBus
 from drowse.generation.results import GenerationResult, RunSet
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomTree
-from drowse.readout.types import GeometryLiveState, LensLiveState, SaeLiveState
+from drowse.readout.types import (
+    GeometryLiveState,
+    LensLiveState,
+    SaeLiveState,
+    UnitsLiveState,
+)
 from drowse.session.session import DrowseSession
 from tests.support.tokens import emit_token
 
@@ -105,7 +110,7 @@ def mock_session(**overrides: Any) -> Any:
         supports_thinking=False, thinking_optional=False,
     )
 
-    # The three instrument faces the routes and session_info read: idle, no
+    # The four instrument faces the routes and session_info read: idle, no
     # probes, no compatible lens.
     session.lens.has_compatible.return_value = False
     session.geometry.names = []
@@ -120,10 +125,15 @@ def mock_session(**overrides: Any) -> Any:
     session.sae.specs.return_value = {}
     session.sae.active_source = None
     session.sae.live_state = SaeLiveState(enabled=False)
+    session.units.names = []
+    session.units.specs.return_value = {}
+    session.units.active_source = None
+    session.units.live_state = UnitsLiveState(enabled=True)
     session.instruments = {
         "geometry": session.geometry,
         "lens": session.lens,
         "sae": session.sae,
+        "units": session.units,
     }
 
     # The unified monitor: ``probe_names`` (wire/gate surface) and

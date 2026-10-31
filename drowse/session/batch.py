@@ -327,6 +327,10 @@ class FastBatchPath:
         # the serial loop is the one that reports it.
         if want_readings and self._sae.names and self._sae_layer() is None:
             return None
+        # A unit probe reads one row through its own tap; the serial loop
+        # reads it for every row.
+        if want_readings and self._reads.has_unit_probes:
+            return None
         model = generate_capable_model(self._model())
         if model is None or hf_unneutralizable_processors(model):
             return None
@@ -409,7 +413,8 @@ class FastBatchPath:
                 eos_ids=sorted(eos_ids),
                 pad_id=pad_id,
                 steering_active=bool(
-                    self._steering.hooks or self._steering.uses_compiled_offsets
+                    self._steering.hooks or self._steering.unit_hooks
+                    or self._steering.uses_compiled_offsets
                 ),
             )
             start = time.monotonic()

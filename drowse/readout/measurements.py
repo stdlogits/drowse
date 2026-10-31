@@ -23,6 +23,10 @@ Shape::
           "binding": {"source": ..., "steering": ..., "layer": N},
           "readings": {name: ...},                # attached sae/<id> probes
           "readout": {"features": [...]}          # native top-k discovery
+        },
+        "units": {
+          "binding": {"source": null, "steering": ...},
+          "readings": {name: ...}                 # attached neuron/… head/… probes
         }
       }
     }
@@ -176,10 +180,19 @@ class SaeChannel(TypedDict):
     readout: NotRequired[SaeReadout]
 
 
+class UnitsChannel(TypedDict):
+    """The units family: attached ``neuron/…`` / ``head/…`` probe readings.
+    ``binding.source`` is always ``None`` (units are the model's own parts)."""
+
+    binding: MeasurementBinding
+    readings: dict[str, ScalarReadingDict]
+
+
 class Instruments(TypedDict):
     geometry: NotRequired[GeometryChannel]
     lens: NotRequired[LensChannel]
     sae: NotRequired[SaeChannel]
+    units: NotRequired[UnitsChannel]
 
 
 class Measurements(TypedDict):
@@ -240,6 +253,7 @@ def build_measurements(
     sae_features: list[tuple[int, float, str | None, float | None]] | None = None,
     sae_source: str | None = None,
     sae_layer: int | None = None,
+    units_readings: Mapping[str, ScalarReading] | None = None,
     steering: str | None = None,
 ) -> Measurements | None:
     """Build one measurement envelope; ``None`` when nothing measured.
@@ -334,6 +348,13 @@ def build_measurements(
         }
         instruments["sae"] = sae_channel
 
+    if units_readings:
+        scores.update(_axis0(units_readings))
+        instruments["units"] = {
+            "binding": {"source": None, "steering": steering},
+            "readings": _readings_dict(units_readings),
+        }
+
     if not instruments:
         return None
 
@@ -407,6 +428,7 @@ __all__ = [
     "SaeFeature",
     "SaeReadout",
     "ScalarReadingDict",
+    "UnitsChannel",
     "build_measurements",
     "live_sources",
 ]

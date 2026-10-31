@@ -58,6 +58,7 @@ SCHEMA_RENAMES: dict[str, str] = {
     "GeometryChannel": "GeometryInstrumentJSON",
     "LensChannel": "LensInstrumentJSON",
     "SaeChannel": "SaeInstrumentJSON",
+    "UnitsChannel": "UnitsInstrumentJSON",
     "MeasurementBinding": "MeasurementBindingJSON",
     "LensReadout": "LensReadoutBlockJSON",
     "LensReadoutLayer": "LensReadoutLayerJSON",

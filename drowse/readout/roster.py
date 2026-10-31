@@ -1,10 +1,11 @@
-"""The probe roster: one attach/detach surface over the three read families.
+"""The probe roster: one attach/detach surface over the four read families.
 
 A selector routes by namespace: ``jlens/<word>`` to the J-lens instrument (a
 readout-channel probe, never a whitened coordinate), ``sae/<id>`` to the SAE
-instrument, and everything else to the geometry instrument (a manifold probe
-on the unified Monitor).  The roster also owns the transcript probe-hash
-caches, one per family, and the single place a roster change is reported:
+instrument, ``neuron/<unit>`` and ``head/<unit>`` to the units instrument,
+and everything else to the geometry instrument (a manifold probe on the
+unified Monitor).  The roster also owns the transcript probe-hash caches, one
+per family, and the single place a roster change is reported:
 :meth:`ProbeRoster.changed` drops the affected digests and fires the
 ``on_change`` callback (the session wires its analytics invalidation there).
 """
@@ -31,7 +32,7 @@ class _Family(Protocol):
 
 
 class ReadoutFamily(_Family, Protocol):
-    """A J-lens or SAE instrument: attach takes no geometry knobs."""
+    """A J-lens, SAE or units instrument: attach takes no geometry knobs."""
 
     def attach(self, selector: str, *, as_name: str | None = None) -> str: ...
 
@@ -63,15 +64,17 @@ class ProbeRoster:
         geometry: GeometryFamily,
         lens: ReadoutFamily,
         sae: ReadoutFamily,
+        units: ReadoutFamily,
         on_change: Callable[[], None],
     ) -> None:
         self._geometry = geometry
         self._lens = lens
         self._sae = sae
+        self._units = units
         self._on_change = on_change
         # Transcript digests per family, filled lazily by ``probe_hash``.
         self._hashes: dict[InstrumentFamily, dict[str, str]] = {
-            "lens": {}, "sae": {}, "geometry": {},
+            "lens": {}, "sae": {}, "units": {}, "geometry": {},
         }
 
     # -------------------------------------------------------------- routing
@@ -81,14 +84,16 @@ class ProbeRoster:
     ) -> str:
         """Attach a probe of any shape and return its name.
 
-        ``jlens/`` and ``sae/`` selectors read their family's readout channel;
-        everything else resolves to a manifold probe (``top_n`` is the
-        nearest-node list length, geometry only).
+        ``jlens/``, ``sae/``, ``neuron/`` and ``head/`` selectors read their
+        family's readout channel; everything else resolves to a manifold
+        probe (``top_n`` is the nearest-node list length, geometry only).
         """
         if selector.startswith("jlens/"):
             name = self._lens.attach(selector, as_name=as_name)
         elif selector.startswith("sae/"):
             name = self._sae.attach(selector, as_name=as_name)
+        elif selector.startswith(("neuron/", "head/")):
+            name = self._units.attach(selector, as_name=as_name)
         else:
             name = self._geometry.attach(selector, as_name=as_name, top_n=top_n)
         self.changed([name])
@@ -97,23 +102,28 @@ class ProbeRoster:
     def detach(self, name: str) -> None:
         """Detach ``name`` from whichever family owns it.
 
-        Lens/SAE detaches are atomic under their state locks and safe
+        Lens/SAE/units detaches are atomic under their state locks and safe
         mid-generation (a bound run keeps its frozen roster); a geometry
         detach rejects while a generation runs.
         """
-        if not (self._lens.try_detach(name) or self._sae.try_detach(name)):
+        if not (
+            self._lens.try_detach(name) or self._sae.try_detach(name)
+            or self._units.try_detach(name)
+        ):
             self._geometry.detach(name)
         self.changed([name])
 
     def specs(self) -> dict[str, dict[str, Any]]:
         """Every attached probe: ``{"manifold": …}`` / ``{"lens": spec}`` /
-        ``{"sae": spec}``, from each family's locked snapshot."""
+        ``{"sae": spec}`` / ``{"units": spec}``, from each family's locked
+        snapshot."""
         out: dict[str, dict[str, Any]] = {
             name: {"manifold": manifold}
             for name, manifold in self._geometry.manifolds().items()
         }
         out.update({name: {"lens": spec} for name, spec in self._lens.specs().items()})
         out.update({name: {"sae": spec} for name, spec in self._sae.specs().items()})
+        out.update({name: {"units": spec} for name, spec in self._units.specs().items()})
         return out
 
     # ------------------------------------------------------------ digests
@@ -126,7 +136,8 @@ class ProbeRoster:
         until :meth:`forget` drops them.
         """
         families: tuple[tuple[InstrumentFamily, _Family], ...] = (
-            ("lens", self._lens), ("sae", self._sae), ("geometry", self._geometry),
+            ("lens", self._lens), ("sae", self._sae), ("units", self._units),
+            ("geometry", self._geometry),
         )
         for family, _ in families:
             cached = self._hashes[family].get(name)
@@ -146,7 +157,10 @@ class ProbeRoster:
         between enumeration and hashing is skipped.
         """
         out: dict[str, str] = {}
-        for name in (*self._geometry.names, *self._lens.names, *self._sae.names):
+        for name in (
+            *self._geometry.names, *self._lens.names, *self._sae.names,
+            *self._units.names,
+        ):
             digest = self.probe_hash(name)
             if digest is not None:
                 out[name] = digest

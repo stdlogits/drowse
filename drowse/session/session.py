@@ -66,6 +66,9 @@ from drowse.readout.geometry import GeometryInstrument
 from drowse.lens.instrument import LensInstrument
 from drowse.sae.instrument import SaeInstrument
 from drowse.sae.runtime import SaeRuntime
+from drowse.units.instrument import UnitsInstrument
+from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
+from drowse.units.stats import UnitStats
 from drowse.loom.replay import TokenReplayer
 from drowse.store.bundled_probes import bootstrap_probe_roster
 from drowse.geometry.profile import Profile
@@ -349,11 +352,19 @@ class DrowseSession:
         self._registry.set_probe_folder(self._fold_profile_probe)
         self._registry.set_atom_resolver("jlens", lambda atom: self._lens_instrument.register_direction(atom))
         self._registry.set_atom_resolver("sae", lambda atom: self._sae_instrument.register_direction(atom))
-        # Neutral means + whitener, built lazily from one neutral load.
+        self._registry.set_atom_resolver("neuron", lambda atom: self._units_instrument.register_direction(atom))
+        # Neutral means + whitener + unit statistics, built lazily from one
+        # neutral load.
         self._neutral = NeutralBaseline(
             model=self._model, tokenizer=self._tokenizer, layers=self._layers,
             model_id=self.model_id, exclusive=self._model_exclusive,
             steered=lambda: self._steering.plan is not None,
+        )
+        # The model's neurons and heads (block description + the neutral
+        # unit statistics): unit probes, gates, pushes and ablations.
+        self._units_runtime = UnitsRuntime(
+            model=self._model, device=self._device,
+            exclusive=self._model_exclusive, stats=self._require_unit_stats,
         )
         # Corpus generation and the extract/fit/bake glue.  Wired before the
         # probe bootstrap below, which fits stale bundled axes through ``fit``;
@@ -371,6 +382,7 @@ class DrowseSession:
             lock=self._gen_lock, events=self.events,
             generation_phase=self._mid_generation_phase,
             on_prefill_steering_change=lambda: self._engine.prefix_cache.clear(),
+            units=self._units_runtime,
         )
         self._extraction = Extraction(
             self, self.events, self._corpus,
@@ -444,12 +456,25 @@ class DrowseSession:
             evict_directions=lambda: self._registry.evict_prefix("sae/"),
             forget_probe_hashes=lambda names: self._roster.forget(names),
         )
+        # The units family: neuron/head probes and gates through its own tap,
+        # ``neuron/`` steering atoms, token replay.
+        self._units_instrument = UnitsInstrument(
+            self._units_runtime,
+            model_id=self.model_id,
+            n_layers=len(self._layers),
+            dtype=self._dtype,
+            exclusive=self._model_exclusive,
+            replay=self._token_replay,
+            put_direction=self._registry.put_profile,
+            has_direction=lambda name: name in self._registry.profiles,
+        )
         # The probe roster: attach/detach routing by namespace and the
         # transcript probe-hash caches; a roster change drops the analytics.
         self._roster = ProbeRoster(
             geometry=self._geometry_instrument,
             lens=self._lens_instrument,
             sae=self._sae_instrument,
+            units=self._units_instrument,
             on_change=self._on_roster_change,
         )
         # The read plane: capture planning and buffers, the per-token reads,
@@ -460,6 +485,7 @@ class DrowseSession:
             geometry=self._geometry_instrument,
             lens=self._lens_instrument,
             sae=self._sae_instrument,
+            units=self._units_instrument,
             layers=self._layers,
             tokenizer=self._tokenizer,
             gate_refs=self._steering_composer.gate_refs,
@@ -792,10 +818,10 @@ class DrowseSession:
             return phase.name
         return None
 
-    # -- The three read instruments --
+    # -- The four read instruments --
     # Each family owns its own state; there is ONE addressing scheme for
     # it (``self._lens_instrument.<field>`` in-session, ``session.lens``
-    # / ``.sae`` / ``.geometry`` outside).
+    # / ``.sae`` / ``.units`` / ``.geometry`` outside).
 
     def _on_roster_change(self) -> None:
         """A probe was attached, detached or changed: the analytics roster
@@ -811,7 +837,7 @@ class DrowseSession:
     @property
     def instruments(self) -> "dict[InstrumentFamily, Instrument]":
         """THE read-family registry — ``geometry`` (the Monitor adapter),
-        ``lens``, ``sae``.
+        ``lens``, ``sae``, ``units``.
 
         This mapping is the family *enumeration*, not a convenience view:
         the probe-hash roster, the composer's gate preflight, and the
@@ -828,7 +854,31 @@ class DrowseSession:
             "geometry": cast("Instrument", self._geometry_instrument),
             "lens": cast("Instrument", self._lens_instrument),
             "sae": cast("Instrument", self._sae_instrument),
+            "units": cast("Instrument", self._units_instrument),
         }
+
+    @property
+    def units(self) -> "UnitsInstrument":
+        """The units instrument — the public face of the units family
+        (``session.instruments["units"]``): ``neuron/…`` and ``head/…``
+        probes and gates, the ``neuron/`` steering atoms, token replay, and
+        its ``runtime`` (block description, unit checks, sites and the
+        neutral unit statistics)."""
+        return self._units_instrument
+
+    def _require_unit_stats(self) -> UnitStats:
+        """The neutral unit statistics, building the neutral baseline when
+        absent (the caller holds the exclusive section); raises
+        :class:`~drowse.units.runtime.UnitsUnavailableError` (422) when the
+        cache has none."""
+        self._neutral.ensure()
+        stats = self._neutral.unit_stats
+        if stats is None:
+            reason = self._neutral.units_unavailable or "the neutral baseline did not load"
+            raise UnitsUnavailableError(
+                f"units are unavailable for {self.model_id}: {reason}"
+            )
+        return stats
 
     @property
     def lens(self) -> "LensInstrument":
@@ -1736,6 +1786,8 @@ class DrowseSession:
         self._sae_instrument.probes.clear()
         self._sae_instrument.live = None
         self._sae_instrument.runtime.close()
+        self._units_instrument.close_run()
+        self._units_instrument.probes.clear()
         self._geometry_instrument.clear()
 
         # The artifact registry, its derived caches, the neutral baseline.
