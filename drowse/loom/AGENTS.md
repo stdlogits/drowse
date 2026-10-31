@@ -231,7 +231,9 @@ one capture forward, and hands `{layer: (hidden,) fp32}` pooled at the
 producing position to the family's `read`. The steering scope opens
 **outside** the exclusive-GPU section (`base/exclusive.py::ExclusiveGuard`):
 composer push/pop take the generation lock blocking, so nesting would
-deadlock. `layers` and `read` resolve inside it. `apply_steering=False` reads
+deadlock. The render (which uploads the ids to the device), `layers` and
+`read` all run inside it: a device upload outside the section once raced a
+lock-free device read for MPS's one command buffer and aborted the server. `apply_steering=False` reads
 the unsteered counterfactual. Always-active affine terms reproduce exactly;
 phase/gated terms fire as the trigger context's rest state decides (the node
 replay below drives the context instead).

@@ -20,7 +20,13 @@ from fastapi.responses import Response
 
 from drowse.errors import DrowseError
 from drowse.readout.monitor_attach import AttachedManifoldProbe
-from drowse.server.runtime import NativeRequest, attached_probe_names, session_router
+from drowse.server.runtime import (
+    NativeRequest,
+    attached_probe_names,
+    run_in_thread,
+    session_lock,
+    session_router,
+)
 from drowse.server.response_models import (
     GeometryProbeInfo,
     LensProbeInfo,
@@ -51,8 +57,10 @@ def _probe_info(name: str, probe: AttachedManifoldProbe) -> GeometryProbeInfo:
     manifold = probe.manifold
     domain_spec = manifold.domain.to_spec()
     intrinsic_dim = int(manifold.domain.intrinsic_dim)
-    nc = manifold.node_coords
-    node_coords = nc.tolist() if nc is not None else None
+    # The host copy taken at attach: this route is lock-free, and copying the
+    # resident (MPS) tensor here would share the device's one command buffer
+    # with whatever model op holds it, which aborts the process.
+    node_coords = [list(row) for row in probe.node_coords_host] or None
     is_affine = manifold.is_affine
     return {
         "family": "geometry",
@@ -154,17 +162,22 @@ def register_probe_routes(app: FastAPI) -> None:
         return {"probes": rows}
 
     @router.get("/probes/{name:path}/geometry")
-    def probe_geometry(name: str) -> ProbeGeometryResponse:
+    async def probe_geometry(name: str) -> ProbeGeometryResponse:
         """Static geometry for the dashboard probe-inspector plot.
 
         Per-layer node centroids + neutral + (rank>=3) a top-3 PCA rotation +
         the curve/surface overlay for a curved fit — all in the whitened frame
         the reads use, so the per-token live point (the reading's
-        ``subspace_coords_per_layer``) overlays directly.
+        ``subspace_coords_per_layer``) overlays directly.  The factors are
+        resident on the model's device, so the copy off it runs under the
+        session lock and inside the exclusive-GPU section.
         """
         try:
-            return session.monitor.probe_geometry(name)
+            async with session_lock(app):
+                return await run_in_thread(session.probe_geometry, name)
         except KeyError as e:
+            if isinstance(e, DrowseError):
+                raise
             raise HTTPException(404, f"probe '{name}' not attached") from e
 
     @router.post("/probes", status_code=201)

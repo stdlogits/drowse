@@ -1277,6 +1277,20 @@ class DrowseSession:
         """
         self._roster.detach(name)
 
+    def probe_geometry(self, name: str) -> dict[str, Any]:
+        """An attached geometry probe's static geometry for the inspector plot
+        (:meth:`drowse.readout.monitor.Monitor.probe_geometry`), copied off the
+        device inside the exclusive-GPU section: its whitened factors are
+        resident, and a copy off MPS beside another thread's model op aborts
+        the process.  ``KeyError`` for a name not attached;
+        ``ConcurrentExtractionError`` (409) while another model op holds the
+        GPU."""
+        with self._model_exclusive(
+            "probe geometry requested while another model use is in flight; "
+            "retry shortly",
+        ):
+            return self.monitor.probe_geometry(name)
+
     def _resolve_probe_manifold(self, selector: str) -> "Manifold":
         """Resolve a probe selector to a loaded :class:`Manifold`.
 
