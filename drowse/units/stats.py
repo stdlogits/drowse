@@ -162,8 +162,10 @@ class UnitStatsAccumulator:
     :meth:`begin_chunk` (the rows' token lengths) and :meth:`commit_chunk`
     (merge) or :meth:`discard_chunk` (an out-of-memory retry re-runs the rows,
     so nothing of the failed attempt may count).  ``failure`` is set, and the
-    hooks go quiet, when a hook raises anything but an out-of-memory error:
-    the neutral pass must never fail because of units.
+    hooks go quiet, when a hook raises anything but an out-of-memory error;
+    an out-of-memory error propagates so the capture can halve its batch, and
+    at batch size 1 the capture calls :meth:`abandon` and re-runs the rows
+    without the hooks: the neutral pass must never fail because of units.
     """
 
     def __init__(
@@ -315,6 +317,15 @@ class UnitStatsAccumulator:
         self._mask = self._head_mask = None
         for acc in self._layers:
             acc.pending_neuron = acc.pending_head = None
+
+    def abandon(self, reason: str) -> None:
+        """Give up for the rest of the pass: remove the hooks, drop the framed
+        forward and record ``reason`` (the capture re-runs the rows without
+        the hooks, so units never fail the neutral pass)."""
+        self.close()
+        self.discard_chunk()
+        if self.failure is None:
+            self.failure = reason
 
     # ------------------------------------------------------------ result
 

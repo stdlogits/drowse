@@ -26,7 +26,7 @@ from drowse.units.stats import (
     UnitStatsAccumulator,
     top_median,
 )
-from tests.support.tiny_models import tiny_model
+from tests.support.tiny_models import byte_tokenizer, tiny_model
 
 pytestmark = pytest.mark.usefixtures("isolated_home")
 
@@ -201,6 +201,72 @@ def test_an_undescribed_model_still_gets_its_cache_with_units_unavailable(
     assert reloaded.units.tensors is None
     for layer, rows in before.items():
         torch.testing.assert_close(reloaded.activations[layer], rows)
+
+
+def test_an_out_of_memory_unit_hook_at_batch_one_drops_units_not_the_pass(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The unit hooks hold memory the plain capture does not: when they run
+    out at batch size 1, the capture drops them and re-runs the rows."""
+    from drowse.fit.neutral import load_or_compute_neutral_cache
+    from drowse.store.neutral import load_neutral_cache
+
+    def oom_hook(self: UnitStatsAccumulator, _acc: Any) -> Any:
+        def hook(_module: torch.nn.Module, _args: tuple[Any, ...]) -> None:
+            if self._mask is not None:
+                self._fail(RuntimeError("MPS backend out of memory (simulated)"))
+        return hook
+
+    monkeypatch.setattr(UnitStatsAccumulator, "_neuron_hook", oom_hook)
+    before = load_neutral_cache(tiny_session.model_id).activations
+    cache = load_or_compute_neutral_cache(
+        tiny_session.model, tiny_session.tokenizer, tiny_session.layers,
+        model_id=tiny_session.model_id, force=True,
+    )
+    assert cache.units.tensors is None
+    assert cache.units.reason is not None and "batch size 1" in cache.units.reason
+    assert cache.sidecar["units"] == {"available": False, "reason": cache.units.reason}
+    for block in model_spec(tiny_session.model).blocks:
+        assert not block.mlp.down._forward_pre_hooks and not block.attn.o._forward_hooks
+    for layer, rows in before.items():
+        torch.testing.assert_close(cache.activations[layer], rows, rtol=1e-4, atol=1e-5)
+
+
+def test_an_out_of_memory_capture_without_an_observer_still_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Abandoning the observer is the only recovery at batch size 1: an
+    out-of-memory error that persists without it propagates."""
+    import drowse.fit.capture as capture_mod
+
+    class Observer:
+        def __init__(self) -> None:
+            self.abandoned: list[str] = []
+
+        def begin_chunk(self, lengths: Any) -> None:
+            del lengths
+
+        def commit_chunk(self) -> None:
+            raise AssertionError("no chunk succeeds")
+
+        def discard_chunk(self) -> None:
+            pass
+
+        def abandon(self, reason: str) -> None:
+            self.abandoned.append(reason)
+
+    def oom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("CUDA out of memory (simulated)")
+
+    model = tiny_model("llama")
+    tokenizer = byte_tokenizer("llama")
+    monkeypatch.setattr(capture_mod, "_encode_and_capture_all_batch", oom)
+    observer = Observer()
+    with pytest.raises(RuntimeError, match="out of memory"):
+        capture_mod.compute_neutral_activations(
+            model, tokenizer, model.model.layers, observer=observer,
+        )
+    assert len(observer.abandoned) == 1
 
 
 def test_a_quantized_projection_makes_units_unavailable() -> None:

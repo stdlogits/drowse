@@ -33,6 +33,11 @@ class ChunkObserver(Protocol):
 
     def discard_chunk(self) -> None: ...
 
+    def abandon(self, reason: str) -> None:
+        """Remove the observer's hooks for the rest of the pass and record
+        ``reason`` (the capture retries without them)."""
+        ...
+
 
 # Rows per batched capture forward.  Capture starts here and halves on OOM
 # (never grows back); length bucketing keeps a wide batch from turning one long
@@ -548,7 +553,10 @@ def compute_neutral_activations(
     pass (the unit statistics, :mod:`drowse.units.stats`): ``begin_chunk``
     with the rows' token lengths before the forward, then ``commit_chunk`` on
     success or ``discard_chunk`` when an out-of-memory retry will re-run the
-    rows.
+    rows.  The observer never fails the pass: an out-of-memory error at batch
+    size 1 with it installed abandons it (its hooks hold memory the capture
+    does not need) and retries the rows without it; only an out-of-memory
+    error at batch size 1 without it propagates.
 
     Storage cost: ~90 · n_layers · hidden_dim · 4B in fp32 (≈ 56MB on
     a 4096-dim, 80-layer model).  Callers persist this through
@@ -606,9 +614,18 @@ def compute_neutral_activations(
 
                 if observer is not None:
                     observer.discard_chunk()
-                if not is_out_of_memory_error(exc) or active_batch <= 1:
+                if not is_out_of_memory_error(exc):
                     raise
-                active_batch = max(1, active_batch // 2)
+                if active_batch > 1:
+                    active_batch = max(1, active_batch // 2)
+                elif observer is not None:
+                    observer.abandon(
+                        "out of memory at capture batch size 1 with the unit "
+                        "statistics hooks installed"
+                    )
+                    observer = None
+                else:
+                    raise
                 if _mps:
                     torch.mps.empty_cache()
                 elif device.type == "cuda":

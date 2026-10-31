@@ -242,9 +242,11 @@ The same forward measures the **unit statistics**
 output-projection forward hook per block, fp32 sums and running top-k buffers
 on the device, framed per chunk through `compute_neutral_activations`'
 `observer` (`begin_chunk(lengths)` / `commit_chunk` / `discard_chunk` on an
-out-of-memory retry). Units never fail the pass: a model `model_spec` refuses,
-or a hook that raises anything but an out-of-memory error, publishes the cache
-with `units` unavailable and the reason. A cached units record whose tensor
+out-of-memory retry, `abandon(reason)` when one strikes at batch size 1: the
+hooks come off and the rows re-run without them). Units never fail the pass:
+a model `model_spec` refuses, a hook that raises anything but an
+out-of-memory error, or an out-of-memory error at batch size 1, publishes the
+cache with `units` unavailable and the reason. A cached units record whose tensor
 names are not the current set recomputes.
 
 ## Bake

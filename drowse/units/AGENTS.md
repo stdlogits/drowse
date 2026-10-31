@@ -63,9 +63,11 @@ capture's out-of-memory retry re-runs those rows). One down-projection
 pre-hook and one output-projection forward hook per block, on the same forward
 the neutral activations come from.
 
-Units never fail the neutral pass: a model `model_spec` refuses, or a hook
-that raises anything but an out-of-memory error, publishes a complete cache
-whose `units` block reads `{"available": false, "reason": …}`. Reading units
+Units never fail the neutral pass: a model `model_spec` refuses, a hook that
+raises anything but an out-of-memory error, or an out-of-memory error that
+persists at capture batch size 1 (the capture then `abandon`s the accumulator
+and re-runs the rows without its hooks) publishes a complete cache whose
+`units` block reads `{"available": false, "reason": …}`. Reading units
 then raises `UnitsUnavailableError` (422) with that reason.
 
 ## The read family (`instrument.py`, `capture.py`)
