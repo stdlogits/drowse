@@ -6,6 +6,7 @@ import math
 
 import pytest
 
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from drowse.readout.types import ProbeReading
 from drowse.generation.token_payloads import TokenProbePayload
 
@@ -61,7 +62,7 @@ def test_token_payload_builds_measurement_envelope() -> None:
     )
 
     envelope = payload["measurements"]
-    assert envelope["version"] == 1
+    assert envelope["version"] == MEASUREMENTS_VERSION
     assert envelope["scope"] == "token"
     assert envelope["provenance"] == "captured"
     assert envelope["scores"] == {"toy": pytest.approx(0.25)}

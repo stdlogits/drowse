@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from drowse.loom.recipe import Recipe
 from drowse.generation.results import GenerationResult
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from tests.support.server import StubSession
 
 @pytest.fixture
@@ -99,8 +100,6 @@ class TestTreeGet:
         ``{sources}`` with the envelope still at version 1, so a 5.x
         dashboard save restored cleanly and the token drawer threw on its
         lens rows.  The restore now refuses another envelope version."""
-        from drowse.readout.measurements import MEASUREMENTS_VERSION
-
         session, client = session_and_client
         user_id = session.tree.add_user_turn("saved branch")
         assistant_id = session.tree.begin_assistant(user_id)
@@ -188,7 +187,7 @@ class TestTreeGet:
             "probes": {"calm": 0.42},
             "per_layer_scores": {"5": {"calm": 0.38}, "10": {"calm": 0.45}},
             "measurements": {
-                "version": 1,
+                "version": MEASUREMENTS_VERSION,
                 "scope": "token",
                 "provenance": "captured",
                 "instruments": {

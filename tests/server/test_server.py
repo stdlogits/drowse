@@ -16,6 +16,7 @@ from drowse.generation.results import GenerationResult, RunSet, TokenEvent
 from tests.support.streams import FakeGenerationStream
 from tests.support.server import mock_session
 from drowse.errors import ConcurrentGenerationError, ProfileNotRegisteredError
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -1206,7 +1207,7 @@ class TestWSTokenEventLens:
         """The envelope forwards by identity — the token tap is the single
         authority; event shaping never rebuilds or reshapes channels."""
         measurements = {
-            "version": 1,
+            "version": MEASUREMENTS_VERSION,
             "scope": "token",
             "provenance": "captured",
             "scores": {"calm": 0.424243},

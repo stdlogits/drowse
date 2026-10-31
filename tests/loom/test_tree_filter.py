@@ -12,6 +12,7 @@ from drowse import (
     parse_filter,
 )
 from drowse.loom.filter import filter_tree, node_token_series
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -141,12 +142,12 @@ class _SyntheticNode:
 
 
 def _rows(probe: str, values: list[float]) -> list[dict[str, Any]]:
-    """Token rows carrying ``probe`` in the 5.x measurement envelope."""
+    """Token rows carrying ``probe`` in the measurement envelope."""
     return [
         {
             "text": f"t{i}",
             "measurements": {
-                "version": 1,
+                "version": MEASUREMENTS_VERSION,
                 "scope": "token",
                 "scores": {probe: v},
             },

@@ -27,6 +27,7 @@ from drowse import (
 from drowse.loom.errors import LoomTreeError
 from drowse.loom.ops import append_turn, check_user_send_target
 from drowse.loom.tree import TOKEN_SIDECAR_FORMAT_VERSION, TREE_FORMAT_VERSION
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from drowse.loom import tree as loom
 
 
@@ -111,7 +112,7 @@ def test_set_authored_token_scores_is_one_tree_mutation():
             "token_id": 7,
             "text": "hello",
             "measurements": {
-                "version": 1,
+                "version": MEASUREMENTS_VERSION,
                 "scope": "token",
                 "provenance": "captured",
                 "instruments": {
@@ -1246,8 +1247,6 @@ def test_load_refuses_a_previous_token_sidecar_format(tmp_path: Path):
 
 @pytest.mark.parametrize("field", ["tokens", "thinking_tokens"])
 def test_node_reader_refuses_rows_of_another_measurement_version(field: str):
-    from drowse.readout.measurements import MEASUREMENTS_VERSION
-
     tree = _seed_tree()
     raw = tree.to_dict(include_tokens=True)
     node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)

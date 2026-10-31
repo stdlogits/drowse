@@ -25,6 +25,7 @@ from drowse.generation.sampling import InheritSystemPrompt, SamplingConfig
 from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
 from drowse.generation.types import GenState
 from drowse.readout.types import ScalarReading
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from drowse.session.engine import (
     ConsumerPlan,
     GenerationEngine,
@@ -478,7 +479,7 @@ def test_stream_options_follow_live_scores_and_live_readouts(
     tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result = GenerationResult(text="ok", tokens=[7], token_count=1, tok_per_sec=1.0, elapsed=1.0)
-    envelope = {"version": 1, "scope": "token", "instruments": {}}
+    envelope = {"version": MEASUREMENTS_VERSION, "scope": "token", "instruments": {}}
     seen: list[TokenConsumerOptions] = []
 
     def _fake_generate_one(_input: Any, *, on_token: Any, **_kw: Any) -> GenerationResult:
