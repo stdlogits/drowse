@@ -3,9 +3,12 @@
 A unit probe reads one model part on the same forward the generation runs:
 
 - ``neuron/L8n344`` — the neuron's activation (coordinate 344 of block 8's
-  down projection input) over its pole's neutral ``act_top``, signed;
+  down projection input) over its pole's neutral scale, signed;
 - ``head/L20h17`` — the head's write norm ``‖W_O^h z_h‖`` (Gemma's sandwich
-  scale included) over its neutral ``act_top``.
+  scale included) over its neutral scale.
+
+The neutral scale is the soft one (:func:`~drowse.units.stats.soft_scale`):
+``act_top`` blended with a floor from the layer's typical scale.
 
 Both are :class:`~drowse.readout.types.ScalarReading`\\ s in the
 ``activation_over_scale`` unit at one layer (depth basis ``single_layer``),
@@ -432,8 +435,8 @@ class UnitsInstrument:
     def _scale(stats: UnitStats, ref: UnitRef) -> torch.Tensor:
         layer = stats.layer(ref.layer)
         if isinstance(ref, NeuronRef):
-            return layer.neuron_scale[:, ref.index].clone()
-        return layer.head_scale[ref.index].reshape(()).clone()
+            return layer.neuron_reading_scale[:, ref.index].clone()
+        return layer.head_reading_scale[ref.index].reshape(()).clone()
 
     def readings(
         self,

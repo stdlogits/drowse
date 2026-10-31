@@ -56,6 +56,29 @@ v5 shards beside each layer's activations (`store/neutral.py`), loaded by
 | `head_mean` | `[n_heads, head_dim]` | mean `z_h` over positions `>= 1` |
 | `head_scale` | `[n_heads]` | `act_top` of the write norm `‖W_O^h z_h‖` (sandwich scale included) over positions `>= HEAD_SCALE_FROM = 16` |
 
+**The reading scale.** A reading (`activation_over_scale`) divides by a
+soft scale, never the bare `act_top`: `stats.soft_scale` blends the unit's own
+scale `s` with a floor from its layer's typical scale `m` for its kind,
+`sqrt(s² + (c · m)²)`, where `m` is `typical_scale`, the median of the layer's
+positive scales (a neuron's over both poles of every neuron, a head's over the
+layer's heads), and `c = SCALE_FLOOR_SHARE = 0.25`
+(`LayerUnitStats.neuron_reading_scale`, `.head_reading_scale`). A pole that
+barely fired on the neutral corpus otherwise reads ordinary firings in the
+hundreds (SmolLM2's `L31n2394+`, `act_top` 0.055 against its layer's 2.28,
+topped the activity list at 169). Why a quarter, measured on SmolLM2-360M (96
+documents): a neuron pole's `act_top` over its layer's median has its 0.1%,
+1% and 5% quantiles at 0.20, 0.33 and 0.47 (heads 0.13, 0.24, 0.45), and 0.24%
+of neuron poles (1.25% of heads) sit below a quarter of it. At `c = 0.25` a
+unit at the median reads 3% lower than over its own scale and one at half the
+median 11% lower, while the tail is held: `L31n2394+` sits at 0.024 of the
+median and its reading falls by about ten. It is soft, not a cut: every unit
+reads and ranks, and a pole with no neutral scale at all (`act_top` 0; 49 of
+163,840 poles on SmolLM2) reads over `c · m`. Probes, gates, the units
+token readout, unit activity and the anatomy's unit rows all divide by it, so
+one unit shows one number everywhere; `Firing.neutral` reports it as `scale`
+beside `act_top`. `capture.SCALE_FLOOR` (1e-6) stays only as the numeric guard
+of a layer whose units never fired.
+
 Position 0 is the attention sink (massive activations) and never counts; a
 head's scale starts where neuron-lens's does, because a head with few keys
 attends sharply. With fewer documents than 24 the median runs over the
@@ -143,11 +166,10 @@ each token at its producing forward, as its loom row's live readings and
 `token_readout` are), reduced on the device: the top units by peak `|value|`
 with their peak token, per-token traces of named units, and one token's whole
 population packed as float16 (little-endian, base64). It uses this package's
-statistics and `SCALE_FLOOR` directly (no tap), skips the sink (position 0:
-value 0, never a peak), and ranks only values read against a real scale: a
-firing on a pole whose neutral `act_top` is 0 reads over the floor (on
-SmolLM2, 49 of 163,840 poles; `neuron/L31n1094` read −554,688) and stays out
-of the peaks. `session.token_anatomy` ranks units by their direct
+statistics' reading scales directly (no tap), skips the sink (position 0:
+value 0, never a peak), and ranks every unit over its soft scale (above), so
+a pole that barely fired on the neutral corpus no longer tops the list on a
+near-zero divisor. `session.token_anatomy` ranks units by their direct
 contribution to one token through the R lens instead. Details:
 `drowse/loom/AGENTS.md`.
 
@@ -245,8 +267,8 @@ whitened metric) with each neuron's pole and label. `stats(unit)` is the
 firing block alone.
 
 **Firing.** `Firing.neutral` is drowse's own statistics (a pole's
-`act_top`, the mean, the document count; a head's write `act_top` and mean
-`‖z_h‖`). The neutral cache has no firing rate, so "fires on X% of tokens"
+`act_top`, its reading `scale`, the mean, the document count; a head's write
+`act_top`, its `scale` and mean `‖z_h‖`). The neutral cache has no firing rate, so "fires on X% of tokens"
 (`rate`: the catalog's share of tokens with `|act| > act_top / 4` over its
 activation corpora, 15.4M positions) comes from a bound catalog, else is
 absent with the reason.

@@ -316,3 +316,31 @@ def test_a_malformed_units_block_is_rejected(tiny_session: Any) -> None:
     pointer.write_text(json.dumps(sidecar))
     with pytest.raises(ValueError, match="unit"):
         load_neutral_cache(tiny_session.model_id)
+
+
+def test_the_reading_scale_is_soft_over_the_layers_typical_scale() -> None:
+    """``activation_over_scale`` divides by sqrt(s² + (c·m)²): ``m`` the
+    median of the layer's positive scales (both poles of every neuron; the
+    layer's heads), ``c`` = SCALE_FLOOR_SHARE.  A unit at the median reads
+    about 3% lower than over its own scale; a silent pole reads over c·m."""
+    from drowse.units.stats import SCALE_FLOOR_SHARE, LayerUnitStats, soft_scale, typical_scale
+
+    neuron_scale = torch.tensor([[1.0, 2.0, 0.0, 4.0], [2.0, 2.0, 0.05, 3.0]])
+    head_scale = torch.tensor([10.0, 20.0, 30.0])
+    layer = LayerUnitStats(
+        neuron_mean=torch.zeros(4), neuron_scale=neuron_scale,
+        head_mean=torch.zeros(3, 2), head_scale=head_scale,
+    )
+    m = typical_scale(neuron_scale)
+    assert float(m) == 2.0, "the median of the positive scales, both poles"
+    assert float(typical_scale(torch.zeros(3))) == 0.0
+    c = SCALE_FLOOR_SHARE
+    torch.testing.assert_close(layer.neuron_reading_scale, torch.sqrt(neuron_scale ** 2 + (c * 2.0) ** 2))
+    torch.testing.assert_close(layer.head_reading_scale, torch.sqrt(head_scale ** 2 + (c * 20.0) ** 2))
+    assert float(layer.neuron_reading_scale[0, 2]) == pytest.approx(c * 2.0), "a silent pole reads over c·m"
+    at_median = float(soft_scale(torch.tensor(2.0), m))
+    assert 2.0 / at_median == pytest.approx(1 / (1 + c ** 2) ** 0.5)
+    assert 0.96 < 2.0 / at_median < 0.98, "a typical unit stays within 3% of its own scale"
+    # The far tail is held: 0.055 against a typical 2.3 reads ~4x the floor's reading, not ~40x.
+    tail = float(soft_scale(torch.tensor(0.055), torch.tensor(2.3)))
+    assert 0.5 < tail < 0.7

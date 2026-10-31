@@ -1055,6 +1055,8 @@ class UnitReader:
                 layer = stats.layer(ref.layer)
                 neutral = {
                     "act_top": round(float(layer.neuron_scale[row, ref.index]), 6),
+                    # What this pole's readings divide by (stats.soft_scale).
+                    "scale": round(float(layer.neuron_reading_scale[row, ref.index]), 6),
                     "mean": round(float(layer.neuron_mean[ref.index]), 6),
                     "documents": float(stats.n_documents),
                 }
@@ -1548,6 +1550,7 @@ class UnitReader:
             layer = stats.layer(ref.layer)
             neutral = {
                 "write_top": round(float(layer.head_scale[ref.index]), 6),
+                "scale": round(float(layer.head_reading_scale[ref.index]), 6),
                 "mean_z_norm": round(float(layer.head_mean[ref.index].norm()), 6),
                 "documents": float(stats.n_documents),
             }

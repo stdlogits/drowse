@@ -130,8 +130,10 @@ Readings: geometry produces `ProbeReading`; lens, SAE and units produce
 `mean_footprint_z` (`slens/` probes), `activation_over_max`,
 `raw_activation`, `activation_over_scale` — + `per_layer` + `DepthSummary` +
 optional `meta`). A unit reading is a neuron's activation over its pole's
-neutral `act_top` (signed) or a head's write norm over its `act_top`, at one
-layer (basis `single_layer`), with the raw firing in `meta`.
+soft neutral scale (signed) or a head's write norm over its own, at one layer
+(basis `single_layer`), with the raw firing in `meta`; the soft scale is
+`act_top` blended with a floor from the layer's typical scale
+(`units/stats.py::soft_scale`, `drowse/units/AGENTS.md`).
 `DepthSummary.basis` travels with the numbers because the families weight
 depth by unrelated masses;
 never compare centers across bases. `as_probe_reading` /

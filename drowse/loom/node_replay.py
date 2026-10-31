@@ -30,9 +30,11 @@ unit activity are those of its producing forward, exactly as its loom row's
 live readings and the families' token readouts are.  Position 0 is the
 attention sink: unit activity there is out of distribution (the unit
 statistics never count it) and is reported as 0 and excluded from the peaks,
-as the units runtime excludes it.  A firing on a pole that never fired on
-the neutral corpus (``act_top`` 0) has no scale to read against: it reads
-over the floor in traces and populations and never ranks among the peaks.
+as the units runtime excludes it.  Every value reads over the unit's soft
+scale (:func:`~drowse.units.stats.soft_scale`: its own ``act_top`` blended
+with a floor from its layer's typical scale), so a pole that barely fired on
+the neutral corpus ranks by how hard it fires against its layer, not by a
+near-zero divisor, and every unit ranks.
 
 **Triggers.**  Generation runs the prompt as one prefill forward and then
 one decode forward per token, and a term's trigger decides per forward
@@ -153,11 +155,9 @@ class UnitActivityJSON(TypedDict):
     ``tokens`` are the node's raw tokens, each read at its producing forward;
     ``sink_raw_index`` names the token produced at the attention sink
     (position 0), whose values are 0 and never peak, or is ``None``.
-    ``traces`` maps each requested unit to one value per token.  ``top``
-    ranks only values read against a real neutral scale: a firing on a pole
-    whose neutral ``act_top`` is 0 (it never fired that way on the neutral
-    corpus) reads over the scale floor, appears in traces and populations,
-    and never ranks.
+    ``traces`` maps each requested unit to one value per token.  Every value
+    is over the unit's soft scale (:func:`~drowse.units.stats.soft_scale`),
+    and ``top`` ranks every unit by it.
     """
 
     node_id: str
@@ -1088,14 +1088,12 @@ class NodeReplayer:
 
         Each token is read at its producing forward, in the units family's
         unit (``activation_over_scale``: a neuron's activation over its
-        pole's neutral ``act_top``, signed; a head's write norm over its
-        ``act_top``), from one replay forward.  Returns the ``top`` units
+        pole's soft neutral scale, signed; a head's write norm over its
+        own), from one replay forward.  Returns the ``top`` units
         across the node by peak ``|value|`` with their peak token, the
         per-token trace of each unit in ``units``, and, with ``raw_index``,
         that token's whole population at ``layers`` (default every layer),
-        packed (:data:`POPULATION_ENCODING`).  A value on a pole with no
-        neutral scale (``act_top`` 0) never ranks (it reads over the floor,
-        ``1e-6``).  The forward runs as generation's triggers ran it
+        packed (:data:`POPULATION_ENCODING`).  The forward runs as generation's triggers ran it
         (:func:`replay_segments`).  Raises ``UnitsUnavailableError`` (422)
         when the model has no unit statistics, ``SteeringCompositionError``
         (422) for steering whose firing the node does not record, and a 400
@@ -1166,17 +1164,13 @@ class NodeReplayer:
             ``r0`` is its column ``first + r0 − start``."""
             return max(0, window.start - first), min(count, window.stop - first)
 
-        def reduce(
-            key: tuple[str, int], values: torch.Tensor, scaled: torch.Tensor, r0: int,
-        ) -> None:
+        def reduce(key: tuple[str, int], values: torch.Tensor, r0: int) -> None:
             """``values`` ``[rows, units]`` for token rows ``r0…``, merged into
-            the running peaks; ``scaled`` marks the values read against a real
-            neutral scale (a pole that never fired on the neutral corpus has
-            none: its value is over the floor and never ranks)."""
+            the running peaks (the sink's rows read 0 and never peak)."""
             rows = int(values.shape[0])
             at_sink = sink[r0:r0 + rows, None]
             values = values.masked_fill(at_sink, 0.0)
-            rank = values.abs().masked_fill(~scaled | at_sink, -1.0)
+            rank = values.abs().masked_fill(at_sink, -1.0)
             best, at = rank.max(dim=0)
             signed = values.gather(0, at[None])[0]
             at = at + r0
@@ -1198,8 +1192,8 @@ class NodeReplayer:
 
         def neuron_hook(block: BlockSpec) -> Any:
             layer_stats = stats.layer(block.layer)
-            plus = layer_stats.neuron_scale[0].to(device)
-            minus = layer_stats.neuron_scale[1].to(device)
+            plus = layer_stats.neuron_reading_scale[0].to(device)
+            minus = layer_stats.neuron_reading_scale[1].to(device)
             last = block.layer == n - 1
 
             def hook(_m: nn.Module, args: tuple[Any, ...], _output: Any) -> None:
@@ -1208,19 +1202,14 @@ class NodeReplayer:
                     col = first + r0 - window.start
                     act = args[0][0, col:col + r1 - r0].float()                  # [rows, d_ff]
                     scale = torch.where(act >= 0, plus, minus)
-                    reduce(
-                        ("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR),
-                        scale > SCALE_FLOOR, r0,
-                    )
+                    reduce(("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR), r0)
                 if last and window.final:   # the last tap: nothing after it is read
                     raise _Stop()
             return hook
 
         def head_hook(block: BlockSpec) -> Any:
             attn = block.attn
-            raw_scale = stats.layer(block.layer).head_scale.to(device)
-            scale = raw_scale.clamp_min(SCALE_FLOOR)
-            scaled = (raw_scale > SCALE_FLOOR)[None, :]
+            scale = stats.layer(block.layer).head_reading_scale.to(device).clamp_min(SCALE_FLOOR)
             grams = _grams(block, device)
             out_norm = block.attn_out_norm
 
@@ -1237,7 +1226,7 @@ class NodeReplayer:
                     norm = norm * torch.rsqrt(
                         o.pow(2).mean(-1, keepdim=True) + float(out_norm.eps),
                     )
-                reduce(("head", block.layer), norm / scale, scaled.expand_as(norm), r0)
+                reduce(("head", block.layer), norm / scale, r0)
             return hook
 
         handles: list[Any] = []

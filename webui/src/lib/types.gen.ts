@@ -1162,11 +1162,9 @@ export interface TreeRestoreResponse {
  * ``tokens`` are the node's raw tokens, each read at its producing forward;
  * ``sink_raw_index`` names the token produced at the attention sink
  * (position 0), whose values are 0 and never peak, or is ``None``.
- * ``traces`` maps each requested unit to one value per token.  ``top``
- * ranks only values read against a real neutral scale: a firing on a pole
- * whose neutral ``act_top`` is 0 (it never fired that way on the neutral
- * corpus) reads over the scale floor, appears in traces and populations,
- * and never ranks.
+ * ``traces`` maps each requested unit to one value per token.  Every value
+ * is over the unit's soft scale (:func:`~drowse.units.stats.soft_scale`),
+ * and ``top`` ranks every unit by it.
  */
 export interface UnitActivityJSON {
   node_id: string;
@@ -1246,8 +1244,9 @@ export interface UnitFindNeuronJSON {
 
 /**
  * How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
- * the catalog) or why absent; drowse's neutral statistics; the catalog's
- * activation row.
+ * the catalog) or why absent; drowse's neutral statistics (``act_top`` or a
+ * head's ``write_top``, and ``scale``, the soft scale its readings divide
+ * by); the catalog's activation row.
  */
 export interface UnitFiringJSON {
   rate: number | null;
@@ -1392,7 +1391,8 @@ export interface UnitsInstrumentJSON {
 
 /**
  * One attached unit probe: an MLP neuron or attention head, read at its
- * own layer in units of its neutral ``act_top``.
+ * own layer in units of its soft neutral scale (``act_top`` blended with a
+ * floor from its layer's typical scale, ``units.stats.soft_scale``).
  */
 export interface UnitsProbeInfo {
   family: "units";

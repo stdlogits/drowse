@@ -459,7 +459,7 @@ Channel units and semantics: `drowse/readout/AGENTS.md`.
 | `geometry` | `session.geometry` (`GeometryInstrument` over `Monitor`) | `ProbeReading` | domain coordinate; Mahalanobis fraction and label distance; curved membership and assignment |
 | `lens` | `session.lens` (`LensInstrument`) | `ScalarReading` | mean fitted-layer probability of one vocabulary token |
 | `sae` | `session.sae` (`SaeInstrument`) | `ScalarReading` | feature activation over Neuronpedia's `maxActApprox` when known, else raw activation |
-| `units` | `session.units` (`UnitsInstrument`) | `ScalarReading` | a neuron's activation over its pole's neutral `act_top` (signed), a head's write norm over its `act_top` |
+| `units` | `session.units` (`UnitsInstrument`) | `ScalarReading` | a neuron's activation over its pole's soft neutral scale (signed), a head's write norm over its own: `act_top` blended with a floor from the layer's typical scale (`units/stats.py::soft_scale`) |
 
 The units family reads the model's own parts rather than the residual: its
 bound run owns a tap (one forward hook per touched down or output projection,

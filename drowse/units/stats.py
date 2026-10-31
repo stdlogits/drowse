@@ -13,6 +13,19 @@ that fills the neutral activation cache, :mod:`drowse.fit.neutral`):
   write norm ``‖W_O^h z_h‖`` as it reaches the residual (Gemma's sandwich
   norm included: its gain and its per-position scale, the LN rule).
 
+A reading divides by a **soft scale**, not the bare ``act_top``: a pole
+that barely fires on the neutral corpus has a tiny scale (SmolLM2's
+``L31n2394`` ``+`` pole: 0.055 against its layer's typical 2.3), and over it
+an ordinary firing reads in the hundreds.  :func:`soft_scale` blends the
+unit's own scale with a floor taken from its layer's typical scale for its
+kind, ``sqrt(s² + (c · m)²)``, ``m`` the layer's median (a neuron's over both
+poles of every neuron, a head's over the layer's heads) and ``c`` =
+:data:`SCALE_FLOOR_SHARE`.  It is soft: no unit is cut, a pole with no
+neutral scale at all reads over ``c · m``, and a unit at the median reads 3%
+lower than over its own scale.  ``activation_over_scale`` divides by it
+everywhere (probes, gates, token readouts, unit activity, the anatomy's unit
+rows), so one unit shows one number in every view.
+
 Positions follow neuron-lens: position 0 (the attention sink, where
 activations are massive) is never counted, and a head's scale starts at
 :data:`HEAD_SCALE_FROM` (a head with few keys attends sharply).  Means count
@@ -26,6 +39,7 @@ on the model's device; :meth:`UnitStatsAccumulator.finish` returns CPU fp32.
 
 from __future__ import annotations
 
+import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -50,13 +64,44 @@ HEAD_MEAN = "head_mean"
 HEAD_SCALE = "head_scale"
 UNIT_TENSOR_NAMES = (NEURON_MEAN, NEURON_SCALE, HEAD_MEAN, HEAD_SCALE)
 
+#: The soft floor's share of a layer's typical unit scale (:func:`soft_scale`).
+#: Measured on SmolLM2-360M (96 neutral documents): the 0.1%, 1% and 5%
+#: quantiles of a neuron pole's ``act_top`` over its layer's median are 0.20,
+#: 0.33 and 0.47 (heads 0.13, 0.24, 0.45); 0.24% of neuron poles and 1.25% of
+#: heads sit below a quarter of the median.  A quarter leaves a typical unit
+#: within 3% of its own scale (11% at half the median) and holds the far tail
+#: (``L31n2394+`` at 0.024 of the median) to about four times the floor's
+#: reading instead of forty.
+SCALE_FLOOR_SHARE = 0.25
+
+
+def typical_scale(scale: torch.Tensor) -> torch.Tensor:
+    """A layer's typical unit scale: the median of ``scale``'s positive
+    entries (0-dim fp32; 0 when none is positive)."""
+    flat = scale.reshape(-1).float()
+    positive = flat[flat > 0]
+    if positive.numel() == 0:
+        return torch.zeros((), dtype=torch.float32)
+    return positive.median()
+
+
+def soft_scale(scale: torch.Tensor, typical: torch.Tensor) -> torch.Tensor:
+    """``sqrt(s² + (c · m)²)``: a unit's own scale ``s`` blended with the floor
+    ``c · m`` (``m`` its layer's :func:`typical_scale`, ``c`` =
+    :data:`SCALE_FLOOR_SHARE`), the scale every ``activation_over_scale``
+    divides by."""
+    floor = SCALE_FLOOR_SHARE * typical.float()
+    return torch.sqrt(scale.float().pow(2) + floor.pow(2))
+
 
 @dataclass(frozen=True, eq=False)
 class LayerUnitStats:
     """One block's unit statistics, fp32 on CPU.
 
     ``neuron_scale`` row 0 is the ``+`` pole's ``act_top``, row 1 the ``−``
-    pole's (both ``≥ 0``).
+    pole's (both ``≥ 0``).  :attr:`neuron_reading_scale` and
+    :attr:`head_reading_scale` are what a reading divides by
+    (:func:`soft_scale` over the layer's typical scale).
     """
 
     neuron_mean: torch.Tensor   # [d_ff]
@@ -80,6 +125,18 @@ class LayerUnitStats:
             head_mean=tensors[HEAD_MEAN],
             head_scale=tensors[HEAD_SCALE],
         )
+
+    @functools.cached_property
+    def neuron_reading_scale(self) -> torch.Tensor:
+        """``[2, d_ff]``: each pole's soft scale over the layer's typical
+        neuron scale (the median of both poles of every neuron)."""
+        return soft_scale(self.neuron_scale, typical_scale(self.neuron_scale))
+
+    @functools.cached_property
+    def head_reading_scale(self) -> torch.Tensor:
+        """``[n_heads]``: each head's soft scale over the layer's typical head
+        scale."""
+        return soft_scale(self.head_scale, typical_scale(self.head_scale))
 
 
 @dataclass(frozen=True, eq=False)

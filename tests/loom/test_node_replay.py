@@ -615,18 +615,32 @@ def test_unit_activity_population_layers_and_refusals(tiny_session: Any) -> None
         session.unit_activity(node.id, units=["neuron/L1n3", "neuron/L1n3"])
 
 
-def test_a_pole_silent_on_the_neutral_corpus_never_ranks(tiny_session: Any) -> None:
-    """Regression (SmolLM2): the top list was 49 neuron poles whose neutral
-    act_top is 0, reading act / 1e-6 (-554688 for neuron/L31n1094).  Such a
-    value has no scale: it stays in the trace, never in the ranking."""
+def test_a_pole_silent_on_the_neutral_corpus_reads_over_the_soft_floor(tiny_session: Any) -> None:
+    """Regression (SmolLM2): poles whose neutral act_top is 0 read act / 1e-6
+    (-554688 for neuron/L31n1094), and once those were cut, a pole with a tiny
+    one (L31n2394+, 0.055 against its layer's 2.3) still topped the list at
+    169.  Every value now reads over the soft scale, sqrt(s² + (c·m)²): a
+    silent pole reads over c·m, finite and ranked with the rest, and its
+    trace, its peak and its probe reading are one number."""
+    from drowse.units.stats import SCALE_FLOOR_SHARE, typical_scale
+
     session = tiny_session
     node = _node(session, max_tokens=4)
-    stats = session.units.runtime.stats()
-    stats.layer(1).neuron_scale[:, 3] = 0.0
+    layer = session.units.runtime.stats().layer(1)
+    layer.neuron_scale[:, 3] = 0.0
+    layer.__dict__.pop("neuron_reading_scale", None)    # the cached soft scale, recomputed
+    floor = SCALE_FLOOR_SHARE * typical_scale(layer.neuron_scale)
+    torch.testing.assert_close(layer.neuron_reading_scale[:, 3], floor.expand(2))
     activity = session.unit_activity(node.id, top=1024, units=["neuron/L1n3"])
-    assert all(peak["unit"] != "neuron/L1n3" for peak in activity["top"])
-    assert max(abs(v) for v in activity["traces"]["neuron/L1n3"]) > 1e3
-    assert all(abs(peak["peak"]) < 1e3 for peak in activity["top"])
+    trace = activity["traces"]["neuron/L1n3"]
+    peak = next(p for p in activity["top"] if p["unit"] == "neuron/L1n3")
+    assert abs(peak["peak"]) == pytest.approx(max(abs(v) for v in trace), abs=1e-5)
+    assert all(abs(p["peak"]) < 1e3 for p in activity["top"])
+    session.add_probe("neuron/L1n3")
+    for raw_index in range(len(node.raw_token_ids)):
+        replay = session.units.token_readout(node.id, raw_index)["measurements"]
+        value = replay["instruments"]["units"]["readings"]["neuron/L1n3"]["value"]
+        assert trace[raw_index] == pytest.approx(value, abs=1e-5)
 
 
 def test_unit_activity_needs_unit_statistics(tiny_session: Any, monkeypatch: pytest.MonkeyPatch) -> None:

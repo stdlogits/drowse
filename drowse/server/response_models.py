@@ -454,7 +454,8 @@ class SaeProbeInfo(TypedDict):
 
 class UnitsProbeInfo(TypedDict):
     """One attached unit probe: an MLP neuron or attention head, read at its
-    own layer in units of its neutral ``act_top``."""
+    own layer in units of its soft neutral scale (``act_top`` blended with a
+    floor from its layer's typical scale, ``units.stats.soft_scale``)."""
 
     family: Literal["units"]
     name: str
@@ -928,8 +929,9 @@ class UnitPlaceJSON(TypedDict):
 
 class UnitFiringJSON(TypedDict):
     """How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
-    the catalog) or why absent; drowse's neutral statistics; the catalog's
-    activation row."""
+    the catalog) or why absent; drowse's neutral statistics (``act_top`` or a
+    head's ``write_top``, and ``scale``, the soft scale its readings divide
+    by); the catalog's activation row."""
 
     rate: float | None
     rate_absent: str | None
