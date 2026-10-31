@@ -32,6 +32,7 @@ from drowse.lens.jlens import (
 from drowse.model.layers import LayerSelector, resolve_layer_selector
 from drowse.lens.store import lens_identity, lens_layers
 from drowse.model.fingerprint import loaded_model_fingerprint
+from drowse.readout.measurements import LensAggregateRow
 
 if TYPE_CHECKING:
     from drowse.geometry.whitener import LayerWhitener
@@ -356,9 +357,9 @@ class LensRuntime:
         *,
         top_k: int,
         probabilities: torch.Tensor | None = None,
-    ) -> list[tuple[str, float, float, float]]:
+    ) -> list[LensAggregateRow]:
         """Layer-aggregate per-layer lens rows into decoded chips
-        ``[(token, strength, com, spread), ...]`` (see
+        ``[(token, strength, com, spread, token_id), ...]`` (see
         :func:`drowse.lens.jlens.aggregate_readout`)."""
         if probabilities is None:
             if logits is None:
@@ -377,7 +378,7 @@ class LensRuntime:
                 depth_tensor=self.depth_tensor(layers, probabilities.device),
             )
         return [
-            (self.decode_id(token_id), strength, com, spread)
+            (self.decode_id(token_id), strength, com, spread, int(token_id))
             for token_id, strength, com, spread in rows
         ]
 
@@ -423,7 +424,7 @@ class LensRuntime:
         dict[int, list[list[tuple[str, float]]]]
         | tuple[
             dict[int, list[list[tuple[str, float]]]],
-            list[list[tuple[str, float, float, float]]],
+            list[list[LensAggregateRow]],
         ]
     ):
         """Top-``top_k`` readout per (layer, position) of a raw prompt.
@@ -448,7 +449,7 @@ class LensRuntime:
         out: dict[int, list[list[tuple[str, float]]]] = {
             layer: [[] for _ in pos] for layer in req
         }
-        agg: list[list[tuple[str, float, float, float]]] = []
+        agg: list[list[LensAggregateRow]] = []
         vocab = int(self.readout_modules()[0].shape[0])
         row_bytes = max(len(req) * vocab * 4, 1)
         chunk = max(1, READOUT_CHUNK_BYTES // row_bytes)

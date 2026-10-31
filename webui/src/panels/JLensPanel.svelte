@@ -9,7 +9,7 @@
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Switch, Token, ease, reducedMotion } from "@stdlogits/ledger";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
-  import { mergeInstrumentProbeRows } from "./rack/probeRows";
+  import { foundLensRows, mergeInstrumentProbeRows } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
   import { depthTint, layerDepth } from "../lib/charts/depth";
   import { apiInstruments, apiSessions, describeError } from "../lib/runtime/services";
@@ -115,20 +115,13 @@
   const foundRows = $derived.by((): WorkspaceRow[] => {
     const rows = displayAggregate;
     if (!rows || rows.length === 0) return [];
-    // A pinned word already has its row.
-    return rows
-      .filter(([token]) => !pinnedRows.some((row) => row.token === token))
-      .map(([token, strength, com, spread]) => ({
-        key: `aggregate:${token}`,
-        sortName: token.trim(),
-        token,
-        strength,
-        measured: true,
-        com,
-        spread,
-        cells: readoutCells(token),
-        pinned: false,
-      }));
+    // A pinned word already has its row; the rest key by vocabulary id (foundLensRows).
+    return foundLensRows(rows, pinnedRows.map((row) => row.token)).map((row) => ({
+      ...row,
+      measured: true,
+      cells: readoutCells(row.token),
+      pinned: false,
+    }));
   });
 
   const words = $derived(

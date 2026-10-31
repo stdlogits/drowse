@@ -231,7 +231,7 @@ try {
   const { default: FeatureReadings } = await server.ssrLoadModule("/src/drawers/token/FeatureReadings.svelte");
   const readout = {
     data: { token_id: 2, token_text: " word", steering: null,
-      aggregate: [{ token: " word", strength: 0.1, com: 0.5, spread: 0.1 }],
+      aggregate: [{ token: " word", id: 11, strength: 0.1, com: 0.5, spread: 0.1 }],
       layers: [{ layer: 0, tokens: [{ token: "word", id: 1, logprob: Math.log(0.8) }] }],
       layer: 0, features: [],
     },
@@ -329,7 +329,14 @@ try {
   chatLog.turns = [];
 
   // A probe's title is its ID as its row writes it.
-  const { probeTitle } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
+  const { probeTitle, foundLensRows } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
+  // Regression: two byte pieces that both decode to U+FFFD are two found rows with two keys (keyed
+  // by text they collided and the keyed each threw each_key_duplicate mid-reply).
+  const found = foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5], ["\uFFFD", 0.2, 0.6, 0.1, 6], [" Paris", 0.1, 0.9, 0.1, 7]], [" Paris"]);
+  assert.deepEqual(found.map(row => row.key), ["aggregate:5", "aggregate:6"], "keyed by id; a pinned word keeps its own row");
+  const { lensReadoutSnapshot } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+  assert.deepEqual(lensReadoutSnapshot({ layers: [], aggregate: [{ token: "\uFFFD", id: 5, strength: 0.3, com: 0.5, spread: 0.1 }] }).aggregate,
+    [["\uFFFD", 0.3, 0.5, 0.1, 5]], "the snapshot keeps the wire's id");
   assert.deepEqual(probeTitle({ family: "sae", feature_id: 7 }, "sae/7", 20), { lead: false, text: "L20 f7" });
   assert.deepEqual(probeTitle({ family: "sae", feature_id: 7 }, "sae/7"), { lead: false, text: "f7" }, "no resident layer, no L");
   assert.deepEqual(probeTitle({ family: "lens", word: "sea" }, "jlens/sea"), { lead: false, text: "sea" });

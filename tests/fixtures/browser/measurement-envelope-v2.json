@@ -172,7 +172,7 @@
             {"layer": 9, "tokens": [{"token": "calm", "id": 17, "logprob": -0.2876820724517809}]}
           ],
           "aggregate": [
-            {"token": "calm", "strength": 0.5, "com": 0.7045454978942871, "spread": 0.19682395458221436}
+            {"token": "calm", "id": 17, "strength": 0.5, "com": 0.7045454978942871, "spread": 0.19682395458221436}
           ]
         },
         "binding": {

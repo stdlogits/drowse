@@ -122,7 +122,7 @@ class TestTokenFrame:
             sae_readings={"sae/548": _sae_reading()},
             per_layer_scores={"12": {"formal.casual": 0.5}},
             lens_readout={12: [(" a", 0.78)], 18: [(" b", 0.6)]},
-            lens_aggregate=[(" a", 0.41, 0.31, 0.05)],
+            lens_aggregate=[(" a", 0.41, 0.31, 0.05, 7)],
             lens_token_ids={12: [5], 18: [7]},
             lens_sources={"R": "local:default", "S": "rs-s"},
             sae_features=[(42, 3.5, "fruit", 121.1)],
@@ -187,7 +187,7 @@ class TestTokenFrame:
             "token", "id", "logprob",
         }
         assert set(readout["aggregate"][0]) == {
-            "token", "strength", "com", "spread",
+            "token", "id", "strength", "com", "spread",
         }
 
     def test_sae_readout_rows(self) -> None:
@@ -274,7 +274,7 @@ class TestReplayEnvelopes:
             scope="replay",
             provenance="replayed",
             lens_readout={12: [(" a", 0.78)]},
-            lens_aggregate=[(" a", 0.41, 0.31, 0.05)],
+            lens_aggregate=[(" a", 0.41, 0.31, 0.05, 7)],
             lens_token_ids={12: [5]},
             lens_sources={"R": "local:default"},
             steering=None,
@@ -323,7 +323,7 @@ class TestReplayEnvelopes:
         )
         lens = LensInstrument(
             **lens_kwargs(replay=_canned_replay((
-            {0: [("a", 0.5, 7)]}, [("a", 0.5, 0.0, 0.0)],
+            {0: [("a", 0.5, 7)]}, [("a", 0.5, 0.0, 0.0, 7)],
         ))),
         )
         # No fitted lens on the stub: resolve a stand-in over one layer.

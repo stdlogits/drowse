@@ -322,7 +322,7 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
 
     def _lens_step(*, top_k: int, step_id: int) -> Any:
         assert (top_k, step_id) == (8, 4)
-        return lens_rows, [(" a", 0.4, 0.5, 0.1)], {3: [7]}
+        return lens_rows, [(" a", 0.4, 0.5, 0.1, 7)], {3: [7]}
 
     session = _tap_session(
         lens_live={"layers": [3]}, lens_sources={"R": "local:default"},

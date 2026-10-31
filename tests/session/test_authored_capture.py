@@ -204,7 +204,7 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
         seen_top_k["lens"] = top_k
         return (
             {0: [("yes", 0.8)]},
-            [("yes", 0.8, 0.5, 0.1)],
+            [("yes", 0.8, 0.5, 0.1, 9)],
             {0: [9]},
             {"jlens/yes": ScalarReading(value=0.8, unit="mean_token_probability")},
         )

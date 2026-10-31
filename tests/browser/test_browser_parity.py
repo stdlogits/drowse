@@ -796,6 +796,7 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
             lens_strength,
             lens_center,
             lens_spread,
+            lens["tokenId"],
         )],
         lens_token_ids={layer: [lens["tokenId"]] for layer in layers},
         lens_sources={"R": lens["source"], "S": slens["source"]},

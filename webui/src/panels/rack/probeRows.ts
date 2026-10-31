@@ -65,3 +65,18 @@ export function mergeInstrumentProbeRows<T extends InstrumentProbeRow>(
   }
   return rows;
 }
+
+/** A lens aggregate chip as a found row, before its per-layer cells: keyed by its vocabulary id,
+ *  since two ids can decode to the same text (byte pieces that both render as U+FFFD) and a keyed
+ *  each throws on a repeated key. A word with a pinned row of its own is left out. */
+export function foundLensRows(
+  aggregate: readonly (readonly [string, number, number, number, number])[],
+  pinnedTokens: readonly string[],
+): { key: string; sortName: string; token: string; strength: number; com: number; spread: number }[] {
+  const pinned = new Set(pinnedTokens);
+  return aggregate
+    .filter(([token]) => !pinned.has(token))
+    .map(([token, strength, com, spread, id]) => ({
+      key: `aggregate:${id}`, sortName: token.trim(), token, strength, com, spread,
+    }));
+}

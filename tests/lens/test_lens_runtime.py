@@ -841,15 +841,15 @@ def test_jlens_readout_aggregate_rides_same_logits() -> None:
     assert len(rows) == 3
     strengths = [r[1] for r in rows]
     assert strengths == sorted(strengths, reverse=True)
-    for tok, strength, com, spread in rows:
-        assert isinstance(tok, str)
+    for tok, strength, com, spread, token_id in rows:
+        assert isinstance(tok, str) and isinstance(token_id, int)
         assert 0.0 <= strength <= 1.0
         assert 0.0 <= com <= 1.0
         assert spread >= 0.0
     # Both fitted source layers contribute. Softmax assigns positive mass to
     # every vocabulary item at each layer, so every aggregate row has a
     # non-degenerate depth distribution over L0 and L1.
-    for _, _, com, spread in rows:
+    for _, _, com, spread, _ in rows:
         assert 0.0 < com < 1 / (3 - 1)
         assert spread > 0.0
 
@@ -998,13 +998,13 @@ def test_live_lens_readout_step_reads_latest_slices() -> None:
     assert scores == sorted(scores, reverse=True)
     assert all(0.0 <= sc <= 1.0 for sc in scores)
     # the aggregate chip list rides the same step: top_k rows of
-    # (token, strength, com, spread) with strength descending in [0, 1]
-    # and com/spread valid normalized depths
+    # (token, strength, com, spread, token_id) with strength descending in
+    # [0, 1] and com/spread valid normalized depths
     assert len(agg) == 3
     strengths = [srow[1] for srow in agg]
     assert strengths == sorted(strengths, reverse=True)
-    for tok, strength, com, spread in agg:
-        assert isinstance(tok, str)
+    for tok, strength, com, spread, token_id in agg:
+        assert isinstance(tok, str) and isinstance(token_id, int)
         assert 0.0 <= strength <= 1.0
         assert 0.0 <= com <= 1.0
         assert spread >= 0.0

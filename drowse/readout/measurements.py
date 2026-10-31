@@ -72,6 +72,11 @@ from drowse.readout.types import (
 MEASUREMENTS_VERSION = 2
 
 MeasurementScope = Literal["token", "aggregate", "replay"]
+
+#: One layer-aggregated lens chip, ``(token, strength, com, spread, token_id)``:
+#: the decoded token and its vocabulary id (two ids can decode to the same
+#: text, e.g. byte pieces that both render as U+FFFD; consumers key by the id).
+LensAggregateRow = tuple[str, float, float, float, int]
 MeasurementProvenance = Literal["captured", "replayed"]
 
 
@@ -173,7 +178,11 @@ class LensReadoutLayer(TypedDict):
 
 
 class LensAggregateToken(TypedDict):
+    """One layer-aggregated chip; ``id`` is its vocabulary id (two ids may
+    decode to the same ``token`` text)."""
+
     token: str
+    id: int
     strength: float
     com: float
     spread: float
@@ -386,7 +395,7 @@ def build_measurements(
     sae_readings: Mapping[str, ScalarReading] | None = None,
     per_layer_scores: Mapping[str, Mapping[str, float]] | None = None,
     lens_readout: Mapping[int, list[tuple[str, float]]] | None = None,
-    lens_aggregate: list[tuple[str, float, float, float]] | None = None,
+    lens_aggregate: list[LensAggregateRow] | None = None,
     lens_token_ids: Mapping[int, list[int]] | None = None,
     lens_sources: Mapping[str, str | None] | None = None,
     sae_features: list[tuple[int, float, str | None, float | None]] | None = None,
@@ -458,11 +467,12 @@ def build_measurements(
             "aggregate": [
                 {
                     "token": str(token),
+                    "id": int(token_id),
                     "strength": float(strength),
                     "com": float(com),
                     "spread": float(spread),
                 }
-                for token, strength, com, spread in (lens_aggregate or ())
+                for token, strength, com, spread, token_id in (lens_aggregate or ())
             ],
         }
     if lens_channel:

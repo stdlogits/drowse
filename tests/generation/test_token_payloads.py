@@ -52,7 +52,7 @@ def test_token_payload_builds_measurement_envelope() -> None:
         {"toy": reading}, per_layer=True,
     ).to_token_payload(
         lens={3: [(" tok", 0.25)]},
-        lens_aggregate=[(" tok", 0.2, 0.6, 0.1)],
+        lens_aggregate=[(" tok", 0.2, 0.6, 0.1, 42)],
         lens_token_ids={3: [42]},
         lens_sources={"R": "local:default"},
         sae=[(7, 3.5, "feature seven", 5.0)],
@@ -81,6 +81,7 @@ def test_token_payload_builds_measurement_envelope() -> None:
             }],
             "aggregate": [{
                 "token": " tok",
+                "id": 42,
                 "strength": 0.2,
                 "com": 0.6,
                 "spread": 0.1,

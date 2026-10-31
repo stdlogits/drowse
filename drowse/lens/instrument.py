@@ -30,6 +30,7 @@ from typing import Any, Literal, NamedTuple, Protocol, cast, overload
 
 import torch
 
+from drowse.readout.measurements import LensAggregateRow
 from drowse.readout.replay import TokenReplay
 from drowse.readout.types import (
     Axis,
@@ -1130,7 +1131,7 @@ class LensInstrument:
         aggregate: Literal[True],
     ) -> tuple[
         dict[int, list[list[tuple[str, float]]]],
-        list[list[tuple[str, float, float, float]]],
+        list[list[LensAggregateRow]],
     ]: ...
 
     def readout(
@@ -1145,7 +1146,7 @@ class LensInstrument:
         dict[int, list[list[tuple[str, float]]]]
         | tuple[
             dict[int, list[list[tuple[str, float]]]],
-            list[list[tuple[str, float, float, float]]],
+            list[list[LensAggregateRow]],
         ]
     ):
         """Lens readout on a raw prompt: the top-``top_k`` tokens per
@@ -1155,8 +1156,8 @@ class LensInstrument:
         final position (explicit indices, negative from the end, read
         more).  Returns ``{layer: [per-position [(token, p_l), ...]]}``.
         ``aggregate=True`` also returns one layer-aggregated chip list
-        ``[(token, strength, com, spread), ...]`` per position, from the
-        same logits (:func:`drowse.lens.jlens.aggregate_readout`).
+        ``[(token, strength, com, spread, token_id), ...]`` per position,
+        from the same logits (:func:`drowse.lens.jlens.aggregate_readout`).
         """
         lens = self._require()
         self.runtime.resolve_layers(lens, layers)
@@ -2438,7 +2439,7 @@ class LensInstrument:
             hidden: dict[int, torch.Tensor],
         ) -> tuple[
             dict[int, list[tuple[str, float, int]]],
-            list[tuple[str, float, float, float]],
+            list[LensAggregateRow],
         ]:
             pair_rows = [(layer, hidden[layer]) for layer in req]
             logits = runtime.logits_rows(lens, pair_rows)
@@ -2465,8 +2466,8 @@ class LensInstrument:
                 for layer, rows in readout.items()
             },
             lens_aggregate=[
-                (str(tok), float(strength), float(com), float(spread))
-                for tok, strength, com, spread in aggregate
+                (str(tok), float(strength), float(com), float(spread), int(tid))
+                for tok, strength, com, spread, tid in aggregate
             ],
             lens_sources={"R": runtime.source},
             steering=token.steering,
@@ -2478,7 +2479,7 @@ class LensInstrument:
     ) -> (
         tuple[
             dict[int, list[tuple[str, float]]],
-            list[tuple[str, float, float, float]],
+            list[LensAggregateRow],
             dict[int, list[int]],
         ]
         | None
@@ -2700,6 +2701,7 @@ class LensInstrument:
                 float(agg_host[0][j]),
                 float(agg_host[1][j]),
                 float(agg_host[2][j]),
+                int(agg_host[3][j]),
             )
             for j in range(k)
         ]
@@ -2714,7 +2716,7 @@ class LensInstrument:
         top_k: int,
     ) -> tuple[
         dict[int, list[tuple[str, float]]],
-        list[tuple[str, float, float, float]],
+        list[LensAggregateRow],
         dict[int, list[int]],
         dict[str, ScalarReading],
     ] | None:

@@ -350,8 +350,13 @@ export interface JointLogprobsJSON {
   n_rank1_changed: number;
 }
 
+/**
+ * One layer-aggregated chip; ``id`` is its vocabulary id (two ids may
+ * decode to the same ``token`` text).
+ */
 export interface LensAggregateTokenJSON {
   token: string;
+  id: number;
   strength: number;
   com: number;
   spread: number;

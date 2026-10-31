@@ -62,7 +62,7 @@ export interface LensState {
    * strength, com, spread]`` strength-descending (mean fitted-layer probability
    * + probability-mass-weighted depth center of mass).  Same lifecycle as
    * ``readout``. */
-  aggregate: [string, number, number, number][] | null;
+  aggregate: LensAggregateChip[] | null;
   /** Rolling buffer of recent aggregate frames (``[token, strength]``
    * pairs per step, newest last, capped like the probe sparklines) —
    * backs the workspace token cards' sparklines.  Carries across
@@ -204,7 +204,7 @@ export interface TokenHoverState {
   coordsByProbe: Record<string, number[]> | null;
   perLayerScores: Record<string, Record<string, number>> | null;
   lensReadout: Record<string, [string, number][]> | null;
-  lensAggregate: [string, number, number, number][] | null;
+  lensAggregate: LensAggregateChip[] | null;
   saeReadout: SaeFeatureJSON[] | null;
   lensLoading: boolean;
   saeLoading: boolean;
@@ -231,7 +231,7 @@ export const tokenHoverState: TokenHoverState = $state({
 
 interface LensHoverSnapshot {
   readout: Record<string, [string, number][]>;
-  aggregate: [string, number, number, number][];
+  aggregate: LensAggregateChip[];
 }
 
 const TOKEN_HOVER_DELAY_MS = 140;
@@ -243,10 +243,14 @@ function _hoverTokenKey(nodeId: string, rawIndex: number, raw: boolean): string 
   return `${modelKey}:${nodeId}:${rawIndex}:${raw ? 1 : 0}`;
 }
 
+/** One layer-aggregated lens chip: ``[token, strength, com, spread, id]``. The vocabulary id
+ *  keys it: two ids can decode to the same text (byte pieces that both render as U+FFFD). */
+export type LensAggregateChip = [string, number, number, number, number];
+
 /** The lens native readout block → the display shape the workspace cards and
  *  hover consume: per-layer ``[token, probability]`` (the wire carries
  *  logprob — ``exp()`` restores the displayed per-layer softmax probability)
- *  plus the ``[token, strength, com, spread]`` aggregate chips. */
+ *  plus the ``[token, strength, com, spread, id]`` aggregate chips. */
 export function lensReadoutSnapshot(
   block: LensReadoutBlockJSON | undefined,
 ): LensHoverSnapshot | null {
@@ -261,6 +265,7 @@ export function lensReadoutSnapshot(
       token.strength,
       token.com,
       token.spread,
+      token.id,
     ]),
   };
 }
@@ -430,7 +435,7 @@ export function lensReadoutForDisplay(): Record<string, [string, number][]> | nu
   return tokenHoverState.active ? tokenHoverState.lensReadout : lensState.readout;
 }
 
-export function lensAggregateForDisplay(): [string, number, number, number][] | null {
+export function lensAggregateForDisplay(): LensAggregateChip[] | null {
   return tokenHoverState.active ? tokenHoverState.lensAggregate : lensState.aggregate;
 }
 
