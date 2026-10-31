@@ -414,6 +414,53 @@ def test_term_layers_report_fit_share_and_selection() -> None:
     assert sum(curved.share) == pytest.approx(3.0)
 
 
+def test_term_layers_weigh_an_affine_position_by_its_whitened_push() -> None:
+    """A flat ``%`` term (every flat concept chip: ``a.b%a``) is weighed by
+    the whitened displacement of its push, ``‖c_L B_L‖_M``, at each layer, in
+    both position forms (they agree at a node)."""
+    from drowse.geometry.domains import CustomDomain
+    from drowse.geometry.manifold import Manifold
+    from drowse.geometry.subspace import fit_affine_subspace
+
+    rig, _ = _rig()
+    whitener = rig.neutral.resident_whitener
+    assert whitener is not None
+    means = rig.neutral.means
+    spread = torch.randn(3, _D, generator=torch.Generator().manual_seed(11))
+    scales = (1.0, 3.0, 2.0, 0.5)
+    layers = {
+        L: fit_affine_subspace(
+            means[L] + scale * spread, neutral_mean=means[L], n_components=2,
+            whitener=whitener, layer=L,
+        ).subspace
+        for L, scale in enumerate(scales)
+    }
+    fan = Manifold(
+        name="fan", domain=CustomDomain(2), node_labels=["n0", "n1", "n2"],
+        node_coords=torch.tensor([[1.0, 0.0], [0.0, 1.0], [-1.0, -1.0]]),
+        layers=layers, feature_space="raw", node_roles=[None] * 3,
+        node_kinds=[None] * 3, mahalanobis_share=dict.fromkeys(layers, 1.0),
+    )
+    assert all(sub.is_affine for sub in fan.layers.values())
+    rig.registry.put_manifold("fan", fan)
+    with rig.steering("0.5 fan%n1{1-2} + 0.5 fan%0,1{0,3}") as scope:
+        where = scope.term_layers()
+
+    raw = []
+    for L in range(_N_LAYERS):
+        node_coords = layers[L].node_coords
+        assert node_coords is not None
+        push = node_coords[1] @ layers[L].basis
+        raw.append(float(whitener.mahalanobis_norms(L, push.reshape(1, -1))[0]))
+    expected = [r / sum(raw) * _N_LAYERS for r in raw]
+    assert max(expected) / min(expected) > 2.0, "the fixture must weigh layers unevenly"
+    label, coords = where["fan%n1{1-2}"], where["fan%0,1{0,3}"]
+    assert (label.fitted, label.layers) == ((0, 1, 2, 3), (1, 2))
+    assert coords.layers == (0, 3)
+    assert label.share == pytest.approx(expected, rel=1e-4)
+    assert coords.share == pytest.approx(expected, rel=1e-4)
+
+
 def test_term_layers_refuse_a_clause_composition_refuses() -> None:
     rig, _ = _rig()
     scope = rig.steering("0.5 c{0}")
