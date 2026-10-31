@@ -81,7 +81,7 @@
     line-height: 1.6;
   }
   .context-label {
-    color: var(--inst-accent);
+    color: var(--ink);
     font-size: var(--text-2xs);
     font-weight: var(--weight-bold);
     text-transform: uppercase;
@@ -129,7 +129,7 @@
     background: var(--glass-strong);
   }
   button.steer-toggle.on {
-    color: var(--inst-accent);
-    background: color-mix(in srgb, var(--inst-accent) 10%, var(--glass));
+    color: var(--ink);
+    background: color-mix(in oklch, var(--inst-accent) 10%, var(--glass));
   }
 </style>

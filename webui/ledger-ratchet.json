@@ -3,22 +3,30 @@
   "categories": {
     "bridge": "uses of a bridge token (an old name mapped onto Ledger)",
     "border": "borders other than 0 or none",
-    "shadow": "shadows other than the tip's --float or a marked token's 2px same-colour spread",
+    "outline": "outlines other than a focus ring (outside :focus and :focus-visible rules)",
+    "shadow": "shadows other than a marked token's 2px same-colour spread (the tip's --float is Ledger's own)",
     "mono": "monospace",
     "uppercase": "text-transform: uppercase or small capitals",
     "tracking": "letter-spaced text (positive letter-spacing)",
     "easing": "easing other than Ledger's one curve",
-    "colour": "colours written outside the tokens"
+    "loop": "animations that loop (infinite)",
+    "colour": "colours written outside the tokens",
+    "mix": "colour mixes outside oklch and oklab (the accent mixes in oklch; a grey mixes in oklab, since Chrome gives a near-grey's powerless oklch hue a red cast)",
+    "tintText": "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)"
   },
   "totals": {
-    "bridge": 3931,
+    "bridge": 3895,
     "border": 162,
-    "shadow": 78,
+    "outline": 0,
+    "shadow": 72,
     "mono": 152,
     "uppercase": 42,
     "tracking": 38,
-    "easing": 15,
-    "colour": 2
+    "easing": 12,
+    "loop": 0,
+    "colour": 2,
+    "mix": 0,
+    "tintText": 0
   },
   "files": {
     "src/drawers/AdvancedSamplingDrawer.svelte": {
@@ -58,7 +66,7 @@
       "bridge": 13
     },
     "src/drawers/HealthDrawer.svelte": {
-      "bridge": 62,
+      "bridge": 58,
       "border": 2,
       "mono": 2,
       "uppercase": 3,
@@ -70,7 +78,7 @@
       "mono": 2
     },
     "src/drawers/LoadConversationDrawer.svelte": {
-      "bridge": 126,
+      "bridge": 124,
       "shadow": 7,
       "mono": 1,
       "easing": 5
@@ -84,21 +92,21 @@
       "mono": 4
     },
     "src/drawers/ManifoldPacksDrawer.svelte": {
-      "bridge": 110,
+      "bridge": 109,
       "border": 9,
       "mono": 5,
       "uppercase": 2,
       "tracking": 2
     },
     "src/drawers/NodeCompareDrawer.svelte": {
-      "bridge": 155,
+      "bridge": 151,
       "shadow": 2,
       "mono": 5,
       "uppercase": 8,
       "tracking": 8
     },
     "src/drawers/ProbeInspectorDrawer.svelte": {
-      "bridge": 101,
+      "bridge": 98,
       "border": 4,
       "shadow": 1,
       "mono": 6,
@@ -139,13 +147,13 @@
       "tracking": 3
     },
     "src/drawers/TokenDrilldownDrawer.svelte": {
-      "bridge": 145,
+      "bridge": 144,
       "border": 5,
       "shadow": 1,
       "mono": 7
     },
     "src/drawers/TranscriptDrawer.svelte": {
-      "bridge": 82,
+      "bridge": 81,
       "border": 8,
       "mono": 5
     },
@@ -196,7 +204,7 @@
       "bridge": 48,
       "shadow": 1,
       "mono": 5,
-      "easing": 2
+      "easing": 1
     },
     "src/drawers/token/InstrumentHeader.svelte": {
       "bridge": 32,
@@ -211,7 +219,7 @@
       "mono": 5,
       "uppercase": 1,
       "tracking": 1,
-      "easing": 2
+      "easing": 1
     },
     "src/drawers/token/LogitsTab.svelte": {
       "bridge": 15,
@@ -225,18 +233,18 @@
       "bridge": 60,
       "shadow": 1,
       "mono": 2,
-      "easing": 2
+      "easing": 1
     },
     "src/drawers/token/TokenRibbon.svelte": {
-      "bridge": 29,
+      "bridge": 27,
       "mono": 3,
       "uppercase": 1,
       "tracking": 1
     },
     "src/lib/Combobox.svelte": {
-      "bridge": 50,
+      "bridge": 48,
       "border": 1,
-      "shadow": 3,
+      "shadow": 2,
       "mono": 1
     },
     "src/lib/NumberInput.svelte": {
@@ -251,9 +259,9 @@
       "mono": 1
     },
     "src/lib/Select.svelte": {
-      "bridge": 52,
+      "bridge": 51,
       "border": 3,
-      "shadow": 3,
+      "shadow": 2,
       "mono": 1
     },
     "src/lib/Slider.svelte": {
@@ -263,9 +271,8 @@
       "mono": 1
     },
     "src/lib/Toaster.svelte": {
-      "bridge": 30,
+      "bridge": 29,
       "border": 2,
-      "shadow": 1,
       "mono": 1
     },
     "src/lib/builder/AdvancedSection.svelte": {
@@ -275,7 +282,7 @@
       "bridge": 11
     },
     "src/lib/charts/Bar.svelte": {
-      "bridge": 12,
+      "bridge": 11,
       "border": 1,
       "shadow": 1,
       "colour": 1
@@ -298,9 +305,6 @@
       "bridge": 33,
       "border": 2,
       "mono": 2
-    },
-    "src/lib/tokens.ts": {
-      "bridge": 2
     },
     "src/lib/ui/BaseModelTag.svelte": {
       "bridge": 9,
@@ -332,9 +336,8 @@
       "bridge": 9
     },
     "src/lib/ui/TokenLogitsPopover.svelte": {
-      "bridge": 27,
+      "bridge": 26,
       "border": 2,
-      "shadow": 1,
       "mono": 2
     },
     "src/panels/JLensPanel.svelte": {
@@ -356,7 +359,7 @@
       "bridge": 7
     },
     "src/panels/RawBuffer.svelte": {
-      "bridge": 52,
+      "bridge": 51,
       "shadow": 1,
       "mono": 2
     },
@@ -375,13 +378,12 @@
       "mono": 1
     },
     "src/panels/loom/LoomDialog.svelte": {
-      "bridge": 59,
+      "bridge": 58,
       "border": 4,
-      "shadow": 1,
       "mono": 2
     },
     "src/panels/loom/LoomNode.svelte": {
-      "bridge": 197,
+      "bridge": 195,
       "border": 7,
       "shadow": 6,
       "mono": 4,
@@ -389,9 +391,9 @@
       "tracking": 1
     },
     "src/panels/loom/LoomSidebar.svelte": {
-      "bridge": 406,
+      "bridge": 404,
       "border": 19,
-      "shadow": 7,
+      "shadow": 6,
       "mono": 10,
       "uppercase": 3,
       "tracking": 2
@@ -401,7 +403,7 @@
       "border": 8
     },
     "src/panels/manifold/ManifoldMiniMap.svelte": {
-      "bridge": 19,
+      "bridge": 16,
       "border": 1,
       "mono": 1
     },
@@ -428,7 +430,7 @@
       "mono": 1
     },
     "src/panels/rack/ProbeCard.svelte": {
-      "bridge": 45,
+      "bridge": 44,
       "border": 1,
       "mono": 2
     },

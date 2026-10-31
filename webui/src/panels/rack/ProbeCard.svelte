@@ -403,7 +403,7 @@
     background: var(--bg-elev);
   }
   .inspect:hover:not(:disabled) {
-    color: var(--tint);
+    color: var(--ink);
   }
   .highlight-action {
     min-height: var(--control-target);
@@ -417,8 +417,8 @@
   }
   .highlight-action:hover,
   .highlight-action.on {
-    color: var(--card-accent);
-    background: color-mix(in srgb, var(--card-accent) 10%, var(--glass));
+    color: var(--ink);
+    background: color-mix(in oklch, var(--card-accent) 10%, var(--glass));
   }
 
   /* ----- body: ProbeReadingRow content -----
@@ -487,7 +487,7 @@
     flex: 0 0 auto;
   }
   .value.pos {
-    color: var(--accent-green);
+    color: var(--ink);
   }
   .value.neg {
     color: var(--accent-red);
@@ -498,7 +498,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: var(--space-3);
-    color: var(--card-accent);
+    color: var(--ink);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
   }

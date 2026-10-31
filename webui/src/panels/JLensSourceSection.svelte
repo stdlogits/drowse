@@ -241,7 +241,7 @@
     text-align: start;
   }
   .relp-on {
-    color: var(--tint);
+    color: var(--ink);
     border-color: var(--tint);
   }
 </style>

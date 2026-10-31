@@ -273,7 +273,7 @@
                       <Bar
                         value={Math.max(feature.activation, 0)}
                         max={rawScale}
-                        color="color-mix(in srgb, var(--tint) 55%, transparent)"
+                        color="color-mix(in oklch, var(--tint) 55%, transparent)"
                       />
                     {/if}
                   </div>
@@ -320,7 +320,7 @@
   .description-context p { margin: var(--space-2) 0; max-width: 76ch; color: var(--fg-muted); font-size: var(--text-xs); line-height: 1.6; }
   .description-context .metadata-privacy { color: var(--fg-subtle); font-size: var(--text-2xs); }
   .description-context .metadata-error { color: var(--accent-red); }
-  .description-action, .no-matches button { min-height: var(--control-target); padding-inline: var(--space-4); border: 0; border-radius: var(--radius-sm); background: var(--glass); color: var(--tint); cursor: pointer; }
+  .description-action, .no-matches button { min-height: var(--control-target); padding-inline: var(--space-4); border: 0; border-radius: var(--radius-sm); background: var(--glass); color: var(--ink); cursor: pointer; }
   .description-action:disabled { opacity: var(--disabled-opacity); cursor: wait; }
   .feature-tools { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-block: var(--space-5); }
   .feature-tools label { display: grid; gap: var(--space-2); color: var(--fg-muted); font-size: var(--text-xs); }
@@ -343,7 +343,7 @@
     font-weight: var(--weight-medium);
   }
   .progress-heading code {
-    color: var(--tint);
+    color: var(--ink);
     font-family: var(--font-mono);
     font-weight: var(--weight-medium);
     font-variant-numeric: tabular-nums;
@@ -367,11 +367,7 @@
   .progress-track.indeterminate span {
     width: 38%;
     min-width: 72px;
-    animation: readout-wait 1.15s linear infinite;
-  }
-  @keyframes readout-wait {
-    from { transform: translateX(-110%); }
-    to { transform: translateX(290%); }
+    opacity: 0.45;
   }
   .readout-progress p {
     margin: var(--space-2) 0 0;
@@ -421,7 +417,7 @@
     line-height: 1.5;
   }
   .sae-value {
-    color: var(--tint);
+    color: var(--ink);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
@@ -431,12 +427,6 @@
   @media (max-width: 760px) {
     .sae-list {
       grid-template-columns: 1fr;
-    }
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .progress-track.indeterminate span {
-      animation: none;
-      transform: none;
     }
   }
 </style>

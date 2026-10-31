@@ -74,7 +74,7 @@
   function cellStyle(logprob: number): string {
     const p = Math.min(1, Math.exp(logprob));
     const pct = Math.round(p * 30);
-    return `background: color-mix(in srgb, var(--tint) ${pct}%, var(--bg));`;
+    return `background: color-mix(in oklch, var(--tint) ${pct}%, var(--bg));`;
   }
 
   function cellTitle(layer: number, t: { token: string; logprob: number }): string {
@@ -306,7 +306,7 @@
     font-weight: var(--weight-medium);
   }
   .progress-heading code {
-    color: var(--tint);
+    color: var(--ink);
     font-family: var(--font-mono);
     font-weight: var(--weight-medium);
     font-variant-numeric: tabular-nums;
@@ -330,11 +330,7 @@
   .progress-track.indeterminate span {
     width: 38%;
     min-width: 72px;
-    animation: readout-wait 1.15s linear infinite;
-  }
-  @keyframes readout-wait {
-    from { transform: translateX(-110%); }
-    to { transform: translateX(290%); }
+    opacity: 0.45;
   }
   .readout-progress p {
     margin: var(--space-2) 0 0;
@@ -345,12 +341,6 @@
   .readout-progress .progress-note {
     color: var(--fg-subtle);
     font-size: var(--text-xs);
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .progress-track.indeterminate span {
-      animation: none;
-      transform: none;
-    }
   }
   .aggregate-grid {
     display: grid;
@@ -370,7 +360,7 @@
     text-align: end;
   }
   .row-value {
-    color: var(--tint);
+    color: var(--ink);
   }
 
   .grid-scroll {

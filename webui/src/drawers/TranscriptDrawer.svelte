@@ -488,12 +488,12 @@
     margin: 0;
   }
   .ok {
-    color: var(--accent-green);
+    color: var(--ink);
     font-size: var(--text-sm);
     margin: 0;
   }
   .banner {
-    background: color-mix(in srgb, var(--accent-amber) 14%, transparent);
+    background: color-mix(in oklab, var(--accent-amber) 14%, transparent);
     border: 1px solid transparent;
     padding: var(--surface-padding);
     color: var(--accent-yellow);

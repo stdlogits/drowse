@@ -176,7 +176,7 @@ variant   := raw | sae | sae-<release>
   .intro {
     padding: var(--surface-padding);
     border-radius: var(--radius-lg);
-    background: var(--surface-sheen), color-mix(in srgb, var(--accent) 6%, var(--glass));
+    background: var(--surface-sheen), color-mix(in oklab, var(--accent) 6%, var(--glass));
     box-shadow: var(--shadow-well);
   }
   .area-grid {

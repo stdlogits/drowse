@@ -1,7 +1,8 @@
 /* The bridge: a temporary map from the Observatory+ token names the not-yet-restyled components
  * still read onto Ledger's values, so the dashboard renders coherently in Ledger while later lanes
  * restyle each area. It declares nothing new: every value is a Ledger token, a mix of them, a plain
- * length, or nothing (shadows and sheens resolve to none).
+ * length, or nothing (shadows and sheens resolve to none; a popup is a wash2 fill, as the header
+ * menu is).
  *
  * scripts/check-ledger.mjs counts each file's uses of these names (with the Ledger violations) and
  * fails if any count rises above webui/ledger-ratchet.json. Counts only go down; the 6.0 cut needs
@@ -28,24 +29,22 @@
   --workspace-neutral-bg: var(--wash);
   --workspace-neutral-hover: var(--wash2);
   --workspace-buffer-bg: transparent;
-  --popup-bg: var(--paper);
+  --popup-bg: var(--wash2);
   --popup-border: transparent;
-  --popup-shadow: var(--float);
-  --scrim-strong: color-mix(in oklch, var(--paper) 72%, transparent);
+  --scrim-strong: color-mix(in oklab, var(--paper) 72%, transparent);
   --fg: var(--ink);
   --fg-strong: var(--ink);
   --fg-dim: var(--ink2);
   --fg-subtle: var(--ink3);
   --fg-muted: var(--ink3);
 
-  /* ---- what used to be hue: interaction is ink, data is the depth tint, negatives are faint ink */
+  /* ---- what used to be hue: interaction is ink, data is the depth tint (written as --tint, and
+   * only as a fill), negatives are faint ink */
   --accent: var(--ink);
   --accent-light: var(--ink);
   --accent-subtle: var(--wash);
   --accent-strong: var(--wash2);
   --focus-ring: var(--ink);
-  --accent-green: var(--tint);
-  --live: var(--tint);
   --accent-red: var(--ink);
   --error-text: var(--ink);
   --accent-yellow: var(--ink2);
@@ -68,7 +67,7 @@
   --layer-cell-neutral: var(--ink3);
   --layer-cell-empty: var(--wash2);
   --layer-cell-positive: var(--tint);
-  --layer-cell-negative: color-mix(in oklch, var(--ink3) 60%, transparent);
+  --layer-cell-negative: color-mix(in oklab, var(--ink3) 60%, transparent);
   --layer-cell-lens: var(--tint);
   --loom-edge-depth: var(--wash2);
 

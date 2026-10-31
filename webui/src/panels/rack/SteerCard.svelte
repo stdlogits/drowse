@@ -263,7 +263,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     padding: 0;
-    color: var(--card-accent);
+    color: var(--ink);
     flex: 0 0 24px;
     cursor: pointer;
   }

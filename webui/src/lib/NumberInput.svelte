@@ -242,7 +242,7 @@
     box-shadow: var(--shadow-control-hover);
   }
   .sk-number:hover .sk-number-input:not(:disabled) {
-    background: var(--control-sheen), color-mix(in srgb, var(--surface-hi) 72%, var(--input-well));
+    background: var(--control-sheen), color-mix(in oklab, var(--surface-hi) 72%, var(--input-well));
   }
   .sk-number.is-invalid .sk-number-input {
     border-color: var(--accent-red);

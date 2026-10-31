@@ -2215,8 +2215,9 @@
   .search-excerpt { display: grid; flex: 1; min-width: 0; gap: var(--space-2); padding: var(--space-3); background: var(--input-well); text-align: start; border: 0; border-radius: var(--radius); color: var(--fg); line-height: 1.5; overflow-wrap: anywhere; }
   .search-excerpt mark { background: var(--accent-subtle); color: inherit; text-decoration: underline; text-underline-offset: 2px; }
   .search-excerpt > span:last-child { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .tree-node-wrap.search-match :global(.node) { outline: 1px solid var(--accent); outline-offset: 2px; }
-  .tree-node-wrap.search-current :global(.node) { outline-width: 3px; outline-offset: 4px; }
+  /* Search hits: wash2 for a match, a 22% tint fill for the one in view. */
+  .tree-node-wrap.search-match :global(.node) { background: var(--wash2); }
+  .tree-node-wrap.search-current :global(.node) { background: color-mix(in oklch, var(--tint) 22%, var(--paper)); }
   .filter-input {
     flex: 1 1 auto;
     min-height: var(--control-field);
@@ -2375,9 +2376,9 @@
   }
   .loom-views button.active {
     color: var(--fg);
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent) 9%, var(--bg-elev));
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 35%, var(--glass-line));
+    background: color-mix(in oklab, var(--accent) 9%, var(--bg-elev));
+    box-shadow: inset 0 1px 0 color-mix(in oklab, var(--fg) 5%, transparent);
   }
   .loom-views strong {
     overflow: hidden;
@@ -2421,7 +2422,7 @@
     overscroll-behavior: contain;
     padding: var(--surface-padding);
     background:
-      radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 4%, transparent), transparent 40%),
+      radial-gradient(circle at 50% 0, color-mix(in oklab, var(--accent) 4%, transparent), transparent 40%),
       var(--bg);
   }
   .projection-heading {
@@ -2511,12 +2512,12 @@
   }
   .branch-action {
     color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
+    border-color: color-mix(in oklab, var(--accent) 28%, transparent);
+    background: color-mix(in oklab, var(--accent) 8%, transparent);
   }
   .branch-action:hover:not(:disabled),
   .branch-action:focus-visible:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
+    background: color-mix(in oklab, var(--accent) 15%, transparent);
     outline: none;
   }
   .primary-action:active:not(:disabled),
@@ -2552,7 +2553,7 @@
     top: 0;
     bottom: 0;
     width: 1px;
-    background: color-mix(in srgb, var(--fg-muted) 38%, transparent);
+    background: color-mix(in oklab, var(--fg-muted) 38%, transparent);
   }
   .path-snippet:first-child .snippet-rail::before {
     top: 24px;
@@ -2569,11 +2570,11 @@
     border: 2px solid var(--bg);
     border-radius: 50%;
     background: var(--fg-muted);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg-muted) 48%, transparent);
+    box-shadow: 0 0 0 1px color-mix(in oklab, var(--fg-muted) 48%, transparent);
   }
   .current-snippet .snippet-rail span {
     background: var(--accent);
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
+    box-shadow: 0 0 0 5px color-mix(in oklab, var(--accent) 10%, transparent);
   }
   .snippet-card {
     display: flex;
@@ -2585,11 +2586,11 @@
     border: 1px solid var(--glass-line);
     border-radius: var(--radius-lg);
     background: var(--surface-sheen), var(--bg-elev);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 4%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in oklab, var(--fg) 4%, transparent);
   }
   .current-snippet .snippet-card {
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--glass-line));
-    background: var(--surface-sheen), color-mix(in srgb, var(--accent) 5%, var(--bg-elev));
+    border-color: color-mix(in oklab, var(--accent) 42%, var(--glass-line));
+    background: var(--surface-sheen), color-mix(in oklab, var(--accent) 5%, var(--bg-elev));
   }
   .snippet-card > header,
   .option-card > header {
@@ -2609,7 +2610,7 @@
     padding: var(--space-xs) var(--space-xs);
     border-radius: var(--radius-pill);
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
   }
   .snippet-actions {
     display: inline-grid;
@@ -2678,7 +2679,7 @@
   .path-token:hover,
   .path-token:focus-visible {
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
     outline: none;
   }
   @media (pointer: coarse) {
@@ -2707,11 +2708,11 @@
     border: 1px solid var(--glass-line);
     border-radius: var(--radius);
     background: var(--bg-elev);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 4%, transparent);
+    box-shadow: inset 0 1px 0 color-mix(in oklab, var(--fg) 4%, transparent);
   }
   .option-card.active-option {
-    border-color: color-mix(in srgb, var(--accent) 48%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent) 5%, var(--bg-elev));
+    border-color: color-mix(in oklab, var(--accent) 48%, var(--glass-line));
+    background: color-mix(in oklab, var(--accent) 5%, var(--bg-elev));
   }
   .option-preview {
     display: -webkit-box;
@@ -2878,7 +2879,7 @@
     flex: 1 1 auto;
     touch-action: none;
     cursor: grab;
-    background: color-mix(in srgb, var(--bg) 90%, var(--bg-alt));
+    background: color-mix(in oklab, var(--bg) 90%, var(--bg-alt));
   }
   .tree-scroll::after {
     content: "";
@@ -2887,7 +2888,7 @@
     pointer-events: none;
     z-index: 4;
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 5%, transparent),
       var(--loom-canvas-shade);
   }
   .tree-scroll.dragging,
@@ -2916,7 +2917,7 @@
   .loom-depth-field::before {
     background-image: radial-gradient(
       circle,
-      color-mix(in srgb, var(--fg-subtle) 42%, transparent) 1px,
+      color-mix(in oklab, var(--fg-subtle) 42%, transparent) 1px,
       transparent 1.4px
     );
     background-size: var(--loom-grid-size) var(--loom-grid-size);
@@ -2926,7 +2927,7 @@
   .loom-depth-field::after {
     background-image: radial-gradient(
       circle,
-      color-mix(in srgb, var(--fg-subtle) 30%, transparent) 0.7px,
+      color-mix(in oklab, var(--fg-subtle) 30%, transparent) 0.7px,
       transparent 1.1px
     );
     background-size: var(--loom-far-size) var(--loom-far-size);
@@ -2992,12 +2993,12 @@
     filter: blur(1.5px);
   }
   .loom-edges path.edge-line {
-    stroke: color-mix(in srgb, var(--fg-muted) 58%, var(--bg));
+    stroke: color-mix(in oklab, var(--fg-muted) 58%, var(--bg));
     stroke-width: var(--edge-width, 1.5px);
     opacity: var(--edge-opacity, 0.55);
   }
   .loom-edges path.edge-depth.active-edge {
-    stroke: color-mix(in srgb, var(--accent) 32%, var(--loom-edge-depth));
+    stroke: color-mix(in oklab, var(--accent) 32%, var(--loom-edge-depth));
     opacity: 0.7;
   }
   .loom-edges path.edge-line.active-edge {
@@ -3008,11 +3009,11 @@
     opacity: 0.18;
   }
   .loom-edges circle.junction-halo {
-    fill: color-mix(in srgb, var(--bg) 72%, transparent);
+    fill: color-mix(in oklab, var(--bg) 72%, transparent);
     stroke: transparent;
   }
   .loom-edges circle.junction-halo.active-junction {
-    fill: color-mix(in srgb, var(--accent) 14%, transparent);
+    fill: color-mix(in oklab, var(--accent) 14%, transparent);
   }
   .loom-edges circle.junction-core {
     fill: var(--bg-elev);
@@ -3021,7 +3022,7 @@
   }
   .loom-edges circle.junction-core.active-junction {
     fill: var(--accent);
-    stroke: color-mix(in srgb, var(--accent) 30%, var(--bg));
+    stroke: color-mix(in oklab, var(--accent) 30%, var(--bg));
   }
   .tree-node-wrap {
     position: absolute;
@@ -3283,7 +3284,7 @@
       padding: var(--space-1) var(--space-3);
       border-radius: var(--radius-pill);
       color: var(--fg-muted);
-      background: color-mix(in srgb, var(--bg) 78%, transparent);
+      background: color-mix(in oklab, var(--bg) 78%, transparent);
       font-size: var(--text-2xs);
       pointer-events: none;
       backdrop-filter: blur(8px);
@@ -3346,7 +3347,6 @@
     border: 1px solid var(--popup-border);
     border-radius: var(--popup-radius);
     padding: var(--surface-padding);
-    box-shadow: var(--popup-shadow);
     min-width: 248px;
     width: min(280px, calc(100vw - 24px));
     max-width: calc(100vw - 16px);
@@ -3391,7 +3391,7 @@
     display: flex;
     flex-direction: column;
     padding: var(--space-2) 0;
-    border-top: 1px solid color-mix(in srgb, var(--glass-line) 72%, transparent);
+    border-top: 1px solid color-mix(in oklab, var(--glass-line) 72%, transparent);
   }
   .loom-menu button {
     background: transparent;
@@ -3416,7 +3416,7 @@
     color: var(--accent-red);
   }
   .loom-menu button.danger:hover {
-    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+    background: color-mix(in oklab, var(--accent-red) 12%, transparent);
   }
   .loom-menu button:disabled {
     color: var(--fg-muted);

@@ -141,7 +141,6 @@
     padding: var(--surface-padding);
     font-family: var(--font-reading);
     font-size: var(--text-base);
-    box-shadow: var(--popup-shadow);
     display: flex;
     align-items: flex-start;
     gap: var(--space-4);

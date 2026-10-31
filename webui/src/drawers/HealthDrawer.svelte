@@ -234,9 +234,9 @@
       background var(--dur-fast) var(--ease-out);
   }
   .checks div.ok {
-    color: var(--accent-green);
-    border-color: color-mix(in srgb, var(--accent-green) 35%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-elev));
+    color: var(--ink);
+    border-color: color-mix(in oklch, var(--tint) 35%, var(--glass-line));
+    background: color-mix(in oklch, var(--tint) 8%, var(--bg-elev));
   }
   ul {
     margin: 0;
@@ -245,10 +245,10 @@
     line-height: 1.5;
   }
   li + li { margin-top: var(--space-2); }
-  .good { color: var(--accent-green); margin: 0; line-height: 1.5; }
+  .good { color: var(--ink); margin: 0; line-height: 1.5; }
   .error {
     color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+    background: color-mix(in oklab, var(--accent-red) 8%, transparent);
     border-radius: var(--radius);
     padding: var(--surface-padding);
     line-height: 1.5;

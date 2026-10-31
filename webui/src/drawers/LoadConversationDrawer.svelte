@@ -524,8 +524,8 @@
     flex: 0 0 auto;
     padding: var(--space-xs) var(--space-xs);
     border-radius: var(--radius-pill);
-    background: color-mix(in srgb, var(--live) 12%, transparent);
-    color: var(--live);
+    background: color-mix(in oklch, var(--tint) 12%, transparent);
+    color: var(--ink);
     font-family: var(--font-data);
     font-size: var(--text-2xs);
   }
@@ -585,7 +585,7 @@
     margin-top: var(--space-3);
     padding: var(--surface-padding);
     border-radius: var(--radius);
-    background: var(--surface-sheen), color-mix(in srgb, var(--accent-red) 8%, var(--input-well));
+    background: var(--surface-sheen), color-mix(in oklab, var(--accent-red) 8%, var(--input-well));
   }
   .confirm-row p { margin: 0; color: var(--fg-strong); font-size: var(--text-sm); line-height: 1.4; }
   .issue-reason { margin-inline-end: auto; color: var(--accent-red); font-size: var(--text-sm); }

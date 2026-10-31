@@ -979,7 +979,7 @@
   /* Family accent drives the header title colour (and every accented rule
    * below via ``--family-accent``) — white subspace vs purple manifold. */
   .title {
-    color: var(--family-accent);
+    color: var(--ink);
     letter-spacing: 0;
     font-size: var(--text-md);
     font-weight: var(--weight-medium);
@@ -1031,11 +1031,11 @@
   .build-btn:hover {
     background: var(--bg-elev);
     border-color: var(--family-accent);
-    color: var(--family-accent);
+    color: var(--ink);
   }
   .build-btn:active:not(:disabled) { scale: var(--press-scale); }
   .plus {
-    color: var(--family-accent);
+    color: var(--ink);
     font-weight: var(--weight-medium);
   }
   .build-label {
@@ -1057,7 +1057,7 @@
     align-items: baseline;
     gap: var(--space-3);
     margin: var(--space-3) 0 0;
-    color: var(--family-accent);
+    color: var(--ink);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     text-transform: uppercase;
@@ -1100,7 +1100,7 @@
     font-weight: var(--weight-medium);
   }
   .cat-header.open .cat-name {
-    color: var(--family-accent);
+    color: var(--ink);
   }
   .cat-count {
     color: var(--fg-muted);
@@ -1128,7 +1128,7 @@
     transition: background var(--dur) var(--ease-out);
   }
   .row:hover {
-    background: var(--surface-sheen), color-mix(in srgb, var(--family-accent) 8%, var(--bg-deep));
+    background: var(--surface-sheen), color-mix(in oklch, var(--family-accent) 8%, var(--bg-deep));
   }
   .row-line {
     display: grid;
@@ -1145,8 +1145,8 @@
     font-size: var(--text-2xs);
     letter-spacing: 0.04em;
     border: 1px solid transparent;
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 16%, transparent);
+    color: var(--ink);
+    background: color-mix(in oklch, var(--family-accent) 16%, transparent);
   }
   .inspect-body {
     padding-top: var(--space-2);
@@ -1161,8 +1161,8 @@
     min-width: 2.2em;
   }
   .act.inspect:hover:not(:disabled) {
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 12%, var(--glass));
+    color: var(--ink);
+    background: color-mix(in oklch, var(--family-accent) 12%, var(--glass));
   }
   .meta {
     display: flex;
@@ -1246,26 +1246,26 @@
    * artifact is already racked / attached. */
   .act.steer,
   .act.probe {
-    color: var(--family-accent);
+    color: var(--ink);
   }
   .act.steer:hover:not(:disabled),
   .act.probe:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--family-accent) 12%, var(--glass));
+    background: color-mix(in oklch, var(--family-accent) 12%, var(--glass));
   }
   .act.fit {
-    color: var(--family-accent);
+    color: var(--ink);
   }
   .act.fit:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--family-accent) 12%, var(--glass));
+    background: color-mix(in oklch, var(--family-accent) 12%, var(--glass));
   }
   .act.del:hover:not(:disabled) {
     color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 12%, var(--glass));
+    background: color-mix(in oklab, var(--accent-red) 12%, var(--glass));
   }
   .act.del.confirm {
     color: var(--accent-red);
     border-color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+    background: color-mix(in oklab, var(--accent-red) 12%, transparent);
   }
 
   /* Custom-attach disclosure — collapsed by default so it doesn't compete
@@ -1384,7 +1384,7 @@
     transition: color var(--dur) var(--ease-out);
   }
   .nodes-toggle:hover {
-    color: var(--family-accent);
+    color: var(--ink);
   }
   .caret {
     font-size: var(--text-xs);
@@ -1424,8 +1424,8 @@
       color var(--dur) var(--ease-out);
   }
   .node-chip:hover:not(:disabled) {
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 16%, var(--glass));
+    color: var(--ink);
+    background: color-mix(in oklch, var(--family-accent) 16%, var(--glass));
   }
   .node-chip:disabled {
     opacity: var(--disabled-opacity);
@@ -1443,7 +1443,7 @@
     font-size: var(--text-2xs);
     text-transform: uppercase;
     letter-spacing: 0.04em;
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 12%, transparent);
+    color: var(--ink);
+    background: color-mix(in oklch, var(--family-accent) 12%, transparent);
   }
 </style>

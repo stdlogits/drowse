@@ -136,7 +136,7 @@
     position: fixed; inset: auto; margin: 0; width: min(22rem, calc(100vw - 16px));
     box-sizing: border-box; padding: var(--surface-padding); overflow: auto; overscroll-behavior: contain;
     border: 1px solid var(--popup-border); border-radius: var(--popup-radius);
-    background: var(--popup-bg); box-shadow: var(--popup-shadow); color: var(--fg-strong);
+    background: var(--popup-bg); color: var(--fg-strong);
     font-family: var(--font-ui); font-size: var(--text-sm);
   }
   header { display: flex; justify-content: space-between; align-items: start; gap: var(--space-sm); }

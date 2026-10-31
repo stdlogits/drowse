@@ -266,14 +266,14 @@
 
   function deltaColor(delta: number): string {
     if (delta === 0) return "var(--fg-muted)";
-    return delta >= 0 ? "var(--accent-green)" : "var(--accent-red)";
+    return delta >= 0 ? "var(--tint)" : "var(--accent-red)";
   }
 
   function spanColor(state: DiffTextSpanJSON["state"]): string {
     if (state === "insert")
-      return "color-mix(in srgb, var(--accent-green) 18%, transparent)";
+      return "color-mix(in oklch, var(--tint) 18%, transparent)";
     if (state === "delete")
-      return "color-mix(in srgb, var(--accent-red) 18%, transparent)";
+      return "color-mix(in oklab, var(--accent-red) 18%, transparent)";
     return "transparent";
   }
 
@@ -972,15 +972,13 @@
    * correspondence, not a pillar), so anchor vs target read via fill
    * weight and outline rather than hue. */
   .tok:hover {
-    background: color-mix(in srgb, var(--fg) 8%, transparent);
+    background: color-mix(in oklab, var(--fg) 8%, transparent);
   }
   .tok.highlight-anchor {
-    background: color-mix(in srgb, var(--fg) 16%, transparent);
+    background: color-mix(in oklab, var(--fg) 16%, transparent);
   }
   .tok.highlight-target {
-    background: transparent;
-    outline: 1px solid var(--fg-muted);
-    outline-offset: -1px;
+    background: var(--wash2);
   }
 
   /* Data well — the unified diff pane. */
@@ -1001,7 +999,7 @@
     font-weight: var(--weight-medium);
   }
   .span-insert .span-sign {
-    color: var(--accent-green);
+    color: var(--ink);
   }
   .span-delete .span-sign {
     color: var(--accent-red);
@@ -1082,7 +1080,7 @@
    * so this stays consistent with .tok.highlight-anchor above rather
    * than borrowing a hue. */
   .ss-table tr.anchor td {
-    background: color-mix(in srgb, var(--fg) 6%, transparent);
+    background: color-mix(in oklab, var(--fg) 6%, transparent);
   }
   .ss-table tr.anchor td.ss-tag {
     color: var(--fg-strong);
@@ -1105,7 +1103,7 @@
     gap: var(--space-4);
   }
   .joint-label {
-    color: var(--tint);
+    color: var(--ink);
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);
     text-transform: uppercase;
@@ -1165,10 +1163,10 @@
   /* Rank-1 flips are the highest-signal rows in this logit-space table —
    * tint them in the lens family rather than the old amber. */
   .lp-table tr.rank-flip td {
-    background: color-mix(in srgb, var(--tint) 10%, transparent);
+    background: color-mix(in oklch, var(--tint) 10%, transparent);
   }
   .lp-table tr.rank-flip .lp-flag {
-    color: var(--tint);
+    color: var(--ink);
   }
   .readings-table {
     display: flex;

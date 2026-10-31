@@ -201,7 +201,7 @@
   // Ring color: caller passes ``ring`` in [-1,1] — negative red, positive
   // green; null when there's no probe aggregate to show.
   const ringColor = $derived(
-    ring === null ? null : ring >= 0 ? "var(--accent-green)" : "var(--accent-red)",
+    ring === null ? null : ring >= 0 ? "var(--tint)" : "var(--accent-red)",
   );
 </script>
 
@@ -383,12 +383,12 @@
     background:
       linear-gradient(
         145deg,
-        color-mix(in srgb, var(--fg) 3%, var(--bg-elev)) 0%,
-        color-mix(in srgb, var(--bg-elev) 96%, transparent) 54%,
-        color-mix(in srgb, var(--bg) 18%, var(--bg-elev)) 100%
+        color-mix(in oklab, var(--fg) 3%, var(--bg-elev)) 0%,
+        color-mix(in oklab, var(--bg-elev) 96%, transparent) 54%,
+        color-mix(in oklab, var(--bg) 18%, var(--bg-elev)) 100%
       );
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 6%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 6%, transparent),
       inset 0 0 0 1px var(--loom-node-outline, var(--node-outline)),
       var(--shadow-loom-node);
     transition:
@@ -411,7 +411,7 @@
     inset: 1px 1px auto;
     height: 40%;
     border-radius: var(--radius-lg) var(--radius-lg) 0 0;
-    background: radial-gradient(ellipse at 50% 0%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 75%);
+    background: radial-gradient(ellipse at 50% 0%, color-mix(in oklab, var(--accent) 9%, transparent), transparent 75%);
     transform: translate(var(--glow-x, 0px), var(--glow-y, 0px)) rotate(var(--glow-angle, 0deg));
     transform-origin: 50% 0;
     pointer-events: none;
@@ -420,8 +420,8 @@
     background: var(--glass-strong);
     transform: translateY(-2px);
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
-      inset 0 0 0 1px var(--loom-node-outline, color-mix(in srgb, var(--fg-muted) 54%, var(--glass-line))),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 8%, transparent),
+      inset 0 0 0 1px var(--loom-node-outline, color-mix(in oklab, var(--fg-muted) 54%, var(--glass-line))),
       var(--shadow-loom-node-hover);
   }
   .node.focused {
@@ -434,10 +434,10 @@
   .node.active {
     font-weight: var(--weight-medium);
     color: var(--fg);
-    background: color-mix(in srgb, var(--accent-subtle) 46%, var(--bg-elev));
-    --node-outline: color-mix(in srgb, var(--accent) 42%, var(--glass-line));
+    background: color-mix(in oklab, var(--accent-subtle) 46%, var(--bg-elev));
+    --node-outline: color-mix(in oklab, var(--accent) 42%, var(--glass-line));
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 8%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 8%, transparent),
       inset 0 0 0 1px var(--loom-node-outline, var(--node-outline)),
       var(--shadow-loom-node-active);
   }
@@ -446,22 +446,22 @@
     background:
       linear-gradient(
         145deg,
-        color-mix(in srgb, var(--accent) 13%, var(--bg-elev)) 0%,
-        color-mix(in srgb, var(--accent-subtle) 44%, var(--bg-elev)) 58%,
-        color-mix(in srgb, var(--bg) 22%, var(--bg-elev)) 100%
+        color-mix(in oklab, var(--accent) 13%, var(--bg-elev)) 0%,
+        color-mix(in oklab, var(--accent-subtle) 44%, var(--bg-elev)) 58%,
+        color-mix(in oklab, var(--bg) 22%, var(--bg-elev)) 100%
       );
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 11%, transparent),
-      inset 0 0 0 1px var(--loom-node-outline, color-mix(in srgb, var(--accent) 62%, var(--glass-line))),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 11%, transparent),
+      inset 0 0 0 1px var(--loom-node-outline, color-mix(in oklab, var(--accent) 62%, var(--glass-line))),
       var(--shadow-loom-node-current),
-      0 0 30px color-mix(in srgb, var(--accent) 9%, transparent);
+      0 0 30px color-mix(in oklab, var(--accent) 9%, transparent);
   }
   .node.dead {
     color: var(--fg-muted);
-    background: color-mix(in srgb, var(--bg-elev) 58%, transparent);
-    --node-outline: color-mix(in srgb, var(--glass-line) 62%, transparent);
+    background: color-mix(in oklab, var(--bg-elev) 58%, transparent);
+    --node-outline: color-mix(in oklab, var(--glass-line) 62%, transparent);
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 3%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 3%, transparent),
       inset 0 0 0 1px var(--loom-node-outline, var(--node-outline)),
       var(--shadow-loom-node-muted);
   }
@@ -474,7 +474,7 @@
     opacity: 0.55;
   }
   .node.streaming {
-    background: color-mix(in srgb, var(--live) 8%, transparent);
+    background: color-mix(in oklch, var(--tint) 8%, transparent);
   }
   .node-head,
   .identity,
@@ -558,7 +558,7 @@
     padding: var(--space-xs) var(--space-xs);
     border-radius: var(--radius-pill);
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
   }
   .node-actions {
     display: inline-grid;
@@ -600,7 +600,7 @@
     flex: none;
     text-transform: uppercase;
     box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 10%, transparent),
+      inset 0 1px 0 color-mix(in oklab, var(--fg) 10%, transparent),
       var(--shadow-loom-glyph);
   }
   .preview {
@@ -633,17 +633,17 @@
     gap: var(--space-xs);
     min-width: 0;
     padding: var(--space-xs) var(--space-xs);
-    border: 1px solid color-mix(in srgb, var(--accent) 34%, var(--glass-line));
+    border: 1px solid color-mix(in oklab, var(--accent) 34%, var(--glass-line));
     border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--glass) 72%, transparent);
+    background: color-mix(in oklab, var(--glass) 72%, transparent);
     transition:
       background var(--dur-fast) var(--ease-out),
       border-color var(--dur-fast) var(--ease-out);
   }
   .sentence-node:hover,
   .sentence-node:focus-within {
-    background: color-mix(in srgb, var(--accent) 8%, var(--glass));
-    border-color: color-mix(in srgb, var(--accent) 78%, var(--glass-line));
+    background: color-mix(in oklab, var(--accent) 8%, var(--glass));
+    border-color: color-mix(in oklab, var(--accent) 78%, var(--glass-line));
   }
   .sentence-tokens {
     display: flex;
@@ -678,7 +678,7 @@
   .sentence-node:hover .sentence-branch,
   .sentence-branch:focus-visible {
     color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
+    background: color-mix(in oklab, var(--accent) 10%, transparent);
     opacity: 1;
     outline: none;
   }
@@ -693,7 +693,7 @@
     height: 6px;
     border: 1px solid currentColor;
     border-radius: 50%;
-    background: color-mix(in srgb, currentColor 24%, transparent);
+    background: color-mix(in oklab, currentColor 24%, transparent);
   }
   .token-node {
     box-sizing: border-box;
@@ -701,7 +701,7 @@
     min-height: 23px;
     max-width: 100%;
     padding: var(--space-xs) var(--space-xs);
-    border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--glass-line));
+    border: 1px solid color-mix(in oklab, var(--accent) 18%, var(--glass-line));
     border-radius: var(--radius-sm);
     color: inherit;
     background: var(--bg-alt);
@@ -720,8 +720,8 @@
   }
   .token-node:hover,
   .token-node:focus-visible {
-    border-color: color-mix(in srgb, var(--accent) 68%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent) 24%, var(--bg-elev));
+    border-color: color-mix(in oklab, var(--accent) 68%, var(--glass-line));
+    background: color-mix(in oklab, var(--accent) 24%, var(--bg-elev));
     outline: none;
     transform: translateY(-1px);
   }

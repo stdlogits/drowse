@@ -219,7 +219,7 @@
     /* Green live/probe hue: the per-token path is a streaming quantity.
      * Translucent + thin so the path reads as historical context, not a
      * foreground feature. */
-    stroke: var(--accent-green);
+    stroke: var(--tint);
     stroke-width: 1.5;
     stroke-opacity: 0.55;
     stroke-linecap: round;
@@ -238,13 +238,13 @@
   .cursor {
     /* Live head of the green trajectory — follows the path's hue so the
      * moving cursor doesn't clash with the line it caps. */
-    fill: var(--accent-green);
+    fill: var(--tint);
     fill-opacity: 0.7;
     stroke: var(--bg-deep);
     stroke-width: 1;
   }
   .settled {
-    fill: var(--accent-green);
+    fill: var(--tint);
     stroke: var(--accent-light);
     stroke-width: 1;
   }

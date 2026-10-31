@@ -137,7 +137,7 @@
 {/if}
 
 <style>
-  .scrim { position: fixed; inset: 0; z-index: 52; background: color-mix(in oklch, var(--paper) 72%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  .scrim { position: fixed; inset: 0; z-index: 52; background: color-mix(in oklab, var(--wash2) 88%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   .palette {
     position: fixed;
     top: 12dvh;
@@ -151,7 +151,6 @@
     translate: -50% 0;
     border-radius: var(--r-row);
     background: var(--paper);
-    box-shadow: var(--float);
   }
   .palette:focus { outline: none; }
   .box { position: relative; height: 48px; border-radius: var(--r-box); background: var(--wash); color: var(--ink3); transition: color var(--fast) var(--ease); }

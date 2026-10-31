@@ -218,12 +218,12 @@
   .sk-slider:hover:not(:disabled)::-webkit-slider-thumb,
   .sk-slider:active:not(:disabled)::-webkit-slider-thumb {
     transform: scale(1.05);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
   }
   .sk-slider:hover:not(:disabled)::-moz-range-thumb,
   .sk-slider:active:not(:disabled)::-moz-range-thumb {
     transform: scale(1.05);
-    box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent);
+    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
   }
   .sk-slider:disabled::-webkit-slider-thumb {
     background: var(--fg-muted);

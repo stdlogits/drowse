@@ -115,6 +115,6 @@
   button:hover:not(:disabled) { background: var(--accent-subtle); }
   button:active:not(:disabled) { transform: scale(0.96); }
   button.primary { background: var(--accent); color: var(--bg); }
-  button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); }
+  button.primary:hover:not(:disabled) { background: color-mix(in oklab, var(--accent) 88%, var(--fg)); }
   button:disabled { opacity: var(--disabled-opacity); cursor: default; }
 </style>

@@ -558,7 +558,6 @@
     background: var(--surface-sheen), var(--popup-bg);
     border: 1px solid var(--popup-border);
     border-radius: var(--popup-radius);
-    box-shadow: var(--popup-shadow);
     width: min(640px, calc(100vw - 2rem));
     min-width: 0;
     max-height: calc(100dvh - 2rem);

@@ -20,7 +20,7 @@
 
   const filled = $derived(barExtent(value, max) * (bipolar ? 50 : 100));
   const fillX = $derived(bipolar ? (value < 0 ? 50 - filled : 50) : 0);
-  const fill = $derived(color ?? (value > 0 ? "var(--accent-green)" : value < 0 ? "var(--accent-red)" : "var(--fg-muted)"));
+  const fill = $derived(color ?? (value > 0 ? "var(--tint)" : value < 0 ? "var(--accent-red)" : "var(--fg-muted)"));
   const tip = $derived(title ?? barTooltip(value, max, percentage));
 </script>
 
@@ -54,7 +54,7 @@
     top: 0;
     bottom: 0;
     border-radius: inherit;
-    background: linear-gradient(to bottom, color-mix(in srgb, var(--fill) 80%, white), var(--fill));
+    background: linear-gradient(to bottom, color-mix(in oklab, var(--fill) 80%, white), var(--fill));
     transition: width var(--dur) var(--ease-out), left var(--dur) var(--ease-out);
   }
   .midline {

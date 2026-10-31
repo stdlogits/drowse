@@ -67,7 +67,7 @@
     // important for low-contrast displays and color-vision differences.
     const hue = t > 0 ? positiveColor : negativeColor;
     const mix = 15 + Math.abs(t) * 85;
-    return `color-mix(in srgb, var(--layer-cell-neutral) ${100 - mix}%, ${hue} ${mix}%)`;
+    return `color-mix(in oklch, var(--layer-cell-neutral) ${100 - mix}%, ${hue} ${mix}%)`;
   });
   const textColor = $derived(
     !isNull && Math.abs(normalized) >= 0.55

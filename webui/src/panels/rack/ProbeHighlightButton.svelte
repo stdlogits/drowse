@@ -48,8 +48,8 @@
   }
   .highlight-action:hover,
   .highlight-action.on {
-    color: var(--card-accent);
-    background: color-mix(in srgb, var(--card-accent) 10%, var(--glass));
+    color: var(--ink);
+    background: color-mix(in oklch, var(--card-accent) 10%, var(--glass));
   }
   .highlight-action:hover {
     box-shadow: var(--shadow-control-hover);

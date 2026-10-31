@@ -83,14 +83,14 @@
     box-shadow: var(--shadow-rack-hover);
   }
   .card.active {
-    border-color: color-mix(in srgb, var(--card-accent) 40%, transparent);
+    border-color: color-mix(in oklch, var(--card-accent) 40%, transparent);
     box-shadow: var(--shadow-rack-active);
   }
   .card.disabled {
     /* Off is a reversible state, not unavailable content. Keep labels and
      * the re-enable action at full contrast; the hollow marker, struck name,
      * and quieter surface communicate state without dimming the whole card. */
-    background: var(--surface-sheen), color-mix(in srgb, var(--glass) 55%, transparent);
+    background: var(--surface-sheen), color-mix(in oklab, var(--glass) 55%, transparent);
     box-shadow: none;
   }
 

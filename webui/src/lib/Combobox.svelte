@@ -205,7 +205,7 @@
     background: var(--control-sheen), var(--surface-hi);
     box-shadow: var(--shadow-control-hover);
   }
-  .sk-combobox.is-invalid { outline: 1px solid var(--accent-red); }
+  .sk-combobox.is-invalid { background: color-mix(in oklab, var(--ink) 10%, var(--paper)); }
   input { width: 100%; min-width: 0; min-height: var(--control-field);
     padding-block: var(--space-2);
     padding-inline: var(--space-sm) calc(var(--control-compact) + var(--space-xs));
@@ -219,8 +219,7 @@
   .is-open .caret { color: var(--accent); transform: rotate(180deg); }
   .popover { --popup-radius: var(--radius-lg); position: fixed; inset: auto; z-index: var(--z-modal); box-sizing: border-box;
     overflow-y: auto; margin: 0; padding: var(--space-2); list-style: none;
-    border: 1px solid var(--popup-border); border-radius: var(--popup-radius); background: var(--surface-sheen), var(--popup-bg);
-    box-shadow: var(--popup-shadow); }
+    border: 1px solid var(--popup-border); border-radius: var(--popup-radius); background: var(--surface-sheen), var(--popup-bg); }
   li { display: flex; align-items: center; min-height: var(--control-option); padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-sm);
     color: var(--fg-strong); font-size: var(--text-sm); line-height: 1.45;

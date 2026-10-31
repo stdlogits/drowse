@@ -106,7 +106,7 @@
     cursor: pointer;
     transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
-  .menu-button:active { scale: 0.94; }
+  .menu-button:active { scale: 0.97; }
   .menu-button[aria-expanded="true"] { background: var(--wash2); color: var(--ink); }
   @media (hover: hover) { .menu-button:hover { background: var(--wash2); color: var(--ink); } }
   .scrim { position: fixed; inset: 0; z-index: 40; padding: 0; border: 0; background: transparent; cursor: default; }

@@ -268,7 +268,7 @@
     text-align: end;
   }
   .row-value {
-    color: var(--tint);
+    color: var(--ink);
   }
   .row-meta {
     display: flex;

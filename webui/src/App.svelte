@@ -405,7 +405,7 @@
   .rooms-host.waiting { pointer-events: none; }
   .room[hidden] { display: none; }
   .booting { position: fixed; inset: 96px var(--s6) auto; z-index: 30; max-width: 720px; margin: 0 auto; pointer-events: none; }
-  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in oklch, var(--paper) 72%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
+  .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in oklab, var(--wash2) 88%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   .dialog {
     position: fixed;
     inset: var(--s5) var(--s5) var(--s5) auto;
@@ -416,7 +416,6 @@
     overflow: hidden;
     border-radius: var(--r-row);
     background: var(--paper);
-    box-shadow: var(--float);
   }
   .dialog.narrow { width: min(520px, calc(100vw - var(--s5) * 2)); }
   .dialog:focus { outline: none; }

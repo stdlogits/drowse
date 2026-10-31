@@ -113,7 +113,7 @@
     box-shadow: var(--shadow-control);
   }
   .solid:hover:not(:disabled) {
-    background: var(--control-sheen), color-mix(in srgb, var(--btn-solid-fill) 94%, white);
+    background: var(--control-sheen), color-mix(in oklab, var(--btn-solid-fill) 94%, white);
     box-shadow: var(--shadow-control-hover);
   }
 
@@ -131,12 +131,12 @@
     box-shadow: var(--shadow-control-hover);
   }
   .ghost.accented {
-    background: var(--control-sheen), color-mix(in srgb, var(--btn-accent) 7%, var(--glass));
-    color: var(--btn-accent);
+    background: var(--control-sheen), color-mix(in oklab, var(--btn-accent) 7%, var(--glass));
+    color: var(--ink);
   }
   .ghost.accented:hover:not(:disabled) {
-    background: var(--control-sheen), color-mix(in srgb, var(--btn-accent) 10%, var(--glass));
-    color: var(--btn-accent);
+    background: var(--control-sheen), color-mix(in oklab, var(--btn-accent) 10%, var(--glass));
+    color: var(--ink);
   }
 
   .flat {
@@ -146,7 +146,7 @@
   }
   .flat:hover:not(:disabled) {
     background: transparent;
-    color: var(--btn-accent);
+    color: var(--ink);
   }
 
   .danger {

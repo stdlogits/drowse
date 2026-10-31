@@ -79,15 +79,15 @@
     filter: blur(0);
   }
   .pin.pinned {
-    color: var(--card-accent);
+    color: var(--ink);
   }
   .pin:hover:not(:disabled) {
-    color: var(--card-accent);
-    background: color-mix(in srgb, var(--card-accent) 8%, transparent);
+    color: var(--ink);
+    background: color-mix(in oklch, var(--card-accent) 8%, transparent);
   }
   .pin.pinned:hover:not(:disabled) {
     color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+    background: color-mix(in oklab, var(--accent-red) 8%, transparent);
   }
   .pin:disabled {
     cursor: default;

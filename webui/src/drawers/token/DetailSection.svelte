@@ -47,7 +47,7 @@
   }
   h3 {
     margin: 0;
-    color: var(--section-accent);
+    color: var(--ink);
     font-size: var(--text-sm);
     font-weight: var(--weight-bold);
     text-transform: uppercase;

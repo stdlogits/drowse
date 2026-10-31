@@ -824,8 +824,7 @@
     cursor: crosshair;
   }
   .inspect .clickable:hover {
-    outline: 1px solid var(--fg-muted);
-    outline-offset: -1px;
+    background: var(--wash2);
     border-radius: var(--radius);
   }
   .inspect .clickable:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }

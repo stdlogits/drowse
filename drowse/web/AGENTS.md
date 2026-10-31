@@ -68,12 +68,18 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
   `check-test-coverage.mjs`. The last requires every `scripts/*.test.mjs` to be reachable
   from `check`, so a new test file needs a line in `package.json`.
 - `check-ledger.mjs` counts, per file, the uses of the bridge's old token names
-  (`lib/style/bridge.css`) and the departures from Ledger (borders, shadows other than the
-  tip's `--float` or a marked token's 2px same-colour spread, monospace, capitals,
-  letter-spaced text, easing off the one curve, colours outside the tokens), and fails if any
-  count differs from `webui/ledger-ratchet.json`. A count that rises fails; one that falls
-  asks for `node scripts/check-ledger.mjs --write`, which lowers the ratchet and never raises
-  it. `--cut` (the 6.0 cut) requires every count at zero and the bridge deleted.
+  (`lib/style/bridge.css`) and the departures from Ledger: borders; outlines outside a
+  `:focus`/`:focus-visible` rule; shadows other than a marked token's 2px same-colour spread
+  (the tip's `--float` is Ledger's own, so any use here counts); monospace; capitals;
+  letter-spaced text; easing off the one curve; animations that loop; colours outside the
+  tokens; colour mixes outside oklch (the accent's) and oklab (a grey's: Chrome renders a
+  near-grey mixed in oklch with a red cast); and text coloured by the depth accent (`--tint`,
+  `--deep`, `--late` or a bridge name for them). It reads `style:prop={…}` directives as
+  `prop: …` declarations. It fails if any count differs from `webui/ledger-ratchet.json`. A
+  count that rises fails; one that falls asks for `node scripts/check-ledger.mjs --write`,
+  which lowers the ratchet and never raises it. A category the ratchet does not record yet
+  fails the check until `--write` takes today's count as its first ceiling. `--cut` (the 6.0
+  cut) requires every count at zero and the bridge deleted.
 
 ## Generated REST types (`lib/types.gen.ts`)
 
@@ -235,6 +241,14 @@ The shell's own state is three small slices. `rooms.svelte.ts` is the route (`#/
 `workbench.svelte.ts` is what the Page region shows (the conversation or the loom) and the
 phone's sheet.
 
+The workbench has three layouts. From 1240 px the three regions sit side by side and each
+scrolls on its own. From the phone up to 1240 px it is Page | Inspector, with the thread
+folded into a row over the page, so a selection always shows beside the conversation. On a
+phone (720 px and under) it is one column: the Inspector is a sheet between the log and the
+composer, and the loom page takes the column (no sheet while it shows). The SAE source picker
+lives in the Lens room beside the lens sources; the Inspector's Features shows a "Choose an
+SAE" button that leads there until an SAE is loaded.
+
 Slices import each other directly, never through the barrel. The import graph has cycles
 (loom ↔ ws, chat ↔ pending). These are safe only because every cross-slice reference sits
 inside a function body, so no module-level initializer may read an imported binding.
@@ -304,7 +318,13 @@ drowse.ai too.
   Colour is depth: the one accent is `--tint`, a layer's place on the `--deep` → `--late`
   ramp, and it only fills; signed negatives are ink at low alpha, interaction is ink. The
   components not yet redrawn read old token names through `lib/style/bridge.css`, which the
-  ratchet counts down.
+  ratchet counts down. Token tints are the depth accent (or ink, for a negative) mixed with
+  transparent in oklch up to 22%, with a 2px spread in the same mix. Popups, menus and toasts
+  are wash2 fills with no shadow; a dialog and the command palette are paper over a wash2 scrim.
+- **A departure from the canvas, for a9 to ratify.** A selected steering term opens in the
+  Inspector (`panels/inspector/TermView.svelte`, the rack's controls) rather than in place
+  under the chips as the Steering artboard draws it (a wash surface with Strength, When, Where
+  and the live expression). The in-place term editor is the term-editor lane's.
 
 ## Testing
 

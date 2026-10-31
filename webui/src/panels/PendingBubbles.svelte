@@ -117,6 +117,6 @@
   }
   .cancel:hover {
     color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+    background: color-mix(in oklab, var(--accent-red) 8%, transparent);
   }
 </style>

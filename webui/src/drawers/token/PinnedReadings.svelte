@@ -140,7 +140,7 @@
     gap: var(--space-3);
   }
   .pinned-value {
-    color: var(--card-accent);
+    color: var(--ink);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;

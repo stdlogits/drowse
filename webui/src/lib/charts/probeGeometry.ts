@@ -93,7 +93,7 @@ function readPalette(el: HTMLElement): Palette {
     bg: v("--bg-deep"),
     node: v("--geom-node", v("--tint")),
     neutral: v("--geom-neutral", v("--fg-subtle")),
-    live: v("--live"),
+    live: v("--tint"),
     light: v("--accent-light"),
   };
 }

@@ -448,7 +448,6 @@
     background: var(--surface-sheen), var(--popup-bg);
     border: 1px solid var(--popup-border);
     border-radius: var(--popup-radius);
-    box-shadow: var(--popup-shadow);
     box-sizing: border-box;
     overflow-y: auto;
     z-index: var(--z-modal);

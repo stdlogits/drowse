@@ -73,7 +73,7 @@
     justify-content: flex-start;
     inline-size: 24px;
     flex: 0 0 24px;
-    color: var(--card-accent);
+    color: var(--ink);
     font-family: var(--font-mono);
     font-size: var(--text-sm);
     font-variant-numeric: tabular-nums;
@@ -114,11 +114,11 @@
     flex: 0 0 auto;
   }
   .accent {
-    color: var(--card-accent);
+    color: var(--ink);
   }
   .badge {
     color: var(--fg);
-    background: color-mix(in srgb, var(--card-accent) 12%, transparent);
+    background: color-mix(in oklch, var(--card-accent) 12%, transparent);
     border-radius: var(--radius-sm);
     padding: var(--space-xs) var(--space-2);
   }

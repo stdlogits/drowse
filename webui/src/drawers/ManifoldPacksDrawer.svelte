@@ -673,7 +673,7 @@
     padding: var(--space-2) var(--space-3);
     border: 1px solid transparent;
     border-radius: var(--radius);
-    color: var(--tint);
+    color: var(--ink);
     background: var(--bg-elev);
     font: inherit;
     font-family: var(--font-mono);
@@ -682,7 +682,7 @@
   }
   .file-action:hover:not(.disabled),
   .archive-tools button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--tint) 12%, var(--bg-elev));
+    background: color-mix(in oklch, var(--tint) 12%, var(--bg-elev));
   }
   .file-action.disabled,
   .archive-tools button:disabled {
@@ -765,7 +765,7 @@
     padding: var(--surface-padding);
     transition: background var(--dur) var(--ease-out);
   }
-  .row:hover { background: color-mix(in srgb, var(--tint) 8%, var(--bg-deep)); }
+  .row:hover { background: color-mix(in oklch, var(--tint) 8%, var(--bg-deep)); }
   .meta {
     display: flex;
     flex-direction: column;
@@ -793,15 +793,15 @@
     font-size: var(--text-2xs);
     letter-spacing: 0.04em;
     border: 1px solid transparent;
-    color: var(--tint);
-    background: color-mix(in srgb, var(--tint) 12%, transparent);
+    color: var(--ink);
+    background: color-mix(in oklch, var(--tint) 12%, transparent);
   }
   .fit-spectral {
     color: var(--accent);
     background: var(--accent-subtle);
   }
   .fit-tag {
-    color: var(--accent-green);
+    color: var(--ink);
     margin-inline-start: var(--space-2);
     font-size: var(--text-2xs);
     text-transform: uppercase;
@@ -834,7 +834,7 @@
   .act {
     min-height: 44px;
     background: var(--glass);
-    color: var(--tint);
+    color: var(--ink);
     border: 1px solid transparent;
     border-radius: var(--radius);
     padding: var(--space-2) var(--space-3);
@@ -847,7 +847,7 @@
       color var(--dur) var(--ease-out);
   }
   .act:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--tint) 12%, transparent);
+    background: color-mix(in oklch, var(--tint) 12%, transparent);
   }
   .act:disabled {
     opacity: var(--disabled-opacity);

@@ -364,11 +364,7 @@
   .progress-track.indeterminate span {
     width: 38%;
     min-width: 72px;
-    animation: readout-wait 1.15s linear infinite;
-  }
-  @keyframes readout-wait {
-    from { transform: translateX(-110%); }
-    to { transform: translateX(290%); }
+    opacity: 0.45;
   }
   .readout-progress p {
     margin: var(--space-2) 0 0;
@@ -399,12 +395,6 @@
   .geometry-guide dl { margin: var(--space-2) 0 0; }
   .geometry-guide dt { color: var(--fg); font-weight: var(--weight-medium); }
   .geometry-guide dd { margin: 0 0 var(--space-3); }
-  @media (prefers-reduced-motion: reduce) {
-    .progress-track.indeterminate span {
-      animation: none;
-      transform: none;
-    }
-  }
   .geo-axis-label {
     color: var(--fg-muted);
     font-family: var(--font-mono);

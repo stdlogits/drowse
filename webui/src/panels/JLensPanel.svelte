@@ -485,7 +485,7 @@
     font-size: var(--text-sm);
     font-weight: var(--weight-structure);
   }
-  .empty-action:hover { color: var(--tint); }
+  .empty-action:hover { color: var(--ink); }
   .drill-hint {
     font-size: var(--text-xs);
     color: var(--fg-dim);
@@ -539,8 +539,8 @@
   }
   .add-btn {
     min-height: var(--control-target);
-    background: color-mix(in srgb, var(--tint) 10%, transparent);
-    color: var(--tint);
+    background: color-mix(in oklch, var(--tint) 10%, transparent);
+    color: var(--ink);
     border: 1px solid transparent;
     border-radius: var(--radius);
     font-size: var(--text-sm);
@@ -549,7 +549,7 @@
     flex: 0 0 auto;
   }
   .add-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--tint) 18%, transparent);
+    background: color-mix(in oklch, var(--tint) 18%, transparent);
   }
   .add-btn:disabled {
     opacity: var(--disabled-opacity);
