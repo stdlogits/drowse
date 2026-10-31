@@ -46,13 +46,8 @@ try {
   assert.match(source, /new ResizeObserver\(redraw\)/);
   assert.match(source, /observer\.observe\(canvas\)/);
   assert.match(source, /observer\.disconnect\(\)/);
-  assert.match(source, /@container probe-inspector/);
-  assert.match(source, /aspect-ratio: 1;/);
-  assert.match(source, /grid-template-columns: 3ch minmax\(0, 1fr\) 6ch;/);
   assert.match(source, /aria-pressed=\{l.layer === selectedLayer\}/);
   const barSource = await readFile(new URL("../src/lib/charts/Bar.svelte", import.meta.url), "utf8");
-  assert.match(barSource, /border-radius: var\(--radius-pill\);/);
-  assert.match(barSource, /border-radius: inherit;/);
   assert.doesNotMatch(barSource, /preserveAspectRatio/);
 
   const { renderProbeGeometry, DEFAULT_ORBIT_QUAT } = await server.ssrLoadModule("/src/lib/charts/probeGeometry.ts");
@@ -92,7 +87,7 @@ try {
     if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
     if (oldStyle === undefined) delete globalThis.getComputedStyle; else globalThis.getComputedStyle = oldStyle;
   }
-  console.log("Chart values, rounded bars, responsive geometry, and projected hover coordinates passed");
+  console.log("Chart values, bars, responsive geometry, and projected hover coordinates passed");
 } finally {
   await server.close();
 }

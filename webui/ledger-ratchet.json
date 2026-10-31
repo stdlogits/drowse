@@ -1,0 +1,467 @@
+{
+  "about": "Ledger ratchet: per-file counts that may only go down (scripts/check-ledger.mjs). The 6.0 cut needs every count at zero and src/lib/style/bridge.css deleted.",
+  "categories": {
+    "bridge": "uses of a bridge token (an old name mapped onto Ledger)",
+    "border": "borders other than 0 or none",
+    "shadow": "shadows other than the tip's --float or a marked token's 2px same-colour spread",
+    "mono": "monospace",
+    "uppercase": "text-transform: uppercase or small capitals",
+    "tracking": "letter-spaced text (positive letter-spacing)",
+    "easing": "easing other than Ledger's one curve",
+    "colour": "colours written outside the tokens"
+  },
+  "totals": {
+    "bridge": 3931,
+    "border": 162,
+    "shadow": 78,
+    "mono": 152,
+    "uppercase": 42,
+    "tracking": 38,
+    "easing": 15,
+    "colour": 2
+  },
+  "files": {
+    "src/drawers/AdvancedSamplingDrawer.svelte": {
+      "bridge": 59,
+      "border": 3,
+      "shadow": 1,
+      "mono": 1
+    },
+    "src/drawers/CastDrawer.svelte": {
+      "bridge": 90,
+      "border": 4,
+      "shadow": 1,
+      "mono": 3
+    },
+    "src/drawers/CompareDrawer.svelte": {
+      "bridge": 52,
+      "shadow": 3,
+      "mono": 3,
+      "uppercase": 1,
+      "tracking": 1
+    },
+    "src/drawers/CorrelationDrawer.svelte": {
+      "bridge": 49,
+      "shadow": 3,
+      "mono": 2,
+      "uppercase": 1,
+      "tracking": 1
+    },
+    "src/drawers/DownloadChatDrawer.svelte": {
+      "bridge": 36,
+      "border": 1
+    },
+    "src/drawers/DrawerOutlet.svelte": {
+      "bridge": 3
+    },
+    "src/drawers/FeedbackDrawer.svelte": {
+      "bridge": 13
+    },
+    "src/drawers/HealthDrawer.svelte": {
+      "bridge": 62,
+      "border": 2,
+      "mono": 2,
+      "uppercase": 3,
+      "tracking": 3
+    },
+    "src/drawers/HelpDrawer.svelte": {
+      "bridge": 70,
+      "shadow": 1,
+      "mono": 2
+    },
+    "src/drawers/LoadConversationDrawer.svelte": {
+      "bridge": 126,
+      "shadow": 7,
+      "mono": 1,
+      "easing": 5
+    },
+    "src/drawers/ManifoldBuilderDrawer.svelte": {
+      "bridge": 14
+    },
+    "src/drawers/ManifoldMergeDrawer.svelte": {
+      "bridge": 65,
+      "border": 4,
+      "mono": 4
+    },
+    "src/drawers/ManifoldPacksDrawer.svelte": {
+      "bridge": 110,
+      "border": 9,
+      "mono": 5,
+      "uppercase": 2,
+      "tracking": 2
+    },
+    "src/drawers/NodeCompareDrawer.svelte": {
+      "bridge": 155,
+      "shadow": 2,
+      "mono": 5,
+      "uppercase": 8,
+      "tracking": 8
+    },
+    "src/drawers/ProbeInspectorDrawer.svelte": {
+      "bridge": 101,
+      "border": 4,
+      "shadow": 1,
+      "mono": 6,
+      "uppercase": 2,
+      "tracking": 2
+    },
+    "src/drawers/RackDrawer.svelte": {
+      "bridge": 186,
+      "border": 11,
+      "mono": 9,
+      "uppercase": 7,
+      "tracking": 7
+    },
+    "src/drawers/SaveConversationDrawer.svelte": {
+      "bridge": 63,
+      "shadow": 3,
+      "mono": 1,
+      "uppercase": 1,
+      "tracking": 1,
+      "easing": 3
+    },
+    "src/drawers/SessionAdminDrawer.svelte": {
+      "bridge": 54,
+      "border": 4,
+      "shadow": 1,
+      "mono": 2
+    },
+    "src/drawers/SystemPromptDrawer.svelte": {
+      "bridge": 43,
+      "border": 4
+    },
+    "src/drawers/TemplateLabDrawer.svelte": {
+      "bridge": 104,
+      "border": 3,
+      "shadow": 1,
+      "mono": 5,
+      "uppercase": 3,
+      "tracking": 3
+    },
+    "src/drawers/TokenDrilldownDrawer.svelte": {
+      "bridge": 145,
+      "border": 5,
+      "shadow": 1,
+      "mono": 7
+    },
+    "src/drawers/TranscriptDrawer.svelte": {
+      "bridge": 82,
+      "border": 8,
+      "mono": 5
+    },
+    "src/drawers/UnavailableRuntimeDrawer.svelte": {
+      "bridge": 9
+    },
+    "src/drawers/manifold/AuthoredForm.svelte": {
+      "bridge": 4,
+      "border": 1
+    },
+    "src/drawers/manifold/DiscoverForm.svelte": {
+      "bridge": 40,
+      "border": 3
+    },
+    "src/drawers/manifold/TemplatedForm.svelte": {
+      "bridge": 4,
+      "border": 1
+    },
+    "src/drawers/manifold/form.css": {
+      "bridge": 120,
+      "border": 7,
+      "shadow": 1,
+      "mono": 6,
+      "uppercase": 2,
+      "tracking": 1
+    },
+    "src/drawers/token/DetailCardHeader.svelte": {
+      "bridge": 13,
+      "mono": 3
+    },
+    "src/drawers/token/DetailSection.svelte": {
+      "bridge": 8,
+      "uppercase": 1
+    },
+    "src/drawers/token/EmptyState.svelte": {
+      "bridge": 8,
+      "mono": 1
+    },
+    "src/drawers/token/EvidenceChips.svelte": {
+      "bridge": 9,
+      "mono": 1
+    },
+    "src/drawers/token/GeometryLayerReadings.svelte": {
+      "bridge": 15,
+      "mono": 1
+    },
+    "src/drawers/token/GeometryTab.svelte": {
+      "bridge": 48,
+      "shadow": 1,
+      "mono": 5,
+      "easing": 2
+    },
+    "src/drawers/token/InstrumentHeader.svelte": {
+      "bridge": 32,
+      "border": 1,
+      "mono": 2,
+      "uppercase": 2,
+      "tracking": 2
+    },
+    "src/drawers/token/LensTab.svelte": {
+      "bridge": 52,
+      "shadow": 6,
+      "mono": 5,
+      "uppercase": 1,
+      "tracking": 1,
+      "easing": 2
+    },
+    "src/drawers/token/LogitsTab.svelte": {
+      "bridge": 15,
+      "mono": 1
+    },
+    "src/drawers/token/PinnedReadings.svelte": {
+      "bridge": 6,
+      "mono": 2
+    },
+    "src/drawers/token/SaeTab.svelte": {
+      "bridge": 60,
+      "shadow": 1,
+      "mono": 2,
+      "easing": 2
+    },
+    "src/drawers/token/TokenRibbon.svelte": {
+      "bridge": 29,
+      "mono": 3,
+      "uppercase": 1,
+      "tracking": 1
+    },
+    "src/lib/Combobox.svelte": {
+      "bridge": 50,
+      "border": 1,
+      "shadow": 3,
+      "mono": 1
+    },
+    "src/lib/NumberInput.svelte": {
+      "bridge": 44,
+      "border": 4,
+      "shadow": 2,
+      "mono": 2
+    },
+    "src/lib/Radio.svelte": {
+      "bridge": 29,
+      "border": 3,
+      "mono": 1
+    },
+    "src/lib/Select.svelte": {
+      "bridge": 52,
+      "border": 3,
+      "shadow": 3,
+      "mono": 1
+    },
+    "src/lib/Slider.svelte": {
+      "bridge": 33,
+      "border": 3,
+      "shadow": 3,
+      "mono": 1
+    },
+    "src/lib/Toaster.svelte": {
+      "bridge": 30,
+      "border": 2,
+      "shadow": 1,
+      "mono": 1
+    },
+    "src/lib/builder/AdvancedSection.svelte": {
+      "bridge": 2
+    },
+    "src/lib/builder/ValidationBlock.svelte": {
+      "bridge": 11
+    },
+    "src/lib/charts/Bar.svelte": {
+      "bridge": 12,
+      "border": 1,
+      "shadow": 1,
+      "colour": 1
+    },
+    "src/lib/charts/HeatmapCell.svelte": {
+      "bridge": 12,
+      "shadow": 1
+    },
+    "src/lib/charts/Sparkline.svelte": {
+      "bridge": 3
+    },
+    "src/lib/charts/TraceDetail.svelte": {
+      "bridge": 9,
+      "mono": 1
+    },
+    "src/lib/charts/probeGeometry.ts": {
+      "mono": 6
+    },
+    "src/lib/manifolds/DiagnosticsPanel.svelte": {
+      "bridge": 33,
+      "border": 2,
+      "mono": 2
+    },
+    "src/lib/tokens.ts": {
+      "bridge": 2
+    },
+    "src/lib/ui/BaseModelTag.svelte": {
+      "bridge": 9,
+      "mono": 1
+    },
+    "src/lib/ui/Button.svelte": {
+      "bridge": 57,
+      "border": 5,
+      "shadow": 6,
+      "colour": 1
+    },
+    "src/lib/ui/ContactForm.svelte": {
+      "bridge": 54,
+      "border": 2,
+      "shadow": 1,
+      "mono": 1
+    },
+    "src/lib/ui/ConversationAutosave.svelte": {
+      "bridge": 5
+    },
+    "src/lib/ui/ManifoldJobProgress.svelte": {
+      "bridge": 17,
+      "mono": 1
+    },
+    "src/lib/ui/ResetSettings.svelte": {
+      "bridge": 7
+    },
+    "src/lib/ui/TemplatePreview.svelte": {
+      "bridge": 9
+    },
+    "src/lib/ui/TokenLogitsPopover.svelte": {
+      "bridge": 27,
+      "border": 2,
+      "shadow": 1,
+      "mono": 2
+    },
+    "src/panels/JLensPanel.svelte": {
+      "bridge": 54,
+      "border": 4,
+      "mono": 1
+    },
+    "src/panels/JLensSourceSection.svelte": {
+      "bridge": 10,
+      "border": 1,
+      "mono": 1
+    },
+    "src/panels/PendingBubbles.svelte": {
+      "bridge": 24,
+      "border": 3,
+      "mono": 2
+    },
+    "src/panels/ProbeRack.svelte": {
+      "bridge": 7
+    },
+    "src/panels/RawBuffer.svelte": {
+      "bridge": 52,
+      "shadow": 1,
+      "mono": 2
+    },
+    "src/panels/SaePanel.svelte": {
+      "bridge": 54,
+      "border": 4,
+      "mono": 1
+    },
+    "src/panels/SaeSourceSection.svelte": {
+      "bridge": 9,
+      "mono": 1
+    },
+    "src/panels/SamplingStrip.svelte": {
+      "bridge": 30,
+      "border": 1,
+      "mono": 1
+    },
+    "src/panels/loom/LoomDialog.svelte": {
+      "bridge": 59,
+      "border": 4,
+      "shadow": 1,
+      "mono": 2
+    },
+    "src/panels/loom/LoomNode.svelte": {
+      "bridge": 197,
+      "border": 7,
+      "shadow": 6,
+      "mono": 4,
+      "uppercase": 2,
+      "tracking": 1
+    },
+    "src/panels/loom/LoomSidebar.svelte": {
+      "bridge": 406,
+      "border": 19,
+      "shadow": 7,
+      "mono": 10,
+      "uppercase": 3,
+      "tracking": 2
+    },
+    "src/panels/loom/LoomWeave.svelte": {
+      "bridge": 49,
+      "border": 8
+    },
+    "src/panels/manifold/ManifoldMiniMap.svelte": {
+      "bridge": 19,
+      "border": 1,
+      "mono": 1
+    },
+    "src/panels/manifold/XYPad.svelte": {
+      "bridge": 7
+    },
+    "src/panels/rack/AtomSteerCard.svelte": {
+      "bridge": 53,
+      "border": 1,
+      "shadow": 1,
+      "mono": 1
+    },
+    "src/panels/rack/InstrumentSourceSection.svelte": {
+      "bridge": 22,
+      "uppercase": 2,
+      "tracking": 2
+    },
+    "src/panels/rack/JLensProbeCard.svelte": {
+      "bridge": 10,
+      "mono": 2
+    },
+    "src/panels/rack/LayerStrip.svelte": {
+      "bridge": 14,
+      "mono": 1
+    },
+    "src/panels/rack/ProbeCard.svelte": {
+      "bridge": 45,
+      "border": 1,
+      "mono": 2
+    },
+    "src/panels/rack/ProbeHighlightButton.svelte": {
+      "bridge": 20,
+      "border": 1,
+      "shadow": 2
+    },
+    "src/panels/rack/ProbePinButton.svelte": {
+      "bridge": 19
+    },
+    "src/panels/rack/ProbeReadingRow.svelte": {
+      "bridge": 6
+    },
+    "src/panels/rack/RackCard.svelte": {
+      "bridge": 22,
+      "border": 2,
+      "shadow": 3
+    },
+    "src/panels/rack/RackMarker.svelte": {
+      "bridge": 6,
+      "mono": 1
+    },
+    "src/panels/rack/SaeProbeCard.svelte": {
+      "bridge": 12,
+      "mono": 2,
+      "easing": 1
+    },
+    "src/panels/rack/SteerCard.svelte": {
+      "bridge": 64,
+      "border": 2,
+      "shadow": 1,
+      "mono": 1
+    }
+  }
+}
