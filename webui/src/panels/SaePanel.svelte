@@ -56,6 +56,8 @@
   } from "../lib/types";
   import type { SaeSortMode } from "../lib/stores.svelte";
 
+  /** ``sources={false}`` leaves the source picker to the Lens room (the inspector's Features). */
+  let { sources = true }: { sources?: boolean } = $props();
   const loaded = $derived(saeLoaded());
   const displayReadout = $derived(saeReadoutForDisplay());
   /** The resident SAE, read off the family block + the prepared-sources
@@ -228,7 +230,7 @@
 </script>
 
 <div class="sae" aria-label="Model feature controls">
-  <RuntimeSaeSourceSection />
+  {#if sources}<RuntimeSaeSourceSection />{/if}
 
   {#if loaded}
 
@@ -469,7 +471,7 @@
     font-size: var(--text-sm);
     font-weight: var(--weight-structure);
   }
-  .empty-action:hover { color: var(--tint); }
+  .empty-action:hover { color: var(--ink); }
   /* Card stack — same rhythm as the other racks' strips. */
   .cards {
     display: flex;
@@ -518,8 +520,8 @@
   .add-btn {
     min-height: var(--control-target);
     /* Family-tinted fill — the gold sibling of the racks' launchers. */
-    background: color-mix(in srgb, var(--tint) 10%, transparent);
-    color: var(--tint);
+    background: color-mix(in oklch, var(--tint) 10%, transparent);
+    color: var(--ink);
     border: 1px solid transparent;
     border-radius: var(--radius);
     font-size: var(--text-sm);
@@ -529,7 +531,7 @@
     transition: background var(--dur) var(--ease-out);
   }
   .add-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--tint) 18%, transparent);
+    background: color-mix(in oklch, var(--tint) 18%, transparent);
   }
   .add-btn:disabled {
     opacity: var(--disabled-opacity);

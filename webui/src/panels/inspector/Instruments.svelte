@@ -6,8 +6,10 @@
   import JLensPanel from "../JLensPanel.svelte";
   import SaePanel from "../SaePanel.svelte";
   import SamplingStrip from "../SamplingStrip.svelte";
-  import { sessionState } from "../../lib/stores/session.svelte";
+  import { saeLoaded, sessionState } from "../../lib/stores/session.svelte";
   import { goto } from "../../lib/stores/rooms.svelte";
+
+  const saeOn = $derived(saeLoaded());
 
   const sources = $derived.by(() => {
     const blocks = sessionState.info?.instruments ?? [];
@@ -34,8 +36,12 @@
   </section>
 
   <section class="dw-sec" id="instrument-sae" aria-labelledby="instrument-sae-head">
-    <div class="dw-sec-head"><span class="head" id="instrument-sae-head">Features</span></div>
-    <SaePanel />
+    <div class="dw-sec-head"><span class="head" id="instrument-sae-head">Features</span>{#if !saeOn}<span class="meta">Off</span>{/if}</div>
+    {#if saeOn}
+      <SaePanel sources={false} />
+    {:else}
+      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose an SAE</button></div>
+    {/if}
   </section>
 
   <section class="dw-sec" id="instrument-sampling" aria-labelledby="instrument-sampling-head">

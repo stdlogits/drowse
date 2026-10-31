@@ -26,11 +26,13 @@ try {
   }
   const requests = [];
   const metadataRequests = [];
+  const sourceRequests = [];
   let replay = (...args) => new Promise((resolve, reject) => requests.push({ args, resolve, reject }));
   const { installRuntimeClient } = await server.ssrLoadModule("/src/lib/runtime/registry.ts");
   installRuntimeClient({ mode: "browser", instruments: {
     tokenReadout: (...args) => replay(...args),
     saeFeaturesMetadata: ids => new Promise((resolve, reject) => metadataRequests.push({ ids, resolve, reject })),
+    sources: family => { sourceRequests.push(family); return Promise.resolve({ sources: [], releases: [] }); },
   } });
   const { cachedTokenReadout, invalidateTokenReadoutCache } =
     await server.ssrLoadModule("/src/lib/runtime/tokenReadoutCache.ts");
@@ -93,6 +95,19 @@ try {
   await partialRetry;
   assert.deepEqual(saeState.meta.get(17), { label: "recovered label", max_act: 20 });
   console.log("SAE metadata lifecycle: missing-label backfill, frame preservation, pack-switch isolation, and offline retry passed");
+
+  // The SAE source picker discovers releases through the one sources refresh. A model with no
+  // SAELens release answers an empty list, and that must stay one request (regression: the picker
+  // re-fetched whenever its release list came back empty, about 1,200 requests a second).
+  const { saeSourceState, refreshSaeSources } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+  await Promise.all([refreshSaeSources(), refreshSaeSources()]);
+  for (let tick = 0; tick < 20; tick += 1) await flush();
+  assert.deepEqual(sourceRequests, ["sae"], "an empty release list is one request, and a concurrent refresh adds none");
+  assert.deepEqual([saeSourceState.sources, saeSourceState.releases], [[], []]);
+  const { readFile } = await import("node:fs/promises");
+  const picker = await readFile(new URL("../src/panels/SaeSourceSection.svelte", import.meta.url), "utf8");
+  assert.doesNotMatch(picker, /apiInstruments|\.sources\(/, "the picker reads saeSourceState and never fetches on its own");
+  console.log("SAE source discovery: one request for an empty release list passed");
   console.log("Readout lifecycle: bounded pending work, 500 overflow attempts, deduplication, invalidation, and transport recovery passed");
 } finally {
   await server.close();

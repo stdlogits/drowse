@@ -1,12 +1,10 @@
 <script lang="ts">
   import { MorphText } from "@stdlogits/ledger";
-  import { onMount } from "svelte";
+  import { onMount, untrack } from "svelte";
   import Bar from "../lib/charts/Bar.svelte";
   import Select from "../lib/Select.svelte";
   import Button from "../lib/ui/Button.svelte";
-  import { apiInstruments } from "../lib/runtime/services";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
-  import { userFacingError } from "../lib/runtime/userFacingError";
   import {
     instrumentFamily,
     loadSae,
@@ -45,12 +43,7 @@
   let trainTokens = $state(1_000_000);
   let trainLayer = $state("");
   let trainConfirm = $state(false);
-  let releases = $state<{
-    release: string;
-    layers: number[];
-    source?: "local" | "saelens";
-  }[]>([]);
-  let discoverError = $state<string | null>(null);
+  const releases = $derived(saeSourceState.releases);
   const providerOptions = $derived((allowPackFetch ? releases : []).map((row) => ({
     value: `saelens:${row.release}`,
     label: row.release,
@@ -120,19 +113,10 @@
     if (selectedSource !== "local") trainConfirm = false;
   });
 
+  // Releases arrive with the sources (refreshSaeSources, on mount); this only picks the first.
   $effect(() => {
-    if (releases.length > 0) return;
-    void apiInstruments.sources("sae").then((result) => {
-      releases = (result.releases ?? []).filter((row) => row.source !== "local");
-      if (!selectedSource && releases.length > 0) {
-        selectedSource = `saelens:${releases[0].release}`;
-      }
-    }).catch((error) => {
-      discoverError = userFacingError(
-        error,
-        "Unable to check available feature packs. Check your connection and try again.",
-      );
-    });
+    const first = releases[0];
+    if (first && untrack(() => !selectedSource)) selectedSource = `saelens:${first.release}`;
   });
 
   function requestTrain(): void {
@@ -265,9 +249,6 @@
     {/if}
     {#if saeTrain.state.error}
       <p class="hint load-error" role="alert">local train: {saeTrain.state.error}</p>
-    {/if}
-    {#if discoverError}
-      <p class="hint" role="alert">registry: {discoverError}</p>
     {/if}
   {/snippet}
 </InstrumentSourceSection>
