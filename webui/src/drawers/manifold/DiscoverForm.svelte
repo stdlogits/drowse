@@ -433,11 +433,8 @@
         checked={rolePerNode}
         onchange={(on) => (rolePerNode = on)}
         label="Use a separate role for each concept"
-        hint={PER_NODE_ROLE_HELP}
+        hint={`${PER_NODE_ROLE_HELP} A chat template without roles fails before fitting.`}
       />
-      {#if rolePerNode}
-        <p class="role-hint">Each concept becomes its assistant voice; a chat template without roles fails before fitting.</p>
-      {/if}
       <Switch checked={force} onchange={(on) => (force = on)} label="Replace existing examples with this name"
         hint="Without replacement, existing concept groups are reused. To change their budget, use a new name or replace them." />
     </div>

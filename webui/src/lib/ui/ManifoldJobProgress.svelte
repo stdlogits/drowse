@@ -7,6 +7,7 @@
   import { steerRack } from "../stores/steering.svelte";
   import { steeringDrawerFor } from "../manifolds/fitKind";
   import { runtimeClient } from "../runtime/client";
+  import { jobNote } from "../manifolds/jobNote";
 
   let { compact = false }: { compact?: boolean } = $props();
   let now = $state(Date.now());
@@ -21,12 +22,9 @@
   const timing = $derived(job?.status === "waiting" ? "Fitting starts next"
     : job?.status === "cancelling" ? "Waiting for the current step to stop"
     : !busy ? "" : remaining === null ? "Estimating this step…" : `${etaLabel(remaining)} in this step`);
-  const step = $derived(!busy ? "" : job?.phase === "generating" && job.fitAfterwards ? "Step 1 of 2" : job?.fitAfterwards ? "Step 2 of 2" : "");
   // The browser runtime does the work in this tab; the server does not need it open.
   const keepOpen = runtimeClient.mode !== "http";
-  const note = $derived(!job ? "" : busy ? [step, keepOpen ? "Keep this tab open" : ""].filter(Boolean).join(" · ")
-    : job.status === "complete" ? job.phase === "generating" ? "Examples saved. Fit them from the library when ready." : job.phase === "scoring" ? "Scored: see the sum and mean probabilities." : job.phase === "installing" ? "Installed. Check its model fits before steering or probing." : "Saved and ready to steer or probe."
-    : "Saved concept groups are kept. Reopen the creator or library to try again.");
+  const next = $derived(job ? jobNote(job, keepOpen) : { note: "", tip: "" });
   const announcement = $derived(job ? `${job.namespace}/${job.name}: ${title}${busy && fraction !== null ? `, ${Math.floor(fraction * 10) * 10}% of this step` : ""}` : "");
 
   $effect(() => {
@@ -69,13 +67,13 @@
         {#if busy && job.cancellable}
           <button type="button" class="dw-text" disabled={job.status !== "running"} onclick={() => void cancel()}>Cancel</button>
         {:else if !busy}
-          <button type="button" class="dw-quiet" onclick={openResult}>Open library</button>
+          <button type="button" class="dw-quiet" data-tip={next.tip || undefined} onclick={openResult}>Open library</button>
           <button type="button" class="dw-text" onclick={dismissManifoldJob}>Dismiss</button>
         {/if}
       </span>
     </div>
     {#if job.error}<p class="error">{job.error}</p>{/if}
-    {#if note}<p class="meta">{note}</p>{/if}
+    {#if next.note}<p class="meta">{next.note}</p>{/if}
   </section>
 {/if}
 
@@ -94,6 +92,11 @@
   .actions .dw-quiet { background: var(--wash2); }
   p { margin: 0; }
   .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
-  @media (max-width: 720px) { .compact { padding: var(--s3) var(--s4); } }
+  @media (max-width: 720px) {
+    .compact { padding: var(--s3) var(--s4); }
+    /* A 44 px target for the text button, without growing the band. */
+    .actions .dw-text { position: relative; }
+    .actions .dw-text::after { content: ""; position: absolute; inset: -12px -6px; }
+  }
   @media (forced-colors: active) { .meter { outline: 1px solid CanvasText; } .meter i { background: Highlight; } }
 </style>
