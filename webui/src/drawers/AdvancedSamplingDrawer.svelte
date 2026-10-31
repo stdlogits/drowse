@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { glide } from "@stdlogits/ledger";
-  import { IconButton } from "@stdlogits/ledger";
+  // Sampling settings (a dialog, from the sampling section's "More settings"): the filters and
+  // penalties, capture and seed as label-over-field pairs, and the rarer knobs folded under More.
+  import { Expander, IconButton, Segmented } from "@stdlogits/ledger";
   import {
     closeDrawer,
     samplingState,
@@ -11,7 +12,6 @@
     sessionState,
   } from "../lib/stores.svelte";
   import NumberInput from "../lib/NumberInput.svelte";
-  import { Expander } from "@stdlogits/ledger";
   import { getRuntimeClient } from "../lib/runtime/registry";
   import { SAMPLING_HELP } from "../lib/parameterHelp";
   import {
@@ -23,13 +23,14 @@
     tokenAlternativeLimit,
   } from "../lib/runtime/samplingCapabilities";
 
-  // Render mode — two-state: chat renders bubbles + roles, raw renders a
+  // Render mode — two-state: chat renders turns and roles, raw renders a
   // single flat completion buffer.  The mode is seeded from the model's
   // ``is_base_model`` flag the first time the model is seen, then it's a
-  // plain user toggle.  Toggling never mutates the loom tree.
+  // plain user toggle (a base model stays raw).  Toggling never mutates the
+  // loom tree.
   const RENDER_MODES: { value: "chat" | "raw"; label: string }[] = [
-    { value: "chat", label: "chat" },
-    { value: "raw", label: "raw" },
+    { value: "chat", label: "Chat template" },
+    { value: "raw", label: "Raw completion" },
   ];
   const isBaseModel = $derived(sessionState.info?.is_base_model === true);
   const runtimeMode = getRuntimeClient().mode;
@@ -88,24 +89,18 @@
   });
 </script>
 
-<section class="drawer-shell" aria-label="Sampling settings drawer">
-  <header class="header">
-    <div>
-      <h2 class="title">Sampling settings</h2>
-    </div>
+<section class="sampling-settings" aria-label="Sampling settings drawer">
+  <header class="dlg-head">
+    <h2>Sampling settings</h2>
     <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
-    <section class="panel">
-      <div class="panel-heading">
-        <div>
-          <h3>Sampling filters and penalties</h3>
-        </div>
-      </div>
-      <div class="setting-grid two">
-        <div class="setting">
-          <span class="setting-label" data-tip={HELP.temperature}>Temperature</span>
+    <section class="dw-sec" aria-labelledby="sampling-filters-head">
+      <span class="head" id="sampling-filters-head">Filters and penalties</span>
+      <div class="fields">
+        <div class="field">
+          <span class="label" data-tip={HELP.temperature}>Temperature</span>
           <NumberInput
             value={samplingState.temperature}
             min={0}
@@ -119,21 +114,21 @@
             ariaLabel="Temperature value"
           />
         </div>
-        <div class="setting">
-          <span class="setting-label" data-tip={HELP.topK}>Top K</span>
+        <div class="field">
+          <span class="label" data-tip={HELP.topK}>Top-k</span>
           <NumberInput
             value={samplingState.top_k}
             min={TOP_K_MIN}
             max={TOP_K_MAX}
             step={1}
-            placeholder="Default (1024)"
+            placeholder="1024 by default"
             allowEmpty
             onchange={onTopK}
-            ariaLabel="Top K"
+            ariaLabel="Top-k"
           />
         </div>
-        <div class="setting">
-          <span class="setting-label" data-tip={HELP.frequencyPenalty}>Frequency penalty</span>
+        <div class="field">
+          <span class="label" data-tip={HELP.frequencyPenalty}>Frequency penalty</span>
           <NumberInput
             value={samplingState.frequency_penalty}
             min={PENALTY_MIN}
@@ -143,8 +138,8 @@
             ariaLabel="Frequency penalty"
           />
         </div>
-        <div class="setting">
-          <span class="setting-label" data-tip={HELP.presencePenalty}>Presence penalty</span>
+        <div class="field">
+          <span class="label" data-tip={HELP.presencePenalty}>Presence penalty</span>
           <NumberInput
             value={samplingState.presence_penalty}
             min={PENALTY_MIN}
@@ -157,15 +152,11 @@
       </div>
     </section>
 
-    <section class="panel">
-      <div class="panel-heading">
-        <div>
-          <h3>Captured output and reproducibility</h3>
-        </div>
-      </div>
-      <div class="setting-grid two">
-        <div class="setting">
-          <span class="setting-label" data-tip={HELP.returnTopK}>Return top K</span>
+    <section class="dw-sec" aria-labelledby="sampling-capture-head">
+      <span class="head" id="sampling-capture-head">Capture and seed</span>
+      <div class="fields">
+        <div class="field">
+          <span class="label" data-tip={HELP.returnTopK}>Alternatives per token</span>
           <NumberInput
             value={samplingState.return_top_k}
             min={0}
@@ -173,11 +164,11 @@
             step={1}
             disabled={!alternativesAvailable}
             onchange={onAlternatives}
-            ariaLabel="Return top K"
+            ariaLabel="Alternatives per token"
           />
         </div>
-        <div class="setting">
-          <span class="setting-label" data-tip={HELP.seed}>Seed</span>
+        <div class="field">
+          <span class="label" data-tip={HELP.seed}>Seed</span>
           <NumberInput
             value={samplingState.seed}
             min={samplingSeedMinimum(runtimeMode)}
@@ -192,38 +183,32 @@
       </div>
     </section>
 
-    <Expander bind:open={technicalOpen} label="Additional parameters">
-      <div class="technical-stack">
-        <section class="technical-section">
-          <h3>Conversation format</h3>
-          <div class="mode-row" role="group" aria-label="Conversation format" use:glide>
-            {#each RENDER_MODES as m (m.label)}
-              <button
-                type="button"
-                class="mode-opt"
-                class:active={genUiMode.mode === m.value}
-                aria-pressed={genUiMode.mode === m.value}
-                disabled={isBaseModel && m.value === "chat"}
-                onclick={() => setGenUiMode(m.value)}
-              >{m.value === "chat" ? "Chat template" : "Raw completion"}</button>
-            {/each}
-          </div>
-          <p class="hint">{isBaseModel ? "Base models continue the exact text in the buffer, without chat roles or a system prompt." : "This model normally opens in chat template mode."}</p>
+    <Expander bind:open={technicalOpen} label="More">
+      <div class="more">
+        <section class="dw-sec" aria-labelledby="sampling-format-head">
+          <span class="head" id="sampling-format-head">Format</span>
+          {#if isBaseModel}
+            <span class="fixed" data-tip="A base model continues the text as written, without chat roles or a system prompt">Raw completion</span>
+          {:else}
+            <div class="dw-row">
+              <Segmented label="Conversation format" value={genUiMode.mode} onchange={setGenUiMode} options={RENDER_MODES} />
+            </div>
+          {/if}
         </section>
 
-        <label class="technical-section">
-          <span class="setting-label">Stop sequences</span>
+        <label class="dw-sec">
+          <span class="head">Stop sequences</span>
           <textarea
             rows="4"
             value={samplingState.stop_sequences}
             oninput={(ev) => setSampling("stop_sequences", (ev.currentTarget as HTMLTextAreaElement).value)}
-            placeholder={"One sequence per line\n###\n<|eot_id|>"}
+            placeholder={"One per line\n###\n<|eot_id|>"}
             aria-label="Stop sequences"
           ></textarea>
         </label>
 
-        <label class="technical-section">
-          <span class="setting-label">Logit bias</span>
+        <label class="dw-sec">
+          <span class="head">Logit bias</span>
           <textarea
             rows="5"
             class:invalid={!logitBiasValid}
@@ -234,11 +219,9 @@
             aria-invalid={!logitBiasValid}
             aria-describedby="logit-bias-help"
           ></textarea>
-          <p id="logit-bias-help" class:error={!logitBiasValid} class="hint">
-            {logitBiasValid
-              ? "Use a JSON object or one token ID and value per line."
-              : "Use JSON or write one token ID and value per line."}
-          </p>
+          <span id="logit-bias-help" class="meta" class:error={!logitBiasValid}>
+            {logitBiasValid ? "A JSON object, or one token ID and value per line" : "Use JSON, or one token ID and value per line"}
+          </span>
         </label>
       </div>
     </Expander>
@@ -246,155 +229,56 @@
 </section>
 
 <style>
-  .drawer-shell {
+  .sampling-settings {
     container: sampling-settings / inline-size;
-    min-height: 0;
-    height: 100%;
     display: flex;
     flex-direction: column;
-    background: transparent;
+    height: 100%;
+    min-height: 0;
+    color: var(--ink2);
   }
-  .header {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-6);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    background: transparent;
-  }
-  .title {
-    color: var(--accent);
-    font-family: var(--font-structure);
-    letter-spacing: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-structure);
-  }
-  p {
-    margin: var(--space-2) 0 0;
-    color: var(--fg-muted);
-    line-height: 1.5;
-    text-wrap: pretty;
-  }
+  .dlg-head { display: flex; flex: 0 0 auto; align-items: center; justify-content: space-between; gap: var(--s4); padding: var(--s5) var(--s5) 0; }
+  .dlg-head h2 { margin: 0; color: var(--ink); font: var(--type-mark); }
   .body {
     display: grid;
-    grid-auto-rows: max-content;
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s6);
     align-content: start;
-    gap: var(--drawer-section-gap);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
     min-height: 0;
-    min-width: 0;
+    padding: var(--s5);
     overflow: auto;
     overscroll-behavior: contain;
   }
-  .panel {
-    min-width: 0;
-  }
-  h3 {
-    margin: 0;
-    color: var(--fg);
-    font-size: var(--text-sm);
-    font-family: var(--font-structure);
-    font-weight: var(--weight-structure);
-    letter-spacing: 0;
-  }
-  .panel-heading {
-    margin-bottom: var(--space-5);
-  }
-  .setting-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-6);
-  }
-  .setting-grid.two {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-  .setting,
-  .technical-section {
-    display: grid;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .setting-label {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--fg-strong);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-structure);
-  }
-  .technical-stack {
-    display: grid;
-    gap: var(--space-6);
-  }
-  .technical-section + .technical-section {
-    padding-top: var(--space-5);
-    box-shadow: inset 0 1px var(--glass-line);
-  }
+
+  /* Two columns of label-over-field, one when the dialog is narrow. */
+  .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4) var(--s5); }
+  .field { display: grid; gap: var(--s2); min-width: 0; }
+  .label { justify-self: start; color: var(--ink2); font: var(--type-control); }
+  .more { display: grid; gap: var(--s5); }
+  .fixed { justify-self: start; color: var(--ink); font: var(--type-control); }
+
   textarea {
     width: 100%;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    background: var(--input-well);
-    color: var(--fg);
-    padding: var(--space-4);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-structure);
-    letter-spacing: 0;
-    resize: vertical;
-    line-height: 1.45;
-  }
-  textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .invalid {
-    border-color: var(--accent-red);
-  }
-  .hint {
-    font-size: var(--text-xs);
-    line-height: 1.35;
-    color: var(--fg-muted);
-  }
-  .error {
-    color: var(--accent-red);
-  }
-  .mode-row {
-    display: flex;
-    gap: var(--space-1);
-    border-radius: var(--radius-group);
-    background: var(--surface-sheen), var(--glass);
-    padding: var(--space-1);
-    margin-top: var(--space-3);
-  }
-  .mode-opt {
-    min-height: var(--control-target);
-    flex: 1 1 0;
-    background: transparent;
-    color: var(--fg-muted);
+    min-height: 96px;
+    padding: var(--s2) var(--s3);
     border: 0;
-    border-radius: var(--radius-inset);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition:
-      background var(--dur) var(--ease-out),
-      color var(--dur) var(--ease-out);
+    border-radius: var(--r-col);
+    background: var(--wash);
+    color: var(--ink);
+    font: var(--type-small);
+    resize: vertical;
+    transition: background-color var(--fast) var(--ease);
   }
-  .mode-opt:hover {
-    color: var(--fg);
-  }
-  .mode-opt.active {
-    background: var(--accent-subtle);
-    color: var(--accent);
-  }
+  textarea:hover { background: var(--wash2); }
+  /* Ledger has no red: an invalid field darkens toward ink, and the line under it says why. */
+  textarea.invalid { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
+  .meta.error { color: var(--ink); }
 
-  @container sampling-settings (max-width: 40rem) {
-    .setting-grid,
-    .setting-grid.two { grid-template-columns: minmax(0, 1fr); }
+  @container sampling-settings (max-width: 560px) {
+    .fields { grid-template-columns: minmax(0, 1fr); }
+  }
+  @media (max-width: 720px) {
+    .dlg-head { padding: var(--s4) var(--s4) 0; }
+    .body { padding: var(--s4); }
   }
 </style>
