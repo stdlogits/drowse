@@ -263,7 +263,11 @@ def test_slens_probe_reads_footprint_z(make_tiny_session: Any) -> None:
     hidden = {L: torch.randn(d, generator=gen) for L in spec["layers"]}
     reading = session.lens.score_probes(hidden)["slens/a"]
     assert reading.unit == "mean_footprint_z"
-    expected = {L: _z(session, lens, L, hidden[L], a) for L in hidden}
+    # A probe reads a residual: centred on the neutral block-output mean.
+    means = session.layer_means
+    expected = {L: _z(session, lens, L, hidden[L] - means[L], a) for L in hidden}
+    raw = {L: _z(session, lens, L, hidden[L], a) for L in hidden}
+    assert reading.per_layer != pytest.approx(raw, rel=1e-3)
     assert reading.per_layer == pytest.approx(expected, rel=1e-4)
     # Regression: the value was a plain mean over every S:out layer; it is
     # the depth rule's w_S-weighted mean, so it reads where S is faithful.
@@ -300,7 +304,7 @@ def test_slens_gate_scalars_and_the_step_stash(make_tiny_session: Any) -> None:
     _install_s_lens(session)
     harness = LensHarness(
         model=session.model, tokenizer=session.tokenizer, layers=session.layers,
-        model_id=session.model_id,
+        model_id=session.model_id, neutral_means={"out": session.layer_means},
     )
     harness.lens.attach("slens/a")
     d = int(session.model.get_input_embeddings().weight.shape[1])
@@ -389,7 +393,7 @@ def test_read_returns_both_families_by_depth(make_tiny_session: Any) -> None:
     d = s_lens.d_model
     vector = torch.randn(d, generator=torch.Generator().manual_seed(6))
 
-    read = cast(LensRead, session.lens.read(vector, 0, "out", k=3))
+    read = cast(LensRead, session.lens.read(vector, 0, "out", of="direction", k=3))
     assert (read.layer, read.site, read.depth) == (0, "out", 0.0)
     assert (read.s.weight, read.r.weight) == (1.0, 0.0)
     assert (read.r.lens, read.s.lens) == ("J:out", "S:out")
@@ -399,26 +403,26 @@ def test_read_returns_both_families_by_depth(make_tiny_session: Any) -> None:
     top = read.s.tokens[0]
     assert top.value == pytest.approx(_z(session, s_lens, 0, vector, top.token_id), rel=1e-4)
 
-    deep = cast(LensRead, session.lens.read(vector, len(session.layers) - 1, "mid"))
+    deep = cast(LensRead, session.lens.read(vector, len(session.layers) - 1, "mid", of="direction"))
     assert (deep.s.weight, deep.r.weight) == (0.0, 1.0)
     # The R lens holds out only: its mid half is absent, never read at out.
     assert not deep.r.present and "no 'mid' site" in str(deep.r.absent)
     assert deep.s.present and deep.s.lens == "S:mid"
 
-    rows = session.lens.read(torch.stack([vector, -vector]), 1, "out", k=2)
+    rows = session.lens.read(torch.stack([vector, -vector]), 1, "out", of="direction", k=2)
     assert isinstance(rows, list) and len(rows) == 2
     from drowse.errors import RequestError
 
     with pytest.raises(RequestError, match="site"):
-        session.lens.read(vector, 0, "pre")
+        session.lens.read(vector, 0, "pre", of="direction")
     with pytest.raises(RequestError, match="outside"):
-        session.lens.read(vector, len(session.layers), "out")
+        session.lens.read(vector, len(session.layers), "out", of="direction")
 
 
 def test_read_without_lenses_is_two_absent_halves(make_tiny_session: Any) -> None:
     session = make_tiny_session(warm=False)
     d = int(session.model.get_input_embeddings().weight.shape[1])
-    read = cast(LensRead, session.lens.read(torch.ones(d), 1))
+    read = cast(LensRead, session.lens.read(torch.ones(d), 1, of="direction"))
     assert not read.r.present and not read.s.present
     assert "rs-s" in str(read.s.absent) and read.r.lens is None
 
@@ -439,11 +443,54 @@ def test_read_prompt_reads_out_and_mid_residuals(make_tiny_session: Any) -> None
         for position, reads in by_position.items():
             assert [read.layer for read in reads] == list(range(len(session.layers)))
             for read in reads:
-                direct = cast(LensRead, session.lens.read(rows[read.layer][position], read.layer, site, k=2))
+                direct = cast(LensRead, session.lens.read(rows[read.layer][position], read.layer, site, of="residual", k=2))
                 assert [t.token_id for t in read.s.tokens] == [t.token_id for t in direct.s.tokens]
                 assert [t.value for t in read.s.tokens] == pytest.approx(
                     [t.value for t in direct.s.tokens], rel=1e-3, abs=1e-4,
                 )
+                # Centred on the neutral mean at the read's own site.
+                assert read.of == "residual" and read.s.centred
+                mean = session.lens.neutral_mean(site, read.layer)
+                top = read.s.tokens[0]
+                assert top.value == pytest.approx(_z_at(
+                    session, read.layer, site, rows[read.layer][position] - mean, top.token_id,
+                ), rel=1e-3)
+
+
+def _z_at(session: Any, layer: int, site: str, h: torch.Tensor, token_id: int) -> float:
+    lens = session.lens.resident_input()
+    weight = session.model.get_input_embeddings().weight.detach().float()
+    keep = token_mask(session.tokenizer, int(weight.shape[0]))
+    centred = weight[keep] - weight[keep].mean(0)
+    u = h.float() @ lens.matrix(layer, site)
+    return float((u @ _centred(session, token_id)) / (centred @ u).std(correction=0))
+
+
+def test_slens_probes_and_reads_refuse_without_a_neutral_mean(make_tiny_session: Any) -> None:
+    """A residual's S read is centred on the neutral mean or refused, never
+    read raw: an slens/ probe without one never attaches, and a read_prompt
+    at a site with no mean raises."""
+    from drowse.errors import NeutralMeansError
+
+    session = make_tiny_session(warm=False)
+    _install_s_lens(session, sites=("out", "mid"))
+    harness = LensHarness(
+        model=session.model, tokenizer=session.tokenizer, layers=session.layers,
+        model_id=session.model_id, neutral_means={"out": session.layer_means},
+    )
+    with pytest.raises(NeutralMeansError, match="mid"):
+        harness.lens.read_prompt("abc", site="mid")
+    harness.lens.read_prompt("abc", site="out")
+    bare = LensHarness(
+        model=session.model, tokenizer=session.tokenizer, layers=session.layers,
+        model_id=session.model_id,
+    )
+    with pytest.raises(NeutralMeansError):
+        bare.lens.attach("slens/a")
+    assert "slens/a" not in bare.lens.probes
+    # A direction needs no mean.
+    d = int(session.model.get_input_embeddings().weight.shape[1])
+    bare.lens.read(torch.ones(d), 0, "mid", of="direction")
 
 
 # -- tokens-in decomposition ---------------------------------------------------------
@@ -476,7 +523,7 @@ def _harness(session: Any) -> LensHarness:
     layer's slice."""
     harness = LensHarness(
         model=session.model, tokenizer=session.tokenizer, layers=session.layers,
-        model_id=session.model_id,
+        model_id=session.model_id, neutral_means={"out": session.layer_means},
     )
     d = int(session.model.get_input_embeddings().weight.shape[1])
     gen = torch.Generator().manual_seed(11)
@@ -745,4 +792,4 @@ def test_read_refuses_a_vector_of_the_wrong_width(make_tiny_session: Any) -> Non
     d = int(session.model.get_input_embeddings().weight.shape[1])
     for bad in (torch.ones(d - 1), torch.ones(2, d + 1)):
         with pytest.raises(RequestError, match="residual-width"):
-            session.lens.read(bad, 0, "out")
+            session.lens.read(bad, 0, "out", of="direction")

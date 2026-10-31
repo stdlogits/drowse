@@ -66,7 +66,7 @@ class _Lens:
         self.calls.append(("read_prompt", {"prompt": prompt, **kwargs}))
         r = FamilyRead("R", 0.4, "probability", lens="R:mid", tokens=(TokenScore(5, " Paris", 0.9),))
         s = FamilyRead("S", 0.6, "footprint_z", lens="S:mid", absent="this S lens has no 'mid' site")
-        return {4: [LensRead(2, "mid", 0.25, r=r, s=s)]}
+        return {4: [LensRead(2, "mid", 0.25, r=r, s=s, of="residual")]}
 
     def decompose(self, selector: str, **kwargs: Any) -> Any:
         self.calls.append(("decompose", {"selector": selector, **kwargs}))

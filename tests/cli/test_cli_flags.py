@@ -574,7 +574,7 @@ class _ReadoutLens:
 
         r = FamilyRead("R", 0.75, "probability", lens="R:out", tokens=(TokenScore(1, "a", 0.5),))
         s = FamilyRead("S", 0.25, "footprint_z", absent="no S-lens available")
-        return {7: [LensRead(3, "out", 0.5, r=r, s=s)]}
+        return {7: [LensRead(3, "out", 0.5, r=r, s=s, of="residual")]}
 
     def decompose(self, _selector: str, **_kw: Any) -> Any:
         return {3: (0.1, [("a", 0.2)]), 4: (0.3, [("b", 0.4)])}

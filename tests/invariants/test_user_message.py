@@ -33,6 +33,7 @@ from drowse.errors import (
     UnknownVariantError,
     UnitRefError,
     UnsupportedBlockError,
+    NeutralMeansError,
     WhitenerError,
 )
 from drowse.errors import ProfileNotRegisteredError
@@ -66,6 +67,8 @@ _OVERRIDES: list[tuple[type[DrowseError], int]] = [
     (AmbiguousVariantError, 400),
     (UnknownVariantError, 404),
     (WhitenerError, 400),
+    # A residual read with no neutral mean at its site: valid read, unsatisfiable here.
+    (NeutralMeansError, 422),
     (ProfileError, 400),
     # A composition failure is syntactically valid but semantically
     # unsatisfiable — 422, distinct from the parser's 400.

@@ -112,6 +112,21 @@ class WhitenerError(ValueError, DrowseError):
         return (400, str(self) or self.__class__.__name__)
 
 
+class NeutralMeansError(RuntimeError, DrowseError):
+    """Raised when a residual read has no neutral mean to centre on.
+
+    S-family reads of a residual are centred on the neutral layer mean at
+    the read's site (``out``: the whitener's centring mean; ``mid``: the
+    neutral cache's mid means).  A model whose cache carries no mid means
+    (its blocks are outside the block description) or a neutral baseline
+    that cannot be built refuses the read rather than reading it
+    uncentred.  422.
+    """
+
+    def user_message(self) -> tuple[int, str]:
+        return (422, str(self) or self.__class__.__name__)
+
+
 class ProfileError(ValueError, DrowseError):
     """Raised on invalid Profile operations (missing layer, empty, etc.).
 

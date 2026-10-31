@@ -7,6 +7,10 @@ the capture forward on a miss.  The same forward feeds the unit statistics
 (:class:`~drowse.units.stats.UnitStatsAccumulator`: one hook pair per block)
 when the model's blocks are described; a model they cannot describe, or a
 unit hook that fails, records units as unavailable and never fails the pass.
+The same forward also measures each block's **mid mean** (:class:`MidMeans`:
+the residual after attention, the MLP's input, pooled at the activations'
+own positions), the centring mean of an S-family read at the lens ``mid``
+site; a model the description refuses records it as unavailable.
 The cache file format, validation and publication are pure IO in
 :mod:`drowse.store.neutral`.
 """
@@ -15,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from typing import Any, Callable
 
 import torch
@@ -24,6 +29,7 @@ from drowse.model.fingerprint import loaded_model_fingerprint
 from drowse.store.neutral import (
     NEUTRAL_CAPTURE_VERSION,
     NeutralCache,
+    NeutralMid,
     NeutralUnits,
     load_neutral_cache,
     neutral_cache_matches,
@@ -178,7 +184,10 @@ def _load_or_compute_neutral_cache_locked(
         except FileNotFoundError:
             pass
         except Exception as e:
-            log.warning("Corrupt neutral activations cache for %s, recomputing: %s", model_id, e)
+            log.warning(
+                "Unreadable or stale neutral activations cache for %s, recomputing: %s",
+                model_id, e,
+            )
         else:
             if not _units_well_formed(cache.units):
                 log.info(
@@ -203,21 +212,180 @@ def _load_or_compute_neutral_cache_locked(
             f"Computing neutral activations for {model_id} "
             f"(one-time per model, {len(pairs)} prompts)..."
         )
-    accumulator, reason = _unit_accumulator(base_model)
-    if accumulator is None:
+    accumulator, mids, reason = _observers(base_model, prepared)
+    if accumulator is None or mids is None:
         activations = _capture.compute_neutral_activations(
             model, tokenizer, layers, rendered=prepared, on_progress=on_progress,
         )
         units = NeutralUnits(None, 0, reason)
+        mid = NeutralMid(None, reason)
     else:
-        with accumulator:
+        with accumulator, mids:
             activations = _capture.compute_neutral_activations(
                 model, tokenizer, layers, rendered=prepared,
-                on_progress=on_progress, observer=accumulator,
+                on_progress=on_progress, observer=_Observers(accumulator, mids),
             )
         units = _finish_units(accumulator)
-    sidecar = publish_neutral_cache(model_id, activations, units=units, **identity)
-    return NeutralCache(activations, units, sidecar)
+        mid = _finish_mid(mids)
+    sidecar = publish_neutral_cache(
+        model_id, activations, units=units, mid=mid, **identity,
+    )
+    return NeutralCache(activations, units, mid, sidecar)
+
+
+class MidMeans:
+    """Streams each block's mid mean off the neutral capture forward.
+
+    One forward hook per block on the MLP input norm (its input is the
+    block's ``mid`` residual, as :class:`~drowse.model.blocks.BlockSpec`
+    defines it), gathering each row at its pooled position (the rendered
+    row's ``content_end``, the activations' own pooling) and summing in
+    fp32 on the device.  It frames forwards like the unit accumulator (a
+    :class:`~drowse.fit.capture.ChunkObserver`): a chunk's rows are the next
+    ``len(lengths)`` prepared rows, committed or discarded with the forward;
+    ``abandon`` records why the means are unavailable.
+    """
+
+    def __init__(
+        self, spec: Any, rendered: Sequence[tuple[torch.Tensor, int]],
+        *, device: torch.device,
+    ) -> None:
+        self._blocks = list(spec.blocks)
+        self._rendered = list(rendered)
+        self._device = device
+        d = int(spec.d_model)
+        self._sums = {
+            block.layer: torch.zeros(d, dtype=torch.float32, device=device)
+            for block in self._blocks
+        }
+        self._pending: dict[int, torch.Tensor] = {}
+        self._handles: list[Any] = []
+        self._cursor = 0
+        self._chunk = 0
+        self._rows: torch.Tensor | None = None
+        self._positions: torch.Tensor | None = None
+        self.count = 0
+        self.failure: str | None = None
+
+    def install(self) -> None:
+        if self._handles:
+            return
+        try:
+            for block in self._blocks:
+                self._handles.append(
+                    block.mlp_in_norm.module.register_forward_hook(self._hook(block.layer)),
+                )
+        except BaseException:
+            self.close()
+            raise
+
+    def close(self) -> None:
+        for handle in self._handles:
+            handle.remove()
+        self._handles = []
+
+    def __enter__(self) -> "MidMeans":
+        self.install()
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        self.close()
+
+    def _hook(self, layer: int) -> Any:
+        def hook(_module: torch.nn.Module, args: tuple[Any, ...], _output: Any) -> None:
+            if self.failure is not None or self._positions is None or self._rows is None:
+                return
+            x = args[0]
+            positions = self._positions.clamp(max=int(x.shape[1]) - 1)
+            self._pending[layer] = x[self._rows, positions, :].float().sum(dim=0)
+        return hook
+
+    def begin_chunk(self, lengths: Sequence[int]) -> None:
+        rows = self._rendered[self._cursor:self._cursor + len(lengths)]
+        self._pending = {}
+        if [int(ids.shape[1]) for ids, _ in rows] != [int(n) for n in lengths]:
+            if self.failure is None:
+                self.failure = "the neutral capture framed its rows out of order"
+            return
+        self._chunk = len(rows)
+        self._rows = torch.arange(len(rows), device=self._device)
+        self._positions = torch.tensor(
+            [int(end) for _, end in rows], dtype=torch.long, device=self._device,
+        )
+
+    def commit_chunk(self) -> None:
+        self._rows = self._positions = None
+        if self.failure is not None:
+            return
+        if set(self._pending) != set(self._sums):
+            self.failure = "a block's mid hook did not fire on a neutral forward"
+            return
+        for layer, total in self._pending.items():
+            self._sums[layer] += total
+        self._pending = {}
+        self._cursor += self._chunk
+        self.count += self._chunk
+
+    def discard_chunk(self) -> None:
+        self._rows = self._positions = None
+        self._pending = {}
+
+    def abandon(self, reason: str) -> None:
+        self.close()
+        self.discard_chunk()
+        if self.failure is None:
+            self.failure = reason
+
+    def finish(self) -> dict[int, torch.Tensor]:
+        """``{layer: [D]}`` fp32 CPU; raises when a row was missed."""
+        if self.failure is not None:
+            raise RuntimeError(self.failure)
+        if self.count != len(self._rendered):
+            raise RuntimeError(
+                f"the mid means saw {self.count} of {len(self._rendered)} neutral rows"
+            )
+        return {layer: (total / self.count).cpu() for layer, total in self._sums.items()}
+
+
+class _Observers:
+    """The unit accumulator and the mid means, framed as one observer."""
+
+    def __init__(self, *observers: Any) -> None:
+        self._observers = observers
+
+    def begin_chunk(self, lengths: Sequence[int]) -> None:
+        for observer in self._observers:
+            observer.begin_chunk(lengths)
+
+    def commit_chunk(self) -> None:
+        for observer in self._observers:
+            observer.commit_chunk()
+
+    def discard_chunk(self) -> None:
+        for observer in self._observers:
+            observer.discard_chunk()
+
+    def abandon(self, reason: str) -> None:
+        for observer in self._observers:
+            observer.abandon(reason)
+
+
+def _observers(
+    model: Any, rendered: Sequence[tuple[torch.Tensor, int]],
+) -> tuple[UnitStatsAccumulator | None, MidMeans | None, str | None]:
+    """The unit-statistics accumulator and the mid means for ``model``, or
+    why there are none (both read the block description).
+
+    Block discovery runs small forwards (the caller holds the exclusive
+    section).  Any failure here is a reason, never an error.
+    """
+    accumulator, reason = _unit_accumulator(model)
+    if accumulator is None:
+        return None, None, reason
+    from drowse.model.blocks import model_spec
+
+    device = next(model.parameters()).device
+    return accumulator, MidMeans(model_spec(model), rendered, device=device), None
 
 
 def _unit_accumulator(
@@ -250,7 +418,18 @@ def _finish_units(accumulator: UnitStatsAccumulator) -> NeutralUnits:
     return NeutralUnits(stats.tensors(), stats.n_documents, None)
 
 
+def _finish_mid(mids: MidMeans) -> NeutralMid:
+    try:
+        means = mids.finish()
+    except Exception as exc:  # noqa: BLE001 — mid means never fail the neutral pass
+        reason = f"{type(exc).__name__}: {exc}"
+        log.warning("Mid means failed on the neutral pass: %s", reason)
+        return NeutralMid(None, reason)
+    return NeutralMid(means, None)
+
+
 __all__ = [
+    "MidMeans",
     "load_or_compute_neutral_activations",
     "load_or_compute_neutral_activations_with_metadata",
     "load_or_compute_neutral_cache",

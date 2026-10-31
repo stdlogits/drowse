@@ -117,6 +117,7 @@ def _read(**kwargs: Any) -> Any:
         readout=lambda: (lambda x: head(x.double()).float()),
         embeddings=lambda: emb,
         decode=lambda i: f"t{i}",
+        of="direction",
         n_layers=11,
         device=torch.device("cpu"),
         k=3,
@@ -151,8 +152,51 @@ def test_read_returns_both_halves_weighted_by_depth() -> None:
         assert [t.token_id for t in read.s.tokens] == z.topk(3).indices.tolist()
         assert read.s.tokens[0].token == f"t{read.s.tokens[0].token_id}"
     payload = reads[0].to_dict()
-    assert set(payload) == {"layer", "site", "depth", "r", "s"}
-    assert set(payload["s"]) == {"family", "weight", "unit", "lens", "tokens", "absent"}
+    assert set(payload) == {"layer", "site", "depth", "of", "r", "s"}
+    assert payload["of"] == "direction"
+    assert set(payload["s"]) == {
+        "family", "weight", "unit", "lens", "centred", "tokens", "absent",
+    }
+    assert payload["s"]["centred"] is False and payload["r"]["centred"] is False
+
+
+def test_a_residual_read_centres_its_s_half_only() -> None:
+    """a9's centring rule: the S half of a residual read reads ``h − μ`` (the
+    neutral mean at the read's site); a direction is read as given and the R
+    half is never centred.  A residual read with no mean refuses."""
+    gen = torch.Generator().manual_seed(9)
+    J = {L: torch.randn(D, D, generator=gen) for L in range(11)}
+    K = {L: torch.randn(D, D, generator=gen) for L in range(11)}
+    r_lens = JacobianLens(None, mid=J, n_prompts=1, d_model=D, key=LensKey("R"))
+    s_lens = JacobianLens(None, mid=K, n_prompts=1, d_model=D, key=LensKey("S"))
+    x = torch.randn(D, generator=gen)
+    mu = 3.0 * torch.randn(D, generator=gen)
+    asked: list[tuple[str, int]] = []
+
+    def centre(site: str, layer: int) -> torch.Tensor:
+        asked.append((site, layer))
+        return mu
+
+    common = dict(vectors=x, layer=3, site="mid", r_lens=r_lens, s_lens=s_lens, centre=centre)
+    head, emb, (residual,) = _read(**{**common, "of": "residual"})
+    _head, _emb, (direction,) = _read(**{**common, "of": "direction"})
+    assert asked == [("mid", 3)]  # only the residual read's S half asks
+    assert residual.of == "residual" and direction.of == "direction"
+    assert residual.s.centred and not residual.r.centred and not direction.s.centred
+    centred = emb.z(((x - mu) @ K[3]).reshape(1, -1))[0].topk(3)
+    assert [t.token_id for t in residual.s.tokens] == centred.indices.tolist()
+    assert [t.value for t in residual.s.tokens] == pytest.approx(centred.values.tolist(), rel=1e-5)
+    raw = emb.z((x @ K[3]).reshape(1, -1))[0].topk(3)
+    assert [t.token_id for t in direction.s.tokens] == raw.indices.tolist()
+    # The R half reads the vector as given, residual or not.
+    top = head((x @ J[3].T).double()).softmax(-1).topk(3)
+    assert [t.token_id for t in residual.r.tokens] == top.indices.tolist()
+    with pytest.raises(ValueError, match="neutral means"):
+        _read(vectors=x, layer=3, site="mid", r_lens=None, s_lens=s_lens, of="residual")
+    # No S half: a residual read never needs a mean.
+    _read(vectors=x, layer=3, site="mid", r_lens=r_lens, s_lens=None, of="residual")
+    with pytest.raises(ValueError, match="residual or a direction"):
+        _read(vectors=x, layer=3, site="mid", r_lens=None, s_lens=None, of="vector")
 
 
 def test_an_absent_half_says_why_and_never_reads_the_other_site() -> None:

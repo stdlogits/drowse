@@ -74,7 +74,7 @@ from drowse.lens.footprint import (
 )
 from drowse.lens.key import LENS_SITES
 from drowse.lens.lifecycle import LensFitRequest, LensFitter, LiveConfig
-from drowse.lens.read import LensRead, read_vectors
+from drowse.lens.read import LensRead, PendingReads, ReadOf, VectorRead, plan_reads
 from drowse.lens.runtime import CaptureHidden, LensRuntime, select_rows
 from drowse.readout.protocol import LatestSlices
 from drowse.errors import RequestError
@@ -360,6 +360,7 @@ class LensInstrument:
         assert_unsteered: Callable[[], None],
         replay: TokenReplay,
         whitener: Callable[[], Any],
+        neutral_means: Callable[[str], Mapping[int, torch.Tensor]],
     ) -> None:
         self.model_id = model_id
         #: The R family's (J/R) resident lens and readout primitives.
@@ -388,6 +389,16 @@ class LensInstrument:
         self._s_weights: BoundedLRU[tuple[str, tuple[int, ...], LensBand], torch.Tensor] = (
             BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
         )
+        #: ``site -> {layer: [d]}``: the neutral mean an S read of a residual
+        #: centres on (``out``: the monitor's centring mean; ``mid``: the
+        #: neutral cache's mid means).  Raises ``NeutralMeansError`` when a
+        #: site has none; there is no uncentred read of a residual.
+        self._neutral_means = neutral_means
+        # The ``slens/`` probes' centring rows, ``[L, d]`` on the device per
+        # layer set, each beside the means mapping it was stacked from.
+        self._centre_stacks: BoundedLRU[
+            tuple[str, tuple[int, ...]], tuple[Any, torch.Tensor]
+        ] = BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
         #: The read plane's capture buffer: the per-step reads consume its
         #: latest slices.
         self._capture = capture
@@ -516,6 +527,12 @@ class LensInstrument:
                 "generation's run (ReadPlane.close_runs) before preparing "
                 "the next — a stale pin suppresses the lens disk refresh"
             )
+        # ``slens/`` probes read residuals centred on the neutral ``out``
+        # mean: make it resident now, before the decode loop (and outside
+        # the leaf state lock), so no per-step read builds it.  Without one
+        # the generation refuses (``NeutralMeansError``), never reads raw.
+        if any(_spec_side(spec) == "input" for spec in list(self.probes.values())):
+            self._neutral_means("out")
         # The WHOLE snapshot is one atomic lens-state transaction:
         # items, gate demand, pin demand, the getter refresh, spec
         # derivation, the live-state reference, and the sidecar
@@ -1331,6 +1348,7 @@ class LensInstrument:
         layer: int,
         site: str = "out",
         *,
+        of: ReadOf,
         k: int = 8,
     ) -> LensRead | list[LensRead]:
         """Read a vector (``[d]``) or rows (``[n, d]``) at ``(layer, site)``.
@@ -1338,24 +1356,29 @@ class LensInstrument:
         The four-lens rule (:mod:`drowse.lens.read`): the caller picks the
         site from where the vector sits (``out``: a block's output residual,
         a neuron's write, a head's inputs at ``L − 1``; ``mid``: a neuron's
-        read direction, a head's write); the result holds the R-family read
-        (top-``k`` readout probabilities through the selected J/R lens) and
-        the S-family read (top-``k`` footprint z through the selected K/S
-        lens), each with its depth weight and lens label.  A family with no
-        lens, no lens at ``site`` or no matrix at ``layer`` comes back
+        read direction, a head's write) and says what it is (``of``, no
+        default): a ``"residual"``, whose S half is centred on the neutral
+        mean at ``site``, or a ``"direction"`` (a steering vector, a unit's
+        write, a write delta), read as given.  The result holds the R-family
+        read (top-``k`` readout probabilities through the selected J/R lens)
+        and the S-family read (top-``k`` footprint z through the selected
+        K/S lens), each with its depth weight and lens label.  A family with
+        no lens, no lens at ``site`` or no matrix at ``layer`` comes back
         absent with the reason; nothing is read from the other site.
 
         Returns one :class:`~drowse.lens.read.LensRead` for a ``[d]`` vector
         and a list for ``[n, d]`` rows.  Takes the model-exclusive section
-        (the first S read builds the embedding statistics).
+        (the first S read builds the embedding statistics, the first
+        residual read the neutral means).  A residual read with no neutral
+        mean at ``site`` raises :class:`~drowse.errors.NeutralMeansError`.
         """
         if site not in LENS_SITES:
             raise RequestError(f"site must be one of {', '.join(LENS_SITES)}, got {site!r}")
+        if of not in ("residual", "direction"):
+            raise RequestError(f"of must be 'residual' or 'direction', got {of!r}")
         n_layers = self.runtime.n_layers
         if not 0 <= int(layer) < n_layers:
             raise RequestError(f"layer {layer} is outside the model's {n_layers} layers")
-        if not 1 <= int(k) <= 256:
-            raise RequestError("k must be in [1, 256]")
         if vector.ndim not in (1, 2):
             raise RequestError(
                 f"read takes a [d] vector or [n, d] rows, got shape {tuple(vector.shape)}"
@@ -1366,29 +1389,60 @@ class LensInstrument:
                 f"read takes residual-width vectors (d = {width}), got shape "
                 f"{tuple(vector.shape)}"
             )
-        r_lens = self.resident()
-        s_lens = self.resident_input()
         with self._exclusive(
             "session.lens.read called while another model use is in flight",
             phase_msg="session.lens.read called while a generation is in flight",
         ), torch.inference_mode():
-            reads = read_vectors(
-                vector.detach(), int(layer), site,
-                r_lens=r_lens, s_lens=s_lens,
-                readout=lambda: self.runtime.readout_modules()[1],
-                embeddings=self._token_embeddings,
-                decode=self.runtime.decode_id,
-                n_layers=n_layers,
-                device=self.runtime.device,
-                k=int(k),
-                band=self.band,
-                no_r_lens=(
-                    f"no R-family lens is selected for {self.model_id} "
-                    f"(`drowse lens fetch {self.model_id}` or `drowse lens fit`)"
-                ),
-                no_s_lens=self._no_input_lens(),
+            pending = self.plan_reads(
+                [VectorRead(vector.detach(), int(layer), site, of)], k=k,
             )
+            reads = pending.finish(pending.tensor.detach().cpu())[0]
         return reads[0] if vector.ndim == 1 else reads
+
+    def plan_reads(self, requests: "Sequence[VectorRead]", *, k: int = 8) -> PendingReads:
+        """Every request's halves through the selected R and S lenses, still on
+        the device (:func:`~drowse.lens.read.plan_reads`): the caller moves
+        :attr:`~drowse.lens.read.PendingReads.tensor` to the host once (alone,
+        or packed into a larger transfer of its own) and unpacks it.
+
+        The caller holds the model-exclusive section (the first S read builds
+        the embedding statistics, the first residual read the neutral means)
+        and runs under ``torch.inference_mode``.
+        """
+        if not 1 <= int(k) <= 256:
+            raise RequestError("k must be in [1, 256]")
+        return plan_reads(
+            requests,
+            r_lens=self.resident(),
+            s_lens=self.resident_input(),
+            readout=lambda: self.runtime.readout_modules()[1],
+            embeddings=self._token_embeddings,
+            decode=self.runtime.decode_id,
+            n_layers=self.runtime.n_layers,
+            device=self.runtime.device,
+            k=int(k),
+            band=self.band,
+            centre=self.neutral_mean,
+            no_r_lens=(
+                f"no R-family lens is selected for {self.model_id} "
+                f"(`drowse lens fetch {self.model_id}` or `drowse lens fit`)"
+            ),
+            no_s_lens=self._no_input_lens(),
+        )
+
+    def neutral_mean(self, site: str, layer: int) -> torch.Tensor:
+        """The neutral mean an S read of a residual at ``(layer, site)`` is
+        centred on, ``[d]`` fp32 (CPU).  Raises
+        :class:`~drowse.errors.NeutralMeansError` when the site has none."""
+        from drowse.errors import NeutralMeansError
+
+        means = self._neutral_means(site)
+        mean = means.get(int(layer))
+        if mean is None:
+            raise NeutralMeansError(
+                f"the neutral {site} means of {self.model_id} hold no layer {layer}"
+            )
+        return mean
 
     def _residual_width(self) -> int:
         """The model's residual width ``d`` (the text config's hidden size,
@@ -1413,9 +1467,11 @@ class LensInstrument:
         """Read a raw prompt's residuals at ``site`` through the depth rule.
 
         One forward; ``out`` reads each block's output, ``mid`` the residual
-        after its attention (the MLP's input).  ``layers`` defaults to every
-        layer either family's lens holds at ``site``; ``positions`` to the
-        final position.  Returns ``{position: [LensRead per layer]}``.
+        after its attention (the MLP's input).  Residuals: each S half reads
+        ``h − μ``, ``μ`` the neutral mean at ``site``.  ``layers`` defaults to
+        every layer either family's lens holds at ``site``; ``positions`` to
+        the final position.  Every read leaves the device in one transfer.
+        Returns ``{position: [LensRead per layer]}``.
         """
         if site not in LENS_SITES:
             raise RequestError(f"site must be one of {', '.join(LENS_SITES)}, got {site!r}")
@@ -1451,10 +1507,15 @@ class LensInstrument:
                 rows = {layer: hidden[layer][0, pos, :] for layer in req}
             else:
                 rows = self._capture_mid(ids, req, pos)
+            with torch.inference_mode():
+                pending = self.plan_reads(
+                    [VectorRead(rows[layer], int(layer), site, "residual") for layer in req],
+                    k=k,
+                )
+                reads = pending.finish(pending.tensor.detach().cpu())
         out: dict[int, list[LensRead]] = {p: [] for p in pos}
-        for layer in req:
-            reads = self.read(rows[layer], layer, site, k=k)
-            for p, read in zip(pos, cast("list[LensRead]", reads), strict=True):
+        for layer_reads in reads:
+            for p, read in zip(pos, layer_reads, strict=True):
                 out[p].append(read)
         return out
 
@@ -1529,6 +1590,9 @@ class LensInstrument:
                     lens = self._require_input()
                     readout_layers = [int(layer) for layer in lens.layers("out")]
                     token_id = self._input_token(word, self._token_embeddings())
+                    # An slens/ probe reads residuals centred on the neutral
+                    # out mean: build it now (a model without one refuses).
+                    self._neutral_means("out")
                 else:
                     lens = self._require()
                     token_id = self.resolve_token(word, side=side)
@@ -1742,8 +1806,9 @@ class LensInstrument:
         the device (:meth:`_input_readings` unpacks it; the live step folds it
         into its own host transfer).
 
-        Per layer ``u_L = K_Lᵀ h_L`` (one batched pullback over the S lens's
-        ``out`` layers that ``hidden`` covers), then each probe token's
+        Per layer ``u_L = K_Lᵀ (h_L − μ_L)`` (one batched pullback over the S
+        lens's ``out`` layers that ``hidden`` covers; ``μ_L`` the neutral
+        block-output mean, as every S read of a residual), then each probe token's
         ``z_L = u_L·ẽ_v / sqrt(u_Lᵀ Σ_E u_L)``: ``O(d²)`` per layer, no pass
         over the vocabulary.  The value is ``Σ_L w_S(L) z_L / Σ_L w_S(L)``,
         ``w_S`` the depth rule's S weight (:func:`~drowse.lens.depth.kind_weights`
@@ -1769,7 +1834,8 @@ class LensInstrument:
         runtime = self.input_runtime
         stack = runtime.transport_stack(lens, layers, embeddings.device)
         rows = torch.stack([hidden[layer].reshape(-1) for layer in layers])
-        u = pullback_rows(stack, rows)                                  # [L, d_emb]
+        centre = self._centre_stack(layers, embeddings.device)          # [L, d]
+        u = pullback_rows(stack, rows.to(centre.device, torch.float32) - centre)
         token_ids = runtime.long_tensor(
             [int(probes[name]["token_id"]) for name in names], embeddings.device,
         )
@@ -1778,6 +1844,23 @@ class LensInstrument:
         weights = self._s_weight_tensor(layers, z.device)                # [L, 1]
         values = footprint_probe_rows(z, depth, weights).detach()       # [3 + L, P]
         return _InputBlock(tuple(names), tuple(layers), values)
+
+    def _centre_stack(self, layers: "Sequence[int]", device: torch.device) -> torch.Tensor:
+        """``[L, d]`` fp32 neutral block-output means over ``layers`` on
+        ``device``, stacked once per layer set and rebuilt when the means
+        mapping changes (a rebuilt neutral baseline)."""
+        layer_tuple = tuple(int(layer) for layer in layers)
+        means = self._neutral_means("out")
+        key = (str(device), layer_tuple)
+        cached = self._centre_stacks.get(key)
+        if cached is not None and cached[0] is means:
+            return cached[1]
+        stack = torch.stack([
+            self.neutral_mean("out", layer).to(device=device, dtype=torch.float32)
+            for layer in layer_tuple
+        ])
+        self._centre_stacks.put(key, (means, stack))
+        return stack
 
     def _s_weight_tensor(self, layers: "Sequence[int]", device: torch.device) -> torch.Tensor:
         """``[L, 1]`` fp32 ``w_S(L) / Σ w_S`` over ``layers`` (zeros when no
