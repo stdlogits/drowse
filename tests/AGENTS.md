@@ -49,7 +49,7 @@ so keep test modules exactly one directory deep.
 | `steering/` | expression grammar, triggers, steering scopes, hooks, installation, subspace/manifold steering, ablation |
 | `readout/` | monitor, probe roster, read planner, captures, measurements envelope, instrument types, geometry replay, `score_hidden` |
 | `lens/`, `sae/` | lens math, the transport estimator (against the autograd oracle), RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
-| `units/` | neutral unit statistics (against a hand computation), the tap, unit probes and gates through a tiny session, replay, unit ablation against hand-patched forwards, neuron pushes, refusals |
+| `units/` | neutral unit statistics (against a hand computation), the tap, unit probes and gates through a tiny session, replay, unit ablation against hand-patched forwards, neuron pushes, refusals; static unit reads, `top` and `find` against hand computations with hand-built R/S lenses, the neuron-lens catalog over a monkeypatched Hub with tiny parquets, the unit routes |
 | `generation/` | decode loop, sampling, logits, prefix cache, render, results, scoring, token payloads |
 | `fit/` | extraction pipeline, capture, bake, monopolar fits, preflight, naturalness, transfer alignment |
 | `loom/` | tree, ops, diff, filter, transcript, recipe overrides, token rows, token replay, joint logprobs, concurrency |

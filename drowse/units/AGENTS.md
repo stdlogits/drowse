@@ -191,7 +191,10 @@ the neutral mean). `session.units.read(unit, k=8, hide_hubs=False)`:
   separately; S over the raw scores of unit covectors (`û · ẽ_v`) of the `+`
   writes and of both poles' read directions together; standard deviations
   are population ones floored as neuron-lens floors them. Heads: each token's
-  z across the layer's heads (unbiased std). Units read `layer_z`.
+  OV z across the layer's heads (unbiased std). Units read `layer_z`. A head's
+  inputs never contrast: the heads of one KV group share their key and value
+  rows, so a contrast across heads saturates (every token at one z) and a few
+  KV heads are too small a population; they stay the vocabulary z.
 
 `ContrastCache` keeps these per-layer statistics (per token mean and std,
 and for R each row's `logsumexp`, which `top` needs for probabilities) under

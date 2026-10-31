@@ -378,7 +378,7 @@ class FindResult:
             "k": self.k,
             "mean_share": round(sum(shares) / len(shares), 6) if shares else 0.0,
             "layers": {str(layer): row for layer, row in sorted(self.layers.items())},
-            "catalog": {key: value for key, value in self.catalog.items() if key != "url"},
+            "catalog": dict(self.catalog),
         }
 
 
@@ -1048,6 +1048,17 @@ class UnitReader:
         minus = catalog.neuron_label(ref.layer, ref.index, -1)
         return plus, minus
 
+    def _catalog_summary(self) -> dict[str, Any]:
+        """The binding without a unit: bound, slug, credit or why not."""
+        status = self.catalog.status()
+        bound = self.catalog.get() is not None
+        return {
+            "bound": bound,
+            "slug": status.get("slug"),
+            "credit": LABEL_CREDIT if bound else None,
+            "reason": None if bound else status.get("reason"),
+        }
+
     def _catalog_block(self, ref: UnitRef) -> dict[str, Any]:
         """The catalog binding as a unit view shows it: bound or why not, the
         unit's neuron-lens.com page and the label credit."""
@@ -1202,7 +1213,7 @@ class UnitReader:
                 )
             copies_place = PlaceRead(layer, "mid", depth, copies["S"], copies["R"], hubs)
             suppress_place = PlaceRead(layer, "mid", depth, suppresses["S"], suppresses["R"], hubs)
-            inputs = self._head_inputs(lenses, block, head, k=k, hide_hubs=hide_hubs)
+            inputs = self._head_inputs(lenses, block, head, k=k, footprints=X)
         return HeadRead(
             ref=ref,
             depth=depth,
@@ -1231,11 +1242,17 @@ class UnitReader:
         return f"the {lens.kind} lens holds no {site} matrix at L{layer}"
 
     def _head_inputs(
-        self, lenses: _Lenses, block: BlockSpec, head: int, *, k: int, hide_hubs: bool,
+        self, lenses: _Lenses, block: BlockSpec, head: int, *, k: int,
+        footprints: torch.Tensor | None = None,
     ) -> dict[str, PlaceRead]:
         """What each projection picks up at ``L − 1``'s output (the token
         embedding at L0): the S half over footprints, the R half over the
-        directions that say each token."""
+        directions that say each token.
+
+        Always the vocabulary z (hubs shown): a layer contrast across heads
+        saturates here, since the heads of one KV group share their key and
+        value rows (with ``g`` of ``n`` heads alike, every token tops out at
+        the same z), and a few KV heads are too small a population."""
         layer = block.layer
         at = layer - 1
         site_layer = max(at, 0)
@@ -1243,7 +1260,7 @@ class UnitReader:
         depth = layer_depth(site_layer, self.n_layers)
         kept = self._kept()
         rows: dict[Family, torch.Tensor | None] = {
-            "S": self._footprints(lenses, at),
+            "S": footprints if footprints is not None else self._footprints(lenses, at),
             "R": self._r_inputs(lenses, at),
         }
         labels: dict[Family, str | None] = {
@@ -1265,24 +1282,10 @@ class UnitReader:
                     )
                     halves[family] = UnitHalf(family, weight, "energy_z", labels[family], absent=why)
                     continue
-
-                def energy(h: int, x: torch.Tensor = x, role: str = role) -> torch.Tensor:
-                    return self._input_energy(x, getattr(head_read_rows(block, h), role).to(self.device))
-
-                z = energy(head)
-                unit: HalfUnit = "energy_z"
-                if hide_hubs:
-                    mean, std = self._head_contrast(
-                        lenses, layer, family, f"in-{role}", energy,
-                    ).mean_std(f"in-{role}")
-                    z = (z - mean) / std
-                    unit = "layer_z"
+                z = self._input_energy(x, getattr(head_read_rows(block, head), role).to(self.device))
                 tokens = self._remap(self._top_tokens(z[None], k)[0], kept)
-                halves[family] = UnitHalf(family, weight, unit, labels[family], tokens)
-            out[role] = PlaceRead(
-                site_layer, "out", depth, halves["S"], halves["R"],
-                "hidden" if hide_hubs else "shown",
-            )
+                halves[family] = UnitHalf(family, weight, "energy_z", labels[family], tokens)
+            out[role] = PlaceRead(site_layer, "out", depth, halves["S"], halves["R"])
         return out
 
     def _head_firing(self, ref: HeadRef) -> Firing:
@@ -1567,7 +1570,7 @@ class UnitReader:
                     "label": None if catalog is None else catalog.neuron_label(ref.layer, ref.index, sign),
                 })
             rows[int(at)] = {"share": round(float(share), 6), "neurons": neurons}
-        return FindResult(label, k, rows, self._catalog_block(NeuronRef(layer=0, index=0)))
+        return FindResult(label, k, rows, self._catalog_summary())
 
     # ------------------------------------------------------------- population
 

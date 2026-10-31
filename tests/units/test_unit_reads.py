@@ -336,6 +336,12 @@ def test_head_hidden_hubs_contrast_across_heads(lensed: Any) -> None:
     zc = (per_head[h] - per_head.mean(0)) / per_head.std(0)
     assert read.copies.s.unit == "layer_z"
     assert _ids(read.copies.s) == [kept[i].item() for i in zc.topk(3).indices]
+    # Regression: inputs never contrast across heads (a KV group's heads share
+    # key and value rows, so every token saturated at one z); they stay raw.
+    raw = cast(HeadRead, session.units.read(f"head/L{L}h{h}", k=3))
+    for role in ("query", "key", "value"):
+        assert read.inputs[role].hubs == "shown" and read.inputs[role].s.unit == "energy_z"
+        assert read.inputs[role].to_dict() == raw.inputs[role].to_dict()
 
 
 # -- top and find ----------------------------------------------------------------
