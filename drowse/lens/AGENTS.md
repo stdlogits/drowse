@@ -85,7 +85,8 @@ present), `unit` (`probability`: per-layer readout probabilities through the
 model's final path; `footprint_z`), `lens` (the label read through, `R:mid`,
 `J:out`, `S:out`), `tokens` (`TokenScore(token_id, token, value)`, top-k
 descending) and `absent`, the reason when there is no lens of the family, no
-lens at the site, or no matrix at the layer. A half is never read from the
+lens at the site, or no matrix at the layer. A vector whose width is not the
+model's residual width is a `RequestError`. A half is never read from the
 other site or family. The weights stay raw, so a consumer fades a light half
 or says that a heavy one is missing. `read_prompt(prompt, site, layers,
 positions, k)` reads a raw prompt's residuals (out: `capture_hidden`; mid: a
@@ -96,12 +97,16 @@ read through this.
 **Footprint z** (`footprint.py`). `u_L = K_Lᵀ h`; `z_L(v) = u_L·ẽ_v /
 sqrt(u_Lᵀ Σ_E u_L)`, with `ẽ_v = scale·W_E[v] − mean` (`scale` from
 `model_spec`, Gemma's `√d`) and `Σ_E` the covariance of `ẽ` over the token
-mask. The mask drops special tokens, byte-fallback pieces (a lone decode with
-U+FFFD) and embedding rows past the tokenizer. `z` is the vocabulary z-score
-of the raw score, so its top-k is neuron-lens's raw `read_S`/`write_S`;
-neuron-lens additionally drops tokens seen fewer than five times in its
-corpora, scores a unit covector in fp16, and its `_z` reads are
-layer-contrastive (across a layer's neurons), which a single read cannot be.
+mask. The mask is the tokenizer's alone: it drops special tokens, every added
+token (special or not: Qwen3's `<think>`/`<tool_call>`, Gemma's
+`<unusedN>`), byte-fallback pieces (spelled `<0xNN>`, including the ASCII ones
+that decode to a control character, or decoding alone to U+FFFD) and
+embedding rows past the tokenizer. `z` is the vocabulary z-score of the raw
+score, so its top-k is neuron-lens's raw `read_S`/`write_S` wherever both keep
+the token. neuron-lens keeps the tokens seen at least five times in its
+corpora instead (rare base tokens differ, and added tokens a corpus contains),
+scores a unit covector in fp16, and its `_z` reads are layer-contrastive
+(across a layer's neurons), which a single read cannot be.
 `TokenEmbeddings` is built once per session on the first S use (model work:
 inside the exclusive section) and holds `Σ_E` on the model device (`d²` fp32).
 A one-token read (`z_of`) costs `O(d²)` per layer, not a vocabulary pass.
@@ -209,8 +214,11 @@ provider name, and carries one or both sites.
   `workspace-r`, `neuronpedia`, `workspace-j`, `local:r`, `local:j`, tagged
   fits), then the S family (`rs-s`, `local:s`, `local:k`, tagged fits).
   Listings and serve's auto-selection (`cli/verbs/serve.py::enable_live_lens`,
-  R family only) use it. `list_lens_sources` rows carry `lens` (kind), `side`
-  and `sites`.
+  R family only) use it. `list_lens_sources` rows carry `lens` (kind),
+  `family` (`R` or `S`; `output`/`input` is the internal slot name, never
+  shown) and `sites`. Selecting an S-family source over the server checks that
+  it loads for these weights (409 otherwise), as the R family's live enable
+  does.
 - A fit, a promotion or a fetch replaces its family's selection. Removal
   unselects only an exact match. `select_source` evicts that family's
   resident lens.
@@ -354,7 +362,11 @@ tensors). `LensInstrument` takes every dependency explicitly: model, capture
   lens A with lens B's layers, which fails with a `KeyError` in the transport
   stack. A run pins the R family when live readout is on or when `jlens/`
   probes feed a final aggregate or a gate, and the S family when `slens/`
-  probes do.
+  probes feed a final aggregate, a gate or the live readout's per-step
+  readings. With live readout on, `plan` also captures the `slens/` probes'
+  band (their S lens's `out` layers), not only the R live layers. A source
+  without `out` pins with its probes layerless; nothing reads its
+  `source_layers`.
 - `fit`, `readout` and `attach` run under the exclusive guard. `fit` takes
   `lens_fit_lock` first and calls `assert_unsteered`.
 
@@ -401,7 +413,11 @@ the per-layer softmax probability `p_l(v)`.
   does. `jlens/` steers toward saying a token, `slens/` toward having read it;
   they are different directions. No S lens is `LensNotFittedError` (404, names
   `rs-s`); a mid-only S lens is the same error naming the missing `out` site.
-  `#<id>` is bounds-checked against the input embedding.
+  `#<id>` is bounds-checked against the input embedding, and a token the
+  footprint mask drops (special, added, byte-fallback, padding) is
+  `InvalidTokenIdError` for atoms and probes alike. Resolution runs in the
+  model-exclusive section (the first S use builds the embedding statistics);
+  the footprints are CPU fp32 against the lens's CPU matrices.
 - **Probe.** `add_probe("jlens/…")` routes through `readout/roster.py` to
   `attach`, never the Monitor: no whitener, no fold. It yields a
   `ScalarReading` (unit `mean_token_probability`) with a per-layer `p_l` trace
@@ -426,9 +442,12 @@ the per-layer softmax probability `p_l(v)`.
   them only from the same forward. A lens gate forces per-step lens reads
   whatever the live toggle says, but never per-token Monitor scoring.
   `@when:slens/<word> > x` works the same way on the footprint z; its readings
-  are stashed by `step_id` on the run (`input_stash`) for the display step.
-  With both `jlens/` and `slens/` probes read in one step the family pays two
-  host transfers, one per channel.
+  are stashed by `step_id` on the run (`input_stash`, which records the probes
+  read on that forward), so the display step reads only the probes the gate
+  did not, and with live readout on the gate reads them all. An `slens/`-only
+  gate never resolves the R family. The live step folds any `slens/` block it
+  reads into its own packed host transfer; a gate callback that reads both
+  families pays two (the R gate stats transfer inside their own helper).
 
 ## Live readout, replay, decomposition
 
@@ -450,7 +469,10 @@ the per-layer softmax probability `p_l(v)`.
   takes the exact unconstrained solve when that is already nonnegative, and
   tiny solves run on CPU. `share` is the variance fraction the atoms carry,
   typically 6–15% for concept vectors against `tokens-out`. `LensDictionary`
-  leaves room for signed `neurons`.
+  leaves room for signed `neurons`. Both dictionaries select, solve and score
+  `share` in the Euclidean residual metric, with no whitener: an activation-
+  space metric that `geometry/AGENTS.md` does not list as a deliberate
+  exception. Whether to list it or whiten targets and atoms is open (a9).
 
 ## Errors, seams, tests
 
