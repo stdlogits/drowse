@@ -785,7 +785,8 @@ class SaeRuntimeInfo(TypedDict):
 
 
 class PreparationStatusJSON(TypedDict):
-    """One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``."""
+    """One shape over lens ``fetch``/``fit``, sae ``fetch``/``train`` and the
+    units ``fetch`` (the neuron-lens catalog; ``slug`` names it)."""
 
     state: str
     operation: str | None
@@ -799,6 +800,7 @@ class PreparationStatusJSON(TypedDict):
     source: NotRequired[str | None]
     release: NotRequired[str | None]
     name: NotRequired[str | None]
+    slug: NotRequired[str | None]
     info: NotRequired[SaeRuntimeInfo | None]
 
 
@@ -826,3 +828,220 @@ class SaeFeatureMetaResponse(TypedDict):
     """``POST .../instruments/sae/features/metadata`` — the discovery backfill."""
 
     features: dict[str, SaeFeatureMetaEntry]
+
+
+# ------------------------------------------------------------------- units --
+
+class UnitTokenJSON(TypedDict):
+    """One ranked token of a unit read, in its half's ``unit``."""
+
+    token_id: int
+    token: str
+    value: float
+
+
+class UnitHalfJSON(TypedDict):
+    """One lens family's read of a unit vector at its place: the depth rule's
+    ``weight`` for the family there, the lens read through (``R:out``,
+    ``S:mid``, ``logit``, ``embedding``), and the tokens or why absent."""
+
+    family: Literal["R", "S"]
+    weight: float
+    unit: Literal["probability", "footprint_z", "layer_z", "own_token_z", "energy_z"]
+    lens: str | None
+    tokens: list[UnitTokenJSON]
+    absent: str | None
+
+
+class UnitPlaceJSON(TypedDict):
+    """A unit vector read at ``(layer, site)``: S and R halves; ``hubs`` is
+    ``hidden`` when the halves rank by the layer-contrastive z."""
+
+    layer: int
+    site: Literal["out", "mid"]
+    depth: float
+    hubs: Literal["shown", "hidden"]
+    s: UnitHalfJSON
+    r: UnitHalfJSON
+
+
+class UnitFiringJSON(TypedDict):
+    """How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
+    the catalog) or why absent; drowse's neutral statistics; the catalog's
+    activation row."""
+
+    rate: float | None
+    rate_absent: str | None
+    neutral: dict[str, float] | None
+    neutral_absent: str | None
+    catalog: dict[str, Any] | None
+    catalog_absent: str | None
+
+
+class UnitLabelJSON(TypedDict):
+    """A catalog label (neuron-lens, by Claude Haiku 5.5): what the unit fires
+    on, attends to (heads) and writes, with confidences; its legibility
+    tests; the credit and the unit's neuron-lens.com page."""
+
+    __pydantic_config__ = _Open  # type: ignore[misc]
+
+    fires: NotRequired[str | None]
+    fires_conf: NotRequired[float | None]
+    attends: NotRequired[str | None]
+    attends_conf: NotRequired[float | None]
+    writes: NotRequired[str | None]
+    writes_conf: NotRequired[float | None]
+    note: NotRequired[str | None]
+    legible: NotRequired[dict[str, Any] | None]
+    credit: str
+    url: str
+
+
+class UnitCatalogBlockJSON(TypedDict):
+    """The catalog binding as a unit view shows it."""
+
+    bound: bool
+    slug: str | None
+    url: str | None
+    credit: str | None
+    reason: str | None
+
+
+class UnitScalarsJSON(TypedDict):
+    w_norm: float
+    cos_ab: float
+    null_share: float
+    mean_act: float | None
+
+
+class NeuronPoleJSON(TypedDict):
+    """One pole: its write read at ``out`` (writes) and its read direction at
+    ``mid`` (fires on), its logit-lens shape, firing and label."""
+
+    pole: Literal["+", "-"]
+    writes: UnitPlaceJSON
+    fires_on: UnitPlaceJSON
+    vocab_skew: float
+    vocab_kurt: float
+    firing: UnitFiringJSON
+    label: UnitLabelJSON | None
+
+
+class NeuronReadJSON(TypedDict):
+    unit: str
+    kind: Literal["neuron"]
+    layer: int
+    index: int
+    depth: float
+    scalars: UnitScalarsJSON
+    poles: list[NeuronPoleJSON]
+    catalog: UnitCatalogBlockJSON
+
+
+class HeadInputsJSON(TypedDict):
+    """What the head's projections pick up at ``L − 1``'s output."""
+
+    query: UnitPlaceJSON
+    key: UnitPlaceJSON
+    value: UnitPlaceJSON
+
+
+class HeadReadJSON(TypedDict):
+    unit: str
+    kind: Literal["head"]
+    layer: int
+    index: int
+    kv_head: int
+    depth: float
+    copies: UnitPlaceJSON
+    suppresses: UnitPlaceJSON
+    inputs: HeadInputsJSON
+    copy_score: dict[str, float | None]
+    firing: UnitFiringJSON
+    label: UnitLabelJSON | None
+    catalog: UnitCatalogBlockJSON
+
+
+class UnitTopHalfJSON(TypedDict):
+    """One family's score of a pole for the token: the layer-contrastive
+    ``z``, the raw read (R ``probability``, S ``footprint_z``), the weight."""
+
+    z: float | None
+    weight: float
+    lens: str | None
+    probability: NotRequired[float | None]
+    footprint_z: NotRequired[float | None]
+
+
+class UnitTopHitJSON(TypedDict):
+    unit: str
+    layer: int
+    index: int
+    pole: Literal["+", "-"]
+    score: float
+    r: UnitTopHalfJSON
+    s: UnitTopHalfJSON
+    label: UnitLabelJSON | None
+
+
+class UnitTopLayerJSON(TypedDict):
+    weights: dict[str, float]
+    lens: dict[str, str | None]
+    absent: dict[str, str | None]
+
+
+class UnitTopJSON(TypedDict):
+    """``GET .../instruments/units/top`` — the neuron poles that write or fire
+    on a token most specifically."""
+
+    token_id: int
+    token: str
+    by: Literal["writes", "fires"]
+    hits: list[UnitTopHitJSON]
+    layers: dict[str, UnitTopLayerJSON]
+
+
+class UnitFindNeuronJSON(TypedDict):
+    unit: str
+    index: int
+    pole: Literal["+", "-"]
+    coeff: float
+    label: UnitLabelJSON | None
+
+
+class UnitFindLayerJSON(TypedDict):
+    share: float
+    neurons: list[UnitFindNeuronJSON]
+
+
+class UnitFindJSON(TypedDict):
+    """``POST .../instruments/units/find`` — a direction split over each
+    layer's neuron writes (Mahalanobis; the sign is the pole)."""
+
+    target: str
+    k: int
+    mean_share: float
+    layers: dict[str, UnitFindLayerJSON]
+    catalog: dict[str, Any]
+
+
+class UnitCatalogBindingJSON(TypedDict):
+    revision: str | None
+    fetched_at: str | None
+    files: int
+
+
+class UnitCatalogJSON(TypedDict):
+    """``GET .../instruments/units/catalog`` — the model's neuron-lens catalog:
+    ``available`` (catalogued), ``bound`` (fetched at the pinned commit) or
+    why not."""
+
+    model_id: str
+    available: bool
+    bound: bool
+    slug: str | None
+    repo: str
+    revision: str
+    credit: str | None
+    reason: str | None
+    binding: UnitCatalogBindingJSON | None

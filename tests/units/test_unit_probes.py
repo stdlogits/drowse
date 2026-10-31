@@ -384,7 +384,7 @@ def test_the_instruments_route_lists_the_units_family(
     assert units["source"] is None
     assert units["live"] == {"enabled": True}
     assert units["capabilities"] == {
-        "sources": False, "preparations": [], "token_readout": True,
+        "sources": False, "preparations": ["fetch"], "token_readout": True,
         "source_switch": False,
     }
     off = client.post(

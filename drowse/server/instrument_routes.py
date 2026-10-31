@@ -1,15 +1,16 @@
 """Native ``/instruments`` routes — the unified read-side surface.
 
-One route tree under ``/drowse/v1/sessions/{id}/instruments`` over the three
+One route tree under ``/drowse/v1/sessions/{id}/instruments`` over the four
 read families ``session.instruments`` registers (``geometry`` / ``lens`` /
-``sae``):
+``sae`` / ``units``; the units' own reads are :mod:`drowse.server.unit_routes`):
 
 - ``POST {family}/live`` — uniform live toggle.
 - ``GET {family}/sources`` — prepared sources (lens) / prepared sources plus
   provider release candidates (sae).
 - ``PUT {family}/source`` — synchronous source switch (lens only).
 - ``POST/GET/DELETE {family}/preparations`` — polled background preparations
-  (lens ``fetch``/``fit``, sae ``fetch``/``train``), one status shape.
+  (lens ``fetch``/``fit``, sae ``fetch``/``train``, units ``fetch``: the
+  neuron-lens catalog), one status shape.
 - ``GET {family}/token-readout`` — the loom token-drilldown replay, wrapped in
   the ``measurements`` replay envelope the instrument builds.
 - Family extras: ``lens/token/validate``, ``sae/features/validate``,
@@ -111,7 +112,7 @@ CAPABILITIES: dict[str, FamilyCapabilities] = {
     ),
     "units": FamilyCapabilities(
         sources=False,
-        preparations=(),
+        preparations=("fetch",),
         token_readout=True,
         source_switch=False,
         sources_error=(
@@ -120,7 +121,6 @@ CAPABILITIES: dict[str, FamilyCapabilities] = {
             "own parts; their statistics ride the neutral cache)",
         ),
         source_switch_error=(404, "units have no source to switch"),
-        preparations_error=(404, "units have no background preparations"),
     ),
 }
 
@@ -272,9 +272,11 @@ def register_instrument_routes(app: FastAPI) -> None:
         "train", label="SAE training", fields=("name", "info"),
         cancel_exc=SaeTrainingCancelled, progress_unit="tokens", progress_pattern=_TRAIN_PROGRESS_RE,
     )
+    unit_fetch = Preparation("fetch", label="unit catalog fetch", fields=("slug",))
     preparations = {
         "lens": PreparationGroup("a J-lens artifact operation is already running", lens_fetch, lens_fit),
         "sae": PreparationGroup("an SAE artifact operation is already running", sae_fetch, sae_train),
+        "units": PreparationGroup("a unit catalog fetch is already running", unit_fetch),
     }
 
     async def stop_preparations() -> None:
@@ -555,12 +557,30 @@ def register_instrument_routes(app: FastAPI) -> None:
             message="starting…", name=body.name, current=0, total=body.tokens, info=None,
         )
 
+    async def unit_fetch_body(body: Any) -> None:
+        record = await run_in_thread(
+            session.units.fetch_catalog, force=body.force, on_progress=unit_fetch.report,
+        )
+        unit_fetch.state["slug"] = record["slug"]
+
+    def start_unit_fetch(fields: dict[str, Any]) -> None:
+        """The units ``fetch``: bind the neuron-lens catalog (network and
+        disk, no session lock).  An uncatalogued model is a 404 at POST."""
+        from drowse.server.unit_routes import UnitCatalogFetchRequest
+
+        body = UnitCatalogFetchRequest(**fields)
+        status = session.units.catalog_status()
+        if not status["available"]:
+            raise HTTPException(404, status["reason"])
+        unit_fetch.start(lambda: unit_fetch_body(body), message="starting…", slug=status["slug"])
+
     #: Starters keyed by ``(family, operation)`` — the CLI verbs on both surfaces.
     starters = {
         ("lens", "fetch"): start_lens_fetch,
         ("lens", "fit"): start_lens_fit,
         ("sae", "fetch"): start_sae_fetch,
         ("sae", "train"): start_sae_train,
+        ("units", "fetch"): start_unit_fetch,
     }
 
     def preparation_group(family: str) -> PreparationGroup:
@@ -586,8 +606,11 @@ def register_instrument_routes(app: FastAPI) -> None:
 
     @router.delete("/instruments/{family}/preparations")
     async def preparations_cancel(family: str) -> PreparationStatusJSON:
-        """lens: cancel a running fit.  sae: cancel a running train, else unload the resident SAE."""
+        """lens: cancel a running fit.  sae: cancel a running train, else
+        unload the resident SAE.  units: a catalog fetch is not cancellable."""
         group = preparation_group(family)
+        if family == "units":
+            raise HTTPException(409, "a unit catalog fetch is not cancellable")
         if family == "lens":
             lens_fit.request_cancel()
         elif sae_train.running:

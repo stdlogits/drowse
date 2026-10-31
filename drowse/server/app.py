@@ -20,6 +20,7 @@ from drowse.server.profile_routes import register_profile_routes
 from drowse.server.security import DEFAULT_MAX_REQUEST_BYTES, HttpSecurityMiddleware, parse_origin
 from drowse.server.session_routes import register_session_routes
 from drowse.server.template_routes import register_template_routes
+from drowse.server.unit_routes import register_unit_routes
 from drowse.server.tree_routes import register_tree_routes
 from drowse.server.ws_stream import register_ws_stream
 from drowse.session.session import DrowseSession
@@ -73,6 +74,7 @@ def create_app(
         register_profile_routes,
         register_probe_routes,
         register_instrument_routes,
+        register_unit_routes,
         register_ws_stream,
     ):
         register(app)

@@ -124,6 +124,10 @@ export const RUNTIME_SERVICE_CATALOGUE = {
     cancelPreparation: exposed("drowse_cancel_preparation", "drowse_prepare_instrument"), tokenReadout: exposed("drowse_token_readout"),
     validateLensToken: exposed("drowse_validate_lens_token"), validateSaeFeature: exposed("drowse_validate_sae_feature"),
     saeFeaturesMetadata: exposed("drowse_sae_feature_metadata"),
+    unitRead: internal("The unit view reads a unit when one is opened; no agent tool yet."),
+    unitTop: internal("The Units room ranks the writers of a token; no agent tool yet."),
+    unitFind: internal("The Units room splits a direction over neurons; no agent tool yet."),
+    unitCatalog: internal("Unit views show the catalog binding with their labels; no agent tool yet."),
   },
 } satisfies ServiceCoverage;
 

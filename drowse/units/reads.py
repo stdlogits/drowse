@@ -1515,6 +1515,12 @@ class UnitReader:
                 directions = {int(layer): target}
             else:
                 directions = {int(key): value for key, value in target.items()}
+            width = self.runtime.spec().d_model
+            for value in directions.values():
+                if value.ndim != 1 or int(value.shape[0]) != width:
+                    raise RequestError(
+                        f"find takes residual-width vectors (d = {width}), got shape {tuple(value.shape)}"
+                    )
             label = "vector"
             out = self.lens.decompose_neurons(directions, k=k, layers=layers, label=label)
         catalog = self.catalog.get()
