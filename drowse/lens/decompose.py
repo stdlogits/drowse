@@ -16,13 +16,15 @@ NNLS fit and the share are all whitened.  A whitener that does not cover the
 layer raises :class:`~drowse.errors.WhitenerError`; there is no Euclidean
 path.
 
-Two dictionaries exist: :class:`TokensOut` (``tokens-out``, ``W_U J_l``: the
-tokens a direction is disposed to *say*) and :class:`TokensIn`
+Three dictionaries exist: :class:`TokensOut` (``tokens-out``, ``W_U J_l``:
+the tokens a direction is disposed to *say*), :class:`TokensIn`
 (``tokens-in``, the S-family footprints ``K_l ẽ_v`` over the token mask: the
-tokens whose *having been read* it resembles).  The interface leaves room for
-``neurons`` (``W_down`` columns, *signed* because a neuron has two poles).
-A signed dictionary selects by ``|score|`` and solves its coefficients
-unconstrained; a nonnegative one keeps the NNLS step.
+tokens whose *having been read* it resembles) and :class:`NeuronWrites`
+(``neurons``, block ``l``'s neuron writes ``s · γ_out ⊙ W_down[:, n]``, Gemma's
+post-feedforward gain included: the neurons whose writes compose it).  The
+neuron dictionary is *signed*, because a neuron has two poles (``+w`` and
+``−w``): it selects by ``|score|`` and solves its coefficients unconstrained,
+the sign naming the pole; the token dictionaries keep the NNLS step.
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ if TYPE_CHECKING:
     from drowse.lens.footprint import TokenEmbeddings
 
 #: The dictionaries ``decompose`` accepts, by wire name.
-DICTIONARIES = ("tokens-out", "tokens-in")
+DICTIONARIES = ("tokens-out", "tokens-in", "neurons")
 
 
 class LensDictionary(Protocol):
@@ -205,6 +207,45 @@ class TokensIn:
         if self.atom_norms is None:
             self.atom_norms = footprint_atom_norms(self.matrix, self.embeddings)
         return self.atom_norms.to(device=self.device, dtype=torch.float32)
+
+
+@dataclass
+class NeuronWrites:
+    """Block ``l``'s neuron writes, signed: the neurons a direction is made of.
+
+    ``writes`` is ``[d, d_ff]`` (column ``n`` the ``+``-pole write of neuron
+    ``n``, :func:`~drowse.model.units.neuron_writes`), held whitened as rows
+    ``W w_n`` (``W = Σ_l^{-1/2}``).  Coefficients are signed: a positive one
+    is the ``+`` pole, a negative one the ``−`` pole.
+    """
+
+    writes: torch.Tensor
+    whitener: "LayerWhitener"
+    layer: int
+    kind: str = field(default="neurons", init=False)
+    nonneg: bool = field(default=False, init=False)
+
+    def __post_init__(self) -> None:
+        _require_cover(self.whitener, self.layer)
+        self.rows = self.whitener.whiten(
+            self.layer, self.writes.to(dtype=torch.float32).T,
+        ).contiguous()
+
+    @property
+    def device(self) -> torch.device:
+        return self.rows.device
+
+    def coords(self, vector: torch.Tensor) -> torch.Tensor:
+        return self.whitener.whiten(self.layer, vector.detach().float()).to(self.device)
+
+    def scores(self, residual: torch.Tensor) -> torch.Tensor:
+        return self.rows @ residual.to(device=self.device, dtype=torch.float32)
+
+    def atom(self, index: int) -> torch.Tensor:
+        return self.rows[int(index)]
+
+    def norms(self) -> torch.Tensor:
+        return self.rows.norm(dim=-1)
 
 
 @dataclass(frozen=True)

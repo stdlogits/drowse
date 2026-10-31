@@ -25,7 +25,7 @@ from __future__ import annotations
 import hashlib
 import threading
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -53,6 +53,9 @@ from drowse.readout.types import (
 from drowse.units.capture import TapUnit, UnitTap
 from drowse.units.runtime import UnitsRuntime, unit_ref
 from drowse.units.stats import UnitStats
+
+if TYPE_CHECKING:
+    from drowse.units.reads import FindResult, TopResult, UnitDetail, UnitReader
 
 
 def _spec(ref: UnitRef) -> dict[str, Any]:
@@ -188,9 +191,12 @@ class UnitsInstrument:
         replay: TokenReplay,
         put_direction: Callable[[str, dict[int, torch.Tensor]], None],
         has_direction: Callable[[str], bool],
+        reader: "UnitReader | None" = None,
     ) -> None:
         #: The model's units: discovery, validation, sites, write directions.
         self.runtime = runtime
+        #: Static reads, top, find and the catalog (``None``: not wired).
+        self._reader = reader
         self._model_id = model_id
         self._n_layers = int(n_layers)
         self._dtype = dtype
@@ -476,6 +482,56 @@ class UnitsInstrument:
         assert isinstance(ref, NeuronRef)
         self._put_direction(name, self.runtime.write_profile(ref))
         return name
+
+    # ---------------------------------------------------------- static reads
+
+    @property
+    def reads(self) -> "UnitReader":
+        """The static-read collaborator (:class:`~drowse.units.reads.UnitReader`)."""
+        if self._reader is None:
+            raise RuntimeError("this units instrument has no reader wired")
+        return self._reader
+
+    def read(self, unit: "str | UnitRef", *, k: int = 8, hide_hubs: bool = False) -> "UnitDetail":
+        """What a unit is about, from its weights: per neuron pole its writes
+        (at ``out``) and what it fires on (at ``mid``), per head its copies,
+        suppressions and inputs, each through the depth rule's R/S pair;
+        scalars, firing statistics and the catalog label
+        (:meth:`~drowse.units.reads.UnitReader.read`)."""
+        return self.reads.read(unit, k=k, hide_hubs=hide_hubs)
+
+    def top(
+        self, token: str, *, by: str = "writes",
+        layers: "list[int] | str | None" = None, k: int = 20,
+    ) -> "TopResult":
+        """Neuron poles that write (``by="writes"``) or fire on (``"fires"``)
+        a token most specifically (:meth:`~drowse.units.reads.UnitReader.top`)."""
+        if by not in ("writes", "fires"):
+            raise RequestError(f"by must be 'writes' or 'fires', got {by!r}")
+        return self.reads.top(token, by="writes" if by == "writes" else "fires", layers=layers, k=k)
+
+    def find(
+        self, target: "str | torch.Tensor | Mapping[int, torch.Tensor]", *,
+        layer: int | None = None, k: int = 16, layers: "list[int] | str | None" = None,
+    ) -> "FindResult":
+        """A direction split over each layer's neuron writes
+        (:meth:`~drowse.units.reads.UnitReader.find`)."""
+        return self.reads.find(target, layer=layer, k=k, layers=layers)
+
+    def stats(self, unit: "str | UnitRef") -> dict[str, Any]:
+        """How a unit fires: neutral statistics and the catalog's row."""
+        return self.reads.stats(unit)
+
+    def catalog_status(self) -> dict[str, Any]:
+        """The model's neuron-lens catalog binding (disk only)."""
+        return self.reads.catalog.status()
+
+    def fetch_catalog(
+        self, *, force: bool = False, on_progress: Callable[[str], None] | None = None,
+    ) -> dict[str, Any]:
+        """Bind the model's neuron-lens catalog (network and disk; no model
+        work).  404 for an uncatalogued model."""
+        return self.reads.catalog.fetch(force=force, on_progress=on_progress)
 
     # -------------------------------------------------------------- replay
 

@@ -1180,11 +1180,66 @@ class LensInstrument:
             )
         if dictionary == "tokens-in":
             return self._decompose_tokens_in(selector, k=k, layers=layers)
+        if dictionary == "neurons":
+            return self.decompose_neurons(
+                self._resolve_profile(selector), k=k, layers=layers, label=selector,
+            )
         lens = self._require()
         directions = self._resolve_profile(selector)
         return self.runtime.decompose(
             lens, directions, label=selector, whitener=self._whitener(), k=k, layers=layers,
         )
+
+    def decompose_neurons(
+        self,
+        directions: "Mapping[int, torch.Tensor]",
+        *,
+        k: int = 16,
+        layers: LayerSelector = None,
+        label: str = "the direction",
+    ) -> dict[int, tuple[float, list[tuple[str, float]]]]:
+        """Split per-layer directions against each layer's neuron writes
+        (the ``neurons`` dictionary; no lens needed).
+
+        Returns ``{layer: (share, [("neuron/L<l>n<i>", coeff), ...])}`` with
+        signed coefficients (positive: the ``+`` pole), in the session
+        whitener's Mahalanobis metric.
+        """
+        from drowse.lens.decompose import NeuronWrites, sparse_decompose
+        from drowse.lens.runtime import require_decompose_whitener
+        from drowse.model.blocks import model_spec
+        from drowse.model.layers import resolve_layer_selector
+        from drowse.model.units import neuron_writes
+
+        n_layers = self.runtime.n_layers
+        req = [
+            layer
+            for layer in resolve_layer_selector(
+                layers, sorted(int(layer) for layer in directions), n_layers=n_layers,
+            )
+            if layer in directions
+        ]
+        if not req:
+            raise RequestError(f"no overlap between {label!r}'s layers and the requested layers")
+        for layer in req:
+            if not 0 <= int(layer) < n_layers:
+                raise RequestError(f"layer {layer} is outside the model's {n_layers} layers")
+        metric = require_decompose_whitener(self._whitener(), req)
+        with self._exclusive(
+            "session.lens.decompose called while another model use is in flight",
+            phase_msg="session.lens.decompose called while a generation is in flight",
+        ), torch.inference_mode():
+            base = getattr(self.runtime.model, "_orig_mod", self.runtime.model)
+            spec = model_spec(base)
+            out: dict[int, tuple[float, list[tuple[str, float]]]] = {}
+            for layer in req:
+                atoms = NeuronWrites(neuron_writes(spec.blocks[layer]), metric, layer)
+                dec = sparse_decompose(directions[layer], atoms, layer=layer, k=k)
+                out[layer] = (
+                    dec.share,
+                    [(f"neuron/L{layer}n{index}", coeff) for index, coeff in dec.atoms],
+                )
+        return out
 
     def _decompose_tokens_in(
         self, selector: str, *, k: int, layers: LayerSelector,
@@ -1300,6 +1355,11 @@ class LensInstrument:
                 f"embedding padding rows never rank in an S read)"
             )
         return token_id
+
+    def token_embeddings(self) -> TokenEmbeddings:
+        """The S read's masked embedding statistics (built once per model;
+        the first call is model work, so hold the exclusive section)."""
+        return self._token_embeddings()
 
     def _token_embeddings(self) -> TokenEmbeddings:
         """The masked embedding statistics, built once per model.

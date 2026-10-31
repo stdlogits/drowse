@@ -66,7 +66,10 @@ from drowse.readout.geometry import GeometryInstrument
 from drowse.lens.instrument import LensInstrument
 from drowse.sae.instrument import SaeInstrument
 from drowse.sae.runtime import SaeRuntime
+from drowse.model.fingerprint import loaded_model_fingerprint
+from drowse.units.catalog import CatalogBinding
 from drowse.units.instrument import UnitsInstrument
+from drowse.units.reads import UnitReader
 from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
 from drowse.units.stats import UnitStats
 from drowse.loom.replay import TokenReplayer
@@ -459,7 +462,15 @@ class DrowseSession:
             forget_probe_hashes=lambda names: self._roster.forget(names),
         )
         # The units family: neuron/head probes and gates through its own tap,
-        # ``neuron/`` steering atoms, token replay.
+        # ``neuron/`` steering atoms, token replay, and the static reads
+        # (through the lens instrument's two families) with the catalog.
+        self._unit_reader = UnitReader(
+            self._units_runtime, self._lens_instrument,
+            model_id=self.model_id, n_layers=len(self._layers),
+            exclusive=self._model_exclusive,
+            catalog=CatalogBinding(self.model_id),
+            weights=lambda: loaded_model_fingerprint(self._model, self.model_id),
+        )
         self._units_instrument = UnitsInstrument(
             self._units_runtime,
             model_id=self.model_id,
@@ -469,6 +480,7 @@ class DrowseSession:
             replay=self._token_replay,
             put_direction=self._registry.put_profile,
             has_direction=lambda name: name in self._registry.profiles,
+            reader=self._unit_reader,
         )
         # The probe roster: attach/detach routing by namespace and the
         # transcript probe-hash caches; a roster change drops the analytics.
