@@ -28,7 +28,8 @@ Shape::
           "binding": {"source": null, "steering": ...},
           "readings": {name: ...}                 # attached neuron/… head/… probes
         }
-      }
+      },
+      "anatomy": {...}                            # replay only: token anatomy
     }
 
 A family's ``readings`` are its *attached probes'* values; its
@@ -42,6 +43,14 @@ a source switch.  The lens channel carries two lens families, so its
 binding names a source per family that produced its data
 (``sources.R``: the ``jlens/`` readings and the native readout;
 ``sources.S``: the ``slens/`` readings), told apart by the reading's unit.
+
+``anatomy`` rides only a ``replay`` envelope (``session.token_anatomy``,
+:mod:`drowse.loom.node_replay`): one token's layers read through both lens
+families (``reads_as``, ``attention``, ``mlp``, ``steering``, each a lens
+read with its halves), the units that pushed the token and the top heads'
+attention.  It is a record of the replay forward, not of a probe, so it sits
+beside ``instruments`` rather than in a family channel; its ``binding``
+names the lens sources it read through.
 """
 
 from __future__ import annotations
@@ -214,6 +223,105 @@ class UnitsChannel(TypedDict):
     readings: dict[str, ScalarReadingDict]
 
 
+class TokenScoreDict(TypedDict):
+    """One ranked token of a lens read half (``lens.read.TokenScore``)."""
+
+    token_id: int
+    token: str
+    value: float
+
+
+class FamilyReadDict(TypedDict):
+    """One family's half of a lens read (``lens.read.FamilyRead``):
+    ``weight`` is the depth rule's, ``centred`` whether it read ``x − μ``
+    (the S half of a residual), ``absent`` why it was not read."""
+
+    family: Literal["R", "S"]
+    weight: float
+    unit: Literal["probability", "footprint_z"]
+    lens: str | None
+    centred: bool
+    tokens: list[TokenScoreDict]
+    absent: str | None
+
+
+class LensReadDict(TypedDict):
+    """The read of one vector at ``(layer, site)`` (``lens.read.LensRead``);
+    ``of`` is ``residual`` or ``direction``."""
+
+    layer: int
+    site: Literal["out", "mid"]
+    depth: float
+    of: Literal["residual", "direction"]
+    r: FamilyReadDict
+    s: FamilyReadDict
+
+
+class AnatomyUnit(TypedDict):
+    """A unit's direct contribution to the anatomy token's logit through the
+    R lens; ``activation`` is a neuron's raw activation or a head's write
+    norm (``None`` in the cross-layer list)."""
+
+    unit: str
+    kind: Literal["neuron", "head"]
+    layer: int
+    index: int
+    contribution: float
+    activation: float | None
+
+
+class AnatomyLayer(TypedDict):
+    """One layer of a token's anatomy: the residual at ``out`` (``reads_as``,
+    S centred), the attention write at ``mid``, the MLP write and the
+    steering injection (``None`` when none) at ``out``, read as directions;
+    the layer's top neurons and heads by contribution."""
+
+    layer: int
+    depth: float
+    reads_as: LensReadDict
+    attention: LensReadDict
+    mlp: LensReadDict
+    steering: LensReadDict | None
+    neurons: list[AnatomyUnit]
+    heads: list[AnatomyUnit]
+
+
+class AnatomyPattern(TypedDict):
+    """A top head's attention from the token's producing position over the
+    context (``weights[j]`` for position ``j``; position 0 is the sink)."""
+
+    unit: str
+    layer: int
+    head: int
+    contribution: float
+    weights: list[float]
+
+
+class AnatomyToken(TypedDict):
+    """The anatomy's token: raw index, id and piece, its producing
+    ``position`` in the replayed sequence, the prompt render's length and the
+    model's probability of it there."""
+
+    raw_index: int
+    token_id: int
+    token: str
+    position: int
+    prompt_length: int
+    probability: float
+
+
+class TokenAnatomy(TypedDict):
+    """One token, every layer (``session.token_anatomy``)."""
+
+    token: AnatomyToken
+    binding: LensBinding
+    layers: list[AnatomyLayer]
+    units: list[AnatomyUnit]
+    units_absent: str | None
+    patterns: list[AnatomyPattern] | None
+    context: list[str] | None
+
+
 class Instruments(TypedDict):
     geometry: NotRequired[GeometryChannel]
     lens: NotRequired[LensChannel]
@@ -230,6 +338,7 @@ class Measurements(TypedDict):
     instruments: Instruments
     scores: NotRequired[dict[str, float]]
     per_layer_scores: NotRequired[dict[str, dict[str, float]]]
+    anatomy: NotRequired[TokenAnatomy]
 
 
 class MeasurementsEnvelope(TypedDict):
@@ -280,6 +389,7 @@ def build_measurements(
     sae_source: str | None = None,
     sae_layer: int | None = None,
     units_readings: Mapping[str, ScalarReading] | None = None,
+    anatomy: TokenAnatomy | None = None,
     steering: str | None = None,
 ) -> Measurements | None:
     """Build one measurement envelope; ``None`` when nothing measured.
@@ -288,7 +398,11 @@ def build_measurements(
     ``captured`` serializers did, so persisted loom rows stay comparable
     across the 5.x boundary).  ``lens_sources`` is ``{"R": label, "S":
     label}``; the lens binding keeps the families that produced data.
+    ``anatomy`` (built by :mod:`drowse.loom.node_replay`) rides a replay
+    envelope only.
     """
+    if anatomy is not None and scope != "replay":
+        raise ValueError("a token anatomy rides a replay envelope only")
     instruments: dict[str, Any] = {}
     scores: dict[str, float] = {}
     lens_families: set[str] = set()
@@ -390,7 +504,7 @@ def build_measurements(
             "readings": _readings_dict(units_readings),
         }
 
-    if not instruments:
+    if not instruments and anatomy is None:
         return None
 
     envelope: Measurements = {
@@ -405,6 +519,8 @@ def build_measurements(
         envelope["per_layer_scores"] = {
             str(layer): dict(row) for layer, row in per_layer_scores.items()
         }
+    if anatomy is not None:
+        envelope["anatomy"] = anatomy
     return envelope
 
 
@@ -443,7 +559,12 @@ def envelope_sources(
 
 
 __all__ = [
+    "AnatomyLayer",
+    "AnatomyPattern",
+    "AnatomyToken",
+    "AnatomyUnit",
     "DepthSummaryDict",
+    "FamilyReadDict",
     "EnvelopeSources",
     "GeometryChannel",
     "Instruments",
@@ -451,6 +572,7 @@ __all__ = [
     "LensAggregateToken",
     "LensBinding",
     "LensChannel",
+    "LensReadDict",
     "LensReadout",
     "LensReadoutLayer",
     "LensReadoutToken",
@@ -465,6 +587,8 @@ __all__ = [
     "SaeFeature",
     "SaeReadout",
     "ScalarReadingDict",
+    "TokenAnatomy",
+    "TokenScoreDict",
     "UnitsChannel",
     "build_measurements",
     "envelope_sources",

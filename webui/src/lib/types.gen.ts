@@ -23,6 +23,88 @@ export interface ActivePathJSON {
   node_ids: string[];
 }
 
+/**
+ * One unit's peak over the node: its signed value (over scale) at the
+ * token where ``|value|`` peaks.
+ */
+export interface ActivityPeak {
+  unit: string;
+  kind: "neuron" | "head";
+  layer: number;
+  index: number;
+  peak: number;
+  raw_index: number;
+}
+
+export interface ActivityPopulation {
+  raw_index: number;
+  encoding: string;
+  layers: PopulationLayer[];
+}
+
+export interface ActivityToken {
+  raw_index: number;
+  token_id: number;
+  token: string;
+}
+
+/**
+ * One layer of a token's anatomy: the residual at ``out`` (``reads_as``,
+ * S centred), the attention write at ``mid``, the MLP write and the
+ * steering injection (``None`` when none) at ``out``, read as directions;
+ * the layer's top neurons and heads by contribution.
+ */
+export interface AnatomyLayer {
+  layer: number;
+  depth: number;
+  reads_as: LensReadDict;
+  attention: LensReadDict;
+  mlp: LensReadDict;
+  steering: LensReadDict | null;
+  neurons: AnatomyUnit[];
+  heads: AnatomyUnit[];
+}
+
+/**
+ * A top head's attention from the token's producing position over the
+ * context (``weights[j]`` for position ``j``; position 0 is the sink).
+ */
+export interface AnatomyPattern {
+  unit: string;
+  layer: number;
+  head: number;
+  contribution: number;
+  weights: number[];
+}
+
+/**
+ * The anatomy's token: raw index, id and piece, its producing
+ * ``position`` in the replayed sequence, the prompt render's length and the
+ * model's probability of it there.
+ */
+export interface AnatomyToken {
+  raw_index: number;
+  token_id: number;
+  token: string;
+  position: number;
+  prompt_length: number;
+  probability: number;
+}
+
+/**
+ * A unit's direct contribution to the anatomy token's logit through the
+ * R lens; ``activation`` is a neuron's raw activation or a head's write
+ * norm (``None`` in the cross-layer list).
+ */
+export interface AnatomyUnit {
+  unit: string;
+  kind: "neuron" | "head";
+  layer: number;
+  index: number;
+  contribution: number;
+  activation: number | null;
+}
+
 /** ``CastMember.to_dict()`` plus the server-derived ``origin``. */
 export interface CastMemberJSON {
   recipe: RecipeJSON | null;
@@ -110,6 +192,21 @@ export interface ExtractResponse {
   profile: VectorInfo;
   canonical: string;
   progress?: string[];
+}
+
+/**
+ * One family's half of a lens read (``lens.read.FamilyRead``):
+ * ``weight`` is the depth rule's, ``centred`` whether it read ``x − μ``
+ * (the S half of a residual), ``absent`` why it was not read.
+ */
+export interface FamilyReadDict {
+  family: "R" | "S";
+  weight: number;
+  unit: "probability" | "footprint_z";
+  lens: string | null;
+  centred: boolean;
+  tokens: TokenScoreDict[];
+  absent: string | null;
 }
 
 export interface FilterMatchesJSON {
@@ -254,6 +351,19 @@ export interface LensProbeInfo {
   feature_space: string;
   word: string;
   token_id: number | null;
+}
+
+/**
+ * The read of one vector at ``(layer, site)`` (``lens.read.LensRead``);
+ * ``of`` is ``residual`` or ``direction``.
+ */
+export interface LensReadDict {
+  layer: number;
+  site: "out" | "mid";
+  depth: number;
+  of: "residual" | "direction";
+  r: FamilyReadDict;
+  s: FamilyReadDict;
 }
 
 export interface LensReadoutBlockJSON {
@@ -458,6 +568,7 @@ export interface MeasurementsEnvelopeJSON {
   instruments: MeasurementInstrumentsJSON;
   scores?: Record<string, number>;
   per_layer_scores?: Record<string, Record<string, number>>;
+  anatomy?: TokenAnatomy;
 }
 
 /** The replay endpoints' response body. */
@@ -491,6 +602,19 @@ export interface PairwiseCompareResponse {
   layers_b: number[];
   matrix: ((number | null)[])[];
   model: string | null;
+}
+
+/**
+ * One layer's whole population at one token, packed
+ * (:data:`POPULATION_ENCODING`): ``neurons`` has ``d_ff`` values, ``heads``
+ * ``n_heads``.
+ */
+export interface PopulationLayer {
+  layer: number;
+  neurons: string;
+  heads: string;
+  n_neurons: number;
+  n_heads: number;
 }
 
 export interface PreparationProgress {
@@ -869,6 +993,24 @@ export interface TemplateTurnJSON {
   [key: string]: unknown;
 }
 
+/** One token, every layer (``session.token_anatomy``). */
+export interface TokenAnatomy {
+  token: AnatomyToken;
+  binding: LensBindingJSON;
+  layers: AnatomyLayer[];
+  units: AnatomyUnit[];
+  units_absent: string | null;
+  patterns: AnatomyPattern[] | null;
+  context: string[] | null;
+}
+
+/** One ranked token of a lens read half (``lens.read.TokenScore``). */
+export interface TokenScoreDict {
+  token_id: number;
+  token: string;
+  value: number;
+}
+
 export interface TranscriptLoadResponseJSON {
   leaf_id: string;
   rev: number;
@@ -895,6 +1037,25 @@ export interface TreeRestoreResponse {
   root_id: string;
   active_node_id: string;
   nodes: number;
+}
+
+/**
+ * Unit activity over a node's tokens (:meth:`NodeReplayer.unit_activity`).
+ *
+ * ``tokens`` are the node's raw tokens, each read at its producing forward;
+ * ``sink_raw_index`` names the token produced at the attention sink
+ * (position 0), whose values are 0 and never peak, or is ``None``.
+ * ``traces`` maps each requested unit to one value per token.
+ */
+export interface UnitActivityJSON {
+  node_id: string;
+  steering: string | null;
+  unit: string;
+  tokens: ActivityToken[];
+  sink_raw_index: number | null;
+  top: ActivityPeak[];
+  traces: Record<string, number[]>;
+  population: ActivityPopulation | null;
 }
 
 /**

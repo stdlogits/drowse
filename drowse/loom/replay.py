@@ -11,13 +11,16 @@ the same anchor (:func:`drowse.loom.ops.resolve_token_anchor`).
 
 The instruments take a replayer as their :class:`~drowse.readout.replay.TokenReplay`
 dependency; the session builds one over its tree, renderer, steering
-composer, exclusive guard and capture forward.
+composer, exclusive guard and capture forward.  :meth:`TokenReplayer.forward`
+is the same rebuild handing the producing ids to a forward of the caller's
+own (the node replay of :mod:`drowse.loom.node_replay`, with its own taps).
 """
 
 from __future__ import annotations
 
 from collections.abc import Callable
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
@@ -33,6 +36,30 @@ if TYPE_CHECKING:
     from drowse.model.chat import ChatTraits
 
 T = TypeVar("T")
+
+
+@dataclass(frozen=True)
+class ReplayForward:
+    """The producing forward's input, as :meth:`TokenReplayer.forward` hands
+    it over: ``ids`` ``[1, T]`` (the node's prompt render, then its raw
+    decode record before the anchored token), ``prompt_length`` (the render's
+    length, so raw token ``i`` is produced at position ``prompt_length + i −
+    1``), the node's whole raw decode record and the anchored raw index."""
+
+    ids: torch.Tensor
+    prompt_length: int
+    raw_ids: tuple[int, ...]
+    raw_index: int
+
+    @property
+    def position(self) -> int:
+        """The producing position of the anchored token (the last one)."""
+        return int(self.ids.shape[1]) - 1
+
+    def producing_position(self, raw_index: int) -> int:
+        """Where raw token ``raw_index`` is produced (its input is the token
+        before it)."""
+        return self.prompt_length + int(raw_index) - 1
 
 
 class TokenReplayer:
@@ -95,6 +122,39 @@ class TokenReplayer:
         ``ConcurrentExtractionError`` while another model op is in flight;
         ``label`` prefixes those messages.
         """
+
+        def capture_and_read(forward: ReplayForward) -> T:
+            ids = forward.ids
+            layer_indices = list(layers() if callable(layers) else layers)
+            hidden = self._capture(
+                ids, layer_indices=layer_indices, pool_index=ids.shape[1] - 1,
+            )
+            return read(hidden)
+
+        return self.forward(
+            node_id, raw_index, run=capture_and_read,
+            apply_steering=apply_steering, raw=raw, label=label,
+        )
+
+    def forward(
+        self,
+        node_id: str,
+        raw_index: int,
+        *,
+        run: Callable[[ReplayForward], T],
+        apply_steering: bool = True,
+        raw: bool = False,
+        label: str,
+    ) -> tuple[ReplayedToken, T]:
+        """The producing forward of ``node_id``'s ``raw_index``-th token,
+        run by ``run`` (the rebuild of :meth:`__call__` without its capture).
+
+        ``run`` receives the :class:`ReplayForward` and executes inside the
+        exclusive-GPU section under the node recipe's steering (when
+        ``apply_steering``), exactly where :meth:`__call__` runs its capture;
+        it owns its forward, hooks and reads.  Anchoring a node's last raw
+        token gives the forward that covers every token's producing position.
+        """
         anchor = resolve_token_anchor(self._tree(), node_id, raw_index, label=label)
         recipe = anchor.node.recipe
         steering = (
@@ -110,11 +170,12 @@ class TokenReplayer:
                 f"{label} called while another model use is in flight",
                 phase_msg=f"{label} called while a generation is in flight",
             ):
-                layer_indices = list(layers() if callable(layers) else layers)
-                hidden = self._capture(
-                    ids, layer_indices=layer_indices, pool_index=ids.shape[1] - 1,
-                )
-                result = read(hidden)
+                result = run(ReplayForward(
+                    ids=ids,
+                    prompt_length=int(ids.shape[1]) - anchor.raw_index,
+                    raw_ids=anchor.raw_ids,
+                    raw_index=anchor.raw_index,
+                ))
         return (
             ReplayedToken(
                 node_id=node_id,
@@ -166,4 +227,4 @@ class TokenReplayer:
         return torch.cat([prompt_ids, prefix], dim=1)
 
 
-__all__ = ["TokenReplayer"]
+__all__ = ["ReplayForward", "TokenReplayer"]

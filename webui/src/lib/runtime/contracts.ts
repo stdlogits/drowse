@@ -34,6 +34,7 @@ import type {
   TemplateDetail,
   TemplateSummary,
   TranscriptLoadResponseJSON,
+  UnitActivityJSON,
   VectorInfo,
   WSClientMessage,
   WSGenerateRequest,
@@ -578,6 +579,67 @@ export interface RuntimeInstrumentsService {
   validateLensToken(word: string, id?: string): Promise<LensTokenValidationJSON>;
   validateSaeFeature(featureId: number, id?: string): Promise<{ id: number; label?: string | null; layer: number; max_act?: number | null }>;
   saeFeaturesMetadata(ids: number[], id?: string): Promise<SaeFeatureMetaResponse>;
+  /**
+   * One loom token, every layer: the replay envelope's `anatomy` (what the
+   * residual reads as, what attention and the MLP added, the units that
+   * pushed the token, the top heads' attention). Optional: a runtime without
+   * it leaves it undefined (`replayCapabilities` tells the UI).
+   */
+  tokenAnatomy?(
+    nodeId: string,
+    rawIndex: number,
+    options?: TokenAnatomyOptions,
+    id?: string,
+  ): Promise<{ measurements: MeasurementsEnvelopeJSON }>;
+  /**
+   * Every neuron's and head's activity over a loom node's tokens: the top
+   * units by peak, traces of the requested units and one token's packed
+   * population. Optional, as `tokenAnatomy`.
+   */
+  unitActivity?(
+    nodeId: string,
+    options?: UnitActivityOptions,
+    id?: string,
+  ): Promise<UnitActivityJSON>;
+}
+
+export interface TokenAnatomyOptions {
+  /** Tokens per lens read (1-256, default 8). */
+  k?: number;
+  /** Neurons and heads per layer and across layers (1-64, default 8). */
+  units?: number;
+  /** Top heads whose attention is returned (0-16, default 4; 0 skips eager attention). */
+  patterns?: number;
+  steered?: boolean;
+  raw?: boolean;
+}
+
+export interface UnitActivityOptions {
+  /** Units across the node by peak |value| (1-1024, default 32). */
+  top?: number;
+  /** Units to trace token by token (`neuron/L8n344`, `head/L20h3`). */
+  units?: string[];
+  /** One token whose whole population to return (packed float16). */
+  rawIndex?: number;
+  /** The population's layers (a layer selector; default every layer). */
+  layers?: string;
+  steered?: boolean;
+  raw?: boolean;
+}
+
+/** Which node-replay reads a runtime's instruments service offers. */
+export interface RuntimeReplayCapabilities {
+  tokenAnatomy: boolean;
+  unitActivity: boolean;
+}
+
+export function replayCapabilities(
+  instruments: RuntimeInstrumentsService,
+): RuntimeReplayCapabilities {
+  return {
+    tokenAnatomy: typeof instruments.tokenAnatomy === "function",
+    unitActivity: typeof instruments.unitActivity === "function",
+  };
 }
 
 export interface InstalledInstrumentPackActivationRequest {
@@ -699,6 +761,8 @@ export const RUNTIME_SERVICE_METHODS = Object.freeze({
     validateLensToken: true,
     validateSaeFeature: true,
     saeFeaturesMetadata: true,
+    tokenAnatomy: true,
+    unitActivity: true,
   }),
 }) satisfies {
   [Service in RuntimeServiceName]: Readonly<

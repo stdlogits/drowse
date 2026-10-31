@@ -52,6 +52,7 @@ import type {
   TemplateDetail,
   TemplateSummary,
   TranscriptLoadResponseJSON,
+  UnitActivityJSON,
   VectorInfo,
 } from "./types";
 import { ApiError } from "./runtime/errors";
@@ -755,6 +756,54 @@ export const apiInstruments = {
     if (family !== "geometry") params.set("top_k", String(opts.topK ?? 8));
     if (opts.layers) params.set("layers", opts.layers);
     return request(`${SESSION_BASE(id)}/instruments/${family}/token-readout?${params}`);
+  },
+
+  /** One loom token, every layer (the node replay's ``anatomy`` in the
+   *  replay envelope): lens reads of the residual and of the attention and
+   *  MLP writes, the units that pushed the token, the top heads' attention. */
+  tokenAnatomy(
+    nodeId: string,
+    rawIndex: number,
+    opts: { k?: number; units?: number; patterns?: number; steered?: boolean; raw?: boolean } = {},
+    id: string = SESSION,
+  ): Promise<{ measurements: MeasurementsEnvelopeJSON }> {
+    const params = new URLSearchParams({
+      node_id: nodeId,
+      raw_index: String(rawIndex),
+      k: String(opts.k ?? 8),
+      units: String(opts.units ?? 8),
+      patterns: String(opts.patterns ?? 4),
+      steered: String(opts.steered ?? true),
+      raw: String(opts.raw ?? false),
+    });
+    return request(`${SESSION_BASE(id)}/instruments/token-anatomy?${params}`);
+  },
+
+  /** Every unit's activity over a loom node's tokens: the top units by peak,
+   *  traces of ``units`` and, with ``rawIndex``, that token's population
+   *  (float16, little-endian, base64). */
+  unitActivity(
+    nodeId: string,
+    opts: {
+      top?: number;
+      units?: string[];
+      rawIndex?: number;
+      layers?: string;
+      steered?: boolean;
+      raw?: boolean;
+    } = {},
+    id: string = SESSION,
+  ): Promise<UnitActivityJSON> {
+    const params = new URLSearchParams({
+      node_id: nodeId,
+      top: String(opts.top ?? 32),
+      steered: String(opts.steered ?? true),
+      raw: String(opts.raw ?? false),
+    });
+    if (opts.units?.length) params.set("units", opts.units.join(","));
+    if (opts.rawIndex !== undefined) params.set("raw_index", String(opts.rawIndex));
+    if (opts.layers) params.set("layers", opts.layers);
+    return request(`${SESSION_BASE(id)}/instruments/units/activity?${params}`);
   },
 
   /** Check that ``word`` round-trips through the loaded model tokenizer as

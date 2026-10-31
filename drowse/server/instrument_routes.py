@@ -12,6 +12,10 @@ read families ``session.instruments`` registers (``geometry`` / ``lens`` /
   (lens ``fetch``/``fit``, sae ``fetch``/``train``), one status shape.
 - ``GET {family}/token-readout`` — the loom token-drilldown replay, wrapped in
   the ``measurements`` replay envelope the instrument builds.
+- ``GET token-anatomy`` — one loom token, every layer (the node replay's
+  ``anatomy`` in the replay envelope): the lens families and the units.
+- ``GET units/activity`` — every neuron's and head's activity over a loom
+  node's tokens (top units by peak, traces, one token's population).
 - Family extras: ``lens/token/validate``, ``sae/features/validate``,
   ``sae/features/metadata``.
 
@@ -32,6 +36,7 @@ from pydantic import Field
 
 from drowse.lens.jlens import JacobianLensCancelled, LensNotFittedError
 from drowse.lens.key import DEFAULT_FIT_DOCUMENTS
+from drowse.loom.node_replay import UnitActivityJSON
 from drowse.model.layers import parse_layer_selector
 from drowse.readout.measurements import MeasurementsEnvelope
 from drowse.sae.training import SaeTrainingCancelled
@@ -619,6 +624,49 @@ def register_instrument_routes(app: FastAPI) -> None:
                 session.instruments[family].token_readout,
                 node_id, raw_index,
                 top_k=top_k, layers=_parse_layers(layers), apply_steering=steered, raw=raw,
+            )
+
+    # -- node replay: token anatomy and unit activity ------------------------
+
+    @router.get("/instruments/token-anatomy")
+    async def instrument_token_anatomy(
+        node_id: str,
+        raw_index: int,
+        k: int = 8,
+        units: int = 8,
+        patterns: int = 4,
+        steered: bool = True,
+        raw: bool = False,
+    ) -> MeasurementsEnvelope:
+        """One loom token, every layer: the replay envelope's ``anatomy``.
+        ``k`` tokens per lens read, ``units`` neurons and heads per layer,
+        ``patterns`` top heads' attention (0: none)."""
+        async with session_lock(app):
+            return await run_in_thread(
+                session.token_anatomy, node_id, raw_index,
+                k=k, units=units, patterns=patterns, apply_steering=steered, raw=raw,
+            )
+
+    @router.get("/instruments/units/activity")
+    async def instrument_unit_activity(
+        node_id: str,
+        top: int = 32,
+        units: str | None = None,
+        raw_index: int | None = None,
+        layers: str | None = None,
+        steered: bool = True,
+        raw: bool = False,
+    ) -> UnitActivityJSON:
+        """Every unit's activity over a node's tokens: the ``top`` units by
+        peak, the traces of ``units`` (comma-separated ``neuron/…``,
+        ``head/…``) and, with ``raw_index``, that token's population at
+        ``layers``."""
+        names = [name.strip() for name in (units or "").split(",") if name.strip()]
+        async with session_lock(app):
+            return await run_in_thread(
+                session.unit_activity, node_id,
+                top=top, units=names, raw_index=raw_index, layers=_parse_layers(layers),
+                apply_steering=steered, raw=raw,
             )
 
     # -- family extras ---------------------------------------------------------

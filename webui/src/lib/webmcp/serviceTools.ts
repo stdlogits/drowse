@@ -76,6 +76,22 @@ function instrumentAvailability(feature: InstrumentFeature, selected?: Instrumen
   };
 }
 
+function replayAvailability(method: "tokenAnatomy" | "unitActivity"): AppTool["available"] {
+  return (context) => {
+    if (!context.runtime) return "Load or connect a model workspace first.";
+    return typeof context.runtime.instruments[method] === "function"
+      ? null : "This runtime does not offer node replay reads.";
+  };
+}
+
+function replayMethod<M extends "tokenAnatomy" | "unitActivity">(context: ToolContext, method: M) {
+  const call = runtime(context).instruments[method];
+  if (typeof call !== "function") {
+    throw new ToolError("INSTRUMENT_UNAVAILABLE", "This runtime does not offer node replay reads.", { method });
+  }
+  return call.bind(runtime(context).instruments) as NonNullable<RuntimeClient["instruments"][M]>;
+}
+
 async function requireInstrument(context: ToolContext, selected: InstrumentFamily, feature: InstrumentFeature, operation?: string) {
   const info = await runtime(context).sessions.get();
   const block = info.instruments.find((item) => item.family === selected);
@@ -452,6 +468,14 @@ function instrumentTools(): AppTool[] {
       description: "Replay a committed token for geometry, lens or SAE evidence. raw_index identifies the producing decode position; steered=false computes an unsteered counterfactual. Returns a job; replay is not capture.",
       inputSchema: objectSchema({ family, node_id: name, raw_index: integer(), topK: integer(1, 100), steered: flag, raw: flag, layers: text("Comma-separated layer indices or supported layer selection.", 1000) }, ["family", "node_id", "raw_index"]),
       execute: async (input, context) => { await requireInstrument(context, input.family as InstrumentFamily, "token_readout"); return job(context, "token-readout", input, (progress) => runtime(context).instruments.tokenReadout(input.family as InstrumentFamily, input.node_id as string, input.raw_index as number, request(input, ["family", "node_id", "raw_index"]), undefined, progress)); } }),
+    tool({ name: "drowse_token_anatomy", group: "analysis", services: ["instruments.tokenAnatomy"], surfaces: ["token_drilldown"], readOnly: true, available: replayAvailability("tokenAnatomy"),
+      description: "Replay a committed token and read it layer by layer: what the residual reads as through the lenses, what attention and the MLP added, the neurons and heads that pushed the token, and where the top heads looked. steered=false computes an unsteered counterfactual. Returns a job; replay is not capture.",
+      inputSchema: objectSchema({ node_id: name, raw_index: integer(), k: integer(1, 256), units: integer(1, 64), patterns: integer(0, 16), steered: flag, raw: flag }, ["node_id", "raw_index"]),
+      execute: async (input, context) => { const call = replayMethod(context, "tokenAnatomy"); return job(context, "token-anatomy", input, () => call(input.node_id as string, input.raw_index as number, request(input, ["node_id", "raw_index"]))); } }),
+    tool({ name: "drowse_unit_activity", group: "analysis", services: ["instruments.unitActivity"], surfaces: ["token_drilldown"], readOnly: true, available: replayAvailability("unitActivity"),
+      description: "Replay a committed node and read every neuron's and head's activity over its tokens: the strongest units with their peak token, per-token traces of named units (neuron/L8n344, head/L20h3), and one token's whole population. Returns a job; replay is not capture.",
+      inputSchema: objectSchema({ node_id: name, top: integer(1, 1024), units: { type: "array", items: text("A unit name such as neuron/L8n344 or head/L20h3.", 64), maxItems: 64 }, rawIndex: integer(), layers: text("Population layers: comma-separated indices, ranges or workspace/all.", 1000), steered: flag, raw: flag }, ["node_id"]),
+      execute: async (input, context) => { const call = replayMethod(context, "unitActivity"); return job(context, "unit-activity", input, () => call(input.node_id as string, request(input, ["node_id"]))); } }),
     tool({ name: "drowse_validate_lens_token", group: "instruments", services: ["instruments.validateLensToken"], readOnly: true, available: instrumentAvailability("resident", "lens"),
       description: "Check whether a word is a supported single-token lens atom for this tokenizer before steering or probing it.", inputSchema: objectSchema({ word: text("The exact token text.", 200) }, ["word"]), execute: async (input, context) => { await requireInstrument(context, "lens", "resident"); return runtime(context).instruments.validateLensToken(input.word as string); } }),
     tool({ name: "drowse_validate_sae_feature", group: "instruments", services: ["instruments.validateSaeFeature"], readOnly: true, available: instrumentAvailability("resident", "sae"),

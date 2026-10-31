@@ -22,7 +22,7 @@ export const INTERFACE_CATALOGUE = {
   load_conversation: exposed("drowse_list_chats", "drowse_open_chat", "drowse_import_chat"),
   compare: exposed("drowse_compare_generations"),
   system_prompt: exposed("drowse_set_system_prompt"),
-  token_drilldown: exposed("drowse_read_tree", "drowse_token_readout", "drowse_fork_token", "drowse_set_token_inspector"),
+  token_drilldown: exposed("drowse_read_tree", "drowse_token_readout", "drowse_token_anatomy", "drowse_unit_activity", "drowse_fork_token", "drowse_set_token_inspector"),
   correlation: exposed("drowse_correlate_profiles", "drowse_compare_profiles"),
   probe_inspector: exposed("drowse_probe_geometry", "drowse_read_workspace"),
   advanced_sampling: exposed("drowse_set_sampling", "drowse_explain_control"),
@@ -55,7 +55,7 @@ export const INTERFACE_FAMILIES: Record<string, CoverageEntry> = {
   sampling_and_identity: exposed("drowse_set_sampling", "drowse_set_system_prompt", "drowse_set_role_labels", "drowse_set_cast_recipe"),
   steering: exposed("drowse_set_steering", "drowse_edit_steer_rack", "drowse_list_manifolds", "drowse_get_profile"),
   probes_and_highlights: exposed("drowse_attach_probe", "drowse_detach_probe", "drowse_set_highlighting", "drowse_probe_geometry"),
-  measurements_and_sources: exposed("drowse_token_readout", "drowse_set_instrument_live", "drowse_instrument_sources", "drowse_use_lens_source", "drowse_validate_lens_token", "drowse_validate_sae_feature", "drowse_sae_feature_metadata"),
+  measurements_and_sources: exposed("drowse_token_readout", "drowse_token_anatomy", "drowse_unit_activity", "drowse_set_instrument_live", "drowse_instrument_sources", "drowse_use_lens_source", "drowse_validate_lens_token", "drowse_validate_sae_feature", "drowse_sae_feature_metadata"),
   instrument_preparations: exposed("drowse_prepare_instrument", "drowse_preparation_status", "drowse_cancel_preparation"),
   artifact_authoring: exposed("drowse_extract_profile", "drowse_create_manifold", "drowse_discover_manifold", "drowse_generate_manifold", "drowse_fit_manifold", "drowse_merge_manifolds"),
   artifact_distribution: exposed("drowse_list_manifold_packs", "drowse_search_manifolds", "drowse_install_manifold", "drowse_delete_manifold", "drowse_delete_manifold_pack", "drowse_import_manifold_pack", "drowse_export_manifold_pack"),
@@ -124,6 +124,7 @@ export const RUNTIME_SERVICE_CATALOGUE = {
     cancelPreparation: exposed("drowse_cancel_preparation", "drowse_prepare_instrument"), tokenReadout: exposed("drowse_token_readout"),
     validateLensToken: exposed("drowse_validate_lens_token"), validateSaeFeature: exposed("drowse_validate_sae_feature"),
     saeFeaturesMetadata: exposed("drowse_sae_feature_metadata"),
+    tokenAnatomy: exposed("drowse_token_anatomy"), unitActivity: exposed("drowse_unit_activity"),
   },
 } satisfies ServiceCoverage;
 
