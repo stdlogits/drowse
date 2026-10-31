@@ -29,7 +29,7 @@ and the layer aggregate are all apples-to-apples.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
@@ -329,20 +329,22 @@ class JacobianLens:
             )
         return {l: w @ matrices[l] for l in requested}
 
-    def select_layers(
-        self, layers: Sequence[int], *, sites: Sequence[str] | None = None,
-    ) -> "JacobianLens":
-        """Return a view-like lens holding only ``layers`` at ``sites``.
+    def select_layers(self, layers: Mapping[str, Iterable[int]]) -> "JacobianLens":
+        """Return a view-like lens holding exactly ``layers``, per site.
 
-        ``sites`` defaults to every site the lens holds, and each must carry
-        every requested layer.  The tensors are shared with ``self``; callers
-        that persist the result materialize their own fp32 shards through
-        ``save_lens``.
+        ``layers`` maps each kept site to its layers (``{"out": [0, 1],
+        "mid": [0, 1, 2]}``); sites it does not name are dropped.  Sites carry
+        different layer sets by design (the R family's ``out`` stops below
+        the last layer, its ``mid`` covers it), so each site is asked only
+        for its own.  A site or layer the lens lacks raises
+        :class:`LensNotFittedError`.  The tensors are shared with ``self``;
+        callers that persist the result materialize their own fp32 shards
+        through ``save_lens``.
         """
-        requested = sorted(set(int(l) for l in layers))
         kept: dict[str, dict[int, torch.Tensor]] = {}
-        for site in self.sites if sites is None else tuple(sites):
+        for site, wanted in layers.items():
             matrices = self.matrices(site)
+            requested = sorted({int(l) for l in wanted})
             missing = [l for l in requested if l not in matrices]
             if missing:
                 fitted = sorted(matrices)
@@ -351,6 +353,8 @@ class JacobianLens:
                     f"{fitted[:3]}..{fitted[-3:]}"
                 )
             kept[site] = {layer: matrices[layer] for layer in requested}
+        if not any(kept.values()):
+            raise ValueError("select_layers() needs at least one layer")
         return self._with_sites(kept)
 
     def _with_sites(self, sites: Mapping[str, Mapping[int, torch.Tensor]]) -> "JacobianLens":

@@ -505,7 +505,7 @@ def test_select_and_union_layers() -> None:
     j2 = torch.randn(_D, _D)
     lens = JacobianLens({0: j0, 1: j1}, n_prompts=3, d_model=_D)
 
-    selected = lens.select_layers([1])
+    selected = lens.select_layers({"out": [1]})
     assert selected.source_layers == [1]
     assert torch.equal(selected.jacobians[1], lens.jacobians[1])
 

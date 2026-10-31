@@ -274,6 +274,15 @@ def plan_lens_fit(
     return LensFitPlan("fresh")
 
 
+
+def _holds_artifact(lens: JacobianLens, sidecar: Mapping[str, Any]) -> bool:
+    """Whether ``lens`` is the whole artifact ``sidecar`` names: every site,
+    every layer (a selective load or selection is a view, not the artifact)."""
+    sites = tuple(sidecar.get("sites", {}))
+    return set(lens.sites) == set(sites) and all(
+        set(lens.layers(site)) == set(lens_layers(sidecar, site)) for site in sites
+    )
+
 # ---------------------------------------------------------------------------
 # Weight-free no-op proof
 # ---------------------------------------------------------------------------
@@ -641,7 +650,7 @@ class _FitRun:
             self.model_id,
             name=self.identity.name,
             requested_layers=(
-                set(self.identity.sources) if use == "selective" else None
+                {"out": set(self.identity.sources)} if use == "selective" else None
             ),
         )
         return loaded
@@ -676,7 +685,7 @@ class _FitRun:
                 return self.topup(plan, *existing)
             base: JacobianLens | None = None
             if existing is not None:
-                base = existing[0].select_layers(self.identity.sources)
+                base = existing[0].select_layers({"out": self.identity.sources})
             elif plan.checkpoint:
                 self.evict_early()
                 loaded = load_lens_checkpoint(self.model_id, self.identity.name)
@@ -700,8 +709,8 @@ class _FitRun:
         # leaves a second full shard set; reap it only when the final
         # artifact proves it is not farther ahead or different.
         remove_subsumed_lens_checkpoint(self.model_id, name=self.identity.name)
-        selected = lens.select_layers(self.identity.sources)
-        if set(lens.source_layers) == set(lens_layers(sidecar)):
+        selected = lens.select_layers({"out": self.identity.sources})
+        if _holds_artifact(lens, sidecar):
             self.residency.adopt(lens, sidecar)
         else:
             # A selective no-op is a return view, not the complete artifact
@@ -754,7 +763,7 @@ class _FitRun:
             _verified_reuse_proof=proof,
         )
         remove_lens_checkpoint(self.model_id, self.identity.name)
-        selected = merged.select_layers(self.identity.sources)
+        selected = merged.select_layers({"out": self.identity.sources})
         self.residency.adopt(
             merged, load_local_lens_sidecar(self.model_id, self.identity.name),
         )

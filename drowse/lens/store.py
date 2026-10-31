@@ -59,7 +59,7 @@ from drowse.base.shards import (
 )
 from drowse.base.source_registry import LOCAL, SourceRef
 from drowse.lens.corpus import LENS_CORPUS_PREPROCESS_VERSION, LENS_DOC_CHARS
-from drowse.lens.jlens import SKIP_FIRST_POSITIONS, JacobianLens
+from drowse.lens.jlens import SKIP_FIRST_POSITIONS, JacobianLens, LensNotFittedError
 from drowse.lens.key import LENS_KINDS, LENS_SITES, LensKey, local_lens_kind
 
 log = logging.getLogger(__name__)
@@ -868,9 +868,14 @@ def _load_lens_verified(
     model_id: str,
     *,
     name: str,
-    requested_layers: set[int] | None = None,
+    requested_layers: Mapping[str, Iterable[int]] | None = None,
 ) -> tuple[JacobianLens, dict[str, Any], _LensPayloadProof | None] | None:
-    """Load a durable lens plus a proof reusable under the fit transaction."""
+    """Load a durable lens plus a proof reusable under the fit transaction.
+
+    ``requested_layers`` (``{site: layers}``) loads only those sites and
+    layers (see :func:`_load_lens_at`); the proof covers the artifact only
+    when the request names all of it.
+    """
     directory = _local_dir(model_id, name)
     anchor = _anchor(directory, checkpoint=False)
     with lens_fit_lock(model_id, name), artifact_lock(anchor):
@@ -887,7 +892,9 @@ def _load_lens_verified(
         lens, verified = loaded
         _cleanup_unreferenced_generations(directory)
         fully_verified = requested_layers is None or all(
-            requested_layers >= set(lens_layers(verified, site))
+            site in requested_layers
+            and {int(layer) for layer in requested_layers[site]}
+            >= set(lens_layers(verified, site))
             for site in verified["sites"]
         )
         return lens, verified, (
@@ -913,22 +920,58 @@ def load_lens_checkpoint(
         return loaded
 
 
+def _requested_site_layers(
+    sidecar: Mapping[str, Any], requested: Mapping[str, Iterable[int]],
+) -> dict[str, set[int]]:
+    """Check a per-site request against a manifest; ``{site: layers}``."""
+    kind = sidecar.get("kind", "?")
+    held = [site for site in LENS_SITES if site in sidecar.get("sites", {})]
+    out: dict[str, set[int]] = {}
+    for site, layers in requested.items():
+        wanted = {int(layer) for layer in layers}
+        if not wanted:
+            raise ValueError(f"a selective lens load names no layers at the {site!r} site")
+        if site not in held:
+            raise LensNotFittedError(
+                f"this {kind} lens has no {site!r} site (it holds: "
+                f"{', '.join(held) or 'none'})"
+            )
+        fitted = lens_layers(sidecar, site)
+        missing = sorted(wanted - set(fitted))
+        if missing:
+            raise LensNotFittedError(
+                f"layers {missing} not in fitted {kind}:{site} lens layers "
+                f"{fitted[:3]}..{fitted[-3:]}"
+            )
+        out[site] = wanted
+    if not out:
+        raise ValueError("a selective lens load names no site")
+    return out
+
+
 def _load_lens_at(
     model_id: str,
     directory: Path,
     sidecar: dict[str, Any] | None,
     *,
     label: str,
-    requested_layers: set[int] | None = None,
+    requested_layers: Mapping[str, Iterable[int]] | None = None,
 ) -> tuple[JacobianLens, dict[str, Any]] | None:
-    """Materialize every site's matrices, verifying each shard's digest.
+    """Materialize the artifact's matrices, verifying each shard's digest.
 
-    ``requested_layers`` loads only those layers, and every site must hold
-    each of them (a selective load of a two-site artifact asks for layers
-    both sites carry).
+    ``requested_layers`` maps each site to load to its layers
+    (``{"out": {0, 1}, "mid": {0, 1, 2}}``); unnamed sites are not read.
+    Sites hold different layers by design (the R family's ``out`` stops
+    below the last layer, its ``mid`` covers it), so each is asked only for
+    its own.  A request the artifact cannot meet raises
+    :class:`LensNotFittedError` (404) rather than reading as a corrupt lens:
+    the artifact is fine, the request is not.
     """
     if sidecar is None:
         return None
+    wanted = None if requested_layers is None else _requested_site_layers(
+        sidecar, requested_layers,
+    )
     try:
         kind = sidecar["kind"]
         d_model = int(sidecar["d_model"])
@@ -936,14 +979,12 @@ def _load_lens_at(
         loaded: dict[str, dict[int, torch.Tensor]] = {}
         for site in (site for site in LENS_SITES if site in sidecar["sites"]):
             durable_layers = lens_layers(sidecar, site)
-            if requested_layers is not None and requested_layers - set(durable_layers):
-                raise ValueError(f"requested layers are absent from the {site} site")
+            if wanted is not None and site not in wanted:
+                continue
             layers = (
-                durable_layers if requested_layers is None
-                else [layer for layer in durable_layers if layer in requested_layers]
+                durable_layers if wanted is None
+                else [layer for layer in durable_layers if layer in wanted[site]]
             )
-            if not layers:
-                raise ValueError("requested layers are absent from lens")
             paths = _site_tensor_paths(
                 directory, sidecar, site, layers,
                 require_exact_keys=(layers == durable_layers),

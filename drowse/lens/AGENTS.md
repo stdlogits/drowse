@@ -45,9 +45,10 @@ site explicitly with `matrices(site)`, `layers(site)` or `matrix(layer, site)`;
 `jacobians`/`source_layers` and the `token_direction`/`atom_norms` readers
 default to `out`, so the output-side readout code reads `out` unchanged. A
 read at a site the lens lacks raises `LensNotFittedError` (404) naming the
-sites it holds; it never falls back to the other site. `select_layers` and
-`union_layers` work site by site (a selection must exist at every kept site;
-pass `sites=` to keep fewer).
+sites it holds; it never falls back to the other site. `select_layers` takes
+per-site requests (`{"out": [...], "mid": [...]}`), keeps exactly the sites it
+names and asks each only for its own layers, since the sites' layer sets
+differ by design (below); `union_layers` works site by site.
 
 **Orientation follows the kind.**
 
@@ -106,8 +107,12 @@ field.
   v7 records no embedding width, so K/S shards hold `K_L` with
   `d_emb = d_model` (a text lens reads the token embedding in the residual
   basis), and saving a lens with another `d_emb` raises. Shard shapes are
-  checked per kind on save and load. A selective load (`requested_layers`)
-  needs each requested layer at every site. `save_lens_checkpoint` takes
+  checked per kind on save and load. A selective load (`requested_layers`,
+  `{site: layers}`) reads only the named sites and layers; a site or layer
+  the artifact lacks raises `LensNotFittedError` (404), never the soft
+  "re-fit" `None`, because the artifact is sound and the request is not.
+  The fit lifecycle asks for `{"out": sources}` and adopts a loaded lens as
+  resident only when it holds every site and layer the manifest names. `save_lens_checkpoint` takes
   per-site raw sums (`{site: {layer: sum}}`) and `promote_lens_checkpoint`
   per-site layers (`site_layers`); a checkpoint is subsumed only when the final
   artifact covers it at every site. `load_lens` and `load_lens_sidecar` take a

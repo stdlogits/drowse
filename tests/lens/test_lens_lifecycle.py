@@ -424,6 +424,38 @@ def test_subset_noop_keeps_full_durable_lens_resident() -> None:
     assert s.lens.resident().source_layers == [0, 1]
 
 
+def test_selective_noop_on_a_two_site_lens_never_stamps_a_view() -> None:
+    """A fit asks for out-site layers; a durable lens may also hold a mid site.
+
+    The selective load reads only the out site, the fit returns it, and the
+    partial view is never adopted under the whole artifact's identity.
+    """
+    import dataclasses
+
+    from drowse.lens.store import load_local_lens, save_lens
+
+    LensHarness().lens.fit(_PROMPTS, source_layers=[0, 1], force=True)
+    loaded = load_local_lens(_MODEL_ID, "j")
+    assert loaded is not None
+    lens, sidecar = loaded
+    provenance = LensProvenance(**{
+        field.name: sidecar[field.name]
+        for field in dataclasses.fields(LensProvenance) if field.name != "skip_first"
+    })
+    mid = {layer: torch.eye(lens.d_model) for layer in range(3)}  # mid covers the last layer
+    save_lens(
+        JacobianLens(lens.jacobians, mid=mid, n_prompts=lens.n_prompts, d_model=lens.d_model, key=lens.key),
+        _MODEL_ID, provenance,
+    )
+
+    session = LensHarness()
+    selected = session.lens.fit(_PROMPTS, source_layers=[0, 1])
+    assert selected.sites == ("out",) and selected.source_layers == [0, 1]
+    assert session.lens.resident_lens is None
+    resident = session.lens.resident()
+    assert resident.sites == ("out", "mid") and resident.layers("mid") == [0, 1, 2]
+
+
 def test_fresh_subset_noop_reads_only_requested_shard_and_preserves_disk_union(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

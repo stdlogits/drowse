@@ -132,13 +132,18 @@ def test_construction_refusals() -> None:
 
 def test_select_and_union_work_site_by_site() -> None:
     lens = _two_site("R")
-    both = lens.select_layers([1, 2])
+    both = lens.select_layers({"out": [1, 2], "mid": [1, 2]})
     assert both.sites == ("out", "mid") and both.layers("mid") == [1, 2]
     assert both.matrices("mid")[1] is lens.matrices("mid")[1]
+    # Each site is asked for its own layers: the last layer lives at mid only.
+    asymmetric = lens.select_layers({"out": [0, 1, 2], "mid": [0, 1, 2, 3]})
+    assert asymmetric.layers("out") == [0, 1, 2] and asymmetric.layers("mid") == [0, 1, 2, 3]
     with pytest.raises(LensNotFittedError, match="R:out"):
-        lens.select_layers([3])  # the mid site has it, the out site does not
-    mid = lens.select_layers([3], sites=["mid"])
+        lens.select_layers({"out": [3]})  # the mid site has it, the out site does not
+    mid = lens.select_layers({"mid": [3]})
     assert mid.sites == ("mid",) and mid.layers("mid") == [3]
+    with pytest.raises(LensNotFittedError, match="no 'mid' site"):
+        JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("R")).select_layers({"mid": [0]})
 
     low = JacobianLens(_mats([0], 4), mid=_mats([0], 5), n_prompts=5, d_model=_D, key=LensKey("R"))
     high = JacobianLens(_mats([1, 2], 6), n_prompts=5, d_model=_D, key=LensKey("R"))
@@ -202,16 +207,39 @@ def test_a_wrong_shape_mid_shard_loads_as_no_lens() -> None:
     assert load_local_lens(_MODEL, "r") is None
 
 
-def test_selective_load_needs_the_layers_at_every_site() -> None:
+def test_selective_load_asks_each_site_for_its_own_layers() -> None:
+    """An R lens's out site stops below the last layer and its mid site covers it.
+
+    A request naming the last layer at mid only is a valid load, not an
+    unusable artifact; a request the artifact cannot meet is a typed 404,
+    not "re-fit".
+    """
     from drowse.lens.store import _load_lens_verified
 
-    save_lens(_two_site("R"), _MODEL, _PROV)
-    loaded = _load_lens_verified(_MODEL, name="r", requested_layers={1, 2})
+    save_lens(_two_site("R"), _MODEL, _PROV)  # out [0..2], mid [0..3]
+    loaded = _load_lens_verified(_MODEL, name="r", requested_layers={"out": {1, 2}, "mid": {1, 2}})
     assert loaded is not None
     lens, _sidecar, proof = loaded
     assert lens.layers("out") == [1, 2] and lens.layers("mid") == [1, 2]
     assert proof is None  # a partial load proves nothing about the rest
-    assert _load_lens_verified(_MODEL, name="r", requested_layers={3}) is None
+
+    asymmetric = _load_lens_verified(
+        _MODEL, name="r", requested_layers={"out": {0, 1, 2}, "mid": {0, 1, 2, 3}},
+    )
+    assert asymmetric is not None
+    lens, _sidecar, proof = asymmetric
+    assert lens.layers("out") == [0, 1, 2] and lens.layers("mid") == [0, 1, 2, 3]
+    assert proof is not None  # the request names the whole artifact
+
+    last = _load_lens_verified(_MODEL, name="r", requested_layers={"mid": {3}})
+    assert last is not None and last[0].sites == ("mid",) and last[0].layers("mid") == [3]
+
+    with pytest.raises(LensNotFittedError, match=r"layers \[3\] not in fitted R:out") as info:
+        _load_lens_verified(_MODEL, name="r", requested_layers={"out": {3}})
+    assert info.value.user_message()[0] == 404
+    save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("R")), _MODEL, _PROV)
+    with pytest.raises(LensNotFittedError, match="no 'mid' site"):
+        _load_lens_verified(_MODEL, name="r", requested_layers={"mid": {0}})
 
 
 def _checkpoint(kind: str, lens: JacobianLens, **extra: Any) -> Path:
