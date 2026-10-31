@@ -191,7 +191,7 @@ def test_migrates_a_v6_home_without_touching_shard_bytes(_home: Path) -> None:
     loaded_active = load_lens(_MODEL)
     assert loaded_active is not None and loaded_active[0].key == LensKey("R")
     binding = load_external_lens_binding(_MODEL, "workspace-r")
-    assert binding is not None and binding.key == LensKey("R")
+    assert binding is not None and binding.kind == "R" and binding.sites == ("out",)
     assert binding.files[LensKey("R")].sha256 == "c" * 64
     assert load_external_lens_binding(_MODEL, "neuronpedia") is None
     sidecar = load_local_lens_sidecar(_MODEL, "r")

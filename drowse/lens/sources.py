@@ -1,16 +1,18 @@
-"""The lens source family: local fits, provider bindings, per-side selection.
+"""The lens source family: local fits, provider bindings, per-family selection.
 
 Drowse owns lenses it fits and stores those payloads below ``DROWSE_HOME``
 (:mod:`drowse.lens.store`).  External publishers retain ownership of theirs: a
 Hugging Face lens stays in the Hub cache and Drowse writes only a small,
 commit-pinned :class:`LensBinding` that maps the provider's files to
-:class:`~drowse.lens.key.LensKey` s.
+:class:`~drowse.lens.key.LensKey` s, one file per site.
 
-Sources are addressed ``local:<kind>[-<tag>]`` (``local:r``, ``local:j``) or by
-a provider binding's bare name (``neuronpedia``, ``workspace-r``,
-``workspace-j``).  The selection is **per side**: one active output-side
-(J/R) and one input-side (K/S) lens, so the two can be resident together;
-every output-side read surface is estimator-agnostic within its side.
+Sources are addressed ``local:<kind>[-<tag>]`` (``local:r``, ``local:s``) or by
+a provider binding's bare name (``rs-r``, ``rs-s``, ``workspace-r``,
+``neuronpedia``, ``workspace-j``).  The selection holds one active R-family
+(J/R) and one S-family (K/S) lens, so the two are resident together; on disk
+the two slots keep their side names (``output``, ``input``).  A source carries
+one or both sites (``out``, ``mid``), and a read at a site the selected source
+lacks says so rather than falling back to the other site.
 """
 
 from __future__ import annotations
@@ -32,7 +34,7 @@ from drowse.base.hf import HFError, _hf_api, _hf_hub_download, _hf_snapshot_down
 from drowse.base.integrity import hash_file
 from drowse.base.source_registry import LOCAL, SourceFamily, SourceRef
 from drowse.lens.jlens import JacobianLens
-from drowse.lens.key import LENS_SIDES, LOCAL_LENS_NAME, LensKey, local_lens_kind
+from drowse.lens.key import LENS_SIDES, LENS_SITES, LOCAL_LENS_NAME, LensKey, local_lens_kind
 from drowse.errors import RequestError, SourceSpecError
 
 LENS_SOURCE_FORMAT_VERSION = 2
@@ -40,52 +42,97 @@ LENS_BINDING_FORMAT_VERSION = 2
 HUGGINGFACE = "huggingface"
 NEURONPEDIA_REPO = "neuronpedia/jacobian-lens"
 WORKSPACE_REPO = "camilablank/workspace-lenses"
+RS_LENSES_REPO = "stdlogits/rs-lenses"
+#: The text corpus every rs-lenses file was fitted on (its model card).  A
+#: file that carries no embedded fit record (Gemma 4's) is bound to it.
+RS_LENSES_CORPUS = (
+    "HuggingFaceFW/dclm_100BT-shuffled@2fa015e4044ec442a0734e89658cdcc538d10dd4"
+)
+RS_LENSES_SEQ_LEN = 128
+RS_LENSES_SKIP_FIRST = 16
 
 
 @dataclass(frozen=True)
 class _Provider:
-    """One fetchable source name: who publishes it and which lens it is."""
+    """One fetchable source name: who publishes it and which lens it is.
+
+    ``files`` maps each site the provider publishes to its path below the
+    model's folder (``<model stem>/<path>``); a fetch binds every one the
+    repository holds, and at least one.  Neuronpedia has no layout (its file
+    is found through a config match) and publishes ``out`` only.
+    """
 
     provider: str
     repo: str
-    key: LensKey
-    arm: str | None = None        # workspace layout: <model>/<arm>/lens.pt
-    estimator: str | None = None  # the arm's declared provenance estimator
+    kind: str
+    files: Mapping[str, str] = field(default_factory=dict)
+    estimator: str | None = None  # the declared provenance estimator
+
+    @property
+    def keys(self) -> tuple[LensKey, ...]:
+        """Every key this provider can bind, in site order."""
+        sites = tuple(self.files) or ("out",)
+        return tuple(LensKey(self.kind, site) for site in LENS_SITES if site in sites)
+
+    @property
+    def side(self) -> str:
+        return LensKey(self.kind).side
 
 
 #: Every fetchable source name.  The binding name is the public source token
-#: (``lens fetch``/``use``/``show``/``rm`` all speak it), so both arms of a
-#: matched workspace J/R pair coexist per model and switch with ``lens use``.
+#: (``lens fetch``/``use``/``show``/``rm`` all speak it), so the R and S lenses
+#: of one release, or both arms of a matched workspace J/R pair, coexist per
+#: model and switch with ``lens use``.
 LENS_PROVIDERS: dict[str, _Provider] = {
-    "neuronpedia": _Provider("neuronpedia", NEURONPEDIA_REPO, LensKey("J")),
+    "rs-r": _Provider(
+        "rs-lenses", RS_LENSES_REPO, "R",
+        files={"out": "r-lens/lens.pt", "mid": "r-lens/mid.pt"}, estimator="relp",
+    ),
+    "rs-s": _Provider(
+        "rs-lenses", RS_LENSES_REPO, "S",
+        files={"out": "s-lens/out.pt", "mid": "s-lens/mid.pt"}, estimator="relp",
+    ),
+    "neuronpedia": _Provider("neuronpedia", NEURONPEDIA_REPO, "J"),
     "workspace-r": _Provider(
-        "workspace-lenses", WORKSPACE_REPO, LensKey("R"),
-        arm="r-lens", estimator="relp",
+        "workspace-lenses", WORKSPACE_REPO, "R",
+        files={"out": "r-lens/lens.pt"}, estimator="relp",
     ),
     "workspace-j": _Provider(
-        "workspace-lenses", WORKSPACE_REPO, LensKey("J"),
-        arm="j-lens", estimator="standard",
+        "workspace-lenses", WORKSPACE_REPO, "J",
+        files={"out": "j-lens/lens.pt"}, estimator="standard",
     ),
 }
 _PROVENANCE_FIELDS = {
     "neuronpedia": {"config_file", "config_sha256", "dim_batch"},
     "workspace-lenses": {"estimator", "rules_json", "target_layer"},
+    "rs-lenses": {"estimator", "rules_json", "embedded"},
 }
-#: Automatic attachment and source-picker order.  The provider R-lens is the
-#: strongest default, then the official paper lens and the matched workspace
-#: J-lens; Drowse-fitted local artifacts are the fallback tier (R before J).
-DEFAULT_LENS_SOURCE_ORDER = ("workspace-r", "neuronpedia", "workspace-j")
+#: Automatic attachment and source-picker order, per family.  The provider
+#: tier first: rs-lenses' R-lens (both sites), the workspace R-lens, the
+#: official paper lens, the matched workspace J-lens; on the S side rs-lenses'
+#: S-lens.  Drowse-fitted local artifacts are the fallback tier (R before J,
+#: S before K).
+DEFAULT_LENS_SOURCE_ORDER: dict[str, tuple[str, ...]] = {
+    "output": ("rs-r", "workspace-r", "neuronpedia", "workspace-j"),
+    "input": ("rs-s",),
+}
+_LOCAL_KIND_ORDER = {"output": ("r", "j"), "input": ("s", "k")}
+
+
+def lens_source_side(ref: SourceRef) -> str:
+    """The selection slot of a source: ``output`` (J/R) or ``input`` (K/S)."""
+    if ref.local:
+        return LensKey(local_lens_kind(ref.name)).side
+    return LENS_PROVIDERS[ref.name].side
 
 
 def _lens_side(model_id: str, ref: SourceRef) -> str:
     del model_id
-    if ref.local:
-        return LensKey(local_lens_kind(ref.name)).side
-    return LENS_PROVIDERS[ref.name].key.side
+    return lens_source_side(ref)
 
 
 #: The lens source family: ``local:<kind>[-<tag>]`` artifacts and bare
-#: provider bindings, one active source per side.
+#: provider bindings, one active source per family slot.
 LENS_SOURCES = SourceFamily(
     label="lens",
     dirname="lens",
@@ -99,25 +146,26 @@ LENS_SOURCES = SourceFamily(
 )
 
 
-def lens_source_preference_key(source: str) -> tuple[int, int, str]:
-    """Stable default ordering for prepared output-side lens sources.
+def lens_source_preference_key(source: str) -> tuple[int, int, int, str]:
+    """Stable default ordering for prepared lens sources.
 
-    The provider tier first (:data:`DEFAULT_LENS_SOURCE_ORDER`), then local
-    fits — ``local:r``, ``local:j``, then any tagged fit — and unknown names
-    last.
+    R-family (J/R) sources sort before S-family (K/S) ones.  Within a family
+    the provider tier comes first (:data:`DEFAULT_LENS_SOURCE_ORDER`), then
+    the local fits (``local:r``, ``local:j``; ``local:s``, ``local:k``), then
+    any tagged fit; unknown names sort last.
     """
-    try:
-        return (DEFAULT_LENS_SOURCE_ORDER.index(source), 0, source)
-    except ValueError:
-        pass
+    unknown = (len(LENS_SIDES), 0, 0, source)
     try:
         ref = LENS_SOURCES.parse(source)
     except ValueError:
-        return (len(DEFAULT_LENS_SOURCE_ORDER) + 1, 0, source)
+        return unknown
+    side = lens_source_side(ref)
+    side_rank = LENS_SIDES.index(side)
     if not ref.local:
-        return (len(DEFAULT_LENS_SOURCE_ORDER) + 1, 0, source)
-    rank = {"r": 0, "j": 1}.get(ref.name, 2)
-    return (len(DEFAULT_LENS_SOURCE_ORDER), rank, ref.name)
+        return (side_rank, 0, DEFAULT_LENS_SOURCE_ORDER[side].index(ref.name), source)
+    order = _LOCAL_KIND_ORDER[side]
+    rank = order.index(ref.name) if ref.name in order else len(order)
+    return (side_rank, 1, rank, ref.name)
 
 
 # -- bindings ---------------------------------------------------------------
@@ -135,10 +183,11 @@ class BoundLensFile:
 class LensBinding:
     """A commit-pinned binding of provider files to lens keys.
 
-    Common identity — publisher and base-model commits, dimensions, corpus
-    recipe — is typed; ``provenance`` carries the provider's own fit record
-    (a Neuronpedia config digest, a workspace arm's declared estimator and
-    rules), validated per provider.
+    One kind, one file per bound site.  Common identity (publisher and
+    base-model commits, dimensions, corpus recipe) is typed; ``provenance``
+    carries the provider's own fit record (a Neuronpedia config digest, a
+    workspace arm's declared estimator and rules, an rs-lenses estimator and
+    whether its files embedded their record), validated per provider.
     """
 
     name: str
@@ -159,10 +208,19 @@ class LensBinding:
         return LENS_PROVIDERS[self.name].provider
 
     @property
-    def key(self) -> LensKey:
-        """The bound output lens (every current provider binds exactly one)."""
-        (key,) = self.files
-        return key
+    def kind(self) -> str:
+        """The bound lens kind (J/R/K/S); every file of a binding shares it."""
+        return LENS_PROVIDERS[self.name].kind
+
+    @property
+    def sites(self) -> tuple[str, ...]:
+        """The bound sites, in ``LENS_SITES`` order."""
+        held = {key.site for key in self.files}
+        return tuple(site for site in LENS_SITES if site in held)
+
+    def file(self, site: str) -> BoundLensFile:
+        """The file bound at ``site`` (``KeyError`` when the site is unbound)."""
+        return self.files[LensKey(self.kind, site)]
 
     def to_json(self) -> dict[str, Any]:
         return {
@@ -235,8 +293,9 @@ def _parse_binding(payload: Any, model_id: str, name: str) -> LensBinding:
         if not _int_at_least(payload[key], minimum):
             raise ValueError(f"lens binding has invalid {key}")
     raw_files = payload["files"]
-    if not isinstance(raw_files, dict) or set(raw_files) != {provider.key.label}:
-        raise ValueError(f"{name} must bind exactly {provider.key.label}")
+    allowed = {key.label for key in provider.keys}
+    if not isinstance(raw_files, dict) or not raw_files or not set(raw_files) <= allowed:
+        raise ValueError(f"{name} must bind a nonempty subset of {sorted(allowed)}")
     files: dict[LensKey, BoundLensFile] = {}
     for label, entry in raw_files.items():
         if (
@@ -267,9 +326,16 @@ def _parse_binding(payload: Any, model_id: str, name: str) -> LensBinding:
     elif (
         provenance["estimator"] != provider.estimator
         or not isinstance(provenance["rules_json"], str)
-        or not _int_at_least(provenance["target_layer"], 0)
+        or (
+            provider.provider == "workspace-lenses"
+            and not _int_at_least(provenance["target_layer"], 0)
+        )
+        or (
+            provider.provider == "rs-lenses"
+            and not isinstance(provenance["embedded"], bool)
+        )
     ):
-        raise ValueError("workspace lens binding has invalid provenance")
+        raise ValueError(f"{provider.provider} lens binding has invalid provenance")
     return LensBinding(
         name=name,
         model_id=model_id,
@@ -300,34 +366,52 @@ def load_external_lens_binding(model_id: str, name: str) -> LensBinding | None:
 
 # -- provider checkpoints ---------------------------------------------------
 
-def _load_provider_checkpoint(path: str) -> dict[str, Any]:
-    payload = torch.load(path, map_location="cpu", weights_only=True)
+#: A provider file's dictionary, by the side its kind reads.  Output kinds
+#: follow the workspace layout (``J`` by ``source_layers``), input kinds
+#: rs-lenses' S files (``K`` by ``layers``).  ``provenance`` is optional.
+_CHECKPOINT_KEYS = {
+    "output": ("J", "source_layers"),
+    "input": ("K", "layers"),
+}
+
+
+def _load_provider_checkpoint(path: str, kind: str) -> dict[str, Any]:
+    """One provider ``.pt`` (memory-mapped: a multi-GB fp32 lens is paged on
+    demand rather than read whole), with its exact key set checked."""
+    matrices, layers = _CHECKPOINT_KEYS[LensKey(kind).side]
+    payload = torch.load(path, map_location="cpu", weights_only=True, mmap=True)
+    required = {matrices, "n_prompts", layers, "d_model"}
     if (
         not isinstance(payload, dict)
-        or not {"J", "n_prompts", "source_layers", "d_model"} <= set(payload)
-        or set(payload) - {"J", "n_prompts", "source_layers", "d_model", "provenance"}
+        or not required <= set(payload)
+        or set(payload) - required - {"provenance"}
     ):
-        raise ValueError("external Jacobian-lens checkpoint has an invalid schema")
+        raise ValueError(
+            f"external {kind}-lens checkpoint has an invalid schema "
+            f"(expected {sorted(required)} and an optional provenance)"
+        )
     return payload
 
 
-def _validated_external_lens(
+def _validated_site_matrices(
     payload: dict[str, Any],
-    key: LensKey,
+    kind: str,
     *,
     expected_d_model: int | None = None,
     expected_layers: int | None = None,
-) -> JacobianLens:
-    jacobians = payload.get("J")
-    layers = payload.get("source_layers")
+) -> tuple[dict[int, torch.Tensor], int, int]:
+    """``(matrices by layer, n_prompts, d_model)`` of one checked provider file."""
+    matrices_key, layers_key = _CHECKPOINT_KEYS[LensKey(kind).side]
+    matrices = payload.get(matrices_key)
+    layers = payload.get(layers_key)
     d_model = payload.get("d_model")
     n_prompts = payload.get("n_prompts")
     if (
-        not isinstance(jacobians, dict)
+        not isinstance(matrices, dict)
         or not isinstance(layers, list)
         or not layers
         or layers != sorted(set(layers))
-        or set(jacobians) != set(layers)
+        or set(matrices) != set(layers)
         or not _int_at_least(d_model, 1)
         or not _int_at_least(n_prompts, 1)
         or (expected_d_model is not None and d_model != expected_d_model)
@@ -339,19 +423,28 @@ def _validated_external_lens(
             )
         )
     ):
-        raise ValueError("external Jacobian-lens checkpoint metadata is incompatible")
+        raise ValueError(f"external {kind}-lens checkpoint metadata is incompatible")
     clean: dict[int, torch.Tensor] = {}
     for layer in layers:
-        value = jacobians[layer]
+        value = matrices[layer]
         if (
             not isinstance(value, torch.Tensor)
             or tuple(value.shape) != (d_model, d_model)
             or not value.dtype.is_floating_point
             or not torch.isfinite(value).all()
         ):
-            raise ValueError(f"external Jacobian-lens layer {layer} is invalid")
+            raise ValueError(f"external {kind}-lens layer {layer} is invalid")
         clean[int(layer)] = value
-    return JacobianLens(clean, n_prompts=n_prompts, d_model=d_model, key=key)
+    return clean, int(n_prompts), int(d_model)
+
+
+def _external_lens(
+    kind: str, sites: Mapping[str, dict[int, torch.Tensor]], *, n_prompts: int, d_model: int,
+) -> JacobianLens:
+    return JacobianLens(
+        sites.get("out"), mid=sites.get("mid"),
+        n_prompts=n_prompts, d_model=d_model, key=LensKey(kind),
+    )
 
 
 def _config_dimensions(model_id: str, revision: str) -> tuple[int, int]:
@@ -448,8 +541,8 @@ def _fetch_neuronpedia(
     files = list(_hf_api().list_repo_files(repo_id, revision=repo_revision))
     checkpoint = _select_checkpoint(files, config_file)
     checkpoint_path = _hf_hub_download(repo_id, checkpoint, revision=repo_revision)
-    lens = _validated_external_lens(
-        _load_provider_checkpoint(checkpoint_path), provider.key,
+    matrices, n_prompts, lens_d_model = _validated_site_matrices(
+        _load_provider_checkpoint(checkpoint_path, provider.kind), provider.kind,
         expected_d_model=d_model, expected_layers=n_layers,
     )
     fit_raw = fit_config.get("fit")
@@ -462,12 +555,11 @@ def _fetch_neuronpedia(
         model_revision=model_revision,
         repo_id=repo_id,
         repo_revision=repo_revision,
-        files={provider.key: BoundLensFile(
-            checkpoint, hash_file(Path(checkpoint_path)),
-            tuple(lens.source_layers),
+        files={LensKey(provider.kind): BoundLensFile(
+            checkpoint, hash_file(Path(checkpoint_path)), tuple(sorted(matrices)),
         )},
-        d_model=lens.d_model,
-        n_prompts=lens.n_prompts,
+        d_model=lens_d_model,
+        n_prompts=n_prompts,
         corpus=":".join(
             str(dataset_cfg.get(key, "")) for key in ("name", "config", "split")
         ),
@@ -481,92 +573,158 @@ def _fetch_neuronpedia(
     )
 
 
-def _workspace_provenance(
-    payload: dict[str, Any], model_id: str, provider: _Provider,
-) -> dict[str, Any]:
-    """Validate the embedded fit recipe against the requested model and arm."""
+def _embedded_record(
+    payload: dict[str, Any], model_id: str, provider: _Provider, key: LensKey,
+    *, required: bool,
+) -> dict[str, Any] | None:
+    """Validate a provider file's embedded fit record against what it is bound as.
+
+    Returns ``None`` for a file with no record when ``required`` is false
+    (rs-lenses' Gemma 4 files carry none).  A record must name this model and
+    the provider's estimator; an rs-lenses record must also name the kind and
+    site it is bound as, so a misplaced file cannot bind.
+    """
     prov = payload.get("provenance")
+    if prov is None and not required:
+        return None
     if not isinstance(prov, dict):
-        raise ValueError("workspace lens checkpoint carries no provenance dict")
+        raise ValueError(f"{provider.provider} lens checkpoint carries no provenance dict")
     prov_model = prov.get("model_id")
     if not isinstance(prov_model, str) or prov_model.casefold() != model_id.casefold():
         raise ValueError(
-            "workspace lens provenance names "
+            f"{provider.provider} lens provenance names "
             f"{prov_model!r}, not the requested model {model_id!r}"
         )
     try:
         config = json.loads(prov.get("config_json", ""))
     except (TypeError, ValueError) as exc:
-        raise ValueError("workspace lens provenance config is unreadable") from exc
-    estimator = config.get("estimator") if isinstance(config, dict) else None
-    if estimator != provider.estimator:
+        raise ValueError(f"{provider.provider} lens provenance config is unreadable") from exc
+    if not isinstance(config, dict):
+        raise ValueError(f"{provider.provider} lens provenance config is not a dict")
+    if config.get("estimator") != provider.estimator:
         raise ValueError(
-            f"workspace {provider.arm} arm declares estimator {estimator!r}; "
-            f"expected {provider.estimator!r}"
+            f"{provider.provider} {key.label} file declares estimator "
+            f"{config.get('estimator')!r}; expected {provider.estimator!r}"
         )
-    rules = config.get("rules", {})
+    if provider.provider == "rs-lenses" and (
+        config.get("lens") != key.kind or config.get("target") != key.site
+    ):
+        raise ValueError(
+            f"rs-lenses file bound as {key.label} declares lens "
+            f"{config.get('lens')!r} at {config.get('target')!r}"
+        )
     corpus = prov.get("dataset_id")
     if not isinstance(corpus, str) or not corpus:
-        raise ValueError("workspace lens provenance has invalid dataset_id")
+        raise ValueError(f"{provider.provider} lens provenance has invalid dataset_id")
     fields: dict[str, int] = {}
-    for key, minimum in (("t_max", 1), ("skip_first", 0), ("target_layer", 0)):
-        value = prov.get(key)
+    for name, minimum in (("t_max", 1), ("skip_first", 0)):
+        value = prov.get(name)
         if not _int_at_least(value, minimum):
-            raise ValueError(f"workspace lens provenance has invalid {key}")
-        fields[key] = int(value)
+            raise ValueError(f"{provider.provider} lens provenance has invalid {name}")
+        fields[name] = int(value)
+    if provider.provider == "workspace-lenses":
+        target = prov.get("target_layer")
+        if not _int_at_least(target, 0):
+            raise ValueError("workspace-lenses lens provenance has invalid target_layer")
+        fields["target_layer"] = int(target)
+    rules = config.get("rules", {})
     return {
         "corpus": corpus,
         "seq_len": fields["t_max"],
         "skip_first": fields["skip_first"],
-        "provenance": {
-            "estimator": estimator,
-            "rules_json": json.dumps(
-                rules if isinstance(rules, dict) else {}, sort_keys=True,
-            ),
-            "target_layer": fields["target_layer"],
-        },
+        "rules_json": json.dumps(rules if isinstance(rules, dict) else {}, sort_keys=True),
+        **({"target_layer": fields["target_layer"]} if "target_layer" in fields else {}),
     }
 
 
-def _fetch_workspace(
+def _fetch_layout(
     model_id: str, name: str, *, repo_id: str, revision: str,
 ) -> LensBinding:
-    """Bind one arm of a matched workspace J/R lens pair (``<m>/<arm>/lens.pt``)."""
+    """Bind a provider that publishes ``<model stem>/<path>`` per site.
+
+    The workspace arms bind their one ``out`` file; rs-lenses binds every site
+    the repository holds for the model (``r-lens/{lens,mid}.pt``,
+    ``s-lens/{out,mid}.pt``), at least one, all of one kind and one fit.
+    """
     provider = LENS_PROVIDERS[name]
     repo_revision = _repo_commit(repo_id, revision)
     model_revision, d_model, n_layers = _resolve_model_for_fetch(model_id)
-    checkpoint = f"{model_id.rsplit('/', 1)[-1].casefold()}/{provider.arm}/lens.pt"
-    files = list(_hf_api().list_repo_files(repo_id, revision=repo_revision))
-    if checkpoint not in files:
-        published = sorted(
-            {str(Path(f).parts[0]) for f in files if f.endswith("/lens.pt")}
-        )
+    stem = model_id.rsplit("/", 1)[-1].casefold()
+    published = set(_hf_api().list_repo_files(repo_id, revision=repo_revision))
+    wanted = {site: f"{stem}/{path}" for site, path in provider.files.items()}
+    present = {site: path for site, path in wanted.items() if path in published}
+    if not present:
+        models = sorted({
+            str(Path(f).parts[0]) for f in published
+            if any(f.endswith(f"/{path}") for path in provider.files.values())
+        })
         raise FileNotFoundError(
-            f"{repo_id} has no {provider.arm} for {model_id!r} "
-            f"(expected {checkpoint}; published models: {', '.join(published)})"
+            f"{repo_id} has no {name} lens for {model_id!r} "
+            f"(expected {' or '.join(sorted(wanted.values()))}; "
+            f"published models: {', '.join(models) or 'none'})"
         )
-    checkpoint_path = _hf_hub_download(repo_id, checkpoint, revision=repo_revision)
-    payload = _load_provider_checkpoint(checkpoint_path)
-    lens = _validated_external_lens(
-        payload, provider.key, expected_d_model=d_model, expected_layers=n_layers,
-    )
-    recipe = _workspace_provenance(payload, model_id, provider)
+    files: dict[LensKey, BoundLensFile] = {}
+    sites: dict[str, dict[int, torch.Tensor]] = {}
+    records: list[dict[str, Any] | None] = []
+    n_prompts: set[int] = set()
+    for site in LENS_SITES:
+        if site not in present:
+            continue
+        key = LensKey(provider.kind, site)
+        local_path = _hf_hub_download(repo_id, present[site], revision=repo_revision)
+        payload = _load_provider_checkpoint(local_path, provider.kind)
+        matrices, count, _ = _validated_site_matrices(
+            payload, provider.kind, expected_d_model=d_model, expected_layers=n_layers,
+        )
+        records.append(_embedded_record(
+            payload, model_id, provider, key,
+            required=provider.provider == "workspace-lenses",
+        ))
+        n_prompts.add(count)
+        sites[site] = matrices
+        files[key] = BoundLensFile(
+            present[site], hash_file(Path(local_path)), tuple(sorted(matrices)),
+        )
+    if len(n_prompts) != 1:
+        raise ValueError(f"{name} files for {model_id!r} disagree on n_prompts")
+    embedded = [record for record in records if record is not None]
+    if embedded and len(embedded) != len(records):
+        raise ValueError(f"{name} files for {model_id!r} disagree on carrying provenance")
+    recipes = {
+        (record["corpus"], record["seq_len"], record["skip_first"]) for record in embedded
+    }
+    if len(recipes) > 1:
+        raise ValueError(f"{name} files for {model_id!r} were fitted on different corpora")
+    if embedded:
+        corpus, seq_len, skip_first = recipes.pop()
+    else:
+        corpus, seq_len, skip_first = RS_LENSES_CORPUS, RS_LENSES_SEQ_LEN, RS_LENSES_SKIP_FIRST
+    if provider.provider == "workspace-lenses":
+        record = embedded[0]
+        provenance: dict[str, Any] = {
+            "estimator": provider.estimator,
+            "rules_json": record["rules_json"],
+            "target_layer": record["target_layer"],
+        }
+    else:
+        provenance = {
+            "estimator": provider.estimator,
+            "rules_json": embedded[0]["rules_json"] if embedded else "{}",
+            "embedded": bool(embedded),
+        }
     return LensBinding(
         name=name,
         model_id=model_id,
         model_revision=model_revision,
         repo_id=repo_id,
         repo_revision=repo_revision,
-        files={provider.key: BoundLensFile(
-            checkpoint, hash_file(Path(checkpoint_path)),
-            tuple(lens.source_layers),
-        )},
-        d_model=lens.d_model,
-        n_prompts=lens.n_prompts,
-        corpus=recipe["corpus"],
-        seq_len=recipe["seq_len"],
-        skip_first=recipe["skip_first"],
-        provenance=recipe["provenance"],
+        files=files,
+        d_model=d_model,
+        n_prompts=n_prompts.pop(),
+        corpus=corpus,
+        seq_len=seq_len,
+        skip_first=skip_first,
+        provenance=provenance,
     )
 
 
@@ -581,11 +739,13 @@ def fetch_lens_source(
 ) -> LensBinding:
     """Fetch a named external lens into the HF cache and bind it.
 
-    The CLI/server dispatch point.  ``workspace-r`` is the RelP lens (an
-    LRP-modified backward graph, faithful on early layers), ``workspace-j``
-    the standard lens fitted on the same forward passes, ``neuronpedia`` the
-    official paper lens.  No payload is copied into ``DROWSE_HOME``; the
-    binding pins the publisher and base-model repositories to commits.
+    The CLI/server dispatch point.  ``rs-r`` and ``rs-s`` are rs-lenses' R-
+    and S-lens (both sites, Qwen3-8B and Gemma 4 12B text), ``workspace-r``
+    the workspace RelP lens, ``workspace-j`` the standard lens fitted on the
+    same forward passes, ``neuronpedia`` the official paper lens.  No payload
+    is copied into ``DROWSE_HOME``; the binding pins the publisher and
+    base-model repositories to commits.  ``activate`` selects the binding in
+    its family's slot.
     """
     provider = LENS_PROVIDERS.get(source)
     if provider is None:
@@ -596,8 +756,8 @@ def fetch_lens_source(
     repo = repo_id or provider.repo
     binding = (
         _fetch_neuronpedia(model_id, repo_id=repo, revision=revision)
-        if provider.arm is None
-        else _fetch_workspace(model_id, source, repo_id=repo, revision=revision)
+        if not provider.files
+        else _fetch_layout(model_id, source, repo_id=repo, revision=revision)
     )
     path = LENS_SOURCES.binding_path(model_id, binding.name)
     with artifact_lock(path):
@@ -612,12 +772,11 @@ def fetch_lens_source(
 def load_external_lens(
     model_id: str, name: str,
 ) -> tuple[JacobianLens, dict[str, Any]] | None:
-    """Load one pinned external lens from the provider cache, offline-only."""
+    """Load one pinned external lens (every bound site) from the provider
+    cache, offline-only."""
     binding = load_external_lens_binding(model_id, name)
     if binding is None:
         return None
-    key = binding.key
-    bound = binding.files[key]
     try:
         config_file = binding.provenance.get("config_file")
         if isinstance(config_file, str):
@@ -628,19 +787,23 @@ def load_external_lens(
             raw = Path(config_path).read_bytes()
             if hashlib.sha256(raw).hexdigest() != binding.provenance["config_sha256"]:
                 raise ValueError("cached Neuronpedia config digest changed")
-        checkpoint_path = _hf_hub_download(
-            binding.repo_id, bound.path,
-            revision=binding.repo_revision, local_files_only=True,
+        sites: dict[str, dict[int, torch.Tensor]] = {}
+        for site in binding.sites:
+            bound = binding.file(site)
+            checkpoint_path = _hf_hub_download(
+                binding.repo_id, bound.path,
+                revision=binding.repo_revision, local_files_only=True,
+            )
+            matrices, n_prompts, _ = _validated_site_matrices(
+                _load_provider_checkpoint(checkpoint_path, binding.kind), binding.kind,
+                expected_d_model=binding.d_model,
+            )
+            if n_prompts != binding.n_prompts or tuple(sorted(matrices)) != bound.layers:
+                raise ValueError("cached external lens does not match its binding")
+            sites[site] = matrices
+        lens = _external_lens(
+            binding.kind, sites, n_prompts=binding.n_prompts, d_model=binding.d_model,
         )
-        lens = _validated_external_lens(
-            _load_provider_checkpoint(checkpoint_path), key,
-            expected_d_model=binding.d_model,
-        )
-        if (
-            lens.n_prompts != binding.n_prompts
-            or tuple(lens.source_layers) != bound.layers
-        ):
-            raise ValueError("cached external lens does not match its binding")
     except (OSError, ValueError, RuntimeError, TypeError):
         return None
     return lens, external_lens_sidecar(binding)
@@ -653,10 +816,11 @@ def external_lens_sidecar(binding: LensBinding) -> dict[str, Any]:
     dimensions, corpus, model identity) so one identity/compatibility check
     serves both; ``_source`` carries the provider record.
     """
-    key = binding.key
     return {
-        "kind": key.kind,
-        "sites": {key.site: {"layers": list(binding.files[key].layers)}},
+        "kind": binding.kind,
+        "sites": {
+            site: {"layers": list(binding.file(site).layers)} for site in binding.sites
+        },
         "n_prompts": binding.n_prompts,
         "d_model": binding.d_model,
         "dtype": "external",
@@ -698,17 +862,34 @@ def load_lens_source_sidecar(model_id: str, ref: SourceRef) -> dict[str, Any] | 
     return load_external_lens_sidecar(model_id, ref.name)
 
 
+def _sidecar_sites(sidecar: Mapping[str, Any] | None) -> list[str]:
+    sites = sidecar.get("sites") if sidecar is not None else None
+    if not isinstance(sites, Mapping):
+        return []
+    return [site for site in LENS_SITES if site in sites]
+
+
 def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
-    """Every prepared source, in default preference order."""
+    """Every prepared source, in default preference order.
+
+    Each row names its kind (``lens``), the family slot it selects into
+    (``side``) and the sites it carries (``sites``; empty for a local
+    artifact whose manifest no longer validates).
+    """
     actives = {LENS_SOURCES.active(model_id, side) for side in LENS_SIDES}
     rows: list[dict[str, Any]] = []
     for name in LENS_SOURCES.local_names(model_id):
+        from drowse.lens.store import load_local_lens_sidecar
+
         ref = SourceRef(LOCAL, name)
+        kind = local_lens_kind(name)
         rows.append({
             "source": LENS_SOURCES.format(ref),
             "kind": LOCAL,
             "name": name,
-            "lens": local_lens_kind(name),
+            "lens": kind,
+            "side": LensKey(kind).side,
+            "sites": _sidecar_sites(load_local_lens_sidecar(model_id, name)),
             "active": ref in actives,
             "path": str(LENS_SOURCES.path_of(model_id, ref)),
         })
@@ -717,16 +898,17 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
         if binding is None:
             continue
         ref = SourceRef(HUGGINGFACE, name)
-        bound = binding.files[binding.key]
         rows.append({
             "source": name,
             "kind": HUGGINGFACE,
             "name": name,
-            "lens": binding.key.kind,
+            "lens": binding.kind,
+            "side": LensKey(binding.kind).side,
+            "sites": list(binding.sites),
             "provider": binding.provider,
             "repo_id": binding.repo_id,
             "repo_revision": binding.repo_revision,
-            "checkpoint": bound.path,
+            "checkpoints": {site: binding.file(site).path for site in binding.sites},
             "active": ref in actives,
             "path": str(LENS_SOURCES.path_of(model_id, ref)),
         })
@@ -735,7 +917,7 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
 
 
 def use_lens_source(model_id: str, source: str) -> SourceRef:
-    """Select a prepared source from the public grammar (into its side)."""
+    """Select a prepared source from the public grammar (into its family's slot)."""
     ref = LENS_SOURCES.parse(source)
     if not LENS_SOURCES.exists(model_id, ref):
         raise FileNotFoundError(
@@ -763,4 +945,3 @@ def remove_lens_source(model_id: str, ref: SourceRef) -> bool:
         path.unlink(missing_ok=True)
     LENS_SOURCES.clear_if_active(model_id, ref)
     return removed
-

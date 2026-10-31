@@ -371,7 +371,9 @@ def register_instrument_routes(app: FastAPI) -> None:
         lens_fetch.report("activating…")
         lens_fetch.state["live_layers"] = await activate_lens_source(binding.name)
         lens_fetch.report(
-            f"active: {binding.name} ({len(binding.files[binding.key].layers)} layers)"
+            f"active: {binding.name} ("
+            + ", ".join(f"{site} {len(binding.file(site).layers)} layers" for site in binding.sites)
+            + ")"
         )
 
     def start_lens_fetch(fields: dict[str, Any]) -> None:

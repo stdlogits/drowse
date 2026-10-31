@@ -139,9 +139,9 @@ def test_jlens_device_stacks_use_a_bounded_lru_cache() -> None:
 
     assert len(session.lens.runtime._stacks) == DEVICE_STACK_CACHE_MAX
     keys = list(session.lens.runtime._stacks)
-    assert (id(lens), str(device), (0,)) in keys
-    assert (id(lens), str(device), (0, 1)) in keys
-    assert (id(lens), str(device), (1,)) not in keys
+    assert (id(lens), "out", str(device), (0,)) in keys
+    assert (id(lens), "out", str(device), (0, 1)) in keys
+    assert (id(lens), "out", str(device), (1,)) not in keys
 
 
 def test_jlens_token_decode_cache_is_bounded() -> None:

@@ -168,13 +168,14 @@ def run_fetch(args: argparse.Namespace) -> None:
     if args.json_output:
         emit_json(binding.to_json())
         return
-    bound = binding.files[binding.key]
     print(
-        f"Fetched {binding.name} for {args.model}: {binding.key.label} lens, "
-        f"{len(bound.layers)} layers, {binding.n_prompts} prompts"
+        f"Fetched {binding.name} for {args.model}: {binding.kind}-lens at "
+        f"{', '.join(binding.sites)}, {binding.n_prompts} prompts"
     )
     print(f"  provider: {binding.repo_id}@{binding.repo_revision}")
-    print(f"  checkpoint: {bound.path}")
+    for site in binding.sites:
+        bound = binding.file(site)
+        print(f"  {site + ':':<5} {bound.path} ({len(bound.layers)} layers)")
     note("Provider payload remains in the Hugging Face cache; binding is active.")
 
 
