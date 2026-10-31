@@ -186,6 +186,7 @@
   @media (max-width: 720px) {
     .dlg-head { padding: var(--s4) var(--s4) 0; }
     .body { padding: var(--s4); }
+    .rows { gap: var(--s3); }
     .row { grid-template-columns: minmax(0, 1fr); }
     .grammar .row { grid-template-columns: 80px minmax(0, 1fr); }
   }

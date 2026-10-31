@@ -202,12 +202,12 @@
     min-width: 0;
     min-height: 36px;
     border-radius: var(--r-col);
-    background: var(--wash);
+    background: var(--field);
     transition: background-color var(--fast) var(--ease);
   }
-  .sk-combobox:hover, .sk-combobox.is-open { background: var(--wash2); }
+  .sk-combobox:hover, .sk-combobox.is-open { background: var(--field-hover); }
   /* Ledger has no red: an invalid field darkens toward ink. */
-  .sk-combobox.is-invalid { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
+  .sk-combobox.is-invalid { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
   input {
     width: 100%;
     min-width: 0;

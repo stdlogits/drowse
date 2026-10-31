@@ -382,7 +382,7 @@
     padding: 0 var(--s2) 0 var(--s3);
     border: 0;
     border-radius: var(--r-col);
-    background: var(--wash);
+    background: var(--field);
     color: var(--ink);
     font: var(--type-small);
     text-align: start;
@@ -390,10 +390,10 @@
     transition: background-color var(--fast) var(--ease);
   }
   .sk-select-trigger:hover:not(:disabled),
-  .sk-select.is-open .sk-select-trigger { background: var(--wash2); }
+  .sk-select.is-open .sk-select-trigger { background: var(--field-hover); }
   .sk-select-trigger:disabled { opacity: 0.4; cursor: default; }
   /* Ledger has no red: an invalid field darkens toward ink, and the form says why below it. */
-  .sk-select-trigger[data-invalid] { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
+  .sk-select-trigger[data-invalid] { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
 
   .sk-select-label {
     flex: 1 1 0;

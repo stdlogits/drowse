@@ -30,7 +30,6 @@
 </script>
 
 <div class="reset-settings" class:full>
-  {#if full}<h3 class="head">Reset settings</h3>{/if}
   {#if confirming}
     <p class="ask">Generation settings, the system prompt, roles, steering and readings go back to how they started. Chats and downloads stay.</p>
     <div class="actions">

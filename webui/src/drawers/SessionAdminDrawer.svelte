@@ -110,7 +110,7 @@
   .embedded .body { padding: 0; overflow: visible; }
 
   .key-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
-  .key-row input { flex: 1 1 280px; min-width: 0; }
+  .key-row input { flex: 1 1 280px; min-width: 0; font: var(--type-small); }
   .meta:empty { display: none; }
   .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
 

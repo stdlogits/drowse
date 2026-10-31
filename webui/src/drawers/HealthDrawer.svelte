@@ -107,7 +107,7 @@
       </dl>
     </section>
 
-    <section class="dw-sec" aria-labelledby={`${uid}-checks`}>
+    <section class="dw-sec narrow" aria-labelledby={`${uid}-checks`}>
       <div class="dw-sec-head"><span class="head" id={`${uid}-checks`}>Checks</span><span class="meta"><MorphText text={`${passing} of ${checks.length}`} /></span></div>
       <ul class="rows">
         {#each checks as check (check.key)}
@@ -120,7 +120,7 @@
       </ul>
     </section>
 
-    <section class="dw-sec" aria-labelledby={`${uid}-warnings`}>
+    <section class="dw-sec narrow" aria-labelledby={`${uid}-warnings`}>
       <div class="dw-sec-head"><span class="head" id={`${uid}-warnings`}>Warnings</span><span class="meta"><MorphText text={warnings.length ? String(warnings.length) : "None"} /></span></div>
       {#if warnings.length}
         <ul class="warnings">
@@ -146,7 +146,7 @@
   .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
 
   /* What the session holds now: figures on paper, no boxes. */
-  .figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(144px, 1fr)); gap: var(--s5) var(--s6); margin: 0; }
+  .figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--s5); margin: 0; }
   .figure { display: grid; gap: 2px; align-content: start; min-width: 0; }
   .figure dd { margin: 0; overflow-wrap: anywhere; }
   .figure .value { color: var(--ink); font: var(--type-lead); font-variant-numeric: tabular-nums; }
@@ -156,7 +156,9 @@
   .row .key { color: var(--ink2); font: var(--type-small); }
   .row.ok .key { color: var(--ink); }
   .mark { display: grid; place-items: center; color: var(--ink); }
-  .mark i { width: 8px; height: 8px; border-radius: 50%; background: var(--wash2); }
+  .mark i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink3); opacity: 0.4; }
+  /* Rows read across a short measure, not the room's width. */
+  .narrow { max-width: 520px; }
 
   .warnings { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
   .warnings li { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }

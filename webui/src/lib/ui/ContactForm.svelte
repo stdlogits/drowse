@@ -129,16 +129,16 @@
     min-height: 36px;
     border: 0;
     border-radius: var(--r-col);
-    background: var(--wash);
+    background: var(--field);
     color: var(--ink);
     font: var(--type-small);
     transition: background-color var(--fast) var(--ease);
   }
   input { padding: 0 var(--s3); }
   textarea { min-height: 160px; max-height: 400px; padding: var(--s2) var(--s3); resize: vertical; }
-  input:hover:not(:disabled), textarea:hover:not(:disabled) { background: var(--wash2); }
+  input:hover:not(:disabled), textarea:hover:not(:disabled) { background: var(--field-hover); }
   /* Ledger has no red: an invalid field darkens toward ink, and its reason sits under it. */
-  input[aria-invalid="true"], textarea[aria-invalid="true"] { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
+  input[aria-invalid="true"], textarea[aria-invalid="true"] { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
   input:disabled, textarea:disabled { opacity: 0.6; }
   input::placeholder, textarea::placeholder { color: var(--ink3); }
   .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }

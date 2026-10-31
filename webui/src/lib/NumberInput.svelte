@@ -211,7 +211,7 @@
     padding: 0 28px 0 var(--s3);
     border: 0;
     border-radius: inherit;
-    background: var(--wash);
+    background: var(--field);
     color: var(--ink);
     font: var(--type-small);
     font-variant-numeric: tabular-nums;
@@ -224,9 +224,9 @@
     -webkit-appearance: none;
     margin: 0;
   }
-  .sk-number:hover .sk-number-input:not(:disabled) { background: var(--wash2); }
+  .sk-number:hover .sk-number-input:not(:disabled) { background: var(--field-hover); }
   /* Ledger has no red: an invalid field darkens toward ink. */
-  .sk-number.is-invalid .sk-number-input { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
+  .sk-number.is-invalid .sk-number-input { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
   .sk-number-input:disabled { cursor: default; }
   .resting .sk-number-input { color: transparent; }
   .number-rest {

@@ -183,18 +183,21 @@
       </div>
     </section>
 
+    <!-- Outside the fold: Segmented's gliding thumb is placed only while no ancestor is inert,
+         and a closed Expander's body is. -->
+    <section class="dw-sec" aria-labelledby="sampling-format-head">
+      <span class="head" id="sampling-format-head">Format</span>
+      {#if isBaseModel}
+        <span class="fixed" data-tip="A base model continues the text as written, without chat roles or a system prompt">Raw completion</span>
+      {:else}
+        <div class="dw-row">
+          <Segmented label="Conversation format" value={genUiMode.mode} onchange={setGenUiMode} options={RENDER_MODES} />
+        </div>
+      {/if}
+    </section>
+
     <Expander bind:open={technicalOpen} label="More">
       <div class="more">
-        <section class="dw-sec" aria-labelledby="sampling-format-head">
-          <span class="head" id="sampling-format-head">Format</span>
-          {#if isBaseModel}
-            <span class="fixed" data-tip="A base model continues the text as written, without chat roles or a system prompt">Raw completion</span>
-          {:else}
-            <div class="dw-row">
-              <Segmented label="Conversation format" value={genUiMode.mode} onchange={setGenUiMode} options={RENDER_MODES} />
-            </div>
-          {/if}
-        </section>
 
         <label class="dw-sec">
           <span class="head">Stop sequences</span>
@@ -263,15 +266,15 @@
     padding: var(--s2) var(--s3);
     border: 0;
     border-radius: var(--r-col);
-    background: var(--wash);
+    background: var(--field);
     color: var(--ink);
     font: var(--type-small);
     resize: vertical;
     transition: background-color var(--fast) var(--ease);
   }
-  textarea:hover { background: var(--wash2); }
+  textarea:hover { background: var(--field-hover); }
   /* Ledger has no red: an invalid field darkens toward ink, and the line under it says why. */
-  textarea.invalid { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
+  textarea.invalid { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
   .meta.error { color: var(--ink); }
 
   @container sampling-settings (max-width: 560px) {
