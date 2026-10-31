@@ -210,8 +210,13 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   registers before `profiles/{name}` so the literal path wins.
 - **Probes.** One collection over the Monitor and the lens/SAE readout
   registries. Each row has a `family` and only fields that family produces;
-  clients key on `family`. `GET S/probes/{name}/geometry` is in the whitened
-  read frame; readout probes have no subspace and 404.
+  clients key on `family`. The listing and `GET S/probes/{name}/geometry`
+  are lock-free and never touch the device: a geometry row's `node_coords`
+  and the geometry payload (in the whitened read frame) are host copies
+  taken at attach (`AttachedManifoldProbe.node_coords_host`, `.geometry`),
+  since copying a resident MPS tensor there raced the model op holding the
+  GPU and aborted the server, and holding the lock instead would stall the
+  inspector for a whole reply. Readout probes have no subspace and 404.
 - **Tree.** Conflicts come from the tree's own reservation; navigate, star,
   note, branch, and cast edits never conflict. `PUT S/tree` restores
   atomically and refuses another model's tree. `cast_json` gives each label an

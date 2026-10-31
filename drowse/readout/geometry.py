@@ -15,7 +15,6 @@ dispatches over it instead of hand-writing a branch per family.
 
 from __future__ import annotations
 
-import hashlib
 import threading
 from collections.abc import Callable, Mapping
 from typing import Any, TYPE_CHECKING
@@ -569,39 +568,16 @@ class GeometryInstrument:
         return {"measurements": measurements}
 
     def probe_hash(self, name: str) -> str | None:
-        """sha256 of the probe's baked tensor bytes (deterministic across
-        machines/devices; fp32-normalized).  A 2-node concept hashes its
-        folded baked-direction view for continuity with the pre-coords
-        scalar monitor's drift check; a multi-node / curved probe hashes
-        the per-layer subspace geometry directly."""
-        # Fetch under the state lock (the ``manifolds`` comprehension
-        # iterates the roster); hash outside it — the manifold object is
-        # immutable after attach (promotion swaps in a NEW object), so a
-        # reference fetched here stays valid for the tensor walk below.
+        """The probe's digest (:func:`~drowse.readout.monitor_attach.probe_digest`),
+        taken from the host copy at attach.  Transcript exports ask for it
+        without the GPU lock, and walking the resident tensors there would
+        copy off the MPS device beside another thread's model op, which
+        aborts the process.  The manifold is immutable after attach
+        (promotion swaps in a new object and re-attaches), so the attach-time
+        digest stays current."""
         with self.state_lock:
-            manifold = self._monitor.manifolds.get(name)
-        if manifold is None:
-            return None
-        from drowse.geometry.fold import folded_directions
-
-        h = hashlib.sha256()
-        try:
-            profile = folded_directions(manifold)
-            per_layer: dict[int, list[torch.Tensor]] = {
-                L: [profile[L]] for L in profile
-            }
-        except ValueError:
-            per_layer = {}
-            for layer_idx, sub in manifold.layers.items():
-                tensors = [sub.mean, sub.basis]
-                if sub.node_coords is not None:
-                    tensors.append(sub.node_coords)
-                per_layer[layer_idx] = tensors
-        for layer_idx in sorted(per_layer.keys()):
-            for tensor in per_layer[layer_idx]:
-                arr = tensor.detach().to("cpu").to(torch.float32).contiguous()
-                h.update(arr.numpy().tobytes())
-        return h.hexdigest()
+            probe = self._monitor.attached_probes().get(name)
+        return probe.digest if probe is not None else None
 
 
 __all__ = ["GeometryInstrument"]
