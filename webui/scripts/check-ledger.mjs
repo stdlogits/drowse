@@ -1,5 +1,5 @@
-// The Ledger ratchet. Counts, per source file, the uses of the bridge's old token names
-// (src/lib/style/bridge.css) and the departures from Ledger (DESIGN.md in @stdlogits/ledger: flat
+// The Ledger ratchet. Counts, per source file, the departures from Ledger (DESIGN.md in
+// @stdlogits/ledger: flat
 // and borderless, the one shadow under the tip (which lives in Ledger, not here), Wix Madefor
 // only, no capitals, one curve, nothing looping, colours only from tokens and mixed in oklch, the
 // depth accent only as a fill), and fails if any count rises above webui/ledger-ratchet.json. The
@@ -7,7 +7,7 @@
 //
 //   node scripts/check-ledger.mjs           check (npm run check)
 //   node scripts/check-ledger.mjs --write   lower the ratchet to today's counts (never raises one)
-//   node scripts/check-ledger.mjs --cut     the 6.0 cut: every count zero and the bridge deleted
+//   node scripts/check-ledger.mjs --cut     the 6.0 cut: every count zero
 //
 // A category the committed ratchet does not list yet is new: check fails until --write records
 // it, and --write takes today's count as its first ceiling. After that it only goes down.
@@ -18,12 +18,10 @@ import { fileURLToPath } from "node:url";
 
 const webui = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const src = join(webui, "src");
-const bridgePath = join(src, "lib/style/bridge.css");
 const ratchetPath = join(webui, "ledger-ratchet.json");
 const mode = process.argv.includes("--write") ? "write" : process.argv.includes("--cut") ? "cut" : "check";
 
 export const CATEGORIES = {
-  bridge: "uses of a bridge token (an old name mapped onto Ledger)",
   border: "borders other than 0 or none",
   outline: "outlines other than a focus ring (outside :focus and :focus-visible rules)",
   shadow: "shadows other than a marked token's 2px same-colour spread (the tip's --float is Ledger's own)",
@@ -34,10 +32,12 @@ export const CATEGORIES = {
   loop: "animations that loop (infinite)",
   colour: "colours written outside the tokens",
   mix: "colour mixes outside oklch and oklab (the accent mixes in oklch; a grey mixes in oklab, since Chrome gives a near-grey's powerless oklch hue a red cast)",
-  tintText: "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)",
+  tintText: "text coloured by the depth accent (--tint, --deep or --late)",
 };
 
-const SKIP = new Set(["lib/types.gen.ts", "lib/style/bridge.css"]);
+const SKIP = new Set(["lib/types.gen.ts"]);
+/** The depth accent's names. */
+const TINT_NAMES = new Set(["--tint", "--deep", "--late"]);
 const SYSTEM_COLOURS = /\b(Canvas|CanvasText|Highlight|HighlightText|ButtonText|ButtonFace|ButtonBorder|GrayText|LinkText|Field|FieldText|Mark|MarkText)\b/;
 const NAMED_COLOURS = /(?<![-\w])(white|black|red|green|blue|gray|grey|yellow|orange|purple|pink|silver|navy|teal|olive|maroon)(?![-\w])/g;
 
@@ -103,12 +103,10 @@ function selectorParts(selector) {
 const isFocusRule = selector =>
   selector !== "" && selectorParts(selector).every(part => /:focus(-visible|-within)?\b/.test(part));
 
-function countFile(text, ext, bridgeNames, tintNames) {
+function countFile(text, ext) {
   const code = stripComments(text, ext);
   const css = styleRegions(code, ext).join("\n");
   const counts = Object.fromEntries(Object.keys(CATEGORIES).map(key => [key, 0]));
-
-  for (const m of code.matchAll(/var\(\s*(--[\w-]+)/g)) if (bridgeNames.has(m[1])) counts.bridge += 1;
 
   for (const { selector, body } of rules(css)) {
     if (isFocusRule(selector)) continue;
@@ -121,10 +119,10 @@ function countFile(text, ext, bridgeNames, tintNames) {
 
   // A component's own accent property (--card-accent, --family, …) is set from the depth accent by
   // its callers, so text coloured through one counts too.
-  const ownAccent = name => !bridgeNames.has(name) && /^--(?:[\w-]*-)?(?:accent|tint|family|hue)(?:-[\w-]*)?$/.test(name);
+  const ownAccent = name => /^--(?:[\w-]*-)?(?:accent|tint|family|hue)(?:-[\w-]*)?$/.test(name);
   for (const { value } of declarations(css, "color")) {
     const names = [...value.matchAll(/var\(\s*(--[\w-]+)/g)].map(m => m[1]);
-    if (names.some(name => tintNames.has(name) || ownAccent(name))) counts.tintText += 1;
+    if (names.some(name => TINT_NAMES.has(name) || ownAccent(name))) counts.tintText += 1;
   }
 
   counts.mix += [...code.matchAll(/color-mix\(\s*in\s+(?!(?:oklch|oklab)\b)[\w-]+/g)].length;
@@ -175,25 +173,15 @@ function countFile(text, ext, bridgeNames, tintNames) {
 }
 
 async function measure() {
-  const bridgeNames = new Set();
-  // The depth accent's names: Ledger's three, and any bridge name whose value reads one of them.
-  const tintNames = new Set(["--tint", "--deep", "--late"]);
-  if (existsSync(bridgePath)) {
-    const bridge = stripComments(await readFile(bridgePath, "utf8"), ".css");
-    for (const m of bridge.matchAll(/(--[\w-]+)\s*:\s*([^;]*);/g)) {
-      bridgeNames.add(m[1]);
-      if (/var\(\s*--(tint|deep|late)\b/.test(m[2])) tintNames.add(m[1]);
-    }
-  }
   const files = {};
   for (const path of await sourceFiles(src)) {
     const rel = relative(src, path).split("\\").join("/");
     if (SKIP.has(rel)) continue;
-    const counts = countFile(await readFile(path, "utf8"), extname(path), bridgeNames, tintNames);
+    const counts = countFile(await readFile(path, "utf8"), extname(path));
     const nonzero = Object.fromEntries(Object.entries(counts).filter(([, n]) => n > 0));
     if (Object.keys(nonzero).length) files[`src/${rel}`] = nonzero;
   }
-  return { files, bridge: existsSync(bridgePath) };
+  return { files };
 }
 
 function totals(files) {
@@ -227,11 +215,11 @@ const unrecorded = Object.keys(CATEGORIES).filter(key => !recorded.includes(key)
 
 if (mode === "cut") {
   const left = Object.values(sum).reduce((a, b) => a + b, 0);
-  if (left > 0 || current.bridge) {
-    console.error(`Ledger cut not ready: ${summary}${current.bridge ? "; src/lib/style/bridge.css still exists" : ""}.`);
+  if (left > 0) {
+    console.error(`Ledger cut not ready: ${summary}.`);
     process.exit(1);
   }
-  console.log("Ledger cut ready: no bridge, no departures.");
+  console.log("Ledger cut ready: no departures.");
 } else if (mode === "write") {
   if (saved) {
     const { rises } = compare(current.files, saved.files, recorded);
@@ -241,7 +229,7 @@ if (mode === "cut") {
     }
   }
   const body = {
-    about: "Ledger ratchet: per-file counts that may only go down (scripts/check-ledger.mjs). The 6.0 cut needs every count at zero and src/lib/style/bridge.css deleted.",
+    about: "Ledger ratchet: per-file counts that may only go down (scripts/check-ledger.mjs). The 6.0 cut needs every count at zero.",
     categories: CATEGORIES,
     totals: sum,
     files: current.files,

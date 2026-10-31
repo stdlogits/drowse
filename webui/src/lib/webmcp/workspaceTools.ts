@@ -380,13 +380,13 @@ export function createWorkspaceTools(): AppTool[] {
       applyCustomSteeringExpression(expression);
       await tick();
       return result({ expression: currentSteeringExpression(), rack_replaced: true });
-    }, { surfaces: ["RecipeBar", "TermView"], services: ["sessions.validateSteering"] }),
+    }, { surfaces: ["RecipeBar", "TermEditor"], services: ["sessions.validateSteering"] }),
     tool("drowse_edit_steer_rack", "Edit a visible steering card", "Add, update, remove, or clear visible steering cards after validating the resulting expression. Flat cards share subspace_along; curved cards have individual along/onto; lens/SAE atoms have alpha. Custom expressions require set_steering instead of implicit replacement.", objectSchema({
       action: choice(["upsert", "remove", "clear", "strength"], "Card mutation or shared flat strength."), selector: string("Exact namespace/name, jlens/word, or sae/feature_id; pass geometry variant separately.", 256),
       variant: string("Geometry variant such as raw, sae-release, role-name, from-model.", 256), label: nullable(string("Target node label; null uses coordinates.", 256)), coords: { type: "array", items: number("Authoring coordinate."), minItems: 1, maxItems: 64 },
       subspace_along: number("Shared slide coefficient for EVERY flat card; 0 disables their push."), along: number("Curved card slide coefficient."), onto: number("Curved residual collapse; zero leaves it unchanged.", 0, 1), alpha: number("Lens/SAE atom coefficient. Values are model dependent; start modestly."),
       enabled: boolean("Include this card in the expression."), ablate: boolean("Mean-ablate a flat concept or atom instead of pushing."), trigger: choice(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"], "Trigger phase: BOTH (default) steers the prompt and every generated token, BEFORE only the prompt prefill, AFTER the reply after thinking, THINKING only thinking tokens, RESPONSE every generated token."),
-    }, ["action"]), async (input, context) => editRack(input, context), { surfaces: ["subspace", "manifolds", "RecipeBar", "TermView", "JLensPanel", "SaePanel"] }),
+    }, ["action"]), async (input, context) => editRack(input, context), { surfaces: ["subspace", "manifolds", "RecipeBar", "TermEditor", "JLensPanel", "SaePanel"] }),
     tool("drowse_attach_probe", "Attach a reading", "Attach a geometry, lens-token, or SAE-feature probe and synchronize the visible probe rack. Reading measures the current representation; attaching does not apply steering.", objectSchema({ selector: string("Full geometry selector, jlens/word, or sae/feature_id.", 256), name: string("Optional unique display/channel name.", 256), top_n: integer("Number of nearest geometry labels to retain.", 1, 1000) }, ["selector"]), async (input, context) => {
       assertWorkspaceIdle(context);
       const info = await attachProbe(input.selector as string, { ...(input.name === undefined ? {} : { name: input.name as string }), ...(input.top_n === undefined ? {} : { top_n: input.top_n as number }) });
@@ -468,8 +468,8 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
       })();
       if (input.enabled !== undefined) entry.enabled = input.enabled as boolean;
       if (input.trigger !== undefined) entry.trigger = input.trigger as Trigger;
-      if (entry.mode === "jlens" || entry.mode === "sae") {
-        if (["coords", "label", "variant", "along", "onto"].some(key => input[key] !== undefined)) throw new ToolError("INVALID_INPUT", "Lens/SAE cards use alpha and ablate, not geometry coordinates or along/onto.");
+      if (entry.mode === "jlens" || entry.mode === "sae" || entry.mode === "unit") {
+        if (["coords", "label", "variant", "along", "onto"].some(key => input[key] !== undefined)) throw new ToolError("INVALID_INPUT", "Lens, SAE and unit cards use alpha and ablate, not geometry coordinates or along/onto.");
         if (input.alpha !== undefined) entry.alpha = input.alpha as number;
         if (input.ablate !== undefined) entry.ablate = input.ablate as boolean;
       } else {

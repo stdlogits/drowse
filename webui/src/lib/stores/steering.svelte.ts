@@ -19,11 +19,15 @@ import type { CorrelationData, ManifoldInfo, VectorInfo } from "../types";
 import type {
   AtomMode,
   AtomSteerEntry,
+  LayerScope,
   ManifoldSteerEntry,
   SteerEntry,
   SubspaceSteerEntry,
+  UnitSteerEntry,
   Variant,
 } from "../types";
+import { formatLayerIndices } from "../steering/layers";
+import { forgetTermLayers } from "../steering/termLayers.svelte";
 import { serializeExpression } from "../expression";
 import { enqueueOrApply } from "./pending.svelte";
 
@@ -161,14 +165,18 @@ function defaultSubspaceEntry(
 
 type EntryOf<M extends SteerEntry["mode"]> = Extract<SteerEntry, { mode: M }>;
 type SteerPatch = { [K in keyof SteerEntry]?: SteerEntry[K] }
-  & Partial<Pick<SubspaceSteerEntry, "ablate" | "coords" | "label">>
+  & Partial<Pick<SubspaceSteerEntry, "ablate" | "coords" | "label" | "layers">>
   & Partial<Pick<ManifoldSteerEntry, "blend" | "onto">>
-  & Partial<Pick<AtomSteerEntry, "alpha">>;
+  & Partial<Pick<AtomSteerEntry | UnitSteerEntry, "alpha">>;
 
 /** Describe a rack edit for the pending-queue bubble. */
 function describePatch(name: string, patch: SteerPatch): string {
   if (patch.enabled !== undefined) return `${patch.enabled ? "enable" : "disable"} ${name}`;
   if (patch.ablate !== undefined) return `${patch.ablate ? "ablate" : "push"} ${name}`;
+  if (patch.layers !== undefined) {
+    const where = patch.layers === null ? "every layer" : patch.layers === "workspace" ? "the workspace" : `layers ${formatLayerIndices(patch.layers) || "none"}`;
+    return `${name} at ${where}`;
+  }
   const [field, value] = Object.entries(patch)[0] ?? ["edit", ""];
   return `${field} ${name}${typeof value === "number" ? ` ${value.toFixed(3)}` : typeof value === "string" ? ` ${value}` : ""}`;
 }
@@ -237,6 +245,14 @@ export function addSubspaceToRack(name: string, variant: Variant = "raw"): void 
   steerRack.entries.set(name, defaultSubspaceEntry(coords, label, variant));
 }
 
+/** Scope a term to layers (its ``{…}`` clause): ``null`` for every fitted layer, ``"workspace"``,
+ *  or exact indices (the empty list leaves the term out until it has a layer again).  Units carry
+ *  their own layer and take no clause. */
+export function setSteerLayers(name: string, layers: LayerScope): void {
+  const scope = Array.isArray(layers) ? [...layers] : layers;
+  patchSteerEntry(name, { layers: scope }, ["subspace", "manifold", "jlens", "sae"]);
+}
+
 /** Take any term off the rack.  Never deletes the server-side artifact. */
 export function removeSteerEntry(name: string): void {
   steerRack.entries.delete(name);
@@ -268,6 +284,8 @@ export async function refreshManifoldList(): Promise<void> {
   try {
     const r = await apiManifolds.list();
     steerRack.catalog = r.manifolds;
+    // A fit, an install or a deletion can move where a term acts.
+    forgetTermLayers();
     steerRack.error = null;
   } catch (e) {
     steerRack.catalog = [];
@@ -364,4 +382,39 @@ export function addJLensToRack(word: string): void {
 /** Add a resident-SAE decoder-row steering chip (``α sae/<id>``). */
 export function addSaeToRack(featureId: number): void {
   addAtomToRack("sae", String(featureId));
+}
+
+// ------------------------------------------------------ unit mutators
+
+/** A unit's rack key: ``neuron/L<layer>n<index>`` or ``head/L<layer>h<index>``, the canonical
+ *  form the grammar writes (case-insensitive input, leading zeros dropped). */
+export function unitKey(id: string): string | null {
+  const match = /^(neuron|head)\/l0*(\d+)([nh])0*(\d+)$/iu.exec(id.trim());
+  if (!match) return null;
+  const family = match[1].toLowerCase();
+  const letter = match[3].toLowerCase();
+  if ((family === "neuron") !== (letter === "n")) return null;
+  return `${family}/L${match[2]}${letter}${match[4]}`;
+}
+
+/** Default α for a unit push: a neuron's write is one sharp direction, like a lens atom. */
+export const UNIT_DEFAULT_ALPHA = 0.2;
+
+/** Rack one unit: a neuron pushed (``alpha`` signed; a negative one takes the other pole) or
+ *  silenced, a head silenced (a head has no single write direction).  Silencing defaults to the
+ *  full neutral mean (α 1).  Re-racking a unit already there replaces how it steers.  Returns the
+ *  rack key, or null for an id that names no unit. */
+export function addUnitToRack(id: string, { ablate = false, alpha }: { ablate?: boolean; alpha?: number } = {}): string | null {
+  const name = unitKey(id);
+  if (!name) return null;
+  const silence = ablate || name.startsWith("head/");
+  steerRack.customExpression = null;
+  steerRack.entries.set(name, {
+    mode: "unit",
+    ablate: silence,
+    alpha: alpha ?? (silence ? 1 : UNIT_DEFAULT_ALPHA),
+    trigger: "BOTH",
+    enabled: true,
+  });
+  return name;
 }

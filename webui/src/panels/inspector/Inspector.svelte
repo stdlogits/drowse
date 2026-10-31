@@ -1,23 +1,24 @@
 <script lang="ts">
   // The Inspector: whatever is selected (lib/stores/selection.svelte.ts). Nothing shows the
-  // instruments; a token its drilldown; a probe its trace and geometry; a steering term its card; a
-  // unit its view, once the engine has units. The crumbs lead back to the instruments.
+  // instruments; a token its drilldown; a probe its trace and geometry; a unit its view, once the
+  // engine has units. A steering term opens in place under the recipe's chips (TermEditor), so
+  // while one is selected the instruments stay here, reading what it does. The crumbs lead back to
+  // the instruments.
   import { IconButton, Swap } from "@stdlogits/ledger";
   import DrawerOutlet from "../../drawers/DrawerOutlet.svelte";
   import Instruments from "./Instruments.svelte";
-  import TermView from "./TermView.svelte";
   import { clearSelection, selection } from "../../lib/stores/selection.svelte";
-  import { steerRack } from "../../lib/stores/steering.svelte";
   import { workbenchUi } from "../../lib/stores/workbench.svelte";
 
   let { sheet = false, onclose }: { sheet?: boolean; onclose?: () => void } = $props();
 
   const current = $derived(selection.current);
+  // A selected term shows the instruments, as nothing selected does.
+  const shown = $derived(current.kind === "term" ? "none" : current.kind);
   const here = $derived.by(() => {
     switch (current.kind) {
       case "token": return "Token";
       case "probe": return "Probe";
-      case "term": return steerRack.entries.has(current.name) ? "Steering" : "Term";
       case "unit": return current.id;
       default: return "Instruments";
     }
@@ -36,23 +37,21 @@
 
 <div class="inspector" class:sheet>
   <div class="dw-crumbs">
-    {#if current.kind === "none"}
+    {#if shown === "none"}
       <span class="dw-here">Instruments</span>
     {:else}
       <button type="button" onclick={toInstruments}>Instruments</button><span aria-hidden="true">›</span><span class="dw-here">{here}</span>
     {/if}
-    {#if current.kind !== "none" || sheet}
+    {#if shown !== "none" || sheet}
       <span class="dw-crumbs-end"><IconButton icon="close" label="Close" onclick={close} /></span>
     {/if}
   </div>
 
-  <Swap key={current.kind === "term" ? `term:${current.name}` : current.kind}>
+  <Swap key={shown}>
     {#if current.kind === "token"}
       <DrawerOutlet name="token_drilldown" docked active mobile={sheet} params={current.params} onclose={clearSelection} />
     {:else if current.kind === "probe"}
       <DrawerOutlet name="probe_inspector" params={current.params} onclose={clearSelection} />
-    {:else if current.kind === "term"}
-      <TermView name={current.name} />
     {:else if current.kind === "unit"}
       <div class="dw-empty"><span class="head">{current.id}</span><p>Units arrive with the engine.</p></div>
     {:else}

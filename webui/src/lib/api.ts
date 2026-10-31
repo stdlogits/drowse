@@ -49,6 +49,7 @@ import type {
   SaeFeatureMetaResponse,
   SessionInfo,
   SourcesResponse,
+  SteeringValidationResponse,
   TemplateDetail,
   TemplateSummary,
   TranscriptLoadResponseJSON,
@@ -150,7 +151,7 @@ export const apiSessions = {
     expression: string,
     id: string = SESSION,
     _options?: import("./runtime/contracts").SteeringValidationOptions,
-  ): Promise<{ valid: boolean; expression: string; error: string | null }> {
+  ): Promise<SteeringValidationResponse> {
     return request(
       `${SESSION_BASE(id)}/steering/validate`,
       jsonBody({ expression }),

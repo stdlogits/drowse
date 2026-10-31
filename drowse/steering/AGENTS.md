@@ -12,7 +12,7 @@ injected, where, when, and how strongly.
 | `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr`, `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
 | `terms.py` | `Steering` (frozen IR), `AlphaEntry`, `SteeringStackEntry`, `term_entry` / `entry_trigger` / `entry_coeff` |
 | `triggers.py` | `Trigger` + presets, `ProbeGate`, `TriggerContext` |
-| `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries), `SteeringScope`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
+| `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries, `term_layers`), `SteeringScope`, `TermLayers`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
 | `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `UnitTerm` / `UnitOp` / `UnitHook` (unit ablation), `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
 
 Layering (`tests/invariants/test_layering.py`): `grammar`/`terms`/`triggers`
@@ -305,6 +305,17 @@ compiled offsets see only selected layers. A plain vector's scope is read from
 its key (`split_layer_clause`); the other kinds carry `layers`. Ablation
 coefficients stay exact under any selection (`eff_along · κ` is still the
 user's coefficient).
+
+`SteeringComposer.term_layers(entries)` (and `SteeringScope.term_layers()`)
+reports where each resolved term acts, for the dashboard's term editor (`POST
+.../steering/validate`): a `TermLayers` of its fitted layers, its share at each
+(mean 1 over the fitted layers) and the layers its clause selects
+(`select_term_layers`, so a clause composition refuses raises here too). Each
+term is weighed alone and unscoped, as composition weighs it: a push (vector,
+pole, projection, affine `%`) by its whitened displacement `‖Δ_L‖_M`, a curved
+`%` by its baked Mahalanobis share, an ablation evenly (its coefficient is exact
+at every layer), a unit at its own layer. It takes the exclusive lock and
+changes nothing installed.
 
 Push and ablate fragments group by trigger equality; each group becomes one
 `synthesize_subspace` call (one merged affine subspace per layer, push wins a

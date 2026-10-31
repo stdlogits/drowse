@@ -142,6 +142,16 @@ export function validateConversationSnapshot(
     if ((!TRIGGERS.has(trigger as Trigger) && !STORED_TRIGGER_ALIASES[trigger]) || typeof row.enabled !== "boolean") {
       invalid(`steering row ${name}`);
     }
+    if (row.mode === "unit") {
+      // A unit carries its own layer: no clause, and a head is only ever silenced.
+      const unit = /^(neuron|head)\/L(?:0|[1-9]\d*)([nh])(?:0|[1-9]\d*)$/u.exec(name);
+      if (!unit || (unit[1] === "neuron") !== (unit[2] === "n")) invalid(`unit row ${name}`);
+      finite(row.alpha, `steering row ${name} alpha`);
+      if (typeof row.ablate !== "boolean" || (name.startsWith("head/") && !row.ablate)) invalid(`steering row ${name} ablation`);
+      if (row.layers !== undefined) invalid(`steering row ${name} layers`);
+      continue;
+    }
+    layerScope(row.layers, `steering row ${name} layers`);
     if (row.mode === "jlens" || row.mode === "sae") {
       finite(row.alpha, `steering row ${name} alpha`);
       if (row.ablate !== undefined && typeof row.ablate !== "boolean") {
@@ -322,6 +332,14 @@ function nonempty(value: unknown, label: string): string {
 
 function nonemptyOrEmpty(value: unknown, label: string): void {
   if (typeof value !== "string") invalid(label);
+}
+
+/** A term's layer clause: absent or null (every fitted layer), ``"workspace"``, or ascending
+ *  distinct non-negative layer indices (empty: the term sits out). */
+function layerScope(value: unknown, label: string): void {
+  if (value === undefined || value === null || value === "workspace") return;
+  const layers = finiteArray(value, label);
+  if (!layers.every((L, i) => Number.isInteger(L) && L >= 0 && (i === 0 || L > layers[i - 1]))) invalid(label);
 }
 
 function nullableString(value: unknown, label: string): void {

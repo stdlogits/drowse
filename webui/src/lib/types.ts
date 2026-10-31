@@ -863,6 +863,8 @@ export interface SubspaceSteerEntry {
    *  the card today (kept for round-trip of pasted/legacy expressions). */
   variant: Variant;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   /** When false, the term is excluded from serialization (visual but
    * not active). */
   enabled: boolean;
@@ -887,6 +889,8 @@ export interface ManifoldSteerEntry {
   /** Tensor variant — rides the atom (``name:sae%pos``). */
   variant: Variant;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
@@ -903,6 +907,8 @@ export interface JLensSteerEntry {
   /** Push coefficient (the plain-atom α slot). */
   alpha: number;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
@@ -910,6 +916,21 @@ export interface JLensSteerEntry {
 export interface SaeSteerEntry {
   mode: "sae";
   /** Mean-ablate the decoder-row direction instead of pushing along it. */
+  ablate: boolean;
+  alpha: number;
+  trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
+  enabled: boolean;
+}
+
+/** One MLP neuron or attention head (``neuron/L31n4410``, ``head/L28h12``: the rack key).  A
+ *  unit carries its own layer, so it takes no layer clause.  A neuron pushes along its write (the
+ *  sign of ``alpha`` picks the pole) or is silenced; a head has no single write direction and is
+ *  only ever silenced (``ablate`` is always true).  Silencing replaces the unit's activation by
+ *  its neutral mean, blended by ``alpha`` (1 = fully). */
+export interface UnitSteerEntry {
+  mode: "unit";
   ablate: boolean;
   alpha: number;
   trigger: Trigger;
@@ -931,7 +952,13 @@ export type SteerEntry =
   | SubspaceSteerEntry
   | ManifoldSteerEntry
   | JLensSteerEntry
-  | SaeSteerEntry;
+  | SaeSteerEntry
+  | UnitSteerEntry;
+
+/** A term's ``{…}`` layer clause: ``null`` (or absent) acts at every layer the term is fitted at;
+ *  ``"workspace"`` at the workspace band; a sorted index list at exactly those layers, and the
+ *  empty list at none (the term is left out of the expression until it has a layer again). */
+export type LayerScope = null | "workspace" | number[];
 
 // ----------------------------------------------------- probe rack --
 
