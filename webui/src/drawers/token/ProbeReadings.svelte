@@ -12,6 +12,7 @@
   import type { GeometryTokenReadout, ReplayReadout } from "./readout.svelte";
   import ReadingWait from "./ReadingWait.svelte";
   import { depthTint, formatSigned } from "./layers";
+  import { probeNote } from "./readings";
 
   let { readout, pinned, hasGeometryProbes, hasReplayContext, replayAvailable, returnToToken }: {
     readout: ReplayReadout<GeometryTokenReadout>;
@@ -69,7 +70,7 @@
         name,
         kind: affine === null ? "geometry" : curved ? "curved" : "flat",
         value: curved ? reading.fraction.toFixed(2) : formatSigned(reading.coords[0] ?? 0),
-        note: curved ? (reading.nearest?.[0]?.[0] ?? "") : reading.coords.length === 1 ? axisLabel(name, 0, 1) : "",
+        note: probeNote(name, curved ? (reading.nearest?.[0]?.[0] ?? "") : reading.coords.length === 1 ? axisLabel(name, 0, 1) : ""),
         bars,
         scale: curved ? 1 : probeAxisScale(name, 0),
         geometry: reading,
@@ -197,7 +198,7 @@
       {#each rows as row, i (row.name)}
         <div role="listitem" class="item rise" style:--i={i}>
           <button type="button" class="row" aria-expanded={open === row.name} onclick={() => toggle(row.name)}>
-            <span class="name"><span class="n1">{row.name}</span>{#if row.note}<span class="meta">{row.note}</span>{/if}</span>
+            <span class="name"><span class="n1">{#each row.name.split(".") as part, k (k)}{#if k > 0}.<wbr>{/if}{part}{/each}</span>{#if row.note}<span class="meta">{row.note}</span>{/if}</span>
             {@render trace(row.bars, row.scale, null, null)}
             <span class="val">{row.value}</span>
           </button>
@@ -237,9 +238,14 @@
   }
   @media (hover: hover) { .row:hover { background: var(--token-fill); } }
   .row[aria-expanded="true"] { background: var(--token-fill); }
+  /* Full width against the Inspector's scroll edge: the ring sits inside. */
+  .row:focus-visible { outline-offset: -2px; }
   .row:active { scale: 0.99; }
-  .name { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; overflow: hidden; white-space: nowrap; }
-  .n1 { overflow: hidden; color: var(--ink); font: var(--type-control); text-overflow: ellipsis; }
+  /* The name is the row's identity: it keeps its width and wraps at its pole separator when it
+   * must, while the note beside it gives way first. */
+  .name { display: flex; align-items: baseline; gap: var(--s2); min-width: 0; }
+  .n1 { flex: 0 1 auto; min-width: 0; color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
+  .name .meta { flex: 0 1000 auto; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .val { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
 
   .trace { display: flex; align-items: flex-end; gap: 1px; height: 24px; min-width: 0; }
@@ -266,9 +272,12 @@
   .chip .n { color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
   .facts { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); }
   .facts b { color: var(--ink); font-weight: 500; }
-  @media (max-width: 720px) {
-    .row { grid-template-columns: minmax(0, 1fr) 88px 48px; gap: var(--s3); }
+  /* A narrow view (the Inspector beside a mid-width page, or the phone) gives the names the room. */
+  @container token (max-width: 440px) {
+    .row { grid-template-columns: minmax(0, 1fr) 88px 44px; gap: var(--s3); }
     .kv { grid-template-columns: minmax(0, 1fr) 88px 56px; gap: var(--s3); }
+  }
+  @media (max-width: 720px) {
     .trace button.bar { min-height: 44px; }
   }
 </style>

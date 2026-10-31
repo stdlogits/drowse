@@ -112,8 +112,13 @@
     .branch { opacity: 0; transition: opacity var(--fast) var(--ease), color var(--fast) var(--ease); }
     .alt:hover .branch, .branch:focus-visible { opacity: 1; }
   }
+  /* A narrow view (the Inspector beside a mid-width page, or the phone's sheet) keeps the token's
+   * room: the meter and the gaps narrow before the token gives way. */
+  @container token (max-width: 350px) {
+    .alt { grid-template-columns: minmax(0, 1fr) 48px 40px 48px; gap: var(--s2); }
+  }
   @media (max-width: 720px) {
-    .alt { min-height: 44px; grid-template-columns: minmax(0, 1fr) 48px 44px 56px; }
-    .branch { min-height: 44px; }
+    .alt { min-height: 44px; }
+    .branch { min-width: 44px; min-height: 44px; }
   }
 </style>

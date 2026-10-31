@@ -186,6 +186,26 @@ try {
   assert.equal(layers.formatSigned(0.25), "+0.25");
   assert.equal(layers.formatSigned(-0.001), "0.00", "a reading that rounds to zero carries no sign");
 
+  const readings = await server.ssrLoadModule("/src/drawers/token/readings.ts");
+  const pin = { value: 0.25, unit: "mean_token_probability", per_layer: {}, depth: null };
+  const recorded = {
+    lens: { binding: { source: "old", steering: null }, readings: { "lens-pin": pin } },
+    sae: { binding: { source: "old", steering: null, layer: 0 }, readings: { "sae-pin": pin } },
+  };
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "captured", sae: "captured" })), ["lens-pin", "sae-pin"],
+    "the pins recorded with the token show beside their capture");
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "replayed", sae: "captured" })), ["sae-pin"],
+    "a replayed lens readout hides the lens pins captured with the token");
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "captured", sae: "replayed" })), ["lens-pin"],
+    "a replayed SAE readout hides the SAE pins captured with the token");
+  assert.deepEqual(readings.pinnedReadings(recorded, { lens: null, sae: null }), {}, "no readout yet, no pins");
+  assert.deepEqual(readings.pinnedReadings(undefined, { lens: "captured", sae: "captured" }), {});
+  assert.equal(readings.probeNote("confident.uncertain", "confident"), "", "a first pole beside its own name says nothing");
+  assert.equal(readings.probeNote("default/Formal.casual", "formal"), "");
+  assert.equal(readings.probeNote("individualist.collectivist", "axis 1"), "axis 1");
+  assert.equal(readings.probeNote("emotions", "joy"), "joy", "a curved probe's nearest node is a reading");
+  assert.equal(readings.probeNote("emotions", ""), "");
+
   const { default: LensReading } = await server.ssrLoadModule("/src/drawers/token/LensReading.svelte");
   const { default: ProbeReadings } = await server.ssrLoadModule("/src/drawers/token/ProbeReadings.svelte");
   const { default: FeatureReadings } = await server.ssrLoadModule("/src/drawers/token/FeatureReadings.svelte");
@@ -205,6 +225,8 @@ try {
   assert.doesNotMatch(lensHtml, /Attention added|MLP added/, "the anatomy's other columns wait for their data");
   assert.match(lensHtml, /below every layer's top 1/, "a token no layer ranked is unmeasured, not zero, and draws no depth");
   assert.doesNotMatch(lensHtml, /class="bars/);
+  assert.match(lensHtml, /\(this token\)/, "the inspected token is named as such across layers");
+  assert.doesNotMatch(lensHtml, /two reads agree/, "the inspected token does not borrow Token's agreement flag");
   const unfitted = render(LensReading, { props: {
     readout: { ...readout, data: null, origin: null }, tokenText: " word", jlensFitted: false, hasReplayContext: true, modelId: "org/fixture", replayAvailable: true,
   } }).body;
@@ -227,6 +249,16 @@ try {
   assert.match(featureHtml, />2\.0</, "a feature without one reads raw");
   assert.match(render(FeatureReadings, { props: { ...featureProps, readout: { ...readout, data: null }, saeLoaded: false } }).body,
     /Choose an SAE/, "no SAE leads to the Lens room");
+
+  const { default: TokenLogitsPopover } = await server.ssrLoadModule("/src/lib/ui/TokenLogitsPopover.svelte");
+  const popover = render(TokenLogitsPopover, { props: {
+    token: { text: " sky", tokenId: 2, logprob: Math.log(0.3), topAlts: [{ id: 2, text: " sky", logprob: Math.log(0.3) }] },
+    anchor: {}, isCurrent: () => true, contextChanged: true, onclose() {},
+  } }).body;
+  assert.match(popover, /data-tip="Model token · sampled probabilities, not raw logits"/);
+  assert.match(popover, /data-tip-sub="Recorded before your edit, with the original text before it"/);
+  assert.doesNotMatch(popover, /<p class="meta[^"]*">[^<]*(not raw logits|Recorded before your edit)/,
+    "what the numbers are goes in the title's tip, not a line in the working view");
 
   const { default: JLensProbeCard } = await server.ssrLoadModule("/src/panels/rack/JLensProbeCard.svelte");
   const { default: SaeProbeCard } = await server.ssrLoadModule("/src/panels/rack/SaeProbeCard.svelte");

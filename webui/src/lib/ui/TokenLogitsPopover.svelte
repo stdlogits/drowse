@@ -21,6 +21,9 @@
   const rows = $derived(tokenProbabilityRows(token));
   const title = $derived(tokenParts(token.text));
   const alternativeCount = tokenAlternativeDefault(getRuntimeClient().mode);
+  /** What the numbers are, for the title's tip and the dialog's description (not a visible line). */
+  const about = $derived(`${source} · sampled probabilities, not raw logits`);
+  const beforeEdit = "Recorded before your edit, with the original text before it";
   let panel: HTMLDivElement;
   let closing = false;
 
@@ -95,7 +98,7 @@
   });
 </script>
 
-<div bind:this={panel} class="token-logits-popover" popover="manual" role="dialog" tabindex="-1" aria-labelledby={`${uid}-title`}
+<div bind:this={panel} class="token-logits-popover" popover="manual" role="dialog" tabindex="-1" aria-labelledby={`${uid}-title`} aria-describedby={`${uid}-about`}
   in:fadeIn|global
   out:fadeOut|global
   onintrostart={() => {
@@ -108,11 +111,11 @@
   onoutrostart={() => { closing = true; panel.inert = true; }}
 >
   <header>
-    <h2 id={`${uid}-title`}><span class="ws">{title.lead ? "·" : ""}</span>{title.empty ? "∅" : title.text}</h2>
+    <!-- A token recorded before an edit keeps the page's dashed mark for it. -->
+    <h2 id={`${uid}-title`} class:context-changed={contextChanged} data-tip={about} data-tip-sub={contextChanged ? beforeEdit : undefined}><span class="ws">{title.lead ? "·" : ""}</span>{title.empty ? "∅" : title.text}</h2>
     <IconButton icon="close" label="Close token probabilities" onclick={() => close()} />
   </header>
-  <p class="meta">{source} · sampled probabilities, not raw logits</p>
-  {#if contextChanged}<p class="meta">Recorded before your edit, with the original text before it</p>{/if}
+  <p class="sr-only" id={`${uid}-about`}>{about}{contextChanged ? `. ${beforeEdit}` : ""}</p>
   {#if rows.length}
     <table aria-label="Recorded token probabilities">
       <thead class="sr-only"><tr><th scope="col">Token</th><th scope="col">Probability</th></tr></thead>
@@ -144,7 +147,8 @@
   }
   .token-logits-popover:focus { outline: none; }
   header { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); width: 100%; min-width: 0; }
-  h2 { min-width: 0; margin: 0; color: var(--ink); font: var(--type-lead); font-family: var(--display); font-weight: 600; white-space: pre; overflow: hidden; text-overflow: ellipsis; }
+  h2 { min-width: 0; margin: 0; color: var(--ink); font: var(--type-lead); font-family: var(--display); font-weight: 600; white-space: pre; overflow: hidden; text-overflow: ellipsis; cursor: help; }
+  h2.context-changed { text-decoration: underline dashed var(--ink3); text-underline-offset: 4px; }
   header :global(.icon) { background: var(--paper); }
   .ws { color: var(--ink3); }
   .ws:empty { display: none; }

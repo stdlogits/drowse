@@ -106,8 +106,14 @@
             </span>
           </button>
           {#if open === row.layer && row.tokens.length > reads}
-            <div class="more toks">
-              {#each row.tokens as item, rank (item.id)}<Token token={item.token} value={Math.exp(item.logprob)} flags={tokenId != null && item.id === tokenId ? 1 : 0} i={rank} />{/each}
+            <div class="more toks" style:--tint={depthTint(row.layer, last)}>
+              {#each row.tokens as item, rank (item.id)}
+                {#if tokenId != null && item.id === tokenId}
+                  <span class="it"><Token token={item.token} value={Math.exp(item.logprob)} i={rank} /><span class="sr-only"> (this token)</span></span>
+                {:else}
+                  <Token token={item.token} value={Math.exp(item.logprob)} i={rank} />
+                {/if}
+              {/each}
             </div>
           {/if}
         {/if}
@@ -120,8 +126,9 @@
       <div class="dw-sec-head"><span class="head">Across layers</span></div>
       <div class="toks" data-link-scope>
         {#each data.aggregate ?? [] as chip, i (i)}
-          <span class="agg" data-tip={`strength ${chip.strength.toFixed(3)} · centred at ${chip.com.toFixed(2)} of depth ±${chip.spread.toFixed(2)} · in ${hits(chip.token)}/${layers.length} layers`}>
-            <Token token={chip.token} value={chip.strength} flags={chip.token === data.token_text ? 1 : 0} {i} />
+          {@const here = chip.token === data.token_text}
+          <span class="agg" class:it={here} data-tip={`strength ${chip.strength.toFixed(3)} · centred at ${chip.com.toFixed(2)} of depth ±${chip.spread.toFixed(2)} · in ${hits(chip.token)}/${layers.length} layers`}>
+            <Token token={chip.token} value={chip.strength} {i} />{#if here}<span class="sr-only"> (this token)</span>{/if}
           </span>
         {/each}
       </div>
@@ -190,8 +197,16 @@
   .ws:empty { display: none; }
   .more { padding: var(--s1) var(--s2) var(--s2) calc(56px + var(--s4)); }
   .agg { display: contents; }
+  /* The inspected token, as the layer table marks it (Token's own tint means two reads agree). */
+  .it { display: contents; }
+  .toks .it > :global(.tok) { background: color-mix(in oklch, var(--tint) 22%, var(--paper)); }
+  /* Full width against the Inspector's scroll edge: the ring sits inside. */
+  .lrow:focus-visible { outline-offset: -2px; }
   @media (max-width: 720px) {
-    .lrow { min-height: 40px; grid-template-columns: 48px minmax(0, 1fr); }
+    /* Phone sizes (the Phone canvas): every target 44 px. */
+    .lrow { min-height: 44px; grid-template-columns: 48px minmax(0, 1fr); }
     .more { padding-left: calc(48px + var(--s4)); }
+    .dw-sec-head .dw-text { position: relative; }
+    .dw-sec-head .dw-text::after { content: ""; position: absolute; inset: -14px -8px; }
   }
 </style>

@@ -52,6 +52,7 @@
   import ProbeReadings from "./token/ProbeReadings.svelte";
   import FeatureReadings from "./token/FeatureReadings.svelte";
   import { formatP, lastLayer } from "./token/layers";
+  import { pinnedReadings } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
@@ -397,12 +398,10 @@
     return { steering: geometry.binding?.steering ?? null, readings: geometry.readings };
   });
 
-  /** The lens and SAE probes pinned while the token was generated: shown only beside the capture
-   *  they belong to (a replay reads the discovery readout, not the pinned roster). */
-  const pinned = $derived.by<Record<string, ScalarReadingJSON>>(() => ({
-    ...(lensReadout.origin === "captured" ? (token?.measurements?.instruments.lens?.readings ?? {}) : {}),
-    ...(saeReadout.origin === "captured" ? (token?.measurements?.instruments.sae?.readings ?? {}) : {}),
-  }));
+  /** The lens and SAE probes pinned while the token was generated, beside their capture only. */
+  const pinned = $derived<Record<string, ScalarReadingJSON>>(
+    pinnedReadings(token?.measurements?.instruments, { lens: lensReadout.origin, sae: saeReadout.origin }),
+  );
 
   // One effect per family: adopt the capture while steered, else replay. Declared geometry, SAE,
   // lens: the replay queue runs the newest interactive request first, so the lens reads first.
@@ -577,7 +576,7 @@
         {#if !atAnchor}<button type="button" class="fact" onclick={resetToAnchor}>Back</button>{/if}
       </div>
       {#if recipeSteering || recipeLine}
-        <p class="recipe meta">{#if recipeSteering}<span class="expr">{recipeSteering}</span>{/if}{#if recipeSteering && recipeLine}<span aria-hidden="true"> · </span>{/if}{recipeLine}</p>
+        <p class="recipe meta">{#if recipeSteering}<span class="expr">{recipeSteering}</span>{/if}{#if recipeSteering && recipeLine}<span aria-hidden="true">{" · "}</span>{/if}{recipeLine}</p>
       {/if}
       {#if context.length > 1}
         <!-- Mouse targets only (the arrow keys walk the same tokens), so focus stays on the view. -->
@@ -635,6 +634,9 @@
   .token {
     /* What a piece on this surface fills with: wash on paper, wash2 on the phone's wash sheet. */
     --token-fill: var(--wash);
+    /* The readings size their columns to the view, not the window: the Inspector is 300 px at a
+     * 768 px window and wider on a phone. */
+    container: token / inline-size;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
     gap: var(--s7);
@@ -683,10 +685,22 @@
 
   .branch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); min-width: 0; }
   .branch input { flex: 1 1 12rem; min-width: 0; background: var(--token-fill); color: var(--ink); white-space: pre; }
+  /* The field meets the Inspector's scroll edge, so its ring sits inside it. */
+  .branch input:focus-visible { outline-offset: -2px; }
+
+  /* On the phone's wash sheet the switch's track steps up to wash2, as the sheet's other pieces do. */
+  .token.mobile .readings-switch :global(.seg) { background: var(--token-fill); }
 
   @media (max-width: 720px) {
+    /* Phone sizes (the Phone canvas): every target 44 px. */
+    .steps :global(button.icon) { width: 44px; height: 44px; }
+    .readings-switch :global(.seg > button) { position: relative; height: 36px; }
+    .readings-switch :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }
     .fact { position: relative; }
     .fact::after { content: ""; position: absolute; inset: -14px -8px; }
+    /* Too small to tap and too close to stretch: on the phone the context is to read, and ‹ ›
+     * (or the page above the sheet) move the token. */
+    .ctok { pointer-events: none; }
     .branch input { min-height: 44px; }
     .branch .dw-text { min-height: 44px; }
   }

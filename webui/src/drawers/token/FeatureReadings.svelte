@@ -195,6 +195,8 @@
   }
   @media (hover: hover) { .row:hover { background: var(--token-fill); } }
   .row[aria-expanded="true"] { background: var(--token-fill); }
+  /* Full width against the Inspector's scroll edge: the ring sits inside. */
+  .row:focus-visible, .tools input:focus-visible { outline-offset: -2px; }
   .row:active { scale: 0.99; }
   .uid { color: var(--ink); font: 600 14px/20px var(--display); letter-spacing: -0.01em; white-space: nowrap; font-variant-numeric: tabular-nums; }
   .label { overflow: hidden; color: var(--ink2); font: var(--type-small); white-space: nowrap; text-overflow: ellipsis; }

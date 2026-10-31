@@ -601,10 +601,11 @@
     : "Continue at the end, cursor, or selection. Originals stay saved in the loom."}</p>
   {#if colorNotice}<p class="color-notice meta" role="status">{colorNotice}</p>{/if}
   {#if mode === "inspect" && inspectionSources.length > 1}
-    <div class="inspection-source">
+    <div class="inspection-source" data-tip={inspectionSource !== "current" ? "As recorded; your text is unchanged" : undefined}>
       <Select value={inspectionSource} options={inspectionSources} ariaLabel="Text to inspect"
+        ariaDescribedby={inspectionSource !== "current" ? "inspection-source-note" : undefined}
         onchange={(value) => { tokenPopup = null; inspectionSource = value; }} />
-      {#if inspectionSource !== "current"}<span class="meta">as recorded; your text is unchanged</span>{/if}
+      <span class="sr-only" id="inspection-source-note">As recorded; your text is unchanged</span>
     </div>
   {/if}
 
@@ -725,7 +726,7 @@
   .draft-state { color: var(--ink2); }
   .color-notice { overflow-wrap: anywhere; }
   .completion-error { color: var(--ink2); }
-  .inspection-source { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); min-width: 0; }
+  .inspection-source { display: flex; align-self: flex-start; align-items: center; min-width: 0; max-width: 100%; }
   .inspection-source :global(.sk-select) { min-width: 0; max-width: min(30rem, 100%); }
   .raw-buffer {
     display: flex;
@@ -806,13 +807,19 @@
 
   .actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); }
   .edit-actions, .generation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
-  .edit-actions { opacity: 0; visibility: hidden; transition: opacity var(--fast) var(--ease), visibility 0s var(--ease) var(--fast); }
-  .edit-actions.shown { opacity: 1; visibility: visible; transition: opacity var(--fast) var(--ease); }
+  /* Save and Discard take space only while there is an edit, so no empty row holds their place (on
+   * a narrow page they wrap onto a line of their own). They fade in when the edit starts. */
+  .edit-actions:not(.shown) { display: none; }
+  .edit-actions.shown { transition: opacity var(--fast) var(--ease); }
+  @starting-style { .edit-actions.shown { opacity: 0; } }
   .generation-actions { margin-left: auto; }
   @media (max-width: 720px) {
     /* The phone's 16 px gutter, as the conversation's log and dock keep it. */
     .raw-buffer { padding: var(--s4) var(--s4) var(--s2); }
     .surface, .buffer-text, .color-mirror, .inspect { font-size: 16px; }
     .actions .dw-text { min-height: 44px; }
+    /* Phone sizes (the Phone canvas): the mode switch's options reach 44 px. */
+    .raw-head :global(.seg > button) { position: relative; height: 36px; }
+    .raw-head :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }
   }
 </style>
