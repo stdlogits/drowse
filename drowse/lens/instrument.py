@@ -305,6 +305,7 @@ class LensInstrument:
         resolve_profile: Callable[[str], Mapping[int, torch.Tensor]],
         assert_unsteered: Callable[[], None],
         replay: TokenReplay,
+        whitener: Callable[[], Any],
     ) -> None:
         self.model_id = model_id
         #: The R family's (J/R) resident lens and readout primitives.
@@ -323,7 +324,9 @@ class LensInstrument:
         # Model-level, built once on the first S-family read: the masked
         # embedding mean and covariance (fp32) every footprint z divides by.
         self._embeddings: TokenEmbeddings | None = None
-        self._footprint_norms: BoundedLRU[tuple[str | None, int], torch.Tensor] = (
+        # Whitened tokens-in atom norms by (S lens identity, layer), each
+        # beside the whitener they were taken in (runtime.cached_norms).
+        self._footprint_norms: BoundedLRU[tuple[str | None, int], tuple[Any, torch.Tensor]] = (
             BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
         )
         # ``slens/`` probe layer weights (``w_S`` normalized over the read
@@ -344,6 +347,9 @@ class LensInstrument:
         self._on_change = on_change
         self._resolve_profile = resolve_profile
         self._assert_unsteered = assert_unsteered
+        #: The session's Mahalanobis whitener (built on first use, ``None``
+        #: when it cannot be): the metric every decomposition runs in.
+        self._whitener = whitener
         # The loom-anchored token replay (the producing forward's capture);
         # this family supplies the lens read.
         self._replay = replay
@@ -1096,7 +1102,9 @@ class LensInstrument:
         coeff), ...])}``: ``share`` is the fraction of the direction's
         variance carried by its best sparse nonnegative combination of ``k``
         atoms (for ``tokens-out``, how *verbalizable* it is; ~6-15% is
-        typical for concept vectors).
+        typical for concept vectors).  Selection, fit and share are all in
+        the session whitener's Mahalanobis metric; a whitener that does not
+        cover a requested layer raises ``WhitenerError``.
         """
         from drowse.lens.decompose import DICTIONARIES
 
@@ -1109,13 +1117,14 @@ class LensInstrument:
         lens = self._require()
         directions = self._resolve_profile(selector)
         return self.runtime.decompose(
-            lens, directions, label=selector, k=k, layers=layers,
+            lens, directions, label=selector, whitener=self._whitener(), k=k, layers=layers,
         )
 
     def _decompose_tokens_in(
         self, selector: str, *, k: int, layers: LayerSelector,
     ) -> dict[int, tuple[float, list[tuple[str, float]]]]:
         from drowse.lens.decompose import TokensIn, sparse_decompose
+        from drowse.lens.runtime import cached_norms, require_decompose_whitener
         from drowse.model.layers import resolve_layer_selector
 
         lens = self._require_input()
@@ -1133,6 +1142,7 @@ class LensInstrument:
                 f"no overlap between {selector!r}'s layers and the S lens's "
                 f"out layers"
             )
+        metric = require_decompose_whitener(self._whitener(), req)
         with self._exclusive(
             "session.lens.decompose called while another model use is in flight",
             phase_msg="session.lens.decompose called while a generation is in flight",
@@ -1143,11 +1153,11 @@ class LensInstrument:
             for layer in req:
                 matrix = lens.matrix(layer, "out")
                 atoms = TokensIn(
-                    matrix, embeddings,
-                    atom_norms=self._footprint_norms.get((identity, layer)),
+                    matrix, embeddings, metric, layer,
+                    atom_norms=cached_norms(self._footprint_norms, (identity, layer), metric),
                 )
                 dec = sparse_decompose(directions[layer], atoms, layer=layer, k=k)
-                self._footprint_norms.put((identity, layer), atoms.norms())
+                self._footprint_norms.put((identity, layer), (metric, atoms.norms()))
                 out[layer] = (
                     dec.share,
                     [(self.runtime.decode_id(tok), coeff) for tok, coeff in dec.atoms],

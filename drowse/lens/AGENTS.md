@@ -528,15 +528,20 @@ the per-layer softmax probability `p_l(v)`.
 - `decompose(selector, k=16, dictionary="tokens-out")` is greedy pursuit
   against a dictionary never materialized, with chunked and cached atom norms:
   `TokensOut` (`W_U J_l`, the R family) or `TokensIn` (`K_l ẽ_v` at the S
-  lens's `out` site, masked tokens scoring `-inf`; its norms are cached per
-  S identity and layer). Selection is norm-normalized. It re-solves NNLS but
-  takes the exact unconstrained solve when that is already nonnegative, and
-  tiny solves run on CPU. `share` is the variance fraction the atoms carry,
-  typically 6–15% for concept vectors against `tokens-out`. `LensDictionary`
-  leaves room for signed `neurons`. Both dictionaries select, solve and score
-  `share` in the Euclidean residual metric, with no whitener: an activation-
-  space metric that `geometry/AGENTS.md` does not list as a deliberate
-  exception. Whether to list it or whiten targets and atoms is open (a9).
+  lens's `out` site, masked tokens scoring `-inf`). It is Mahalanobis like
+  every activation-space metric: a dictionary is built over the session's
+  `LayerWhitener` at its layer and holds its matrix whitened once (`J_l W`,
+  `W K_l`, `W = Σ^{-1/2}` from `LayerWhitener.whiten`), `coords` maps the
+  target there, so selection, the NNLS fit and `share` are all whitened. A
+  whitener that is missing or misses a layer raises `WhitenerError`
+  (`runtime.require_decompose_whitener`); the instrument takes the whitener
+  getter by injection (`whitener=`, the session's lazy neutral state). The
+  whitened norms are cached per lens identity and layer beside the whitener
+  they were taken in (`runtime.cached_norms`), so a rebuilt whitener
+  recomputes them. Selection is norm-normalized. It re-solves NNLS but takes
+  the exact unconstrained solve when that is already nonnegative, and tiny
+  solves run on CPU. `share` is the Mahalanobis variance fraction the atoms
+  carry. `LensDictionary` leaves room for signed `neurons`.
 
 ## Errors, seams, tests
 

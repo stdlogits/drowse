@@ -15,7 +15,7 @@ state that depends on the resident lens.
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -32,6 +32,9 @@ from drowse.lens.jlens import (
 from drowse.model.layers import LayerSelector, resolve_layer_selector
 from drowse.lens.store import lens_identity, lens_layers
 from drowse.model.fingerprint import loaded_model_fingerprint
+
+if TYPE_CHECKING:
+    from drowse.geometry.whitener import LayerWhitener
 
 #: Device transport stacks kept per runtime (each is ``[L, d, d]`` fp32).
 DEVICE_STACK_CACHE_MAX = 2
@@ -120,6 +123,37 @@ def _missing_layers_error(lens: JacobianLens, missing: Sequence[int]) -> Request
     )
 
 
+
+def require_decompose_whitener(
+    whitener: "LayerWhitener | None", layers: "Sequence[int]",
+) -> "LayerWhitener":
+    """The whitener a decomposition over ``layers`` runs in, or
+    :class:`~drowse.errors.WhitenerError` when there is none or it misses a
+    layer: decomposition is Mahalanobis, with no Euclidean path."""
+    from drowse.errors import WhitenerError
+
+    if whitener is None:
+        raise WhitenerError(
+            "decomposition needs the Mahalanobis whitener, and none could be "
+            "built (regenerate the neutral activation cache)"
+        )
+    missing = [layer for layer in layers if not whitener.covers_all([layer])]
+    if missing:
+        raise WhitenerError(
+            f"decomposition needs a Mahalanobis whitener covering layers "
+            f"{missing} (regenerate the neutral activation cache)"
+        )
+    return whitener
+
+
+def cached_norms(
+    cache: "BoundedLRU[Any, tuple[Any, torch.Tensor]]", key: Any, whitener: Any,
+) -> torch.Tensor | None:
+    """Whitened atom norms cached under ``key`` when they were taken in this
+    very ``whitener`` (the entry holds it, so its identity cannot be reused)."""
+    hit = cache.get(key)
+    return hit[1] if hit is not None and hit[0] is whitener else None
+
 class LensRuntime:
     """The resident lens plus the readout primitives over it.
 
@@ -164,6 +198,11 @@ class LensRuntime:
             BoundedLRU(SELECTOR_CACHE_MAX)
         )
         self._readout_modules: tuple[torch.Tensor, torch.nn.Module] | None = None
+        #: Whitened ``tokens-out`` atom norms by ``(lens identity, layer)``,
+        #: each beside the whitener they were taken in (:func:`cached_norms`).
+        self._atom_norms: BoundedLRU[tuple[str | None, int], tuple[Any, torch.Tensor]] = (
+            BoundedLRU(DEVICE_STACK_CACHE_MAX)
+        )
 
     # ------------------------------------------------------------ residency
 
@@ -181,6 +220,7 @@ class LensRuntime:
         self.identity = lens_identity(sidecar)
         self.source = source
         self._stacks.clear()
+        self._atom_norms.clear()
 
     def clear(self) -> None:
         """Drop the resident lens and its device stacks."""
@@ -188,6 +228,7 @@ class LensRuntime:
         self.identity = None
         self.source = None
         self._stacks.clear()
+        self._atom_norms.clear()
 
     def close(self) -> None:
         """Release every cache (session teardown)."""
@@ -437,14 +478,16 @@ class LensRuntime:
         directions: Mapping[int, torch.Tensor],
         *,
         label: str,
+        whitener: "LayerWhitener | None",
         k: int = 16,
         layers: LayerSelector = None,
     ) -> dict[int, tuple[float, list[tuple[str, float]]]]:
         """Split a per-layer direction into its J-space component.
 
         Returns ``{layer: (share, [(token, coeff), ...])}``: ``share`` is the
-        fraction of the direction's variance carried by its best sparse
-        nonnegative combination of ``k`` lens token vectors.
+        fraction of the direction's Mahalanobis variance carried by its best
+        sparse nonnegative combination of ``k`` lens token vectors, all in
+        ``whitener``'s metric (:func:`require_decompose_whitener`).
         """
         from drowse.lens.decompose import TokensOut, sparse_decompose
         from drowse.model.readout import get_output_projection
@@ -462,6 +505,7 @@ class LensRuntime:
             raise RequestError(
                 f"no overlap between {label!r}'s layers and the fitted lens layers"
             )
+        metric = require_decompose_whitener(whitener, req)
         out: dict[int, tuple[float, list[tuple[str, float]]]] = {}
         for layer in req:
             jacobian = lens.jacobians[layer]
@@ -470,16 +514,12 @@ class LensRuntime:
                     projection.detach().to(device=jacobian.device, dtype=torch.float32)
                     @ jacobian
                 )
-            dec = sparse_decompose(
-                directions[layer],
-                TokensOut(
-                    jacobian, unembed,
-                    atom_norms=(
-                        lens.atom_norms(layer, unembed) if projection is None else None
-                    ),
-                ),
-                layer=layer, k=k,
+            atoms = TokensOut(
+                jacobian, unembed, metric, layer,
+                atom_norms=cached_norms(self._atom_norms, (self.identity, layer), metric),
             )
+            dec = sparse_decompose(directions[layer], atoms, layer=layer, k=k)
+            self._atom_norms.put((self.identity, layer), (metric, atoms.norms()))
             out[layer] = (
                 dec.share,
                 [(str(self.tokenizer.decode([tok])), coeff) for tok, coeff in dec.atoms],

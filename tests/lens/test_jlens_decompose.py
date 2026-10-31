@@ -7,12 +7,20 @@ from pathlib import Path
 import pytest
 import torch
 
+from drowse.errors import WhitenerError
+from drowse.geometry.whitener import LayerWhitener
 from drowse.lens.decompose import TokensOut, sparse_decompose
 from tests.support.lens import LENS_PROMPTS as _PROMPTS
 from tests.support.lens import LensHarness
+from tests.support.whitener import isotropic_whitener, synthetic_whitener
 
 _D = 32
 _VOCAB = 60
+
+
+def _iso(d: int = _D, layers: tuple[int, ...] = (0,)) -> LayerWhitener:
+    """The identity metric: the whitened pursuit equals the plain one."""
+    return isotropic_whitener(layers, d)
 
 
 def _dictionary(seed: int = 0) -> tuple[torch.Tensor, torch.Tensor]:
@@ -29,7 +37,7 @@ def test_recovers_planted_sparse_combination() -> None:
     for v, c in atoms.items():
         target = target + c * (unembed[v].float() @ jacobian)
 
-    dec = sparse_decompose(target, TokensOut(jacobian, unembed), layer=0, k=8)
+    dec = sparse_decompose(target, TokensOut(jacobian, unembed, _iso(), 0), layer=0, k=8)
 
     got = dict(dec.atoms)
     assert set(atoms) <= set(got)
@@ -50,7 +58,7 @@ def test_positive_tiny_solve_skips_projected_gradient(
         raise AssertionError("positive NNLS case should not need eigvalsh/PGD")
 
     monkeypatch.setattr(torch.linalg, "eigvalsh", _explode)
-    dec = sparse_decompose(target, TokensOut(jacobian, unembed), layer=0, k=2)
+    dec = sparse_decompose(target, TokensOut(jacobian, unembed, _iso(d), 0), layer=0, k=2)
 
     got = dict(dec.atoms)
     assert got[2] == pytest.approx(2.0, abs=1e-5)
@@ -65,13 +73,13 @@ def test_share_low_for_offspace_direction() -> None:
     # instead check that pure noise explains much less than a planted target.
     gen = torch.Generator().manual_seed(3)
     noise = torch.randn(_D, generator=gen)
-    dec = sparse_decompose(noise, TokensOut(jacobian, unembed), layer=0, k=4)
+    dec = sparse_decompose(noise, TokensOut(jacobian, unembed, _iso(), 0), layer=0, k=4)
     assert dec.share < 0.9
 
 
 def test_zero_target_yields_empty() -> None:
     jacobian, unembed = _dictionary()
-    dec = sparse_decompose(torch.zeros(_D), TokensOut(jacobian, unembed), layer=0, k=4)
+    dec = sparse_decompose(torch.zeros(_D), TokensOut(jacobian, unembed, _iso(), 0), layer=0, k=4)
     assert dec.share == 0.0 and dec.atoms == []
 
 
@@ -79,7 +87,7 @@ def test_respects_k_budget() -> None:
     jacobian, unembed = _dictionary()
     gen = torch.Generator().manual_seed(5)
     target = torch.randn(_D, generator=gen)
-    dec = sparse_decompose(target, TokensOut(jacobian, unembed), layer=0, k=3)
+    dec = sparse_decompose(target, TokensOut(jacobian, unembed, _iso(), 0), layer=0, k=3)
     assert len(dec.atoms) <= 3
 
 
@@ -90,6 +98,9 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_lens_decompose_on_registered_profile(_isolated_home: None) -> None:
     session = LensHarness()
+    session.whitener = isotropic_whitener(
+        range(len(session.layers)), int(session.model.config.hidden_size),
+    )
     lens = session.lens.fit(_PROMPTS)
     # register the direction for toy-vocab token 'g', then decompose it —
     # the decomposition should attribute it (near-)fully to that atom.
@@ -112,6 +123,9 @@ class _SignedDictionary:
 
     def __init__(self, atoms: torch.Tensor) -> None:
         self._atoms = atoms
+
+    def coords(self, vector: torch.Tensor) -> torch.Tensor:
+        return vector.float()
 
     def scores(self, residual: torch.Tensor) -> torch.Tensor:
         return self._atoms @ residual
@@ -140,8 +154,46 @@ def test_signed_dictionary_recovers_negative_coefficients() -> None:
 
 def test_token_dictionary_matches_the_composed_lens_matvec() -> None:
     jacobian, unembed = _dictionary()
-    words = TokensOut(jacobian, unembed)
+    words = TokensOut(jacobian, unembed, _iso(), 0)
     residual = torch.randn(_D, generator=torch.Generator().manual_seed(2))
     assert torch.allclose(words.scores(residual), unembed @ (jacobian @ residual))
     assert torch.allclose(words.atom(9), unembed[9] @ jacobian)
     assert torch.allclose(words.norms(), (unembed @ jacobian).norm(dim=-1), atol=1e-5)
+
+
+def test_the_pursuit_runs_in_the_whitened_metric() -> None:
+    """Regression: selection, the NNLS fit and the share used Euclidean
+    residual-space products.  Under an anisotropic covariance they are the
+    Mahalanobis ones: equal to the Euclidean pursuit of the whitened target
+    against the whitened atoms, and different from the plain one."""
+    jacobian, unembed = _dictionary()
+    whitener = synthetic_whitener([0], _D)
+    gen = torch.Generator().manual_seed(9)
+    target = torch.randn(_D, generator=gen)
+
+    dec = sparse_decompose(target, TokensOut(jacobian, unembed, whitener, 0), layer=0, k=4)
+    # By hand: whiten everything, then the identity-metric pursuit.
+    W = whitener.whiten(0, torch.eye(_D))  # rows of I W = W (symmetric)
+    hand = sparse_decompose(
+        target @ W, TokensOut(jacobian @ W, unembed, _iso(), 0), layer=0, k=4,
+    )
+    assert [v for v, _c in dec.atoms] == [v for v, _c in hand.atoms]
+    assert dec.share == pytest.approx(hand.share, rel=1e-4)
+    plain = sparse_decompose(target, TokensOut(jacobian, unembed, _iso(), 0), layer=0, k=4)
+    assert dec.atoms != plain.atoms or abs(dec.share - plain.share) > 1e-3
+    # The whitened coordinates' dot products are Mahalanobis.
+    u, v = torch.randn(2, _D, generator=gen)
+    assert float(whitener.whiten(0, u) @ whitener.whiten(0, v)) == pytest.approx(
+        float(u @ whitener.apply_inv(0, v)), rel=1e-4,
+    )
+
+
+def test_an_uncovered_layer_is_a_whitener_error() -> None:
+    jacobian, unembed = _dictionary()
+    with pytest.raises(WhitenerError, match="layer 3"):
+        TokensOut(jacobian, unembed, _iso(layers=(0,)), 3)
+    session = LensHarness()
+    session.lens.fit(_PROMPTS)
+    name = session.lens.register_direction("g")
+    with pytest.raises(WhitenerError, match="none could be built"):
+        session.lens.decompose(name, k=2)

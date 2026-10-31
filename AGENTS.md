@@ -173,7 +173,8 @@ one measurement envelope (`readout/measurements.py`). Replace or delete the old
 path when you add a new one; breaking compatibility is acceptable.
 
 **Mahalanobis only.** Every activation-space metric (fit basis, share, steering
-synthesis, `~`/`|`, monitor reads, `manifold compare`, transfer) needs a
+synthesis, `~`/`|`, monitor reads, `manifold compare`, transfer, the lens
+decompositions) needs a
 `LayerWhitener` covering every touched layer (`covers_all`) and raises
 `WhitenerError` otherwise. On real LMs the Euclidean metric is dominated by a
 few massive-activation channels, so a fallback would be a wrong answer, not a

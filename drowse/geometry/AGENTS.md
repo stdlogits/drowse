@@ -319,7 +319,11 @@ layer whose centered rows or `K` are non-finite is left out, which is why
 `store/neutral.py::load_neutral_whitener` from the fp32 neutral cache, or by
 the session's lazy neutral state.
 
-Primitives: `apply_inv`, `mahalanobis_norm(s)`, `mahalanobis_cosine`,
+Primitives: `apply_inv`, `whiten(layer, rows)` (the whitened coordinates
+`W v`, `W = Σ^{-1/2} = (1/√λ)(I − V diag(g) Vᵀ)` from the thin SVD of `X`,
+cached per layer, never D×D; whitened dot products are Mahalanobis, and the
+lens decompositions fold `W` into their dictionaries),
+`mahalanobis_norm(s)`, `mahalanobis_cosine`,
 `leace_project` (Belrose et al. 2023; `~` keeps `⟨b, d⟩_M/⟨d, d⟩_M · d`, `|`
 erases it), `subspace_gram(layer, B) = B Σ⁻¹ Bᵀ` (the reduced metric behind the
 share and whitened reads) and `woodbury_factors` (device-resident factors for

@@ -87,7 +87,7 @@ class LayerWhitener:
     iterate via ``in`` / :attr:`layers` see only the covered set.
     """
 
-    __slots__ = ("_K", "_X", "_dim", "_lambda", "_mean")
+    __slots__ = ("_K", "_X", "_dim", "_lambda", "_mean", "_root")
 
     def __init__(
         self,
@@ -118,6 +118,9 @@ class LayerWhitener:
         self._dim: dict[int, int] = {
             L: int(t.shape[-1]) for L, t in self._X.items()
         }
+        # Per-layer ``(V, g)`` of the whitening transform, built on first
+        # :meth:`whiten` (see there).
+        self._root: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
 
     # ---- construction --------------------------------------------------
 
@@ -379,6 +382,46 @@ class LayerWhitener:
         # The true Gram is symmetric PSD; symmetrize away finite-precision
         # asymmetry so downstream quadratic forms can't pick up drift.
         return 0.5 * (gram + gram.transpose(0, 1))
+
+    def _root_factors(self, layer: int) -> tuple[torch.Tensor, torch.Tensor]:
+        """``(V, g)`` with ``Σ_reg^{-1/2} = (1/√λ)(I − V diag(g) Vᵀ)``.
+
+        From the thin SVD ``X = U S Vᵀ`` (via the ``N × N`` eigenproblem of
+        ``X Xᵀ``, fp64): ``Σ_reg = λI + XᵀX/N`` has eigenvalue
+        ``λ + s²/N`` on ``V`` and ``λ`` off it, so its inverse root scales
+        ``V`` by ``√(Nλ/(Nλ+s²))/√λ``, i.e. ``g = 1 − √(Nλ/(Nλ+s²))``.
+        Directions with ``s ≈ 0`` have ``g ≈ 0`` and are dropped.
+        """
+        cached = self._root.get(layer)
+        if cached is not None:
+            return cached
+        X = self._X[layer].to(dtype=torch.float64)
+        n = int(X.shape[0])
+        lam = self._lambda[layer]
+        evals, U = torch.linalg.eigh(X @ X.transpose(0, 1))
+        keep = evals > max(float(evals.max()), 0.0) * 1e-12
+        s2 = evals[keep]
+        V = (X.transpose(0, 1) @ U[:, keep]) / s2.sqrt()
+        g = 1.0 - torch.sqrt(n * lam / (n * lam + s2))
+        cached = (V.to(torch.float32), g.to(torch.float32))
+        self._root[layer] = cached
+        return cached
+
+    def whiten(self, layer: int, rows: torch.Tensor) -> torch.Tensor:
+        """Whitened coordinates ``W v`` of each row ``v``, ``W = Σ_L^{-1/2}``.
+
+        Whitened rows' dot products are Mahalanobis:
+        ``whiten(u) · whiten(v) = uᵀ Σ⁻¹ v``.  ``W`` is symmetric, so for a
+        matrix ``M`` whose rows are residual vectors ``whiten(layer, M) =
+        M W``.  Low rank on the identity (:meth:`_root_factors`), never
+        ``D × D``.  Promoted to fp32 on CPU like :meth:`apply_inv` (analysis
+        time, not a hot path); the output keeps ``rows``' dtype and shape.
+        """
+        dim = self._require(layer, int(rows.shape[-1]))
+        V, g = self._root_factors(layer)
+        flat = rows.to(dtype=torch.float32, device="cpu").reshape(-1, dim)
+        out = (flat - ((flat @ V) * g) @ V.transpose(0, 1)) / math.sqrt(self._lambda[layer])
+        return out.reshape(rows.shape).to(dtype=rows.dtype)
 
     def mahalanobis_norms(self, layer: int, rows: torch.Tensor) -> torch.Tensor:
         """Row norms ``sqrt(vᵢᵀ Σ_L⁻¹ vᵢ)`` of ``rows`` ``(B, D)`` in one apply.

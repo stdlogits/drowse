@@ -441,6 +441,7 @@ class DrowseSession:
             resolve_profile=self._registry.ensure_profile_registered,
             assert_unsteered=self._steering_composer.assert_unsteered,
             replay=self._token_replay,
+            whitener=self._neutral.whitener,
         )
         # The SAE family: resident dictionary + Neuronpedia metadata (the
         # runtime), probes, live discovery and token replay.  ``sae/<id>``

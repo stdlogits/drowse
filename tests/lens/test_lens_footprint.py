@@ -14,6 +14,7 @@ from drowse.lens.footprint import TokenEmbeddings, pullback_rows, token_mask
 from drowse.lens.jlens import JacobianLens
 from drowse.lens.key import LensKey
 from drowse.lens.read import read_vectors
+from tests.support.whitener import isotropic_whitener
 
 V, D = 12, 5
 
@@ -201,7 +202,7 @@ def test_tokens_in_recovers_a_mix_of_footprints() -> None:
     emb = TokenEmbeddings.build(weight, 1.0, keep)
     K = torch.randn(D, D, generator=torch.Generator().manual_seed(7)) + 3 * torch.eye(D)
     target = 2.0 * (K @ emb.centred([1])[0]) + 0.5 * (K @ emb.centred([6])[0])
-    dictionary = TokensIn(K, emb)
+    dictionary = TokensIn(K, emb, isotropic_whitener([0], D), 0)
     assert dictionary.kind == "tokens-in" and dictionary.nonneg
     norms = dictionary.norms()
     assert norms[3] == 1.0 and torch.isneginf(dictionary.scores(target)[~keep]).all()
@@ -210,3 +211,24 @@ def test_tokens_in_recovers_a_mix_of_footprints() -> None:
     assert dec.dictionary == "tokens-in"
     assert sorted(idx for idx, _ in dec.atoms) == [1, 6]
     assert dec.share == pytest.approx(1.0, abs=1e-4)
+
+
+def test_tokens_in_selects_and_shares_in_the_whitened_metric() -> None:
+    """Regression (review repro): with ``K = I``, centred embeddings
+    ``±(10, 1)`` and ``±(0, 1)``, target ``(1, 1)`` and covariance
+    ``diag(100, 1)``, the Euclidean pursuit picked token 0 at share 0.599;
+    the Mahalanobis one picks token 2 at share 0.990."""
+    from drowse.geometry.whitener import LayerWhitener
+
+    weight = torch.tensor([[10.0, 1.0], [-10.0, -1.0], [0.0, 1.0], [0.0, -1.0]])
+    emb = TokenEmbeddings.build(weight, 1.0, torch.ones(4, dtype=torch.bool))
+    # Σ_reg = λI + XᵀX/N = I + diag(99, 0) = diag(100, 1).
+    whitener = LayerWhitener(
+        {0: torch.tensor([[99.0**0.5, 0.0]])}, {0: torch.tensor([[0.01]])},
+        {0: 1.0}, {0: torch.zeros(2)},
+    )
+    dec = sparse_decompose(
+        torch.tensor([1.0, 1.0]), TokensIn(torch.eye(2), emb, whitener, 0), layer=0, k=1,
+    )
+    assert [idx for idx, _ in dec.atoms] == [2]
+    assert dec.share == pytest.approx(1.0 / 1.01, rel=1e-4)

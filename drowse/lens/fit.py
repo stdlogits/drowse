@@ -187,7 +187,6 @@ class LensSums:
         for matrices in total.values():
             for matrix in matrices.values():
                 matrix.mul_(n)
-        lens._atom_norm_cache.clear()
         n_odd = n // 2
         odd_sums: dict[str, dict[int, torch.Tensor]] | None = None
         if odd is not None:

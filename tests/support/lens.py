@@ -93,8 +93,12 @@ def lens_kwargs(
     capture: Any = None,
     registry: Any = None,
     replay: Any = None,
+    whitener: Any = None,
 ) -> dict[str, Any]:
     """The :class:`LensInstrument` constructor arguments, with inert defaults.
+
+    ``whitener`` is what the instrument's whitener getter returns (default
+    ``None``: a decomposition raises ``WhitenerError``).
 
     ``capture`` defaults to an empty :class:`FakeCapture`, ``registry`` to a
     fresh artifact registry (profiles resolve from it), ``replay`` to
@@ -125,6 +129,7 @@ def lens_kwargs(
         resolve_profile=lambda selector: registry.profiles[selector],
         assert_unsteered=lambda: None,
         replay=unwired_replay if replay is None else replay,
+        whitener=lambda: whitener,
     )
 
 
@@ -158,6 +163,7 @@ class LensHarness:
         tokenizer: Any = None,
         model_id: str = TOY_MODEL_ID,
         replay: Any = None,
+        whitener: Any = None,
     ) -> None:
         from drowse.lens.instrument import LensInstrument
         from tests.support.replay import unwired_replay
@@ -173,6 +179,8 @@ class LensHarness:
         self.changes: list[list[str]] = []
         self.capture: Any = FakeCapture({})
         self.exclusive_messages: list[str] = []
+        #: What the instrument's whitener getter returns (decompositions).
+        self.whitener = whitener
         self.lens = LensInstrument(
             model=self.model,
             tokenizer=self.tokenizer,
@@ -187,6 +195,7 @@ class LensHarness:
             resolve_profile=lambda selector: self.registry.profiles[selector],
             assert_unsteered=lambda: None,
             replay=unwired_replay if replay is None else replay,
+            whitener=lambda: self.whitener,
         )
 
     @property

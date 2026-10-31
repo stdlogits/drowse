@@ -36,7 +36,6 @@ from typing import Any
 import torch
 
 from drowse.errors import DrowseError, RequestError
-from drowse.lens.decompose import token_atom_norms
 from drowse.lens.key import LENS_SITES, LensKey
 
 #: Positions before this index are excluded from the Jacobian average — early
@@ -192,7 +191,6 @@ class JacobianLens:
                         f"{list(self.matrix_shape)} matrices"
                     )
             self._sites[site] = matrices
-        self._atom_norm_cache: dict[tuple[str, int, str, str, int, tuple[int, ...]], torch.Tensor] = {}
 
     # -- identity and layout ------------------------------------------------
 
@@ -359,28 +357,6 @@ class JacobianLens:
             d_emb=self.d_emb,
             key=self.key,
         )
-
-    def atom_norms(self, layer: int, unembed: torch.Tensor, site: str = "out") -> torch.Tensor:
-        """Cached per-token norms of the layer's J-lens dictionary atoms."""
-        self._require_side("output", "token atom norms")
-        matrix = self.matrix(layer, site)
-        key = (
-            site,
-            int(layer),
-            str(unembed.device),
-            str(unembed.dtype),
-            int(unembed.data_ptr()),
-            tuple(int(x) for x in unembed.shape),
-        )
-        cached = self._atom_norm_cache.get(key)
-        if cached is not None:
-            return cached
-        norms = token_atom_norms(
-            matrix.to(device=unembed.device, dtype=torch.float32),
-            unembed,
-        )
-        self._atom_norm_cache[key] = norms
-        return norms
 
     @classmethod
     def union_layers(cls, lenses: Sequence["JacobianLens"]) -> "JacobianLens":

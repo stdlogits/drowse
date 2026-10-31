@@ -273,7 +273,11 @@ def test_token_directions_and_decomposition_include_output_projection(model: Any
     expected = row @ jacobian.numpy().astype(np.float64)
     actual = lens.token_direction(7, unembed, output_projection=projection)[0]
     np.testing.assert_allclose(actual.numpy(), expected, atol=1e-7, rtol=1e-5)
-    session = LensHarness(model=model, layers=get_layers(model))
+    from tests.support.whitener import isotropic_whitener
+
+    session = LensHarness(
+        model=model, layers=get_layers(model), whitener=isotropic_whitener([0], dim),
+    )
     session.lens.resident = lambda: lens  # type: ignore[method-assign]
     session.registry.put_profile("test", {0: actual})
     result = session.lens.decompose("test", layers=[0], k=1)
