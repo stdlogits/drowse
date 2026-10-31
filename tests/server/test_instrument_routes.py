@@ -608,7 +608,9 @@ class TestPreparations:
         lens_fit = schemas[("lens", "fit")]
         assert {"kind", "sites"} <= set(lens_fit)
         for kind in _choices(lens_fit["kind"]):
-            LensFitRequest(kind=kind, sites=list(_choices(lens_fit["sites"])), seq_len=None)
+            LensFitRequest.model_validate(
+                {"kind": kind, "sites": list(_choices(lens_fit["sites"])), "seq_len": None},
+            )
 
     def test_geometry_404(self, session_and_client: Any) -> None:
         _session, client = session_and_client
