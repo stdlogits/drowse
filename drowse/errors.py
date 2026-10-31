@@ -188,6 +188,32 @@ class RelpUnsupportedError(RuntimeError, DrowseError):
         return (422, str(self) or self.__class__.__name__)
 
 
+class UnsupportedBlockError(RuntimeError, DrowseError):
+    """Raised when a decoder block is outside what a
+    :class:`~drowse.model.blocks.BlockSpec` can describe: a mixture-of-experts
+    MLP, a fused gate-up or qkv projection, a linear-attention (hybrid) layer,
+    a norm that is not an RMSNorm, or any submodule the description has no
+    place for.  ``layer`` names the block (``None`` for the model-level
+    part) and ``reason`` says what was found.  Transport fits and unit reads
+    need every block described exactly, so a partial description is refused
+    rather than read approximately.
+    """
+
+    def __init__(self, reason: str, *, layer: int | None = None) -> None:
+        self.layer = layer
+        self.reason = reason
+        super().__init__(reason if layer is None else f"layer {layer}: {reason}")
+
+    def user_message(self) -> tuple[int, str]:
+        return (422, str(self) or self.__class__.__name__)
+
+
+class UnitRefError(RequestError):
+    """Raised when a ``neuron/`` or ``head/`` unit name is malformed (the
+    form is ``L<layer>n<index>`` / ``L<layer>h<index>``).  Whether the layer
+    and index exist is checked later, against the loaded model."""
+
+
 class UnsupportedProbeChannelError(RequestError):
     """Raised at steering-composition preflight when a probe gate references
     a channel its instrument family can never produce (e.g.
