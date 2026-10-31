@@ -330,12 +330,17 @@ drowse.ai too.
   (`ATOM_DEFAULT_ALPHA = 0.3`): a single token or feature direction runs hotter than a
   concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
   keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed
-  (signed α, 0.2 by default; below zero its − pole) or a neuron or head ablated (`!…`,
-  written bare at α 1, the unit held at its neutral mean). A head has no push. Switching a
-  term between push and ablation takes that operation's own α (`setUnitOperation`), since a
-  push's α kept as an ablation's would blend away from the mean and a negative one amplify;
-  `unitTerms.ts::unitTermProblem` refuses a negative ablation α and a head push in the
-  snapshot validator and in WebMCP's rack edit alike.
+  (signed α, `UNIT_PUSH_ALPHA` 0.2; below zero its − pole) or a neuron or head ablated
+  (`1 !…`, `UNIT_ABLATE_ALPHA`, the unit held at its neutral mean, written with its
+  coefficient like every ablation). A head has no push. Switching a term between push and
+  ablation takes that operation's own α (`setUnitOperation`), since a push's α kept as an
+  ablation's would blend away from the mean and a negative one amplify. One rule,
+  `unitTerms.ts::unitTermProblem`, refuses a negative ablation α and a head push wherever a
+  unit term is made or changed: `setUnitTerm` (the one unit mutator; it reads any form
+  `parseUnit` does and keys by the engine's reference), `patchSteerEntry` (so the term
+  editor's switch and dial), the snapshot validator and WebMCP's rack edit. A unit carries its
+  layer, so it never takes a `{…}` clause (the grammar refuses one): `setSteerLayers` skips
+  units and the validator refuses a unit row with `layers`.
 - **Units.** The unit view (selection `{ kind: "unit", id }`) and the Units room read
   through `lib/stores/units.svelte.ts`: plain getters inside `$derived`, the matching
   `request*` from an `$effect`, nothing asked while a generation runs. Both hide where
@@ -378,7 +383,10 @@ drowse.ai too.
   presets; the thinking pair only on a thinking model),
   the position on its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
   as tall as the term's share, painted by dragging; All fitted, Workspace, Clear) and the
-  term as the expression writes it. While a term is selected the Inspector shows the
+  term as the expression writes it. A unit's strip is fixed (`LayerStrip` without
+  `onchange`, a `note` in place of the presets): its own layer lit, nothing to paint. A unit's
+  facts and chip carry its catalog label (`unitTermLabel`, the pole its term pushes), and the
+  editor opens its unit view. While a term is selected the Inspector shows the
   instruments, and the phone's sheet stays down. Where a term acts comes from `POST
   .../steering/validate` (`terms`, `n_layers`), asked once per term text at strength 1 and
   `@response`, so a probe never drops the cached prefix (`termLayers.svelte.ts`); a runtime

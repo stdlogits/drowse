@@ -1,6 +1,8 @@
 // A unit's terms in the recipe: a neuron pushed along its write (either pole) or a neuron or head
 // mean-ablated. Import-free, so the snapshot validator (lib/conversationSnapshot.ts, which loads
-// outside the Svelte build too) shares the one rule with WebMCP and the rack.
+// outside the Svelte build too) shares the one rule with WebMCP, the rack's mutators
+// (stores/steering.svelte.ts: setUnitTerm, patchSteerEntry) and the term editor. The term's text is
+// lib/expression.ts::formatUnitTerm's, like every other term's.
 
 export type UnitTerm = "plus" | "minus" | "silence";
 
@@ -23,13 +25,4 @@ export function unitTermProblem(name: string, entry: { ablate: unknown; alpha: u
   if (head && !entry.ablate) return `${name}: a head has no push, only ablation`;
   if (entry.ablate && entry.alpha < 0) return `${name}: an ablation's alpha must not be negative (1 holds the unit at its neutral mean)`;
   return null;
-}
-
-/** The steering expression a unit term writes: ``0.2 neuron/L31n4410``, ``-0.2 neuron/…``,
- *  ``!neuron/…`` (exact mean-ablation). A head has no push. */
-export function unitTermExpression(id: string, term: UnitTerm, alpha = UNIT_PUSH_ALPHA): string {
-  if (term === "silence") return `!${id}`;
-  if (id.startsWith("head/")) throw new Error("a head has no push");
-  const a = Math.abs(alpha);
-  return `${term === "minus" ? "-" : ""}${a} ${id}`;
 }

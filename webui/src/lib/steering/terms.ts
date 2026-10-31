@@ -3,6 +3,8 @@
 // row, so the node suites load them; the chips and the term editor draw from them.
 
 import type { ManifoldInfo, SteerEntry, Trigger } from "../types";
+import { parseUnit, unitTitle } from "../units";
+import { UNIT_PUSH_ALPHA, unitTermProblem } from "../unitTerms";
 
 /** The trigger choices, in phase order, with the grammar's exact window as each one's tip. The
  *  thinking pair shows only on a model that thinks (or on a term already set to one). */
@@ -33,16 +35,9 @@ export function coefficientText(value: number, { fixed = false }: { fixed?: bool
   return rounded < 0 ? `−${body}` : body;
 }
 
-/** A unit's ID as the data writes it: ``neuron/L31n4410`` → ``L31 n4410``. */
-export function unitLabel(name: string): string {
-  const match = /^(?:neuron|head)\/L(\d+)([nh])(\d+)$/u.exec(name);
-  return match ? `L${match[1]} ${match[2]}${match[3]}` : name;
-}
-
-/** A unit's layer, from its key. */
+/** A unit's layer, from its key (``neuron/L31n4410`` → 31). */
 export function unitLayer(name: string): number | null {
-  const match = /^(?:neuron|head)\/L(\d+)[nh]\d+$/u.exec(name);
-  return match ? Number(match[1]) : null;
+  return parseUnit(name)?.layer ?? null;
 }
 
 /** The selector's last segment: ``default/emotions`` → ``emotions``. */
@@ -53,7 +48,7 @@ export function bareName(name: string): string {
 
 /** Whether a term removes what it names rather than pushing toward it. */
 export function removes(name: string, entry: SteerEntry): boolean {
-  if (entry.mode === "unit") return entry.ablate || name.startsWith("head/");
+  if (entry.mode === "unit") return entry.ablate;
   return (entry.mode === "subspace" || entry.mode === "jlens" || entry.mode === "sae") && entry.ablate;
 }
 
@@ -64,7 +59,7 @@ export function termTitle(name: string, entry: SteerEntry): string {
     case "manifold": return entry.label ?? entry.coords.map(c => coefficientText(c)).join(", ");
     case "jlens": return name.slice("jlens/".length);
     case "sae": return `feature ${name.slice("sae/".length)}`;
-    case "unit": return unitLabel(name);
+    case "unit": return unitTitle(name);
   }
 }
 
@@ -145,7 +140,8 @@ export function wrapPieces(text: string): string[] {
  *  token, an SAE feature, a neuron. A curved term and a head cannot be both. */
 export function canRemove(name: string, entry: SteerEntry, info: ManifoldInfo | null): boolean {
   if (entry.mode === "jlens" || entry.mode === "sae") return true;
-  if (entry.mode === "unit") return name.startsWith("neuron/");
+  // A unit switches both ways when the one rule lets it push (a neuron, not a head).
+  if (entry.mode === "unit") return unitTermProblem(name, { ablate: false, alpha: UNIT_PUSH_ALPHA }) === null;
   if (entry.mode === "subspace") return info?.node_count === 1 || info?.node_count === 2;
   return false;
 }

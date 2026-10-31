@@ -84,7 +84,15 @@ try {
   const tokens = [" Above", " the", " stars", " hung", "."].map((token, raw_index) => ({ raw_index, token_id: 200 + raw_index, token }));
   installRuntimeClient({
     mode: "http",
-    sessions: { validateSteering: async (expression) => ({ valid: true, expression, error: null }) },
+    sessions: {
+      // A unit acts at its own layer (the composer's term_layers), which the term editor's strip shows.
+      validateSteering: async (expression) => {
+        const unit = /(neuron|head)\/L(\d+)[nh]\d+/u.exec(expression);
+        if (!unit) return { valid: true, expression, error: null };
+        const layer = Number(unit[2]);
+        return { valid: true, expression, error: null, n_layers: 36, terms: [{ key: unit[0], fitted: [layer], share: [1], layers: [layer] }] };
+      },
+    },
     profiles: {}, manifolds: {}, templates: {}, tree: {}, events: {},
     probes: {
       attach: async (req) => ({ family: "units", name: req.selector, unit: req.selector, kind: "neuron", layer: 31, index: 4410, layers: [31], intrinsic_dim: 1, feature_space: "units" }),
@@ -132,7 +140,7 @@ try {
     firesOn, peakIndex, decodeFloat16, decileCuts, shadeOf, strongestColumns, fieldGeometry, parseQuery,
     peakPole, rankHeads,
   } = units;
-  const { unitTermExpression, unitTermProblem } = await server.ssrLoadModule("/src/lib/unitTerms.ts");
+  const { unitTermProblem } = await server.ssrLoadModule("/src/lib/unitTerms.ts");
 
   // IDs: every spelling a person types or a route names, one reference.
   for (const text of ["neuron/L31n4410", "L31 n4410", "l31n4410", "L31/n4410", " L31  n4410 "]) {
@@ -207,10 +215,6 @@ try {
   assert.deepEqual(parseQuery("L31 n"), { mode: "id", ref: null, text: "L31 n" });
   assert.deepEqual(parseQuery("stars"), { mode: "word", word: "stars" });
   assert.deepEqual(parseQuery("·stars"), { mode: "word", word: " stars" });
-  assert.equal(unitTermExpression("neuron/L31n4410", "plus"), "0.2 neuron/L31n4410");
-  assert.equal(unitTermExpression("neuron/L31n4410", "minus", 0.3), "-0.3 neuron/L31n4410");
-  assert.equal(unitTermExpression("head/L28h12", "silence"), "!head/L28h12");
-  assert.throws(() => unitTermExpression("head/L28h12", "plus"), /no push/);
 
   // The recipe: a unit holds one term; push ±, silence, toggled off; serialized in the grammar.
   const store = await server.ssrLoadModule("/src/lib/stores/units.svelte.ts");
@@ -306,6 +310,36 @@ try {
   assert.match(html, /Push \+/);
   assert.match(html, /Silence/);
   assert.doesNotMatch(html, /no S lens at mid/, "an absent faded half stays out");
+
+  // The unit's term in the recipe's term editor: the one rule (lib/unitTerms.ts), the catalog label
+  // of the pole it pushes, a way to its unit view, and its own layer on a fixed strip.
+  const { default: TermEditor } = await server.ssrLoadModule("/src/panels/rack/TermEditor.svelte");
+  const { sessionState: session } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+  session.info = { model_id: "Qwen/Qwen3-8B" };
+  const editor = (name, entry) => render(TermEditor, { props: { name, entry, onclose: () => {}, onremove: () => {} } }).body;
+  const push = { mode: "unit", ablate: false, alpha: 0.2, trigger: "BOTH", enabled: true };
+  editor("neuron/L31n4410", push);
+  await settle();
+  await settle();
+  html = editor("neuron/L31n4410", push);
+  assert.match(html, /MLP neuron · L31 · night-sky and starlight words/, "the facts carry the catalog label");
+  assert.match(html, />Open L31 n4410</, "the editor opens the unit view");
+  assert.match(html, />Push</);
+  assert.match(html, />its own layer</, "a unit's strip shows its layer, fixed");
+  assert.doesNotMatch(html, />All fitted</, "no clause control on a unit");
+  assert.equal((html.match(/class="cell is-fixed[^"]*\bis-on\b/g) ?? []).length, 1, "one layer lit");
+  const text = (markup) => markup.replace(/<[^>]*>/g, "");
+  assert.match(text(html), /0\.2 neuron\/L31n4410\s*Copy/, "the term as the expression writes it");
+  const silenced = { mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true };
+  editor("head/L28h12", silenced);
+  await settle();
+  await settle();
+  html = editor("head/L28h12", silenced);
+  assert.match(html, /attention head · L28/);
+  assert.doesNotMatch(html, />Push</, "a head has no push");
+  assert.match(html, /All of it/, "an ablation at 1 is exact mean-ablation");
+  assert.match(text(html), /1 !head\/L28h12\s*Copy/);
+  session.info = null;
 
   store.requestUnitRead("head/L28h12", true);
   await settle();

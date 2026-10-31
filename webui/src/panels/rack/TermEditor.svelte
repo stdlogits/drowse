@@ -2,7 +2,9 @@
   // The open term, in place under the recipe's chips (the Steering canvas): a wash surface with the
   // term's name and what it is, its strength (a big readout that scrubs sideways, over a signed
   // range), when it acts, its position on its geometry, where it acts by layer (the depth strip),
-  // and the term as the expression writes it. Every change applies at once (through the rack's
+  // and the term as the expression writes it. A unit (a neuron or a head) follows lib/unitTerms.ts:
+  // its push and its ablation each take their own strength, a head is only ablated, and its strip
+  // shows its own layer, fixed; its catalog label joins the facts, and it opens its unit view. Every change applies at once (through the rack's
   // pending queue while a reply generates); Done closes it.
   import { MorphText, Segmented, Switch } from "@stdlogits/ledger";
   import Select from "../../lib/Select.svelte";
@@ -11,7 +13,6 @@
   import LayerStrip from "./LayerStrip.svelte";
   import {
     ATOM_DEFAULT_ALPHA,
-    UNIT_DEFAULT_ALPHA,
     manifoldByName,
     patchSteerEntry,
     setSteerCoords,
@@ -21,6 +22,8 @@
     steerRack,
   } from "../../lib/stores/steering.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
+  import { select } from "../../lib/stores/selection.svelte";
+  import { setUnitOperation, unitTermLabel, unitsAvailable } from "../../lib/stores/units.svelte";
   import { formatTerm } from "../../lib/expression";
   import { layerClause, layerRunsText, layerTint, peakLayer } from "../../lib/steering/layers";
   import { placeOf } from "../../lib/steering/termLayers.svelte";
@@ -54,11 +57,14 @@
   const where = $derived(place.where);
   const unitAt = $derived(entry.mode === "unit" ? unitLayer(name) : null);
 
+  // A unit's catalog label, for the pole its term pushes (a head's under +), once one is known.
+  const unitLabel = $derived(entry.mode === "unit" ? unitTermLabel(name, entry) : null);
+
   const facts = $derived.by(() => {
     const at = unitAt !== null
       ? `L${unitAt}`
       : where && where.fitted.length ? `fitted at L${layerRunsText(where.fitted)}` : "";
-    return [termSource(name, entry), termKind(entry, info), at].filter(Boolean).join(" · ");
+    return [termSource(name, entry), termKind(entry, info), at, unitLabel].filter(Boolean).join(" · ");
   });
 
   // The term's colour: the depth where its share peaks among the layers it acts on.
@@ -129,7 +135,7 @@
   function setRemoval(remove: boolean): void {
     if (remove === removal) return;
     if (entry.mode === "subspace") patchSteerEntry(name, { ablate: remove }, ["subspace"]);
-    else if (entry.mode === "unit") patchSteerEntry(name, { ablate: remove, alpha: remove ? 1 : UNIT_DEFAULT_ALPHA }, ["unit"]);
+    else if (entry.mode === "unit") setUnitOperation(name, remove);
     else patchSteerEntry(name, { ablate: remove, alpha: remove ? 1 : ATOM_DEFAULT_ALPHA }, ["jlens", "sae"]);
   }
 
@@ -254,13 +260,14 @@
     </div>
   {/if}
 
-  {#if entry.mode !== "unit"}
-    {#if where}
-      <LayerStrip nLayers={where.nLayers} fitted={where.fitted} share={where.share} selected={place.selected}
-        {scope} onchange={(next) => setSteerLayers(name, next)} />
-    {:else if place.status === "loading"}
-      <div class="waiting" aria-hidden="true"></div>
-    {/if}
+  {#if where && entry.mode === "unit"}
+    <LayerStrip nLayers={where.nLayers} fitted={where.fitted} share={where.share} selected={place.selected}
+      scope={null} note="its own layer" />
+  {:else if where}
+    <LayerStrip nLayers={where.nLayers} fitted={where.fitted} share={where.share} selected={place.selected}
+      {scope} onchange={(next) => setSteerLayers(name, next)} />
+  {:else if place.status === "loading"}
+    <div class="waiting" aria-hidden="true"></div>
   {/if}
   {#if place.error}<p class="error">{place.error}</p>{/if}
 
@@ -272,7 +279,12 @@
   </div>
 
   <div class="foot">
-    <button type="button" class="dw-text" onclick={onremove}>Remove</button>
+    <span class="dw-row">
+      <button type="button" class="dw-text" onclick={onremove}>Remove</button>
+      {#if entry.mode === "unit" && unitsAvailable()}
+        <button type="button" class="dw-text" onclick={() => select({ kind: "unit", id: name })}>Open {title}</button>
+      {/if}
+    </span>
     <button type="button" class="dw-button" disabled={noLayers} onclick={onclose}>Done</button>
   </div>
 </section>

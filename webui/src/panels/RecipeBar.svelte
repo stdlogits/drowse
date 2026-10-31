@@ -19,6 +19,7 @@
   import { pushToast } from "../lib/stores/toasts.svelte";
   import { clearSelection, select, selection } from "../lib/stores/selection.svelte";
   import { sessionState } from "../lib/stores/session.svelte";
+  import { unitTermLabel } from "../lib/stores/units.svelte";
   import { depthSpan, layerRunsText } from "../lib/steering/layers";
   import { placeOf } from "../lib/steering/termLayers.svelte";
   import { chipStrength, termSource, termTitle, triggerWord, unitLayer } from "../lib/steering/terms";
@@ -40,7 +41,7 @@
         enabled: entry.enabled,
         strength: chipStrength(name, entry, steerRack.subspaceAlong),
         title: termTitle(name, entry),
-        source: termSource(name, entry),
+        source: (entry.mode === "unit" ? unitTermLabel(name, entry) : null) ?? termSource(name, entry),
         span: place.where ? depthSpan(place.selected, place.where.nLayers) : null,
         meta: [layers, triggerWord(entry.trigger)].filter(Boolean).join(" · "),
       };

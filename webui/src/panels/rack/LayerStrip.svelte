@@ -3,7 +3,9 @@
   // as the term's share there. The layers it is fitted at take a selection, drawn solid; the rest
   // are stubs. Press and drag across the cells to paint a range (a stroke adds when it starts on an
   // unselected cell and removes otherwise); Enter or Space toggles one. Every change writes the
-  // term's clause (lib/steering/layers.ts): every fitted layer writes none.
+  // term's clause (lib/steering/layers.ts): every fitted layer writes none. Without ``onchange``
+  // the strip only shows where the term acts (a unit, whose layer is its own: the grammar refuses
+  // a clause on one), with ``note`` in place of the presets.
   import {
     layerRunsText,
     layerTint,
@@ -20,6 +22,7 @@
     selected,
     scope,
     onchange,
+    note = "",
   }: {
     /** The model's depth. */
     nLayers: number;
@@ -31,8 +34,13 @@
     selected: readonly number[];
     /** Its clause as written (``workspace`` shows as the band the server resolved). */
     scope: LayerScope;
-    onchange: (scope: LayerScope) => void;
+    /** Writes the clause; absent, the strip is fixed (no presets, no painting). */
+    onchange?: (scope: LayerScope) => void;
+    /** What a fixed strip says in place of the presets. */
+    note?: string;
   } = $props();
+
+  const fixed = $derived(onchange === undefined);
 
   const uid = $props.id();
   const top = $derived(Math.max(0, ...share.filter(Number.isFinite)));
@@ -59,7 +67,7 @@
   const shown = $derived(stroke ? stroke.pick : selected);
 
   function commit(pick: number[]): void {
-    onchange(scopeForSelection(pick, fitted));
+    onchange?.(scopeForSelection(pick, fitted));
   }
 
   /** The fitted layer under the pointer, by the cells' own boxes. */
@@ -72,7 +80,7 @@
   }
 
   function begin(event: PointerEvent, layer: number): void {
-    if (event.button !== 0) return;
+    if (fixed || event.button !== 0) return;
     event.preventDefault();
     (event.currentTarget as HTMLElement).closest<HTMLElement>(".cells")?.setPointerCapture(event.pointerId);
     const on = !selected.includes(layer);
@@ -99,7 +107,7 @@
 
   function key(event: MouseEvent, layer: number): void {
     // A pointer press already painted; a click with no pointer (Enter, Space) toggles.
-    if (event.detail !== 0) return;
+    if (fixed || event.detail !== 0) return;
     commit(paintLayer(selected, layer, !selected.includes(layer)));
   }
 </script>
@@ -107,16 +115,24 @@
 <div class="where">
   <div class="dw-sec-head">
     <span class="head" id="{uid}-where">Where</span>
-    <div class="presets">
-      <button type="button" class="dw-text" aria-pressed={allFitted} onclick={() => onchange(null)}>All fitted</button>
-      <button type="button" class="dw-text" aria-pressed={scope === "workspace"} onclick={() => onchange("workspace")}>Workspace</button>
-      <button type="button" class="dw-text" aria-pressed={none} onclick={() => onchange([])}>Clear</button>
-    </div>
+    {#if onchange}
+      <div class="presets">
+        <button type="button" class="dw-text" aria-pressed={allFitted} onclick={() => onchange(null)}>All fitted</button>
+        <button type="button" class="dw-text" aria-pressed={scope === "workspace"} onclick={() => onchange("workspace")}>Workspace</button>
+        <button type="button" class="dw-text" aria-pressed={none} onclick={() => onchange([])}>Clear</button>
+      </div>
+    {:else if note}
+      <span class="meta">{note}</span>
+    {/if}
   </div>
   <div class="cells" role="group" aria-labelledby="{uid}-where" style:--n={nLayers}
     onpointermove={sweep} onpointerup={end} onpointercancel={end} onlostpointercapture={end}>
     {#each cells as cell (cell.layer)}
-      {#if cell.fitted}
+      {#if cell.fitted && fixed}
+        <span class="cell is-fixed" class:is-on={shown.includes(cell.layer)} style:--bar={cell.colour} aria-hidden="true">
+          <i style:height="{cell.height}%"></i>
+        </span>
+      {:else if cell.fitted}
         <button type="button" class="cell" data-layer={cell.layer} aria-pressed={shown.includes(cell.layer)}
           aria-label="L{cell.layer}" style:--bar={cell.colour}
           onpointerdown={(event) => begin(event, cell.layer)} onclick={(event) => key(event, cell.layer)}>
@@ -164,7 +180,8 @@
     transition: opacity var(--fast) var(--ease), height var(--glide) var(--ease);
   }
   .cell[aria-pressed="true"] > i { opacity: 1; }
-  .cell.is-off { cursor: default; }
+  .cell.is-off, .cell.is-fixed { cursor: default; }
+  .cell.is-fixed.is-on > i { opacity: 1; }
   .cell.is-off > i { height: 4px; background: var(--wash2); opacity: 1; }
   .cell > b {
     position: absolute;

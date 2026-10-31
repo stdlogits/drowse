@@ -137,6 +137,12 @@ export function unitLabelFor(id: string, pole: "+" | "-" = "+"): string | null {
   return labels.get(labelKey(id, pole)) ?? null;
 }
 
+/** The catalog label of the pole a racked unit term pushes (a head's, and an ablation's, under
+ *  ``+``), once one is known: what the recipe's chip and the term editor show beside the unit. */
+export function unitTermLabel(id: string, entry: { ablate: boolean; alpha: number }): string | null {
+  return unitLabelFor(id, !entry.ablate && entry.alpha < 0 ? "-" : "+");
+}
+
 // ---------------------------------------------------------------- activity
 
 export interface ActivityRequest {
@@ -265,7 +271,8 @@ export function toggleUnitTerm(id: string, term: UnitTerm): void {
  *  head has no push. */
 export function setUnitOperation(id: string, ablate: boolean): void {
   const entry = steerRack.entries.get(id);
-  if (entry?.mode !== "unit" || entry.ablate === ablate || (!ablate && id.startsWith("head/"))) return;
+  if (entry?.mode !== "unit" || entry.ablate === ablate) return;
+  // patchSteerEntry holds the one rule (lib/unitTerms.ts): a head's push changes nothing.
   patchSteerEntry(id, { ablate, alpha: ablate ? UNIT_ABLATE_ALPHA : UNIT_PUSH_ALPHA }, ["unit"]);
 }
 

@@ -458,7 +458,8 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
     } else {
       const entry: SteerEntry = entries.get(selector) ?? (() => {
         if (selector.startsWith("jlens/") || selector.startsWith("sae/")) return { mode: selector.startsWith("jlens/") ? "jlens" : "sae", alpha: 0.3, ablate: false, enabled: true, trigger: "BOTH" };
-        if (selector.startsWith("neuron/") || selector.startsWith("head/")) return { mode: "unit", alpha: selector.startsWith("head/") ? 1 : 0.2, ablate: selector.startsWith("head/"), enabled: true, trigger: "BOTH" };
+        // A new unit: a neuron pushed, a head (which has no push) ablated, each at its own strength.
+        if (selector.startsWith("neuron/") || selector.startsWith("head/")) return { mode: "unit", alpha: selector.startsWith("head/") ? UNIT_ABLATE_ALPHA : UNIT_PUSH_ALPHA, ablate: selector.startsWith("head/"), enabled: true, trigger: "BOTH" };
         else {
           const info = steerRack.catalog.find(row => `${row.namespace}/${row.name}` === selector);
           if (!info) throw new ToolError("NOT_FOUND", "Choose an exact namespace/name from the control catalog.");

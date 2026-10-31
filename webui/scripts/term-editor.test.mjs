@@ -66,25 +66,38 @@ try {
     ["jlens/storm", { mode: "jlens", ablate: true, alpha: 1, trigger: "BOTH", enabled: true, layers: [20, 21, 22] }],
     ["sae/7", { mode: "sae", ablate: false, alpha: 0.3, trigger: "BOTH", enabled: true, layers: [] }],
     ["neuron/L31n4410", { mode: "unit", ablate: false, alpha: -0.2, trigger: "RESPONSE", enabled: true }],
-    ["head/L28h12", { mode: "unit", ablate: false, alpha: 1, trigger: "BOTH", enabled: true }],
+    ["head/L28h12", { mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true }],
     ["default/emotions", { mode: "manifold", blend: 0.35, onto: 0, coords: [0], label: "wonder", variant: "raw", trigger: "RESPONSE", enabled: true, layers: "workspace" }],
   ]);
   assert.equal(serializeExpression(rack, 0.5),
     "0.5 default/honest%honest{12-14,20} + 1 !jlens/storm{20-22} - 0.2 neuron/L31n4410@response + 1 !head/L28h12 + 0.35 default/emotions%wonder{workspace}@response",
-    "the clause follows the selector and precedes the trigger; a term at no layer sits out; a unit takes no clause and a head is only silenced");
+    "the clause follows the selector and precedes the trigger; a term at no layer sits out; a unit takes no clause");
   assert.equal(formatTerm("sae/7", rack.get("sae/7"), 0.5), "0.3 sae/7", "on its own, an inert term writes no clause");
 
   // ---- rack edits: the clause and units
   const steering = await server.ssrLoadModule("/src/lib/stores/steering.svelte.ts");
-  const { steerRack, setSteerLayers, addUnitToRack, unitKey, addJLensToRack, currentSteeringExpression, removeSteerEntry } = steering;
-  assert.equal(unitKey("NEURON/l08N0344"), "neuron/L8n344", "a unit's key is the grammar's canonical form");
-  assert.equal(unitKey("head/L20h17"), "head/L20h17");
-  assert.equal(unitKey("neuron/L8h3"), null, "the letter must match the family");
-  assert.equal(unitKey("neuron/8"), null);
-  assert.equal(addUnitToRack("head/L2h0", { ablate: false }), "head/L2h0");
-  assert.deepEqual(steerRack.entries.get("head/L2h0"), { mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true }, "a head is silenced, fully by default");
-  addUnitToRack("neuron/L1n3");
+  const { steerRack, setSteerLayers, setUnitTerm, patchSteerEntry, addJLensToRack, currentSteeringExpression, removeSteerEntry } = steering;
+  const { UNIT_ABLATE_ALPHA, UNIT_PUSH_ALPHA } = await server.ssrLoadModule("/src/lib/unitTerms.ts");
+  assert.equal(setUnitTerm("NEURON/l08N0344", { ablate: false, alpha: UNIT_PUSH_ALPHA }), "neuron/L8n344", "a unit's key is the grammar's canonical form");
+  removeSteerEntry("neuron/L8n344");
+  assert.equal(setUnitTerm("neuron/L8h3", { ablate: true, alpha: 1 }), null, "the letter must match the family");
+  assert.equal(setUnitTerm("neuron/8", { ablate: true, alpha: 1 }), null);
+  // The one rule (lib/unitTerms.ts): a head is only ablated, an ablation never negative.
+  assert.equal(setUnitTerm("head/L2h0", { ablate: false, alpha: UNIT_PUSH_ALPHA }), null, "a head push is refused");
+  assert.equal(setUnitTerm("neuron/L1n3", { ablate: true, alpha: -0.2 }), null, "a negative ablation is refused");
+  assert.equal(steerRack.entries.size, 0, "a refused term changes nothing");
+  assert.equal(setUnitTerm("head/L2h0", { ablate: true, alpha: UNIT_ABLATE_ALPHA }), "head/L2h0");
+  assert.deepEqual(steerRack.entries.get("head/L2h0"), { mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true }, "exact mean-ablation");
+  setUnitTerm("neuron/L1n3", { ablate: false, alpha: UNIT_PUSH_ALPHA });
   assert.deepEqual(steerRack.entries.get("neuron/L1n3"), { mode: "unit", ablate: false, alpha: 0.2, trigger: "BOTH", enabled: true });
+  // Every edit keeps to the rule: the editor's switch and dial go through patchSteerEntry.
+  patchSteerEntry("head/L2h0", { ablate: false, alpha: UNIT_PUSH_ALPHA }, ["unit"]);
+  assert.equal(steerRack.entries.get("head/L2h0").ablate, true, "a head cannot be switched to a push");
+  patchSteerEntry("head/L2h0", { alpha: -0.5 }, ["unit"]);
+  assert.equal(steerRack.entries.get("head/L2h0").alpha, 1, "an ablation's strength never goes negative");
+  patchSteerEntry("neuron/L1n3", { alpha: -0.4 }, ["unit"]);
+  assert.equal(steerRack.entries.get("neuron/L1n3").alpha, -0.4, "a push takes either pole");
+  patchSteerEntry("neuron/L1n3", { alpha: UNIT_PUSH_ALPHA }, ["unit"]);
   addJLensToRack("storm");
   setSteerLayers("jlens/storm", [4, 5]);
   setSteerLayers("neuron/L1n3", [1]);
@@ -198,7 +211,7 @@ try {
   assert.equal(terms.coefficientText(0.35, { fixed: true }), "0.35");
   assert.equal(terms.coefficientText(-0.004, { fixed: true }), "0.00");
   assert.equal(terms.chipStrength("jlens/storm", { mode: "jlens", ablate: true, alpha: 1 }, 0.5), "without");
-  assert.equal(terms.chipStrength("head/L2h0", { mode: "unit", ablate: false, alpha: 1 }, 0.5), "without");
+  assert.equal(terms.chipStrength("head/L2h0", { mode: "unit", ablate: true, alpha: 1 }, 0.5), "without");
   assert.equal(terms.chipStrength("default/honest", { mode: "subspace", ablate: false }, 0.5), "0.5", "a flat term shows the shared strength");
   assert.equal(terms.termTitle("neuron/L31n4410", { mode: "unit" }), "L31 n4410");
   assert.equal(terms.unitLayer("head/L28h12"), 28);
@@ -218,7 +231,12 @@ try {
   assert.deepEqual(terms.wrapPieces(line), ["0.5 default/", "confident.uncertain", "%confident", "{4-8,", "20}", "@response"],
     "the expression wraps between a selector's parts, never inside a name, and inside a clause only at a comma");
   assert.equal(terms.wrapPieces(line).join(""), line);
-  assert.ok(terms.canRemove("neuron/L1n3", { mode: "unit" }, null) && !terms.canRemove("head/L1h3", { mode: "unit" }, null));
+  assert.ok(terms.canRemove("neuron/L1n3", { mode: "unit" }, null) && !terms.canRemove("head/L1h3", { mode: "unit" }, null),
+    "a neuron switches between push and ablation; a head (no push) does not");
+  assert.deepEqual(terms.strengthDial("head/L1h3", { mode: "unit", ablate: true, alpha: 1 }, 0.5), { value: 1, min: 0, max: 1, step: 0.05, shared: false },
+    "an ablation's dial runs from none of it to exact mean-ablation, never below zero");
+  assert.deepEqual([terms.strengthDial("neuron/L1n3", { mode: "unit", ablate: false, alpha: -0.2 }, 0.5).min, terms.strengthSays("neuron/L1n3", { mode: "unit", ablate: false }, -0.2)],
+    [-1, "Away from L1 n3"], "a push runs either pole");
   assert.ok(!terms.canRemove("default/emotions", entry, { node_count: 20 }), "a curved position cannot be removed");
   assert.ok(terms.canRemove("default/honest", { mode: "subspace" }, { node_count: 2 }));
 

@@ -150,11 +150,11 @@ export function formatSaeTerm(name: string, entry: SaeSteerEntry): string {
 }
 
 /** Render one unit term — ``<alpha> neuron/L31n4410`` (a push; a negative α takes the other pole)
- *  or ``<alpha> !neuron/…`` / ``<alpha> !head/…`` (silenced toward the neutral mean).  A unit
- *  carries its own layer, so it never writes a clause; a head is only ever silenced. */
+ *  or ``<alpha> !neuron/…`` / ``<alpha> !head/…`` (mean-ablated, 1 exactly).  A unit carries its
+ *  own layer, so it never writes a clause (the grammar refuses one); which terms a unit takes is
+ *  lib/unitTerms.ts's rule, held by the rack. */
 export function formatUnitTerm(name: string, entry: UnitSteerEntry): string {
-  const silence = entry.ablate || name.startsWith("head/");
-  return `${formatCoeff(entry.alpha)} ${silence ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
+  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
 }
 
 /** Render one manifold (curved) rack entry — ``<along[,onto]>

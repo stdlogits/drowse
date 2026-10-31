@@ -2,7 +2,7 @@
 //
 // A steering vector is the K=2 flat case of a manifold, so every term is a
 // position on a fitted geometry — one ``entries`` map of tagged
-// ``SteerEntry`` (``mode: "subspace" | "manifold" | "jlens" | "sae"``), one
+// ``SteerEntry`` (``mode: "subspace" | "manifold" | "jlens" | "sae" | "unit"``), one
 // card, and one serializer.  Subspace (flat) terms share the rack-level
 // ``subspaceAlong`` master (the merged affine subspace slides once);
 // manifold (curved) terms keep their per-card along/onto; the two
@@ -29,6 +29,8 @@ import type {
 import { formatLayerIndices } from "../steering/layers";
 import { forgetTermLayers } from "../steering/termLayers.svelte";
 import { serializeExpression } from "../expression";
+import { parseUnit } from "../units";
+import { unitTermProblem } from "../unitTerms";
 import { enqueueOrApply } from "./pending.svelte";
 
 /** Default shared subspace-along master — the ~0.5 coherent sweet spot
@@ -192,7 +194,10 @@ export function patchSteerEntry<M extends SteerEntry["mode"]>(
   enqueueOrApply(describePatch(name, patch), () => {
     const entry = steerRack.entries.get(name);
     if (!entry || (modes && !modes.includes(entry.mode as M))) return;
-    steerRack.entries.set(name, { ...entry, ...patch } as SteerEntry);
+    const next = { ...entry, ...patch } as SteerEntry;
+    // A unit's edit keeps to the one rule (a head is not pushed, an ablation not negative).
+    if (next.mode === "unit" && unitTermProblem(name, next) !== null) return;
+    steerRack.entries.set(name, next);
   });
 }
 
@@ -384,60 +389,35 @@ export function addSaeToRack(featureId: number): void {
   addAtomToRack("sae", String(featureId));
 }
 
-/** Put a unit's one term into the recipe (``id`` is ``neuron/L31n4410`` or ``head/L28h12``): a push
- *  along its write (``alpha`` signed, the − pole's below zero) or an exact mean-ablation; ``null``
- *  takes it out. A unit holds one term at a time, so a push replaces an ablation and back. Queued
- *  behind a running generation like every rack edit. */
-export function setUnitTerm(id: string, term: { ablate: boolean; alpha: number } | null): void {
-  const what = term === null ? `remove ${id}` : term.ablate ? `ablate ${id}` : `push ${id} ${term.alpha}`;
+// ------------------------------------------------------ unit terms
+
+/** Put a unit's one term into the recipe, or take it out (``null``). ``id`` names the unit in any
+ *  form ``parseUnit`` reads (``neuron/L31n4410``, ``L28 h12``); the rack key is the engine's
+ *  reference. A push runs along the neuron's write (``alpha`` signed, the − pole's below zero), an
+ *  ablation blends the unit toward its neutral mean (``alpha`` 1 is exact mean-ablation). A unit
+ *  holds one term at a time, so a push replaces an ablation and back, keeping its trigger. The one
+ *  rule (lib/unitTerms.ts) refuses a head push and a negative ablation: nothing changes and the
+ *  answer is null. Otherwise the answer is the rack key; the edit queues behind a running
+ *  generation like every rack edit. */
+export function setUnitTerm(id: string, term: { ablate: boolean; alpha: number } | null): string | null {
+  const name = parseUnit(id)?.id ?? null;
+  if (name === null) return null;
+  if (term !== null && unitTermProblem(name, term) !== null) return null;
+  const what = term === null ? `remove ${name}` : term.ablate ? `ablate ${name}` : `push ${name} ${term.alpha}`;
   enqueueOrApply(what, () => {
     if (term === null) {
-      steerRack.entries.delete(id);
+      steerRack.entries.delete(name);
       return;
     }
-    const prev = steerRack.entries.get(id);
+    const prev = steerRack.entries.get(name);
     steerRack.customExpression = null;
-    steerRack.entries.set(id, {
+    steerRack.entries.set(name, {
       mode: "unit",
       ablate: term.ablate,
       alpha: term.alpha,
       trigger: prev?.mode === "unit" ? prev.trigger : "BOTH",
-      enabled: true,
+      enabled: prev?.mode === "unit" ? prev.enabled : true,
     });
-  });
-}
-
-// ------------------------------------------------------ unit mutators
-
-/** A unit's rack key: ``neuron/L<layer>n<index>`` or ``head/L<layer>h<index>``, the canonical
- *  form the grammar writes (case-insensitive input, leading zeros dropped). */
-export function unitKey(id: string): string | null {
-  const match = /^(neuron|head)\/l0*(\d+)([nh])0*(\d+)$/iu.exec(id.trim());
-  if (!match) return null;
-  const family = match[1].toLowerCase();
-  const letter = match[3].toLowerCase();
-  if ((family === "neuron") !== (letter === "n")) return null;
-  return `${family}/L${match[2]}${letter}${match[4]}`;
-}
-
-/** Default α for a unit push: a neuron's write is one sharp direction, like a lens atom. */
-export const UNIT_DEFAULT_ALPHA = 0.2;
-
-/** Rack one unit: a neuron pushed (``alpha`` signed; a negative one takes the other pole) or
- *  silenced, a head silenced (a head has no single write direction).  Silencing defaults to the
- *  full neutral mean (α 1).  Re-racking a unit already there replaces how it steers.  Returns the
- *  rack key, or null for an id that names no unit. */
-export function addUnitToRack(id: string, { ablate = false, alpha }: { ablate?: boolean; alpha?: number } = {}): string | null {
-  const name = unitKey(id);
-  if (!name) return null;
-  const silence = ablate || name.startsWith("head/");
-  steerRack.customExpression = null;
-  steerRack.entries.set(name, {
-    mode: "unit",
-    ablate: silence,
-    alpha: alpha ?? (silence ? 1 : UNIT_DEFAULT_ALPHA),
-    trigger: "BOTH",
-    enabled: true,
   });
   return name;
 }
