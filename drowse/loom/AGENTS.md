@@ -233,7 +233,8 @@ producing position to the family's `read`. The steering scope opens
 composer push/pop take the generation lock blocking, so nesting would
 deadlock. `layers` and `read` resolve inside it. `apply_steering=False` reads
 the unsteered counterfactual. Always-active affine terms reproduce exactly;
-phase/gated terms fire as the trigger context's rest state decides.
+phase/gated terms fire as the trigger context's rest state decides (the node
+replay below drives the context instead).
 `raw=True` picks the flat render, which the node does not record.
 
 `TokenReplayer.forward(node_id, raw_index, run=…)` is the same rebuild
@@ -245,15 +246,31 @@ owns its forward. `__call__` is its capture use.
 ## Node replay (`node_replay.py`)
 
 `NodeReplayer` (session-wired over the token replayer, the model, the lens
-instrument, the units runtime, the tokenizer and the tree getter) runs one
-forward over a node's tokens with taps where the model's parts meet the
-residual, stopping after the last block (no vocabulary head over every
-position): each block's input, its `mid` (the MLP input norm's input), its
-output before the steering hooks (a `prepend` hook) and after them, the down
-projection's input and output, and the output projection's input and output.
-Every tap is a forward hook, so it sees what the module used (after a unit
-ablation's pre-hook). Eager attention (the attention config's
-`_attn_implementation`, restored after) runs only when patterns are asked for.
+instrument, the units runtime, the tokenizer, the tree getter, the chat
+traits, the steering manager's `TriggerContext` and the open stack's
+triggers) runs one forward over a node's tokens with taps where the model's
+parts meet the residual, stopping after the last block (no vocabulary head
+over every position): each block's input, its `mid` (the MLP input norm's
+input), its output before the steering hooks (a `prepend` hook) and after
+them, the down projection's input and output, and the output projection's
+input and output. Every tap is a forward hook, so it sees what the module
+used (after a unit ablation's pre-hook). Eager attention (the attention
+config's `_attn_implementation`, restored after) runs only when a pattern can
+be returned: `patterns > 0` and the R lens holds a `mid` layer to rank heads by.
+
+**Triggers.** Generation prefills the prompt in one forward and decodes one
+token per forward, and a trigger decides per forward. `replay_segments` splits
+the replay the same way: one cacheless forward when every open term is
+`Trigger.BOTH` (exact, the common case); otherwise the prefill, then the
+decode positions in runs where every trigger fires alike (`@first:N`,
+`@after:N` boundaries, judged by `Trigger.active` itself), run on one KV cache
+with `is_prefill`, `gen_step` and `sink_column` set as the decode loop sets
+them and the rest state restored after. A probe gate (live probe scores) or,
+on a family that thinks, a thinking-phase window (`@after`, `@thinking`)
+depends on state the node does not record, so a steered replay under one
+raises `SteeringCompositionError` (422); `apply_steering=False` replays
+without the node's own terms. Pinned against the live unit readings of
+`@prompt`, `@response`, `@first:2` and `@after:2` generations.
 
 - **Token anatomy** (`token_anatomy(node_id, raw_index, k=8, units=8,
   patterns=4)`): per layer the residual at `out` read as a residual
@@ -278,7 +295,9 @@ ablation's pre-hook). Eager attention (the attention config's
 
 Everything a result carries is packed into one fp32 vector and moved to the
 host once (`_Pack`); the lens reads ride the same transfer through
-`LensInstrument.plan_reads`. Only decoded tokens (a turn's raw record) are
+`LensInstrument.plan_reads`, and so do an anatomy's context ids (exact in fp32
+below 2²⁴). Unit activity derives its sink row on the host from
+`prompt_length`. Only decoded tokens (a turn's raw record) are
 addressable, as with `token_readout`; prompt render positions appear only as
 pattern context. On SmolLM2 (MPS, warm) an anatomy takes about 0.3 s, a
 24-token activity about 0.15 s.

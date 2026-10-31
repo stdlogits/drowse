@@ -79,7 +79,7 @@ from drowse.generation.results import (
 )
 from drowse.generation.sampling import SamplingConfig
 from drowse.session.batch import BatchRunner, FastBatchPath
-from drowse.steering.terms import Steering
+from drowse.steering.terms import Steering, entry_trigger
 from drowse.geometry.manifold import Manifold
 
 if TYPE_CHECKING:
@@ -473,7 +473,8 @@ class DrowseSession:
             put_direction=self._registry.put_profile,
             has_direction=lambda name: name in self._registry.profiles,
         )
-        # The node replay: one tapped forward over a node's tokens, read as
+        # The node replay: one tapped forward over a node's tokens (split
+        # where the open steering's triggers fired differently), read as
         # token anatomy and unit activity (the lens and units families).
         self._node_replay = NodeReplayer(
             replayer=self._token_replay,
@@ -482,6 +483,12 @@ class DrowseSession:
             units=self._units_runtime,
             tokenizer=self._tokenizer,
             tree=lambda: self.tree,
+            traits=self._chat,
+            trigger_context=self._steering.ctx,
+            open_triggers=lambda: [
+                entry_trigger(entry)
+                for entry in self._steering_composer.flatten_stack().values()
+            ],
         )
         # The probe roster: attach/detach routing by namespace and the
         # transcript probe-hash caches; a roster change drops the analytics.

@@ -573,11 +573,15 @@ and the MLP and steering writes at `out` as directions; the neurons and heads
 with the largest direct contribution to the token's logit through the R lens
 (the token's unembedding row, its final norm linearized, pulled back by
 `J_Lᵀ` at `out` for neurons and `mid` for heads); and, under eager attention
-only when asked, the top heads' attention rows. It rides the replay
-envelope's `anatomy`. **Unit activity** reads every neuron and head at every
-token of a turn in the units family's unit and reduces it on the device (peaks,
-traces, one token's float16 population). Each leaves the device in one
-transfer.
+only when a head can be ranked, the top heads' attention rows. It rides the
+replay envelope's `anatomy`. **Unit activity** reads every neuron and head at
+every token of a turn in the units family's unit and reduces it on the device
+(peaks, traces, one token's float16 population). Each leaves the device in one
+transfer. Unlike a token readout, the node replay drives the trigger context:
+with every open term always active it is one forward, otherwise the prefill
+and then KV-cached runs of decode positions where every trigger fires alike,
+as generation ran them; a probe gate or (on a thinking family) a
+thinking-phase window, which the node does not record, refuses (422).
 
 **Residual or direction.** Every lens read says what it reads
 (`lens/read.py`, `of`, no default). The S read of a residual is centred on the

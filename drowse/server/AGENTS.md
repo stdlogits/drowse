@@ -262,7 +262,8 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   (`session.token_anatomy`), and `GET units/activity` (`node_id`, `top`,
   `units` comma-separated, `raw_index`, `layers` a selector, `steered`, `raw`)
   returns `UnitActivityJSON` (`session.unit_activity`; units unavailable is
-  the family's 422).
+  the family's 422). Both answer 422 (`SteeringCompositionError`) for steered
+  probe-gated or thinking-phase terms the replay cannot reproduce.
 
 ## Long-running operations (`operations.py`)
 

@@ -34,8 +34,21 @@ as the units runtime excludes it.  A firing on a pole that never fired on
 the neutral corpus (``act_top`` 0) has no scale to read against: it reads
 over the floor in traces and populations and never ranks among the peaks.
 
+**Triggers.**  Generation runs the prompt as one prefill forward and then
+one decode forward per token, and a term's trigger decides per forward
+whether it fires.  When every open term fires everywhere (``Trigger.BOTH``,
+the default) one forward over the node is exact.  Otherwise the replay runs
+the prefill and then the decode positions in KV-cached forwards, one per run
+of positions where every trigger fires the same way, with the trigger
+context set as generation set it (:func:`replay_segments`).  A probe gate
+(the generation's live probe scores) or, on a family that thinks, a
+thinking-phase window (``@after``, ``@thinking``) depends on state the node
+does not record, so a replay under one refuses
+(:class:`~drowse.errors.SteeringCompositionError`, 422).
+
 Every result leaves the device in one transfer (the lens reads, the
-contributions, the patterns and the flags are packed together).
+contributions, the patterns, the context ids and the flags are packed
+together).
 """
 
 from __future__ import annotations
@@ -43,7 +56,7 @@ from __future__ import annotations
 import base64
 import math
 import weakref
-from collections.abc import Callable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -52,11 +65,12 @@ import torch
 import torch.nn as nn
 from typing_extensions import TypedDict
 
-from drowse.errors import RequestError
+from drowse.errors import RequestError, SteeringCompositionError
 from drowse.lens.read import LensRead, VectorRead
 from drowse.loom.ops import resolve_token_anchor
 from drowse.loom.replay import ReplayForward, TokenReplayer
 from drowse.model.blocks import BlockSpec, ModelSpec
+from drowse.model.chat import logits_keep_kwarg
 from drowse.model.layers import LayerSelector, resolve_model_layers
 from drowse.model.units import head_write_matrix
 from drowse.naming import HeadRef, NeuronRef, UnitRef
@@ -69,12 +83,14 @@ from drowse.readout.measurements import (
     TokenAnatomy,
     build_measurements,
 )
+from drowse.steering.triggers import Trigger, TriggerContext
 from drowse.units.capture import SCALE_FLOOR
 from drowse.units.stats import UNIT_POSITIONS_FROM, UnitStats
 
 if TYPE_CHECKING:
     from drowse.lens.instrument import LensInstrument
     from drowse.loom.tree import LoomTree
+    from drowse.model.chat import ChatTraits
     from drowse.units.runtime import UnitsRuntime
 
 #: ``activation_over_scale``: the units family's probe unit.
@@ -202,6 +218,145 @@ def _forward(model: nn.Module, ids: torch.Tensor) -> None:
         pass
 
 
+@dataclass(frozen=True)
+class ReplaySegment:
+    """One forward of a replay: positions ``[start, stop)`` under one trigger
+    state (the prompt's ``prefill``, or decode step ``gen_step``: the forward
+    producing raw token ``gen_step``)."""
+
+    start: int
+    stop: int
+    prefill: bool
+    gen_step: int
+
+
+def replay_segments(
+    prompt_length: int, length: int, triggers: Iterable[Trigger], *, can_think: bool,
+) -> tuple[ReplaySegment, ...]:
+    """The forwards that replay ``length`` positions the way generation ran
+    them under ``triggers`` (every open steering term's trigger).
+
+    Generation prefills ``[0, prompt_length)`` in one forward, then decode
+    step ``k`` produces raw token ``k`` at position ``prompt_length + k − 1``.
+    With every trigger ``Trigger.BOTH`` each position is steered alike and
+    one forward over ``[0, length)`` is exact.  Otherwise the prefill is one
+    segment and the decode positions split wherever a trigger's activity
+    changes (``@first:N``, ``@after:N``), each segment evaluated by
+    :meth:`Trigger.active` itself.  Raises
+    :class:`~drowse.errors.SteeringCompositionError` (422) for a term whose
+    firing depends on state the node does not record: a probe gate (the
+    generation's live probe scores) or, when the family can think
+    (``can_think``), a thinking-phase window (``@after``, ``@thinking``).
+    """
+    windowed = list(dict.fromkeys(t for t in triggers if t != Trigger.BOTH))
+    if not windowed:
+        return (ReplaySegment(0, int(length), prefill=False, gen_step=0),)
+    gated = any(t.generated and t.gate is not None for t in windowed)
+    phased = can_think and any(t.generated and t.thinking != t.response for t in windowed)
+    if gated or phased:
+        what = " and ".join(
+            label for label, present in (
+                ("probe-gated terms (@when:…), which fire on the generation's live "
+                 "probe scores", gated),
+                ("thinking-phase terms (@after, @thinking), which fire on the decode "
+                 "loop's thinking state", phased),
+            ) if present
+        )
+        raise SteeringCompositionError(
+            f"the replayed steering has {what}; the node records neither, so a "
+            "replay cannot reproduce where they fired. Replay without them "
+            "(apply_steering=false drops the node's own steering)."
+        )
+
+    def fires(step: int) -> tuple[bool, ...]:
+        ctx = TriggerContext(gen_step=step)
+        return tuple(t.active(ctx) for t in windowed)
+
+    prefill_stop = min(int(prompt_length), int(length))
+    segments: list[ReplaySegment] = []
+    if prefill_stop > 0:
+        segments.append(ReplaySegment(0, prefill_stop, prefill=True, gen_step=0))
+    start = prefill_stop
+    while start < length:
+        step = start - int(prompt_length) + 1
+        state = fires(step)
+        stop = start + 1
+        while stop < length and fires(stop - int(prompt_length) + 1) == state:
+            stop += 1
+        segments.append(ReplaySegment(start, stop, prefill=False, gen_step=step))
+        start = stop
+    return tuple(segments)
+
+
+class _Window:
+    """The running forward's span of the replayed positions, read by the taps."""
+
+    __slots__ = ("final", "start", "stop")
+
+    def __init__(self) -> None:
+        self.start = 0
+        self.stop = 0
+        self.final = True
+
+
+def _drive(
+    model: nn.Module,
+    ids: torch.Tensor,
+    segments: Sequence[ReplaySegment],
+    ctx: TriggerContext | None,
+    window: _Window,
+) -> None:
+    """Run ``ids`` through ``segments``, keeping ``window`` on the running one.
+
+    The one rest-state segment (every trigger fires everywhere) is one
+    cacheless forward, the context untouched.  Otherwise each segment, a
+    lone prefill included, runs on one KV cache with the context set as the
+    decode loop sets it (the attention sink in column 0 only from position
+    0), and the context returns to its rest state after.  The taps raise
+    :class:`_Stop` in the last segment only.
+    """
+    if len(segments) == 1 and not segments[0].prefill:
+        segment = segments[0]
+        window.start, window.stop, window.final = segment.start, segment.stop, True
+        _forward(model, ids[:, segment.start:segment.stop])
+        return
+    if ctx is None:
+        raise ValueError("a segmented replay needs the trigger context")
+    keep = logits_keep_kwarg(model)
+    past: Any = None
+    try:
+        with torch.inference_mode():
+            for i, segment in enumerate(segments):
+                window.start, window.stop = segment.start, segment.stop
+                window.final = i == len(segments) - 1
+                ctx.is_prefill = segment.prefill
+                ctx.thinking = False
+                ctx.gen_step = segment.gen_step
+                ctx.sink_column = 0 if segment.start == 0 else None
+                ctx.probe_scores = {}
+                kwargs: dict[str, Any] = {
+                    "input_ids": ids[:, segment.start:segment.stop], "use_cache": True,
+                }
+                if past is not None:
+                    kwargs["past_key_values"] = past
+                if keep is not None:
+                    kwargs[keep] = 1
+                try:
+                    out = model(**kwargs)
+                except _Stop:
+                    if not window.final:
+                        raise RuntimeError("a replay tap stopped before the last forward") from None
+                    return
+                past = getattr(out, "past_key_values", None)
+                if past is None:
+                    raise RuntimeError(
+                        "the model returned no KV cache; a segmented replay runs on one"
+                    )
+                del out
+    finally:
+        ctx.reset()
+
+
 @dataclass
 class TokenTaps:
     """What one forward carries at one position ``p``, fp32 on the device.
@@ -245,19 +400,36 @@ class TokenTaps:
 def tap_token(
     model: nn.Module, spec: ModelSpec, ids: torch.Tensor, position: int,
     *, patterns: bool,
+    segments: Sequence[ReplaySegment] | None = None,
+    ctx: TriggerContext | None = None,
 ) -> TokenTaps:
-    """One forward of ``ids`` ``[1, T]`` tapped at ``position``.
+    """The forward of ``ids`` ``[1, T]`` tapped at ``position``.
 
     ``patterns`` needs the attention modules to return their probabilities
     (run it under :func:`eager_attention`).  Each hook copies one row; the
     block-output tap sits before the steering hooks (``prepend``) and after
     them, so the two together isolate the injection.  Every projection tap
     is a forward hook, so it sees the input the module used (after a unit
-    ablation's pre-hook).
+    ablation's pre-hook).  ``segments`` (:func:`replay_segments`, default
+    one forward over ``ids``) splits the forward as generation's triggers
+    did, driving ``ctx``; ``position`` lies in the last one, the only one
+    tapped.
     """
     blocks = spec.blocks
     n = len(blocks)
     p = int(position)
+    plan = (
+        tuple(segments) if segments is not None
+        else (ReplaySegment(0, int(ids.shape[1]), prefill=False, gen_step=0),)
+    )
+    if not plan[-1].start <= p < plan[-1].stop:
+        raise ValueError(f"position {p} is outside the replay's last forward")
+    window = _Window()
+
+    def here() -> int | None:
+        """``position``'s row in the running forward (only the last is tapped)."""
+        return p - window.start if window.final else None
+
     first: dict[str, torch.Tensor] = {}
     mid: dict[int, torch.Tensor] = {}
     pre: dict[int, torch.Tensor] = {}
@@ -269,31 +441,44 @@ def tap_token(
     rows: dict[int, torch.Tensor] = {}
 
     def block_input(_m: nn.Module, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        row = here()
+        if row is None:
+            return
         h = args[0] if args else kwargs["hidden_states"]
-        first["h"] = _row(h, p)
+        first["h"] = _row(h, row)
 
     def tap(layer: int, store: dict[int, torch.Tensor], *, out: bool = False, stop: bool = False) -> Any:
         def hook(_m: nn.Module, args: tuple[Any, ...], output: Any) -> None:
-            store[layer] = _row(_first(output) if out else args[0], p)
+            row = here()
+            if row is None:
+                return
+            store[layer] = _row(_first(output) if out else args[0], row)
             if stop:
                 raise _Stop()
         return hook
 
     def pair(layer: int, inputs: dict[int, torch.Tensor], outputs: dict[int, torch.Tensor]) -> Any:
         def hook(_m: nn.Module, args: tuple[Any, ...], output: Any) -> None:
-            inputs[layer] = _row(args[0], p)
-            outputs[layer] = _row(_first(output), p)
+            row = here()
+            if row is None:
+                return
+            inputs[layer] = _row(args[0], row)
+            outputs[layer] = _row(_first(output), row)
         return hook
 
     def pattern(layer: int) -> Any:
         def hook(_m: nn.Module, _args: tuple[Any, ...], output: Any) -> None:
+            row = here()
+            if row is None:
+                return
             weights = output[1] if isinstance(output, tuple) and len(output) > 1 else None
             if weights is None:
                 raise RuntimeError(
                     f"block {layer}'s attention returned no probabilities; patterns "
                     "need eager attention"
                 )
-            rows[layer] = weights[0, :, p, : p + 1].to(dtype=torch.float32, copy=True)
+            # Keys span the cache and this forward: ``[0, p]`` is the context.
+            rows[layer] = weights[0, :, row, : p + 1].to(dtype=torch.float32, copy=True)
         return hook
 
     handles: list[Any] = [
@@ -311,7 +496,7 @@ def tap_token(
             handles.append(block.attn.o.register_forward_hook(pair(L, zs, attn_out)))
             if patterns:
                 handles.append(block.attn.module.register_forward_hook(pattern(L)))
-        _forward(model, ids)
+        _drive(model, ids, plan, ctx, window)
     if "h" not in first or len(post) != n or len(mid) != n:
         raise RuntimeError("the replay forward did not reach every block")
     out = torch.stack([post[L] for L in range(n)])
@@ -600,7 +785,9 @@ class NodeReplayer:
     steering scope, exclusive section), the model, the lens instrument (its
     resident R and S lenses, its read planning and neutral means), the units
     runtime (the block description and the neutral unit statistics), the
-    tokenizer and the loom tree getter.
+    tokenizer, the loom tree getter, the chat facts (whether the family can
+    think), the steering's :class:`TriggerContext` and the triggers of every
+    open steering term (read inside the replay's scope).
     """
 
     def __init__(
@@ -612,6 +799,9 @@ class NodeReplayer:
         units: "UnitsRuntime",
         tokenizer: Any,
         tree: Callable[[], "LoomTree"],
+        traits: "ChatTraits",
+        trigger_context: TriggerContext,
+        open_triggers: Callable[[], Iterable[Trigger]],
     ) -> None:
         self._replayer = replayer
         self._model = getattr(model, "_orig_mod", model)
@@ -619,6 +809,25 @@ class NodeReplayer:
         self._units = units
         self._tokenizer = tokenizer
         self._tree = tree
+        self._traits = traits
+        self._ctx = trigger_context
+        self._open_triggers = open_triggers
+
+    def _segments(self, forward: ReplayForward) -> tuple[ReplaySegment, ...]:
+        """The forwards replaying ``forward`` as the open steering fired
+        during generation (:func:`replay_segments`)."""
+        return replay_segments(
+            forward.prompt_length, int(forward.ids.shape[1]), self._open_triggers(),
+            can_think=bool(self._traits.supports_thinking),
+        )
+
+    def _patterns_readable(self) -> bool:
+        """Whether a head can be ranked, so a pattern returned: the R lens
+        holds a layer at ``mid`` (heads are read through ``J`` there)."""
+        lens = self._lens.resident()
+        if lens is None or "mid" not in set(getattr(lens, "sites", ("out",))):
+            return False
+        return bool(list(lens.layers("mid")))
 
     def _decode(self, token_id: int) -> str:
         return str(self._tokenizer.decode([int(token_id)]))
@@ -649,10 +858,13 @@ class NodeReplayer:
         w_n``, ``g_L = J_Lᵀ u`` with ``u`` the token's norm-linearized
         unembedding row; heads through ``J`` at ``mid``).  Across layers the
         top ``units`` units, and the attention from the token's producing
-        position of the top ``patterns`` heads (0: none, and no eager
-        attention).  Raises ``UnsupportedBlockError`` (422) for a model the
-        block description refuses; without an R lens the contributions are
-        absent (``units_absent`` says why).
+        position of the top ``patterns`` heads (0, or an R lens with no
+        ``mid`` layer to rank heads by: none, and no eager attention).  The
+        forward runs as generation's triggers ran it (:func:`replay_segments`).
+        Raises ``UnsupportedBlockError`` (422) for a model the block
+        description refuses and ``SteeringCompositionError`` (422) for
+        steering whose firing the node does not record; without an R lens the
+        contributions are absent (``units_absent`` says why).
         """
         if not 1 <= int(k) <= 256:
             raise RequestError("k must be in [1, 256]")
@@ -667,9 +879,14 @@ class NodeReplayer:
             self._lens.neutral_mean("out", 0)
 
         def run(forward: ReplayForward) -> TokenAnatomy:
-            with eager_attention(spec, patterns > 0):
+            segments = self._segments(forward)
+            # Eager attention and the pattern taps only when a pattern can be
+            # returned (a head ranked through the R lens at ``mid``).
+            tapped = patterns > 0 and self._patterns_readable()
+            with eager_attention(spec, tapped):
                 taps = tap_token(
-                    self._model, spec, forward.ids, forward.position, patterns=patterns > 0,
+                    self._model, spec, forward.ids, forward.position, patterns=tapped,
+                    segments=segments, ctx=self._ctx,
                 )
             with torch.inference_mode():
                 return self._anatomy(
@@ -714,6 +931,7 @@ class NodeReplayer:
         flat = _FlatUnits(())
         top_slots: tuple[_Slot, _Slot] | None = None
         pattern_slots: tuple[_Slot, _Slot, _Slot] | None = None
+        context_slot: _Slot | None = None
         if isinstance(contributions, str):
             absent = contributions
         else:
@@ -740,6 +958,9 @@ class NodeReplayer:
                 pattern_slots = (
                     pack.add(rows[chosen]), pack.add(chosen + base), pack.add(heads[chosen]),
                 )
+                # The context's ids ride the same transfer (fp32 holds every
+                # id below 2**24 exactly: every vocabulary).
+                context_slot = pack.add(forward.ids[0])
 
         host = pack.host()
         reads = pending.finish(_take(host, reads_slot))
@@ -797,8 +1018,8 @@ class NodeReplayer:
             units_absent=absent,
             patterns=pattern_rows,
             context=(
-                [self._decode(int(t)) for t in forward.ids[0].tolist()]
-                if pattern_rows is not None else None
+                [self._decode(int(t)) for t in _take(host, context_slot).tolist()]
+                if context_slot is not None else None
             ),
         )
 
@@ -869,8 +1090,11 @@ class NodeReplayer:
         that token's whole population at ``layers`` (default every layer),
         packed (:data:`POPULATION_ENCODING`).  A value on a pole with no
         neutral scale (``act_top`` 0) never ranks (it reads over the floor,
-        ``1e-6``).  Raises ``UnitsUnavailableError`` (422) when the model has
-        no unit statistics and a 400 for a malformed or out-of-range unit.
+        ``1e-6``).  The forward runs as generation's triggers ran it
+        (:func:`replay_segments`).  Raises ``UnitsUnavailableError`` (422)
+        when the model has no unit statistics, ``SteeringCompositionError``
+        (422) for steering whose firing the node does not record, and a 400
+        for a malformed or out-of-range unit.
         """
         if not 1 <= int(top) <= 1024:
             raise RequestError("top must be in [1, 1024]")
@@ -891,7 +1115,7 @@ class NodeReplayer:
 
         def run(forward: ReplayForward) -> UnitActivityJSON:
             return self._activity(
-                spec, stats, forward, top=int(top), refs=refs,
+                spec, stats, forward, self._segments(forward), top=int(top), refs=refs,
                 population=None if raw_index is None else int(raw_index),
                 pop_layers=pop_layers,
             )
@@ -906,6 +1130,7 @@ class NodeReplayer:
 
     def _activity(
         self, spec: ModelSpec, stats: UnitStats, forward: ReplayForward,
+        segments: Sequence[ReplaySegment],
         *, top: int, refs: Sequence[UnitRef], population: int | None,
         pop_layers: Sequence[int],
     ) -> UnitActivityJSON:
@@ -914,33 +1139,57 @@ class NodeReplayer:
         ids = forward.ids
         device = ids.device
         count = len(forward.raw_ids)
-        positions = torch.arange(
-            forward.prompt_length - 1, forward.prompt_length - 1 + count, device=device,
-        )
-        sink = positions < UNIT_POSITIONS_FROM                                   # [N]
+        # Token row ``r`` is read at position ``first + r``; the rows before
+        # ``UNIT_POSITIONS_FROM`` sit on the attention sink (host arithmetic:
+        # nothing about them is read back from the device).
+        first = forward.prompt_length - 1
+        n_sink = max(0, min(count, UNIT_POSITIONS_FROM - first))
+        sink = torch.arange(count, device=device) < n_sink                      # [N]
+        window = _Window()
         wanted = {int(layer) for layer in pop_layers}
         picks: dict[tuple[str, int], list[int]] = {}
         for ref in refs:
             kind = "neuron" if isinstance(ref, NeuronRef) else "head"
             picks.setdefault((kind, ref.layer), []).append(ref.index)
         peaks: dict[tuple[str, int], tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
-        traces: dict[tuple[str, int], torch.Tensor] = {}
+        traces: dict[tuple[str, int], list[torch.Tensor]] = {}
         pops: dict[tuple[str, int], torch.Tensor] = {}
+        seen: dict[tuple[str, int], int] = {}
 
-        def reduce(key: tuple[str, int], values: torch.Tensor, scaled: torch.Tensor) -> None:
-            """``values`` ``[N, units]``; ``scaled`` marks the values read
-            against a real neutral scale (a pole that never fired on the
-            neutral corpus has none: its value is over the floor and never
-            ranks)."""
-            values = values.masked_fill(sink[:, None], 0.0)
-            rank = values.abs().masked_fill(~scaled | sink[:, None], -1.0)
+        def rows_here() -> tuple[int, int]:
+            """The token rows the running forward holds, ``(r0, r1)``; row
+            ``r0`` is its column ``first + r0 − start``."""
+            return max(0, window.start - first), min(count, window.stop - first)
+
+        def reduce(
+            key: tuple[str, int], values: torch.Tensor, scaled: torch.Tensor, r0: int,
+        ) -> None:
+            """``values`` ``[rows, units]`` for token rows ``r0…``, merged into
+            the running peaks; ``scaled`` marks the values read against a real
+            neutral scale (a pole that never fired on the neutral corpus has
+            none: its value is over the floor and never ranks)."""
+            rows = int(values.shape[0])
+            at_sink = sink[r0:r0 + rows, None]
+            values = values.masked_fill(at_sink, 0.0)
+            rank = values.abs().masked_fill(~scaled | at_sink, -1.0)
             best, at = rank.max(dim=0)
-            peaks[key] = (values.gather(0, at[None])[0], at, best)
+            signed = values.gather(0, at[None])[0]
+            at = at + r0
+            held = peaks.get(key)
+            if held is not None:       # an earlier forward's rows: the larger wins
+                better = best > held[2]
+                signed = torch.where(better, signed, held[0])
+                at = torch.where(better, at, held[1])
+                best = torch.where(better, best, held[2])
+            peaks[key] = (signed, at, best)
+            seen[key] = seen.get(key, 0) + rows
             chosen = picks.get(key)
             if chosen:
-                traces[key] = values[:, torch.tensor(chosen, device=values.device)]
-            if population is not None and key[1] in wanted:
-                pops[key] = values[population]
+                traces.setdefault(key, []).append(
+                    values[:, torch.tensor(chosen, device=values.device)],
+                )
+            if population is not None and key[1] in wanted and r0 <= population < r0 + rows:
+                pops[key] = values[population - r0]
 
         def neuron_hook(block: BlockSpec) -> Any:
             layer_stats = stats.layer(block.layer)
@@ -949,13 +1198,16 @@ class NodeReplayer:
             last = block.layer == n - 1
 
             def hook(_m: nn.Module, args: tuple[Any, ...], _output: Any) -> None:
-                act = args[0][0].index_select(0, positions).float()              # [N, d_ff]
-                scale = torch.where(act >= 0, plus, minus)
-                reduce(
-                    ("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR),
-                    scale > SCALE_FLOOR,
-                )
-                if last:   # the forward's last tap: nothing after it is read
+                r0, r1 = rows_here()
+                if r1 > r0:
+                    col = first + r0 - window.start
+                    act = args[0][0, col:col + r1 - r0].float()                  # [rows, d_ff]
+                    scale = torch.where(act >= 0, plus, minus)
+                    reduce(
+                        ("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR),
+                        scale > SCALE_FLOOR, r0,
+                    )
+                if last and window.final:   # the last tap: nothing after it is read
                     raise _Stop()
             return hook
 
@@ -968,15 +1220,19 @@ class NodeReplayer:
             out_norm = block.attn_out_norm
 
             def hook(_m: nn.Module, args: tuple[Any, ...], output: Any) -> None:
-                z = args[0][0].index_select(0, positions).float()
+                r0, r1 = rows_here()
+                if r1 <= r0:
+                    return
+                col = first + r0 - window.start
+                z = args[0][0, col:col + r1 - r0].float()
                 zh = z.reshape(-1, attn.n_heads, attn.head_dim)
                 norm = torch.einsum("nhi,hij,nhj->nh", zh, grams, zh).clamp_min(0.0).sqrt()
                 if out_norm is not None:
-                    o = _first(output)[0].index_select(0, positions).float()
+                    o = _first(output)[0, col:col + r1 - r0].float()
                     norm = norm * torch.rsqrt(
                         o.pow(2).mean(-1, keepdim=True) + float(out_norm.eps),
                     )
-                reduce(("head", block.layer), norm / scale, scaled.expand_as(norm))
+                reduce(("head", block.layer), norm / scale, scaled.expand_as(norm), r0)
             return hook
 
         handles: list[Any] = []
@@ -984,9 +1240,9 @@ class NodeReplayer:
             for block in blocks:
                 handles.append(block.mlp.down.register_forward_hook(neuron_hook(block)))
                 handles.append(block.attn.o.register_forward_hook(head_hook(block)))
-            _forward(self._model, ids)
-            if len(peaks) != 2 * n:
-                raise RuntimeError("the replay forward did not reach every unit")
+            _drive(self._model, ids, segments, self._ctx, window)
+            if len(seen) != 2 * n or any(rows != count for rows in seen.values()):
+                raise RuntimeError("the replay forward did not reach every unit at every token")
             order = [(kind, L) for L in range(n) for kind in ("neuron", "head")]
             flat = _FlatUnits([(kind, L, int(peaks[(kind, L)][0].numel())) for kind, L in order])
             signed = torch.cat([peaks[key][0] for key in order])
@@ -997,7 +1253,7 @@ class NodeReplayer:
             top_slots = (
                 pack.add(signed[best]), pack.add(best), pack.add(at[best]), pack.add(rank[best]),
             )
-            trace_slots = {key: pack.add(value) for key, value in traces.items()}
+            trace_slots = {key: pack.add(torch.cat(parts)) for key, parts in traces.items()}
             pop_slots = {key: pack.add(value) for key, value in pops.items()}
             host = pack.host()
 
@@ -1036,7 +1292,6 @@ class NodeReplayer:
                     for L in sorted(wanted)
                 ],
             }
-        sink_rows = [i for i, flag in enumerate(sink.tolist()) if flag]
         return {
             "node_id": "",
             "steering": None,
@@ -1045,7 +1300,7 @@ class NodeReplayer:
                 {"raw_index": i, "token_id": int(t), "token": self._decode(int(t))}
                 for i, t in enumerate(forward.raw_ids)
             ],
-            "sink_raw_index": sink_rows[0] if sink_rows else None,
+            "sink_raw_index": 0 if n_sink > 0 else None,
             "top": peaks_out,
             "traces": traces_out,
             "population": population_out,

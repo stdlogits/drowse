@@ -337,6 +337,187 @@ def test_anatomy_refuses_bad_knobs_and_anchors(tiny_session: Any) -> None:
         session.token_anatomy(node.id, 999)
 
 
+def test_anatomy_without_an_r_mid_layer_leaves_attention_alone(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: eager attention and the pattern hooks ran whenever
+    ``patterns > 0``, even with no R lens to rank heads by (no pattern can
+    be returned)."""
+    import drowse.loom.node_replay as node_replay
+
+    session = tiny_session
+    node = _node(session)
+    enabled: list[bool] = []
+    original = node_replay.eager_attention
+
+    def spy(spec: Any, on: bool) -> Any:
+        enabled.append(on)
+        return original(spec, on)
+
+    monkeypatch.setattr(node_replay, "eager_attention", spy)
+    seen = _spy_taps(monkeypatch)
+    session.token_anatomy(node.id, 1, patterns=3)
+    assert enabled == [False] and seen[0][1].patterns is None
+    _install_lens(session, "R", seed=5)
+    anatomy = session.token_anatomy(node.id, 1, patterns=3)["measurements"]["anatomy"]
+    assert enabled == [False, True] and anatomy["patterns"] is not None
+
+
+def _host_reads(monkeypatch: pytest.MonkeyPatch) -> tuple[list[int], list[int]]:
+    """Record the storage of every pack the replay read back and of every
+    tensor read into a Python list while it ran."""
+    import drowse.loom.node_replay as node_replay
+
+    packs: list[int] = []
+    lists: list[int] = []
+    host = node_replay._Pack.host
+    tolist = torch.Tensor.tolist
+
+    def counting_host(self: Any) -> torch.Tensor:
+        out = host(self)
+        packs.append(out.untyped_storage().data_ptr())
+        return out
+
+    def counting_tolist(self: torch.Tensor) -> Any:
+        lists.append(self.untyped_storage().data_ptr())
+        return tolist(self)
+
+    monkeypatch.setattr(node_replay._Pack, "host", counting_host)
+    monkeypatch.setattr(torch.Tensor, "tolist", counting_tolist)
+    return packs, lists
+
+
+def test_anatomy_and_unit_activity_read_back_one_pack(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: anatomy with patterns read the context ids back apart from
+    its pack, and unit activity read its sink mask back.  Every host read
+    is now a view of the one packed transfer."""
+    session = tiny_session
+    _install_lens(session, "R", seed=1)
+    node = _node(session)
+    expected_tail = [session.tokenizer.decode([int(t)]) for t in node.raw_token_ids[:2]]
+    with monkeypatch.context() as patch:
+        packs, lists = _host_reads(patch)
+        anatomy = session.token_anatomy(node.id, 2, patterns=2)["measurements"]["anatomy"]
+    assert len(packs) == 1 and lists and set(lists) == set(packs)
+    context = anatomy["context"]
+    assert context is not None and context[-2:] == expected_tail
+    with monkeypatch.context() as patch:
+        packs, lists = _host_reads(patch)
+        activity = session.unit_activity(node.id, top=4, units=["neuron/L1n3"], raw_index=1)
+    assert len(packs) == 1 and set(lists) <= set(packs)
+    assert activity["sink_raw_index"] is None
+
+
+# -- triggers --------------------------------------------------------------------------
+
+
+def test_replay_segments_follow_each_trigger_window() -> None:
+    from drowse.loom.node_replay import ReplaySegment, replay_segments
+    from drowse.steering.triggers import Trigger
+
+    def spans(triggers: Any) -> list[tuple[int, int, bool, int]]:
+        return [
+            (seg.start, seg.stop, seg.prefill, seg.gen_step)
+            for seg in replay_segments(5, 9, triggers, can_think=False)
+        ]
+
+    # Every term fires everywhere: one forward, whatever the trigger state.
+    assert replay_segments(5, 9, [], can_think=True) == (ReplaySegment(0, 9, False, 0),)
+    assert spans([Trigger.BOTH, Trigger()]) == [(0, 9, False, 0)]
+    # The prompt is the prefill; decode step k sits at position 5 + k - 1.
+    assert spans([Trigger.PROMPT_ONLY]) == [(0, 5, True, 0), (5, 9, False, 1)]
+    assert spans([Trigger.GENERATED_ONLY]) == [(0, 5, True, 0), (5, 9, False, 1)]
+    assert spans([Trigger.first(2)]) == [(0, 5, True, 0), (5, 6, False, 1), (6, 9, False, 2)]
+    assert spans([Trigger.after(3), Trigger.first(2)]) == [
+        (0, 5, True, 0), (5, 6, False, 1), (6, 7, False, 2), (7, 9, False, 3),
+    ]
+    # A family that cannot think is never in a thinking section.
+    assert spans([Trigger.AFTER_THINKING]) == spans([Trigger.GENERATED_ONLY])
+    # Raw token 0's anatomy is the prefill alone.
+    assert replay_segments(5, 5, [Trigger.GENERATED_ONLY], can_think=False) == (
+        ReplaySegment(0, 5, True, 0),
+    )
+
+
+def test_replay_refuses_triggers_the_node_does_not_record() -> None:
+    from dataclasses import replace
+
+    from drowse.errors import SteeringCompositionError
+    from drowse.loom.node_replay import replay_segments
+    from drowse.steering.triggers import Trigger
+
+    with pytest.raises(SteeringCompositionError, match="probe-gated") as info:
+        replay_segments(5, 9, [Trigger.when("x", ">", 0.1)], can_think=False)
+    assert info.value.user_message()[0] == 422
+    for phase in (Trigger.AFTER_THINKING, Trigger.THINKING_ONLY):
+        with pytest.raises(SteeringCompositionError, match="thinking-phase"):
+            replay_segments(5, 9, [phase], can_think=True)
+    # A gate on a prompt-only term never fires: nothing to reproduce.
+    never = replace(Trigger.PROMPT_ONLY, gate=Trigger.when("x", ">", 0.1).gate)
+    assert len(replay_segments(5, 9, [never], can_think=True)) == 2
+
+
+@pytest.mark.parametrize("window", ["@prompt", "@response", "@first:2", "@after:2"])
+def test_a_triggered_node_replays_as_generation_steered_it(
+    tiny_session: Any, window: str,
+) -> None:
+    """Regression: the replay ran one forward at the trigger context's rest
+    state, so a prompt-only term never fired, a response term fired on the
+    prompt too and token windows were wrong.  Each token's unit activity now
+    equals the live reading generation recorded, and the anatomy's steering
+    row is present exactly where the term fired."""
+    from tests.support.sessions import register_vectors
+
+    session = tiny_session
+    register_vectors(session, "probe.axis")
+    session.add_probe("neuron/L1n3")
+    session.add_probe("head/L2h1")
+    node = _node(session, steering=f"2 probe.axis{window}", max_tokens=5)
+    count = len(node.raw_token_ids)
+    names = ["neuron/L1n3", "head/L2h1"]
+    activity = session.unit_activity(node.id, units=names)
+    assert node.recipe is not None and activity["steering"] == node.recipe.steering
+    rows = {
+        int(row["raw_index"]): row["measurements"]["instruments"]["units"]["readings"]
+        for row in node.tokens
+    }
+    assert rows
+    for raw_index, readings in rows.items():
+        for name, trace in activity["traces"].items():
+            assert trace[raw_index] == pytest.approx(readings[name]["value"], abs=1e-4)
+    unsteered = session.unit_activity(node.id, units=names, apply_steering=False)
+    assert unsteered["traces"] != activity["traces"]
+    fired = {
+        "@prompt": lambda k: k == 0,
+        "@response": lambda k: k >= 1,
+        "@first:2": lambda k: 1 <= k < 2,
+        "@after:2": lambda k: k >= 2,
+    }[window]
+    for raw_index in range(count):
+        anatomy = session.token_anatomy(node.id, raw_index, patterns=0)
+        layers = anatomy["measurements"]["anatomy"]["layers"]
+        injected = any(layer["steering"] is not None for layer in layers)
+        assert injected == fired(raw_index), raw_index
+
+
+def test_a_gated_open_steering_refuses_the_replay(tiny_session: Any) -> None:
+    from drowse.errors import SteeringCompositionError
+    from tests.support.sessions import register_vectors
+
+    session = tiny_session
+    register_vectors(session, "probe.axis")
+    node = _node(session, max_tokens=3)
+    with session.steering("0.5 probe.axis@when:neuron/L1n3 > 0"):
+        with pytest.raises(SteeringCompositionError, match="probe-gated"):
+            session.unit_activity(node.id)
+        with pytest.raises(SteeringCompositionError, match="probe-gated"):
+            session.token_anatomy(node.id, 1, patterns=0)
+    # The session replays again once the scope closes.
+    session.unit_activity(node.id)
+
+
 # -- unit activity -------------------------------------------------------------------
 
 
