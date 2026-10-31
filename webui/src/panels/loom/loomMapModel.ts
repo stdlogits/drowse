@@ -6,7 +6,7 @@
 import type { ChatTurn, LoomNodeJSON, TokenScore } from "../../lib/types";
 import { loomMessageWidth } from "./loomLayout";
 import type { LoomSegment } from "./loomSegments";
-import { splitTokenSentences } from "./loomSentences";
+import { splitTokenSentences, tokenWords } from "./loomSentences";
 
 type TokenRow = NonNullable<LoomNodeJSON["tokens"]>[number];
 
@@ -113,35 +113,53 @@ export function segmentWidth(segment: LoomSegment): number {
   });
 }
 
-/** Card height estimate used until the rendered card reports its measured
- *  height: sentence rows of token chips wrapped at the card width. */
+// LoomNode's geometry, which the estimate below mirrors: 12 px padding top and bottom, a 20 px
+// head, 8 px between rows, sentences as 22 px lines (2 px padding above and below, 2 px apart) in
+// the 14 px face at about 6.4 px a character, a 16 px meta line, tools 28 px tall (44 on touch).
+// A shared prefix has a 16 px hint where the tools would be.
+const CHAR_PX = 6.4;
+const BRANCH_PX = 72;
+
+/** Lines a sentence takes: its words wrapped greedily at ``available`` px, then the inline
+ *  "Branch here" (when the sentence can branch), which wraps like a word. */
+function sentenceLines(tokens: readonly { text: string }[], start: number, end: number, available: number, branch: boolean): number {
+  let lines = 1;
+  let used = 0;
+  const place = (px: number) => {
+    if (used > 0 && used + px > available) { lines += 1; used = 0; }
+    if (px > available) { lines += Math.ceil(px / available) - 1; used = px % available; } else used += px;
+  };
+  for (const word of tokenWords(tokens, start, end)) {
+    let chars = 0;
+    for (let index = word.start; index <= word.end; index += 1) chars += (tokens[index].text || "∅").length;
+    place(chars * CHAR_PX);
+  }
+  if (branch) place(BRANCH_PX);
+  return lines;
+}
+
+/** Card height estimate used until the rendered card reports its measured height. */
 export function segmentHeightEstimate(segment: LoomSegment, width: number, coarse: boolean): number {
   return cached(heights, segment.node, `${segment.start}:${segment.end}:${width}:${coarse ? 1 : 0}`, () => {
-    const tokens = segment.node.tokens?.slice(segment.start, segment.end) ?? [];
+    const node = segment.node;
+    const tokens = node.tokens?.slice(segment.start, segment.end) ?? [];
+    const available = width - 32;
+    let body: number;
     if (tokens.length > 0) {
-      const availableWidth = width - 60;
       const sentences = splitTokenSentences(tokens);
-      let rows = 0;
+      body = 2 * (sentences.length - 1);
       for (const sentence of sentences) {
-        rows += 1;
-        let usedWidth = 0;
-        for (let index = sentence.start; index <= sentence.end; index += 1) {
-          const label = (tokens[index].text || "∅").replace(/\s/g, " ");
-          const tokenWidth = Math.min(availableWidth, Math.max(coarse ? 24 : 18, 16 + label.length * 7));
-          if (usedWidth > 0 && usedWidth + 3 + tokenWidth > availableWidth) {
-            rows += 1;
-            usedWidth = tokenWidth;
-          } else {
-            usedWidth += (usedWidth > 0 ? 3 : 0) + tokenWidth;
-          }
-        }
+        const boundary = tokens[sentence.end];
+        const branch = boundary.raw_index != null && boundary.token_id != null;
+        body += 4 + 22 * sentenceLines(tokens, sentence.start, sentence.end, available, branch);
       }
-      return coarse
-        ? 120 + rows * 47 + sentences.length * 56
-        : 105 + rows * 27 + sentences.length * 38;
+    } else {
+      const textLength = segment.start > 0 ? 12 : (node.text ?? "").trim().length;
+      body = 20 * Math.min(6, Math.max(1, Math.ceil(textLength * CHAR_PX / available)));
     }
-    const textLength = (segment.node.text ?? "").trim().length;
-    const lines = Math.min(6, Math.max(1, Math.ceil(textLength / Math.max(1, (width - 40) / 7))));
-    return 98 + lines * 18;
+    if (segment.shared) return 24 + 20 + 8 + body + 8 + 16;
+    const mean = node.mean_logprob;
+    const meta = segment.start > 0 || Boolean(node.notes) || node.recipe != null || (typeof mean === "number" && Number.isFinite(mean));
+    return 24 + 20 + 8 + body + (meta ? 8 + 16 : 0) + 8 + (coarse ? 44 : 28);
   });
 }

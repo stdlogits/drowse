@@ -257,17 +257,14 @@
 
 <section class="drawer-shell" aria-label="Saved conversations drawer">
   <header class="header">
-    <div>
-      <h2 class="title">Saved chats</h2>
-      <p>Named conversations stay on this device until you delete them.</p>
-    </div>
+    <h2 class="dw-title">Saved chats</h2>
     <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="toolbar">
     <label class="search-field">
       <span class="sr-only">Search saved chats</span>
-      <input bind:value={query} type="search" placeholder="Search saved chats…" />
+      <input bind:value={query} type="search" placeholder="Search saved chats" />
     </label>
     <input
       bind:this={fileInput}
@@ -278,14 +275,9 @@
       onchange={importFile}
       tabindex="-1"
     />
-    <div class="toolbar-actions">
-      <button
-        type="button"
-        class="button primary"
-        disabled={genStatus.active}
-        onclick={() => openDrawer("save_conversation")}
-      >Save current chat</button>
-      <button type="button" class="button" disabled={importing} aria-busy={importing} onclick={() => fileInput?.click()}>{importing ? "Importing…" : "Import file"}</button>
+    <div class="dw-row">
+      <button type="button" class="dw-button" disabled={genStatus.active} onclick={() => openDrawer("save_conversation")}>Save current chat</button>
+      <button type="button" class="dw-quiet" disabled={importing} aria-busy={importing} onclick={() => fileInput?.click()}>{importing ? "Importing…" : "Import file"}</button>
     </div>
   </div>
 
@@ -293,30 +285,25 @@
     <div class="storage-protection" role="status">
       <div>
         <strong>Protect saved chats</strong>
-        <p>{persistenceAttempted
-          ? "Your browser did not grant protection. Your chats are still saved locally."
-          : "Automatic browser cleanup protection is off."}</p>
+        {#if persistenceAttempted}<p class="meta">The browser declined; your chats are still saved here.</p>{/if}
       </div>
       <button
         type="button"
-        class="quiet-button"
+        class="dw-quiet"
         disabled={persistenceRequesting}
         onclick={() => void protectStorage()}
-      >{persistenceRequesting ? "Checking…" : persistenceAttempted ? "Try again" : "Protect storage"}</button>
+      >{persistenceRequesting ? "Checking…" : persistenceAttempted ? "Try again" : "Protect"}</button>
     </div>
   {/if}
 
   <div class="body">
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if genStatus.active}<p class="notice">Wait for the current reply to finish before opening another chat.</p>{/if}
+    {#if genStatus.active}<p class="notice">Opening another chat waits for the reply to finish.</p>{/if}
 
     {#if loading}
-      <p class="empty">Loading saved chats…</p>
+      <p class="meta">Loading…</p>
     {:else if filtered.length === 0 && issues.length === 0}
-      <div class="empty-state">
-        <strong>{query.trim() ? "No matches" : "No saved chats yet"}</strong>
-        <p>{query.trim() ? "Try a different name or model." : "Save the current chat to name it and keep its full loom."}</p>
-      </div>
+      <p class="meta">{query.trim() ? "No matches" : "No saved chats yet"}</p>
     {:else}
       <div class="conversation-list" role="list" aria-label="Saved conversations">
         {#each filtered as record (record.id)}
@@ -343,53 +330,53 @@
                 {:else}
                   <strong {...{ "aria-description": (record.name) }} dir="auto">{record.name}</strong>
                 {/if}
-                <span class="card-meta">
+                <span class="meta card-meta">
                   <span class="model">{displayModelName(record.modelId)}{#if record.modelType === "base" || (matchesModel && sessionState.info?.is_base_model)}<BaseModelTag />{/if}</span>
-                  {#if savedConversationState.activeId === record.id}<span class="current-label">Open now</span>{/if}
+                  {#if savedConversationState.activeId === record.id}<span>open now</span>{/if}
                 </span>
               </div>
 
-              <time datetime={new Date(record.updatedAt).toISOString()} {...{ "aria-description": (absoluteTime(record.updatedAt)) }}>
+              <time class="meta" datetime={new Date(record.updatedAt).toISOString()} {...{ "aria-description": (absoluteTime(record.updatedAt)) }}>
                 {relativeTime(record.updatedAt)}
               </time>
             </div>
 
             {#if editingId === record.id}
               <div class="card-actions">
-                <button type="button" class="quiet-button" onclick={() => (editingId = null)}>Cancel</button>
                 <button
                   type="button"
-                  class="button compact"
+                  class="dw-quiet"
                   onclick={() => void saveRename(record)}
                   disabled={!editingName.trim() || changingId === record.id}
                 >Save name</button>
+                <button type="button" class="dw-text" onclick={() => (editingId = null)}>Cancel</button>
               </div>
             {:else if confirmDeleteId === record.id}
-              <div class="confirm-row" role="group" aria-label={`Confirm deletion of ${record.name}`}>
-                <p>Delete “{record.name}”? This cannot be undone.</p>
-                <button type="button" class="quiet-button" onclick={() => (confirmDeleteId = null)}>Cancel</button>
+              <div class="card-actions confirm-row" role="group" aria-label={`Confirm deletion of ${record.name}`}>
+                <p>Delete “{record.name}” for good?</p>
                 <button
                   type="button"
-                  class="danger-button"
+                  class="dw-button"
                   onclick={() => void deleteConversation(record.id)}
                   disabled={changingId === record.id}
                 >Delete</button>
+                <button type="button" class="dw-text" onclick={() => (confirmDeleteId = null)}>Cancel</button>
               </div>
             {:else}
               <div class="card-actions">
                 <button
                   type="button"
-                  class="button primary compact"
+                  class="dw-quiet"
                   onclick={() => void openConversation(record)}
                   disabled={!matchesModel || genStatus.active || openingId !== null}
                   {...{ "aria-description": (matchesModel ? undefined : `Load ${displayModelName(record.modelId)} to open this chat`) }}
                 >{openingId === record.id ? "Opening…" : matchesModel ? "Open" : "Different model"}</button>
-                <button type="button" class="quiet-button" onclick={() => beginRename(record)}>Rename</button>
-                <button type="button" class="quiet-button" disabled={changingId !== null} onclick={() => void download(record)}>Download</button>
-                <button type="button" class="quiet-button" disabled={changingId !== null || importing || openingId !== null}
+                <button type="button" class="dw-text" onclick={() => beginRename(record)}>Rename</button>
+                <button type="button" class="dw-text" disabled={changingId !== null} onclick={() => void download(record)}>Download</button>
+                <button type="button" class="dw-text" disabled={changingId !== null || importing || openingId !== null}
                   aria-label={`Duplicate ${record.name}`} aria-busy={duplicatingId === record.id}
                   onclick={() => void duplicateConversation(record)}>Duplicate</button>
-                <button type="button" class="quiet-button danger-text" onclick={() => requestDelete(record.id)}>Delete</button>
+                <button type="button" class="dw-text" onclick={() => requestDelete(record.id)}>Delete</button>
               </div>
             {/if}
           </article>
@@ -400,22 +387,22 @@
             <div class="card-main">
               <div class="card-copy">
                 <strong>{issue.name || "Unavailable saved chat"}</strong>
-                <span class="model">The saved data is still in storage.</span>
+                <span class="meta">Could not be read; the data is still in storage</span>
               </div>
             </div>
             {#if confirmDeleteId === issue.id}
-              <div class="confirm-row" role="group" aria-label="Confirm deletion of unavailable saved chat">
-                <p>Delete this saved data? This cannot be undone.</p>
-                <button type="button" class="quiet-button" onclick={() => (confirmDeleteId = null)}>Cancel</button>
-                <button type="button" class="danger-button" onclick={() => void deleteConversation(issue.id)}>Delete</button>
+              <div class="card-actions confirm-row" role="group" aria-label="Confirm deletion of unavailable saved chat">
+                <p>Delete this saved data for good?</p>
+                <button type="button" class="dw-button" onclick={() => void deleteConversation(issue.id)}>Delete</button>
+                <button type="button" class="dw-text" onclick={() => (confirmDeleteId = null)}>Cancel</button>
               </div>
             {:else}
               <div class="card-actions">
                 <span
-                  class="issue-reason"
+                  class="meta"
                   {...{ "aria-description": (userFacingError(issue.reason, "This saved chat could not be read. The data is still in storage.")) }}
-                >Could not read this chat</span>
-                <button type="button" class="quiet-button danger-text" onclick={() => requestDelete(issue.id)}>Delete</button>
+                >Unreadable</span>
+                <button type="button" class="dw-text" onclick={() => requestDelete(issue.id)}>Delete</button>
               </div>
             {/if}
           </article>
@@ -426,201 +413,39 @@
 </section>
 
 <style>
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-  }
-  .header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .header div { min-width: 0; }
-  .title { margin: 0; color: var(--fg); font-size: var(--text-lg); font-weight: var(--weight-medium); }
-  .header p { margin: var(--space-2) 0 0; color: var(--fg-dim); font-size: var(--text-sm); line-height: 1.45; }
-  .toolbar {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-2);
-    padding: 0 var(--drawer-gutter-inline) var(--space-4);
-  }
-  .toolbar-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .search-field { min-width: 0; }
-  .search-field input {
-    width: 100%;
-    min-height: var(--control-field);
-    box-sizing: border-box;
-    border: 0;
-    border-radius: var(--radius);
-    background: var(--input-well);
-    box-shadow: var(--shadow-well);
-    color: var(--fg);
-    padding: var(--space-3) var(--space-4);
-    font: inherit;
-  }
-  .search-field input:focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    padding: 0 var(--drawer-gutter-inline) var(--drawer-gutter-block);
-  }
-  .storage-protection {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-3);
-    margin: 0 var(--drawer-gutter-inline) var(--space-4);
-    padding: var(--surface-padding);
-    border-radius: var(--radius);
-    background: var(--warning-bg);
-    box-shadow: inset 0 0 0 1px var(--warning-border);
-  }
-  .storage-protection strong { color: var(--warning-ink); font-size: var(--text-sm); }
-  .storage-protection p { margin: var(--space-1) 0 0; color: var(--warning-ink); font-size: var(--text-xs); line-height: 1.4; }
-  .storage-protection .quiet-button { color: var(--warning-action-ink); background: var(--warning-action); box-shadow: none; }
-  .storage-protection .quiet-button:hover:not(:disabled) { color: var(--warning-action-ink); background: var(--warning-action-hover); }
-  .conversation-list { display: grid; gap: var(--space-3); }
-  .conversation-card {
-    min-width: 0;
-    padding: var(--surface-padding);
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--glass);
-    box-shadow: var(--shadow-rack);
-    transition: background-color 140ms ease, box-shadow 140ms ease;
-  }
-  .conversation-card:hover { background: var(--surface-sheen), var(--glass-strong); box-shadow: var(--shadow-rack-hover); }
-  .conversation-card.current { box-shadow: var(--shadow-card-active); }
-  .card-main {
-    min-width: 0;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .card-copy { min-width: 0; display: grid; gap: var(--space-xs); }
-  .card-copy strong {
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--fg);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-  .model { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg-dim); font-size: var(--text-sm); }
-  .card-meta { display: flex; align-items: center; flex-wrap: wrap; gap: var(--space-2); min-width: 0; }
-  .current-label {
-    flex: 0 0 auto;
-    padding: var(--space-xs) var(--space-xs);
-    border-radius: var(--radius-pill);
-    background: color-mix(in oklch, var(--tint) 12%, transparent);
-    color: var(--ink);
-    font-family: var(--font-data);
-    font-size: var(--text-2xs);
-  }
-  time { align-self: start; color: var(--fg-muted); font-size: var(--text-xs); white-space: nowrap; }
-  .card-actions {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-4);
-    margin-block-start: var(--space-4);
-    margin-inline-start: calc(var(--space-unit) * 10);
-  }
-  .button, .quiet-button, .danger-button {
-    min-width: var(--control-target);
-    min-height: var(--control-field);
-    border: 0;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
-  }
-  .button { background: var(--glass-strong); color: var(--fg-strong); box-shadow: var(--shadow-control); }
-  .button:hover:not(:disabled) { background: var(--glass-bright); }
-  .button.primary { background: var(--action-bg); color: var(--action-ink); }
-  .button.primary:hover:not(:disabled) { background: var(--action-hover); }
-  .button.compact { padding: var(--space-2) var(--space-4); }
-  .quiet-button { background: transparent; color: var(--fg-dim); }
-  .quiet-button:hover:not(:disabled) { background: var(--bg-hover); color: var(--fg); }
-  .danger-text { color: var(--accent-red); }
-  .danger-button { background: var(--danger-bg); color: var(--accent-red); }
-  .danger-button:hover:not(:disabled) { background: var(--danger-hover); }
-  .button:active:not(:disabled), .quiet-button:active:not(:disabled), .danger-button:active:not(:disabled) { transform: scale(0.96); }
-  .button:disabled, .quiet-button:disabled, .danger-button:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
-  .button:focus-visible, .quiet-button:focus-visible, .danger-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .rename-field { display: block; min-width: 0; }
-  .rename-field input {
-    width: 100%;
-    min-width: 0;
-    min-height: var(--control-field);
-    box-sizing: border-box;
-    border: 0;
-    border-radius: var(--radius);
-    background: var(--input-well);
-    box-shadow: var(--shadow-well);
-    color: var(--fg);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-  }
-  .rename-field input:focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .confirm-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto auto;
-    align-items: center;
-    gap: var(--space-2);
-    margin-top: var(--space-3);
-    padding: var(--surface-padding);
-    border-radius: var(--radius);
-    background: var(--surface-sheen), color-mix(in oklab, var(--accent-red) 8%, var(--input-well));
-  }
-  .confirm-row p { margin: 0; color: var(--fg-strong); font-size: var(--text-sm); line-height: 1.4; }
-  .issue-reason { margin-inline-end: auto; color: var(--accent-red); font-size: var(--text-sm); }
-  .notice, .error, .empty { margin: 0 0 var(--space-3); color: var(--fg-dim); font-size: var(--text-sm); line-height: 1.45; }
-  .notice { color: var(--accent-amber); }
-  .error { color: var(--accent-red); }
-  .empty-state {
-    display: grid;
-    gap: var(--space-2);
-    place-items: center;
-    padding: var(--space-8) var(--space-5);
-    text-align: center;
-    color: var(--fg-dim);
-  }
-  .empty-state strong { color: var(--fg); font-size: var(--text-md); }
-  .empty-state p { margin: 0; max-width: 34ch; font-size: var(--text-sm); line-height: 1.5; }
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
+  /* Saved chats: a search, then one row per chat, the open one in wash2; its actions as quiet text. */
+  .drawer-shell { display: flex; flex-direction: column; gap: var(--s4); height: 100%; min-height: 0; padding: var(--s5) var(--s6) 0; color: var(--ink2); }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
+  .toolbar { display: grid; gap: var(--s3); }
+  .search-field input { width: 100%; height: 40px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-small); }
+  .search-field input::-webkit-search-cancel-button { -webkit-appearance: none; }
   .file-input { display: none; }
-  @media (max-width: 520px) {
-    .toolbar { grid-template-columns: 1fr; }
-    .toolbar-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
-    .storage-protection { grid-template-columns: 1fr; }
-    .storage-protection .quiet-button { width: 100%; }
-    .card-actions { margin-inline-start: 0; }
-    .confirm-row { grid-template-columns: 1fr auto auto; }
-    .confirm-row p { grid-column: 1 / -1; }
+  .storage-protection { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); padding: var(--s3) var(--s3) var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .storage-protection strong { color: var(--ink); font: var(--type-control); }
+  .storage-protection .dw-quiet { background: var(--wash2); }
+  .body { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; margin: 0 calc(var(--s3) * -1); padding: 0 0 var(--s6); }
+  .body > p { margin: 0 var(--s3) var(--s3); }
+  .notice, .error { color: var(--ink); font: var(--type-small); }
+  .conversation-list { display: grid; gap: 2px; }
+  .conversation-card { display: grid; gap: var(--s2); min-width: 0; padding: var(--s3); border-radius: var(--r-box); transition: background-color var(--fast) var(--ease); }
+  .conversation-card:hover { background: var(--wash); }
+  .conversation-card.current { background: var(--wash2); }
+  .conversation-card.unavailable { color: var(--ink3); }
+  .card-main { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); min-width: 0; }
+  .card-copy { display: grid; gap: 2px; min-width: 0; }
+  .card-copy strong { overflow: hidden; color: var(--ink); font: var(--type-label); text-overflow: ellipsis; white-space: nowrap; }
+  .card-meta { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); }
+  .model { display: inline-flex; align-items: center; gap: var(--s2); }
+  time { flex: none; white-space: nowrap; }
+  .rename-field input { width: 100%; height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-col); background: var(--paper); color: var(--ink); font: var(--type-label); }
+  .card-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+  .card-actions .dw-quiet { height: 32px; padding: 0 var(--s4); }
+  .conversation-card:hover .dw-quiet, .conversation-card.current .dw-quiet { background: var(--paper); }
+  .confirm-row p { color: var(--ink); font: var(--type-small); }
+  @media (max-width: 720px) {
+    .drawer-shell { padding: var(--s4) var(--s4) 0; }
+    .search-field input, .rename-field input { font-size: 16px; }
+    .card-actions .dw-quiet { height: 44px; }
   }
+  @media (pointer: coarse) { .dw-text, .search-field input, .rename-field input { min-height: 44px; } }
 </style>

@@ -171,38 +171,30 @@
 
 <section class="drawer-shell" class:embedded aria-label={embedded ? "Save and name chat" : "Save conversation drawer"}>
   <header class="header">
-    <div>
-      <h2 class="title"><MorphText text={embedded ? "Save and name chat" : current ? "Update saved chat" : "Save chat"} /></h2>
-      <p>Keep the full loom, response settings, and readings on this device.</p>
-    </div>
+    <h2 class="dw-title"><MorphText text={embedded ? "Save and name chat" : current ? "Update saved chat" : "Save chat"} /></h2>
     {#if !embedded}<IconButton icon="close" label="Close" onclick={closeDrawer} />{/if}
   </header>
 
   <div class="body">
-    <div class="identity-card">
-      <label class="name-field">
-        <span>Name</span>
-        <input
-          bind:value={name}
-          maxlength="120"
-          autocomplete="off"
-          placeholder="Untitled conversation"
-          disabled={loading || saving}
-        />
-      </label>
-    </div>
+    <label class="name-field">
+      <span class="meta">Name</span>
+      <input
+        bind:value={name}
+        maxlength="120"
+        autocomplete="off"
+        placeholder="Untitled conversation"
+        disabled={loading || saving}
+      />
+    </label>
 
-    <div class="summary" aria-label="Conversation summary">
-      <span>{modelName}</span>
+    <div class="dw-facts" aria-label="Conversation summary">
+      <span><b>{modelName}</b></span>
       <span>{turnCount} {turnCount === 1 ? "turn" : "turns"}</span>
+      <span>kept in this browser</span>
     </div>
-
-    <p class="storage-note">
-      Stored in this browser. Drowse removes a saved chat only after you confirm Delete.
-    </p>
 
     {#if genStatus.active}
-      <p class="notice">Wait for the current reply to finish before saving.</p>
+      <p class="notice">Saving waits for the reply to finish.</p>
     {/if}
     {#if error}
       <p class="error" role="alert">{error}</p>
@@ -210,19 +202,18 @@
   </div>
 
   <footer class="footer">
-    <button type="button" class="text-button" onclick={downloadCopy} disabled={loading || saving || genStatus.active}>
+    <button type="button" class="dw-text" onclick={downloadCopy} disabled={loading || saving || genStatus.active}>
       <MorphText text={backupState === "preparing" ? "Preparing copy…" : backupState === "ready" ? "Download started" : "Download copy"} numbers={false} />
     </button>
     <div class="footer-actions">
       {#if current}
-        <button type="button" class="button" onclick={() => void save(true)} disabled={loading || saving || genStatus.active}>
+        <button type="button" class="dw-quiet" onclick={() => void save(true)} disabled={loading || saving || genStatus.active}>
           Save as new
         </button>
       {/if}
       <button
         type="button"
-        class="button primary"
-        class:loading-pulse={saving}
+        class="dw-button"
         aria-busy={saving}
         onclick={() => void save(false)}
         disabled={loading || saving || genStatus.active || !name.trim()}
@@ -234,140 +225,20 @@
 </section>
 
 <style>
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
+  .drawer-shell { display: flex; flex-direction: column; gap: var(--s5); height: 100%; min-height: 0; padding: var(--s5) var(--s6) var(--s6); color: var(--ink2); }
+  .drawer-shell.embedded { height: auto; padding: 0; }
+  .header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
+  .embedded .dw-title { font: var(--type-lead); letter-spacing: 0; }
+  .body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s4); min-height: 0; margin: -4px; padding: 4px; overflow-y: auto; }
+  .embedded .body { flex: none; overflow: visible; }
+  .name-field { display: grid; gap: var(--s1); min-width: 0; }
+  .name-field input { width: 100%; min-width: 0; height: 48px; padding: 0 var(--s4); border: 0; border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-label); }
+  .notice, .error { color: var(--ink); font: var(--type-small); }
+  .footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s3) var(--s4); }
+  .footer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); margin-left: auto; }
+  @media (max-width: 720px) {
+    .drawer-shell:not(.embedded) { padding: var(--s4) var(--s4) var(--s5); }
+    .name-field input { font-size: 16px; }
   }
-  .header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .drawer-shell.embedded {
-    --drawer-gutter-inline: var(--surface-gutter);
-    --drawer-gutter-block: var(--panel-padding);
-    height: auto;
-  }
-  .embedded .body {
-    flex: none;
-    overflow: visible;
-  }
-  .header div { min-width: 0; }
-  .title {
-    margin: 0;
-    color: var(--fg);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-medium);
-  }
-  .header p {
-    margin: var(--space-2) 0 0;
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    line-height: 1.45;
-  }
-  .body {
-    flex: 1 1 auto;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--drawer-gutter-block);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .identity-card {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--surface-padding);
-    border-radius: var(--radius-lg);
-    background: var(--glass);
-    box-shadow: var(--shadow-rack);
-  }
-  .name-field {
-    min-width: 0;
-    display: grid;
-    gap: var(--space-2);
-  }
-  .name-field span {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
-  }
-  .name-field input {
-    width: 100%;
-    min-width: 0;
-    min-height: 46px;
-    box-sizing: border-box;
-    border: 0;
-    border-radius: var(--radius);
-    background: var(--input-well);
-    box-shadow: var(--shadow-well);
-    color: var(--fg);
-    padding: var(--space-3) var(--space-4);
-    font: inherit;
-    font-size: var(--text-md);
-  }
-  .name-field input:focus { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  .summary {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-3);
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-  }
-  .summary span:first-child { color: var(--fg-strong); }
-  .storage-note, .notice, .error {
-    margin: 0;
-    font-size: var(--text-sm);
-    line-height: 1.5;
-  }
-  .storage-note { color: var(--fg-muted); }
-  .notice { color: var(--accent-amber); }
-  .error { color: var(--accent-red); }
-  .footer {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--drawer-gutter-block);
-    padding: 0 var(--drawer-gutter-inline) var(--drawer-gutter-block);
-  }
-  .footer-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--drawer-gutter-block); }
-  .button, .text-button {
-    min-height: var(--control-field);
-    border: 0;
-    border-radius: var(--radius);
-    font: inherit;
-    cursor: pointer;
-    transition: background-color 120ms ease, color 120ms ease, transform 120ms ease;
-  }
-  .button {
-    padding: var(--space-3) var(--space-5);
-    background: var(--glass-strong);
-    color: var(--fg-strong);
-    box-shadow: var(--shadow-control);
-  }
-  .button:hover:not(:disabled) { background: var(--glass-bright); }
-  .button.primary { background: var(--action-bg); color: var(--action-ink); }
-  .button.primary:hover:not(:disabled) { background: var(--action-hover); }
-  .button:active:not(:disabled), .text-button:active:not(:disabled) { transform: scale(0.96); }
-  .text-button { padding: var(--space-2); background: transparent; color: var(--fg-dim); }
-  .text-button:hover:not(:disabled) { color: var(--fg); background: var(--bg-hover); }
-  .button:disabled, .text-button:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
-  .button:focus-visible, .text-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  @media (max-width: 520px) {
-    .drawer-shell.embedded { --drawer-gutter-inline: var(--panel-padding); }
-    .footer { align-items: stretch; flex-direction: column-reverse; }
-    .footer-actions { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); }
-    .text-button { align-self: flex-start; }
-  }
+  @media (pointer: coarse) { .dw-text { min-height: 44px; } }
 </style>

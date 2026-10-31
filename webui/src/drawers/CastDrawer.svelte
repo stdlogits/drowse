@@ -246,19 +246,11 @@
 </script>
 
 <section class="drawer-shell" aria-label="Role settings drawer">
-  <header class="header">
-    <div>
-      <h2 class="title">Role settings</h2>
-    </div>
-    <IconButton icon="close" label="Close" onclick={() => void closeWithSave()} />
-  </header>
-
   <div class="body">
-    <section class="panel role-picker" aria-labelledby="conversation-roles-title">
-      <div class="section-heading">
-        <div>
-          <h3 id="conversation-roles-title">Conversation roles</h3>
-        </div>
+    <section class="dw-sec role-picker" aria-labelledby="conversation-roles-title">
+      <div class="dw-sec-head">
+        <h3 id="conversation-roles-title" class="head">Conversation roles</h3>
+        <IconButton icon="close" label="Close" onclick={() => void closeWithSave()} />
       </div>
       <ul class="roster" aria-label="Conversation roles">
         {#each roster as row (row.label)}
@@ -269,16 +261,16 @@
               aria-pressed={editingKey === row.key}
               onclick={() => void selectMember(row)}
             >
-              <span class="glyph" aria-hidden="true">{row.label.slice(0, 1).toUpperCase()}</span>
+              <span class="dw-pip" class:is-model={row.label === "assistant"} aria-hidden="true"></span>
               <span class="member-text">
                 <span class="member-label">{row.label}</span>
                 {#if row.member?.recipe && Object.keys(row.member.recipe).length > 0}
-                  <span class="member-recipe">Standing recipe</span>
+                  <span class="meta">standing recipe</span>
                 {:else}
-                  <span class="member-notes">Uses the current reply settings</span>
+                  <span class="meta">reply settings</span>
                 {/if}
                 {#if row.member?.notes}
-                  <span class="member-notes">{row.member.notes}</span>
+                  <span class="meta member-notes">{row.member.notes}</span>
                 {/if}
               </span>
             </button>
@@ -288,46 +280,43 @@
     </section>
 
     {#if editingKey && editingLabel}
-      <section class="panel form" aria-labelledby="selected-role-title">
-        <div class="section-heading">
-          <div>
-            <h3 id="selected-role-title">{editingLabel}</h3>
-          </div>
+      <section class="dw-sec form" aria-labelledby="selected-role-title">
+        <div class="dw-sec-head">
+          <h3 id="selected-role-title" class="role-title">{editingLabel}</h3>
+          <p class="meta" role="status" aria-live="polite">{saveStatus}</p>
         </div>
-        <div class="field">
-          <span class="field-heading">
-            <span class="label" data-tip={IDENTITY_HELP.cast}>Steering expression</span>
-          </span>
+        <label class="field">
+          <span class="meta" data-tip={IDENTITY_HELP.cast}>Steering</span>
           <input
-            class="input mono"
             bind:value={steering}
-            placeholder="Leave blank for normal behavior"
+            placeholder="None"
             spellcheck="false"
             autocomplete="off"
             aria-label={`Steering expression for ${editingLabel}`}
             oninput={scheduleSave}
           />
-        </div>
-        <div class="field">
-          <span class="field-heading"><span class="label" data-tip={SAMPLING_HELP.thinking}>Thinking default</span></span>
-          <Select
-            value={thinking}
-            options={[{ value: "inherit", label: "Use reply setting" }, { value: "true", label: "On" }, { value: "false", label: "Off" }]}
-            disabled={!sessionState.info?.supports_thinking || !sessionState.info?.thinking_is_optional}
-            ariaLabel={`Thinking default for ${editingLabel}`}
-            onchange={(value) => { thinking = value; scheduleSave(); }}
-          />
-        </div>
-        <div class="field">
-          <span class="field-heading"><span class="label" data-tip={SAMPLING_HELP.seed}>Seed default</span></span>
-          <NumberInput value={seed} min={samplingSeedMinimum(getRuntimeClient().mode)} max={SAMPLING_SEED_MAX} step={1} allowEmpty placeholder="Use reply setting" ariaLabel={`Seed default for ${editingLabel}`} onchange={(value) => { seed = value === null ? null : Math.floor(value); scheduleSave(); }} />
+        </label>
+        <div class="pair">
+          <div class="field">
+            <span class="meta" data-tip={SAMPLING_HELP.thinking}>Thinking</span>
+            <Select
+              value={thinking}
+              options={[{ value: "inherit", label: "Reply setting" }, { value: "true", label: "On" }, { value: "false", label: "Off" }]}
+              disabled={!sessionState.info?.supports_thinking || !sessionState.info?.thinking_is_optional}
+              ariaLabel={`Thinking default for ${editingLabel}`}
+              onchange={(value) => { thinking = value; scheduleSave(); }}
+            />
+          </div>
+          <div class="field">
+            <span class="meta" data-tip={SAMPLING_HELP.seed}>Seed</span>
+            <NumberInput value={seed} min={samplingSeedMinimum(getRuntimeClient().mode)} max={SAMPLING_SEED_MAX} step={1} allowEmpty placeholder="Reply setting" ariaLabel={`Seed default for ${editingLabel}`} onchange={(value) => { seed = value === null ? null : Math.floor(value); scheduleSave(); }} />
+          </div>
         </div>
         <label class="field">
-          <span class="label">Private note</span>
+          <span class="meta">Private note</span>
           <input
-            class="input"
             bind:value={notes}
-            placeholder="What should you remember about this role?"
+            placeholder="A note for yourself"
             autocomplete="off"
             oninput={scheduleSave}
           />
@@ -335,237 +324,39 @@
         {#if err}
           <p class="error" role="alert">{err}</p>
         {/if}
-        <div class="form-actions">
-          <p class="save-status" role="status" aria-live="polite">{saveStatus}</p>
-          {#if selectedMember?.origin === "configured"}
-            <button
-              type="button"
-              class="btn quiet"
-              disabled={busy}
-              onclick={() => void clearSelectedSettings()}
-            >Clear settings</button>
-          {/if}
-        </div>
+        {#if selectedMember?.origin === "configured"}
+          <div class="dw-row">
+            <button type="button" class="dw-text" disabled={busy} onclick={() => void clearSelectedSettings()}>Clear settings</button>
+          </div>
+        {/if}
       </section>
     {/if}
   </div>
 </section>
 
 <style>
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
+  /* Roles: the roster as rows (the one being edited in wash2), its settings beside it. */
+  .drawer-shell { min-width: 0; color: var(--ink2); }
+  .body { display: grid; grid-template-columns: minmax(220px, 300px) minmax(0, 1fr); gap: var(--s7); align-items: start; }
+  .roster { display: grid; gap: 2px; }
+  .member-main { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: var(--s2); align-items: start; width: 100%; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-box); background: transparent; color: var(--ink2); font: var(--type-small); text-align: left; cursor: pointer; transition: background-color var(--fast) var(--ease); }
+  .member-main:hover { background: var(--wash); }
+  .member.editing .member-main { background: var(--wash2); }
+  .member-text { display: grid; gap: 2px; min-width: 0; }
+  .member-label { color: var(--ink); font: var(--type-control); }
+  .member-notes { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .role-title { margin: 0; color: var(--ink); font: var(--type-lead); }
+  .form { gap: var(--s4); }
+  .field { display: grid; gap: var(--s1); min-width: 0; }
+  .field input { width: 100%; height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-small); }
+  .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+  .error { color: var(--ink); font: var(--type-small); }
+  @media (max-width: 860px) {
+    .body { grid-template-columns: minmax(0, 1fr); gap: var(--s6); }
   }
-  .header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-6);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
+  @media (max-width: 720px) {
+    .pair { grid-template-columns: minmax(0, 1fr); }
+    .field input { font-size: 16px; }
   }
-  .title {
-    color: var(--accent);
-    font-family: var(--font-structure);
-    font-size: var(--text-md);
-    font-weight: var(--weight-structure);
-  }
-  .body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: grid;
-    grid-auto-rows: max-content;
-    align-content: start;
-    gap: var(--drawer-section-gap);
-    min-height: 0;
-  }
-  .panel {
-    padding: var(--panel-padding);
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--glass);
-    box-shadow: var(--shadow-well);
-  }
-  .section-heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-4);
-    margin-bottom: var(--space-5);
-  }
-  h3 {
-    margin: 0;
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-size: var(--text-base);
-    font-weight: var(--weight-structure);
-  }
-  .roster {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-3);
-  }
-  .member {
-    min-width: 0;
-    border-radius: var(--radius);
-  }
-  .member-main {
-    width: 100%;
-    min-height: var(--control-field);
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    background: var(--bg-elev);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    color: inherit;
-    font: inherit;
-    text-align: start;
-    padding: var(--surface-padding);
-    cursor: pointer;
-    min-width: 0;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .member-main:hover {
-    background: var(--surface-hi);
-  }
-  .member-main:active {
-    transform: scale(var(--press-scale));
-  }
-  .member-main[aria-pressed="true"] {
-    background: var(--accent-subtle);
-    border-color: var(--accent-strong);
-  }
-  .glyph {
-    flex: none;
-    width: 28px;
-    height: 28px;
-    border-radius: 50%;
-    background: var(--glass-bright);
-    color: var(--fg-strong);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-  .member-text {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
-    min-width: 0;
-  }
-  .member-label {
-    font-family: var(--font-mono);
-    color: var(--fg-strong);
-  }
-  .member-recipe,
-  .member-notes {
-    font-size: var(--text-xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .member-recipe { color: var(--accent); }
-  .member-notes {
-    color: var(--fg-muted);
-  }
-  .form {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .label {
-    color: var(--fg-strong);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-structure);
-  }
-  .field-heading {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .input {
-    min-height: var(--control-field);
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-    font: inherit;
-  }
-  .input.mono {
-    font-family: var(--font-mono);
-  }
-  .input:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 1px;
-  }
-  .error {
-    margin: 0;
-    color: var(--accent-red);
-    font-size: var(--text-sm);
-  }
-  .form-actions {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-    margin-top: var(--space-2);
-  }
-  .save-status {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .btn {
-    min-height: var(--control-field);
-    background: var(--glass);
-    color: var(--fg-strong);
-    border: 1px solid transparent;
-    padding: var(--space-3) var(--space-5);
-    font: inherit;
-    border-radius: var(--radius);
-    font-family: var(--font-structure);
-    font-weight: var(--weight-structure);
-    cursor: pointer;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .btn:hover:not(:disabled) {
-    background: var(--glass-strong);
-  }
-  .btn.quiet {
-    background: transparent;
-    color: var(--fg-muted);
-  }
-  .btn.quiet:hover:not(:disabled) {
-    color: var(--accent-red);
-  }
-  .btn:active:not(:disabled) {
-    transform: scale(var(--press-scale));
-  }
-
-  @media (max-width: 560px) {
-    .roster { grid-template-columns: minmax(0, 1fr); }
-  }
+  @media (pointer: coarse) { .dw-text, .field input { min-height: 44px; } }
 </style>

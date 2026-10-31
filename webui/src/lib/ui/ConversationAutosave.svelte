@@ -10,7 +10,6 @@
   import { conversationLibrary, savedConversationState, registerConversationAutosave } from "../stores/savedConversations.svelte";
   import { userFacingError } from "../runtime/userFacingError";
   import { openDrawer, drawerState } from "../stores/drawers.svelte";
-  import Button from "./Button.svelte";
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let tail: Promise<void> = Promise.resolve();
@@ -86,12 +85,16 @@
 {#if savedConversationState.status === "error"}
   <div class="autosave-error" role="alert">
     <span>{savedConversationState.error}</span>
-    <Button onclick={() => void flush().catch(() => undefined)}>Retry autosave</Button>
-    <Button variant="solid" onclick={() => openDrawer("save_conversation")}>Save chat / backup</Button>
+    <button type="button" class="dw-text" onclick={() => void flush().catch(() => undefined)}>Retry</button>
+    <button type="button" class="dw-quiet" onclick={() => openDrawer("save_conversation")}>Save or back up</button>
   </div>
 {/if}
 
 <style>
-  .autosave-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--surface-padding); color: var(--error-text); background: var(--danger-bg); font-size: var(--text-sm); }
-  .autosave-error span { flex: 1 1 20rem; min-width: 0; overflow-wrap: anywhere; }
+  /* An autosave that failed: one wash line under the header, the fixes beside it. */
+  .autosave-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin: 0 var(--s6) var(--s2); padding: var(--s2) var(--s2) var(--s2) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-small); }
+  .autosave-error span { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
+  .autosave-error .dw-quiet { background: var(--wash2); }
+  @media (max-width: 720px) { .autosave-error { margin: 0 var(--s4) var(--s2); } }
+  @media (pointer: coarse) { .dw-text { min-height: 44px; } }
 </style>
