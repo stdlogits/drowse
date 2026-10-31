@@ -1,4 +1,4 @@
-"""The declarative verb table: eight groups, dispatch, help, short flags.
+"""The declarative verb table: nine groups, dispatch, help, short flags.
 
 Parser *behavior* only — what a runner does with its namespace is tested in
 ``test_cli_flags`` / ``test_cli_manifold``.
@@ -37,9 +37,15 @@ def _all_paths() -> list[tuple[str, ...]]:
     return out
 
 
-def test_exactly_eight_top_level_verbs() -> None:
+def test_exactly_nine_top_level_verbs() -> None:
     assert set(_subparsers(build_parser())) == {
-        "serve", "manifold", "pack", "config", "experiment", "template", "lens", "sae",
+        "serve", "manifold", "pack", "config", "experiment", "template", "lens", "sae", "unit",
+    }
+
+
+def test_the_unit_group() -> None:
+    assert set(_subparsers(_parser_at(["unit"]))) == {
+        "read", "top", "find", "stats", "fetch", "ls", "rm",
     }
 
 
@@ -73,7 +79,7 @@ def test_short_flags_keep_one_meaning_tree_wide() -> None:
 
 @pytest.mark.parametrize("argv", [
     [], ["manifold"], ["pack"], ["pack", "export"], ["template"], ["lens"],
-    ["sae"], ["experiment"], ["experiment", "transcript"], ["config"],
+    ["sae"], ["experiment"], ["experiment", "transcript"], ["config"], ["unit"],
 ])
 def test_bare_group_prints_its_help_and_exits_zero(
     argv: list[str], capsys: pytest.CaptureFixture[str],
@@ -118,6 +124,15 @@ def _parser_at(argv: list[str]) -> argparse.ArgumentParser:
     ["sae", "fetch", "m", "saelens:r", "--layer", "-1"],
     ["sae", "rm", "m", "local:x", "-j"],
     ["pack", "push", "x", "-p"],
+    ["unit", "read", "neuron/L8n344"],          # -m is required
+    ["unit", "top", "owl", "-m", "x", "--by", "says"],
+    ["unit", "top", "owl", "-m", "x", "-k", "0"],
+    ["unit", "fetch"],
+    ["unit", "fetch", "m", "-d", "cpu"],        # no model load: no -d/-q
+    ["unit", "ls", "m", "-f"],
+    ["unit", "catalog"],                       # the binding is listed by `ls`
+    ["unit", "rm", "m", "-j"],
+    ["lens", "decompose", "x", "-m", "m", "--dictionary", "heads"],
 ])
 def test_rejected_argv(argv: list[str]) -> None:
     with pytest.raises(SystemExit) as exc:
@@ -165,6 +180,22 @@ def test_rejected_argv(argv: list[str]) -> None:
      {"command": "experiment transcript run", "model": None, "strict": False}),
     (["sae", "fetch", "m", "saelens:r", "--layer", "14", "--revision", "abc"],
      {"layer": 14, "revision": "abc"}),
+    (["unit", "read", "neuron/L8n344", "-m", "m"],
+     {"command": "unit read", "unit": "neuron/L8n344", "model": "m", "top_k": 8,
+      "hide_hubs": False, "json_output": False, "device": "auto", "quantize": None}),
+    (["unit", "read", "head/L20h17", "-m", "m", "--hide-hubs", "-k", "16", "-j"],
+     {"hide_hubs": True, "top_k": 16, "json_output": True}),
+    (["unit", "top", "#42", "-m", "m"],
+     {"command": "unit top", "token": "#42", "by": "writes", "top_k": 20, "layers": None}),
+    (["unit", "top", "owl", "-m", "m", "--by", "fires", "--layers", "0-8"],
+     {"by": "fires", "layers": "0-8"}),
+    (["unit", "find", "honest", "-m", "m", "--layers", "workspace"],
+     {"command": "unit find", "selector": "honest", "top_k": 16, "layers": "workspace"}),
+    (["unit", "stats", "neuron/L1n2", "-m", "m", "-j"], {"command": "unit stats", "json_output": True}),
+    (["unit", "fetch", "Qwen/Qwen3-8B", "-f"], {"command": "unit fetch", "model": "Qwen/Qwen3-8B", "force": True}),
+    (["unit", "ls"], {"command": "unit ls", "model": None}),
+    (["unit", "rm", "Qwen/Qwen3-8B", "-y"], {"command": "unit rm", "yes": True}),
+    (["lens", "decompose", "x", "-m", "m", "--dictionary", "neurons"], {"dictionary": "neurons"}),
 ])
 def test_parsed_namespace(argv: list[str], expected: dict[str, Any]) -> None:
     args = parse_args(argv)

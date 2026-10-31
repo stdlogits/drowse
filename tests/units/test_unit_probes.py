@@ -25,8 +25,8 @@ from drowse.units.capture import TapUnit, UnitTap
 from drowse.units.runtime import UnitSite
 from tests.support.blocks import tiny_dense_model
 from tests.support.sessions import TinyCheckpoint, TinySessionFactory, register_vectors
-from tests.support.tiny_models import ChatFamily, tiny_model, write_tiny_checkpoint
-from tests.support.units import random_unit_stats
+from tests.support.tiny_models import tiny_model, write_tiny_checkpoint
+from tests.support.units import GEMMA4_MIXED_HEADS, random_unit_stats
 
 
 def _site(spec: Any, ref: Any, stats: Any) -> UnitSite:
@@ -121,37 +121,9 @@ def test_the_tap_reads_activation_over_scale(family: str, refs: list[Any]) -> No
     assert tap.values_at(2) is None and tap.values_at(-1) is None
 
 
-#: A Gemma 4 chat family whose sliding layers (0, 2) have 8-wide heads and
-#: global layers (1, 3) 16-wide ones.
-_GEMMA4 = ChatFamily(
-    name="gemma4_text",
-    model_type="gemma4_text",
-    chat_template=(
-        "{{ bos_token }}"
-        "{% for m in messages %}"
-        "{% set role = 'model' if m['role'] == 'assistant' else m['role'] %}"
-        "<|turn>{{ role }}\n{{ m['content'] }}<turn|>\n"
-        "{% endfor %}"
-        "{% if add_generation_prompt %}<|turn>model\n{% endif %}"
-    ),
-    pad="<pad>",
-    bos="<bos>",
-    eos="<turn|>",
-    header_open="<|turn>",
-    header_close="\n",
-    config_overrides={
-        "sliding_window": 4096, "hidden_size_per_layer_input": 0,
-        "global_head_dim": 16, "num_global_key_value_heads": 1,
-        "layer_types": [
-            "sliding_attention", "full_attention", "sliding_attention", "full_attention",
-        ],
-    },
-)
-
-
 @pytest.mark.usefixtures("isolated_home")
 def test_probes_and_gates_read_heads_of_both_gemma4_sizes(tmp_path: Path) -> None:
-    checkpoint = TinyCheckpoint(write_tiny_checkpoint(tmp_path / "tiny-g4", _GEMMA4), _GEMMA4)
+    checkpoint = TinyCheckpoint(write_tiny_checkpoint(tmp_path / "tiny-g4", GEMMA4_MIXED_HEADS), GEMMA4_MIXED_HEADS)
     factory = TinySessionFactory(checkpoint, tmp_path / "seed")
     try:
         session = factory()
@@ -384,7 +356,7 @@ def test_the_instruments_route_lists_the_units_family(
     assert units["source"] is None
     assert units["live"] == {"enabled": True}
     assert units["capabilities"] == {
-        "sources": False, "preparations": [], "token_readout": True,
+        "sources": False, "preparations": ["fetch"], "token_readout": True,
         "source_switch": False,
     }
     off = client.post(

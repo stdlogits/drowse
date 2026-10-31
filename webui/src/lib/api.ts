@@ -53,10 +53,15 @@ import type {
   TemplateSummary,
   TranscriptLoadResponseJSON,
   UnitActivityJSON,
+  HeadReadJSON,
+  NeuronReadJSON,
+  UnitCatalogJSON,
+  UnitFindJSON,
+  UnitTopJSON,
   VectorInfo,
 } from "./types";
 import { ApiError } from "./runtime/errors";
-import type { RuntimeOperationReceipt } from "./runtime/contracts";
+import type { RuntimeOperationReceipt, UnitFindBody } from "./runtime/contracts";
 import { getApiKey, httpAuthHeaders } from "./runtime/http-auth";
 
 // --------------------------------------------------------- session id --
@@ -843,6 +848,42 @@ export const apiInstruments = {
       `${SESSION_BASE(id)}/instruments/sae/features/metadata`,
       jsonBody({ ids }),
     );
+  },
+
+  /** One unit from its weights (the unit view): ``neuron/L8n344`` or
+   *  ``head/L20h17``; ``hideHubs`` ranks by the layer-contrastive z. */
+  unitRead(
+    unit: string,
+    options: { k?: number; hideHubs?: boolean } = {},
+    id: string = SESSION,
+  ): Promise<NeuronReadJSON | HeadReadJSON> {
+    const params = new URLSearchParams({ unit });
+    if (options.k !== undefined) params.set("k", String(options.k));
+    if (options.hideHubs) params.set("hide_hubs", "true");
+    return request(`${SESSION_BASE(id)}/instruments/units/read?${params.toString()}`);
+  },
+
+  /** Neuron poles that write or fire on a token, most specific first. */
+  unitTop(
+    token: string,
+    options: { by?: "writes" | "fires"; layers?: string; k?: number } = {},
+    id: string = SESSION,
+  ): Promise<UnitTopJSON> {
+    const params = new URLSearchParams({ token });
+    if (options.by) params.set("by", options.by);
+    if (options.layers) params.set("layers", options.layers);
+    if (options.k !== undefined) params.set("k", String(options.k));
+    return request(`${SESSION_BASE(id)}/instruments/units/top?${params.toString()}`);
+  },
+
+  /** A selector, or a vector at a layer, split over each layer's neuron writes. */
+  unitFind(body: UnitFindBody, id: string = SESSION): Promise<UnitFindJSON> {
+    return request(`${SESSION_BASE(id)}/instruments/units/find`, jsonBody(body));
+  },
+
+  /** The model's neuron-lens catalog binding (disk only). */
+  unitCatalog(id: string = SESSION): Promise<UnitCatalogJSON> {
+    return request(`${SESSION_BASE(id)}/instruments/units/catalog`);
   },
 };
 

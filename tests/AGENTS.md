@@ -49,7 +49,7 @@ so keep test modules exactly one directory deep.
 | `steering/` | expression grammar, triggers, steering scopes, hooks, installation, subspace/manifold steering, ablation |
 | `readout/` | monitor, probe roster, read planner, captures, measurements envelope, instrument types, geometry replay, `score_hidden` |
 | `lens/`, `sae/` | lens math, the transport estimator (against the autograd oracle), RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
-| `units/` | neutral unit statistics (against a hand computation), the tap, unit probes and gates through a tiny session, replay, unit ablation against hand-patched forwards, neuron pushes, refusals |
+| `units/` | neutral unit statistics (against a hand computation), the tap, unit probes and gates through a tiny session, replay, unit ablation against hand-patched forwards, neuron pushes, refusals; static unit reads, `top` and `find` against hand computations with hand-built R/S lenses, the neuron-lens catalog over a monkeypatched Hub with tiny parquets, the unit routes |
 | `generation/` | decode loop, sampling, logits, prefix cache, render, results, scoring, token payloads |
 | `fit/` | extraction pipeline, capture, bake, monopolar fits, preflight, naturalness, transfer alignment |
 | `loom/` | tree, ops, diff, filter, transcript, recipe overrides, token rows, token replay, joint logprobs, concurrency |
@@ -146,7 +146,7 @@ set session privates.
 | `engine.py` | `engine_over(host, ...)`: a `GenerationEngine` with an inert runtime, for call composition without a model. |
 | `lens.py` | `LensHarness` (a `LensInstrument` on the toy model, recording `on_change` and exclusive sections), `lens_instrument`/`lens_kwargs` (constructor arguments with inert defaults), `FakeCapture`. |
 | `sae.py` | `MockSaeBackend` (identity encode/decode by default), `sae_instrument` (a real `SaeInstrument` + `SaeRuntime`; registry effects land on `.effects`), `make_resident` (installs a residency without the load path). |
-| `units.py` | `inert_units_instrument` (a real `UnitsInstrument` over a model-less runtime, for rigs), `random_unit_stats(spec)`, `patched_forward_logits(model, ids, {module: patch})` (the hand-patched forward unit hooks are checked against). |
+| `units.py` | `inert_units_instrument` (a real `UnitsInstrument` over a model-less runtime, for rigs), `random_unit_stats(spec)`, `patched_forward_logits(model, ids, {module: patch})` (the hand-patched forward unit hooks are checked against), `GEMMA4_MIXED_HEADS` (a tiny Gemma 4 chat family with 8- and 16-wide heads, for `TinyCheckpoint`). |
 | `replay.py` | `ReplayRig` (a real `TokenReplayer` over the toy model and a real `LoomTree`, recording renders, scopes, exclusive sections and capture forwards; hand `rig.replay` to the instrument under test), `unwired_replay` (fails loudly if called). |
 | `geometry.py` | `stub_geometry_instrument(stub)`: a real `GeometryInstrument` reading a hand-built stub's attributes per call. For the remaining stub suites; new tests use `tiny_session`. |
 | `capture.py` | `install_capture` (swaps `fit.capture._encode_and_capture_all_batch` for a synthetic per-row encoder and pins the baseline prompts to one), `StubHandle` (identity layers + a covering synthetic whitener), for model-free `ManifoldExtractionPipeline` tests. |

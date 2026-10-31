@@ -1,9 +1,9 @@
 # drowse/cli
 
 The `drowse` console script (`drowse.cli.main:main`; `python -m drowse` is the
-same entry point): eight verb groups — `serve`, `manifold`, `pack`, `config`,
-`experiment`, `template`, `lens`, `sae` — as thin frontends over `DrowseSession`
-and the `store`/`fit`/`lens`/`sae` packages. The CLI is in the top layer beside
+same entry point): nine verb groups — `serve`, `manifold`, `pack`, `config`,
+`experiment`, `template`, `lens`, `sae`, `unit` — as thin frontends over
+`DrowseSession` and the `store`/`fit`/`lens`/`sae`/`units` packages. The CLI is in the top layer beside
 `server`, `web` and `notebook` (`tests/invariants/test_layering.py`): it may
 import any lower layer and never reaches a session private (`session._x`).
 
@@ -105,7 +105,7 @@ not --no-dls`, `compile`, `cuda_graphs`, `return_top_k`, closed on exit.
   `probes=[]`, which also skips the construction-time neutral capture and fits.
 - `-d/-q` (`MODEL_LOAD`) exist exactly on the verbs that load weights: `serve`,
   `manifold extract|generate|fit`, `template score`, `lens fit|top|decompose`,
-  `sae train`, every `experiment` verb. `manifold transfer` has neither but loads
+  `sae train`, `unit read|top|find|stats`, every `experiment` verb. `manifold transfer` has neither but loads
   a model (default device) when it must capture a missing neutral cache.
 
 ## Fail before the load
@@ -201,7 +201,7 @@ One letter, one long form, tree-wide (`test_short_flags_keep_one_meaning_tree_wi
 | `-P` | `--port` | `-C` | `--cors` | `-k` | below |
 
 - `-k` is the one double-booked letter: `--api-key` on `serve`, `--top-k` on
-  `lens top|decompose`; they never share a parser.
+  `lens top|decompose` and `unit read|top|find`; they never share a parser.
 - `-s` is always `--strict`, strict about something per verb: unresolvable
   steering references (config block), identical layer coverage (`manifold
   bake`), probe-roster drift (`transcript run`).
@@ -282,9 +282,32 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   layer's residual read through both families (S footprint z, R readout
   probability), S line first, each with its depth weight and lens label or
   the reason it is absent; `-j` emits `LensRead.to_dict()` per position.
-  `decompose --dictionary tokens-out|tokens-in` (default `tokens-out`).
+  `decompose --dictionary tokens-out|tokens-in|neurons` (default `tokens-out`;
+  `neurons` needs no lens, and `unit find` is it with poles and labels). A
+  neuron's coefficient is signed, the sign its pole: the text prints
+  `+neuron/L8n344 0.42`, and `-j` lists `neurons` (`unit`, `pole`, `coeff`)
+  where a token dictionary lists `tokens`.
 - `top` reads a raw prompt (no chat template); `decompose SELECTOR -m` takes the
   model as a flag, unlike the rest of the group.
+
+**unit** — `drowse/units/AGENTS.md` has the reads and the catalog.
+- `read UNIT -m` (`neuron/L8n344`, `head/L20h17`) prints a neuron per pole
+  (writes at `out`, fires on at `mid`, each an S line then an R line with its
+  depth weight and lens) with its scalars, firing and catalog label; a head's
+  copies, suppressions and query/key/value inputs (at `L − 1`) and copy
+  scores. `--hide-hubs` ranks by the layer-contrastive z (the first use of a
+  layer builds its statistics); `-j` emits `NeuronRead`/`HeadRead.to_dict()`.
+- `top TOKEN -m [--by writes|fires] [--layers L]` lists the poles that write
+  (or fire on) the token most specifically across the layers (default all;
+  `sample` exits 2); `find SELECTOR -m` is `lens decompose --dictionary
+  neurons` with poles and labels; `stats UNIT -m` the firing block alone.
+- `fetch MODEL [-f]`, `ls [MODEL]` and `rm MODEL -y` never load a model:
+  the catalog binding is the model's label source, fetched, listed and
+  removed as `lens` and `sae` sources are (`ls` without a model lists every
+  catalogued one). The catalog exists for `Qwen/Qwen3-8B` and
+  `google/gemma-4-12B` only, and any other model is a 404 (exit 1). `rm`
+  without `-y` exits 2, like every `rm`. Unit reads and the catalog need no
+  `-d/-q` beyond the read verbs.
 
 **sae** — `train`'s `--layer` defaults to the layer nearest 65% depth within the
 40–90% band (`sae.backend.select_runtime_layer`); `--width` overrides
@@ -316,8 +339,9 @@ Each belongs to a design the engine does not have; do not propose them.
 
 ## Testing
 
-`tests/cli/` is CPU-only and model-free. `test_cli_verbs.py` pins the parser:
-eight groups, `-h` on every parser, the short-flag table, bare groups exit 0,
+`tests/cli/` is CPU-only and model-free (`test_cli_unit.py` alone loads the
+tiny checkpoint on CPU). `test_cli_verbs.py` pins the parser:
+nine groups, `-h` on every parser, the short-flag table, bare groups exit 0,
 rejected argv for absent surfaces, parsed namespaces, torch-free help — a new
 verb or flag usually needs a case there. `test_cli_flags.py` covers runners over
 `tests.support.cli` (`FakeSession`, `install_fake_session`, `poison_session` to

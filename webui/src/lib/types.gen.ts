@@ -240,6 +240,29 @@ export interface GeometryProbeInfo {
   node_coords: number[][] | null;
 }
 
+/** What the head's projections pick up at ``L − 1``'s output. */
+export interface HeadInputsJSON {
+  query: UnitPlaceJSON;
+  key: UnitPlaceJSON;
+  value: UnitPlaceJSON;
+}
+
+export interface HeadReadJSON {
+  unit: string;
+  kind: "head";
+  layer: number;
+  index: number;
+  kv_head: number;
+  depth: number;
+  copies: UnitPlaceJSON;
+  suppresses: UnitPlaceJSON;
+  inputs: HeadInputsJSON;
+  copy_score: Record<string, number | null>;
+  firing: UnitFiringJSON;
+  label: UnitLabelJSON | null;
+  catalog: UnitCatalogBlockJSON;
+}
+
 /** What a read family supports, declared by the server rather than guessed. */
 export interface InstrumentCapabilities {
   sources: boolean;
@@ -576,6 +599,31 @@ export interface MeasurementsReplayJSON {
   measurements: MeasurementsEnvelopeJSON | null;
 }
 
+/**
+ * One pole: its write read at ``out`` (writes) and its read direction at
+ * ``mid`` (fires on), its logit-lens shape, firing and label.
+ */
+export interface NeuronPoleJSON {
+  pole: "+" | "-";
+  writes: UnitPlaceJSON;
+  fires_on: UnitPlaceJSON;
+  vocab_skew: number;
+  vocab_kurt: number;
+  firing: UnitFiringJSON;
+  label: UnitLabelJSON | null;
+}
+
+export interface NeuronReadJSON {
+  unit: string;
+  kind: "neuron";
+  layer: number;
+  index: number;
+  depth: number;
+  scalars: UnitScalarsJSON;
+  poles: NeuronPoleJSON[];
+  catalog: UnitCatalogBlockJSON;
+}
+
 export interface NodeDiffJSON {
   a_id: string;
   b_id: string;
@@ -623,7 +671,10 @@ export interface PreparationProgress {
   unit: string;
 }
 
-/** One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``. */
+/**
+ * One shape over lens ``fetch``/``fit``, sae ``fetch``/``train`` and the
+ * units ``fetch`` (the neuron-lens catalog; ``slug`` names it).
+ */
 export interface PreparationStatusJSON {
   state: string;
   operation: string | null;
@@ -637,6 +688,7 @@ export interface PreparationStatusJSON {
   source?: string | null;
   release?: string | null;
   name?: string | null;
+  slug?: string | null;
   info?: SaeRuntimeInfo | null;
 }
 
@@ -1060,6 +1112,180 @@ export interface UnitActivityJSON {
   top: ActivityPeak[];
   traces: Record<string, number[]>;
   population: ActivityPopulation | null;
+}
+
+export interface UnitCatalogBindingJSON {
+  revision: string | null;
+  fetched_at: string | null;
+  files: number;
+}
+
+/** The catalog binding as a unit view shows it. */
+export interface UnitCatalogBlockJSON {
+  bound: boolean;
+  slug: string | null;
+  url: string | null;
+  credit: string | null;
+  reason: string | null;
+}
+
+/**
+ * ``GET .../instruments/units/catalog`` — the model's neuron-lens catalog:
+ * ``available`` (catalogued), ``bound`` (fetched at the pinned commit) or
+ * why not.
+ */
+export interface UnitCatalogJSON {
+  model_id: string;
+  available: boolean;
+  bound: boolean;
+  slug: string | null;
+  repo: string;
+  revision: string;
+  credit: string | null;
+  reason: string | null;
+  binding: UnitCatalogBindingJSON | null;
+}
+
+/**
+ * ``POST .../instruments/units/find`` — a direction split over each
+ * layer's neuron writes (Mahalanobis; the sign is the pole).
+ */
+export interface UnitFindJSON {
+  target: string;
+  k: number;
+  mean_share: number;
+  layers: Record<string, UnitFindLayerJSON>;
+  catalog: Record<string, unknown>;
+}
+
+export interface UnitFindLayerJSON {
+  share: number;
+  neurons: UnitFindNeuronJSON[];
+}
+
+export interface UnitFindNeuronJSON {
+  unit: string;
+  index: number;
+  pole: "+" | "-";
+  coeff: number;
+  label: UnitLabelJSON | null;
+}
+
+/**
+ * How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
+ * the catalog) or why absent; drowse's neutral statistics; the catalog's
+ * activation row.
+ */
+export interface UnitFiringJSON {
+  rate: number | null;
+  rate_absent: string | null;
+  neutral: Record<string, number> | null;
+  neutral_absent: string | null;
+  catalog: Record<string, unknown> | null;
+  catalog_absent: string | null;
+}
+
+/**
+ * One lens family's read of a unit vector at its place: the depth rule's
+ * ``weight`` for the family there, the lens read through (``R:out``,
+ * ``S:mid``, ``logit``, ``embedding``), and the tokens or why absent.
+ */
+export interface UnitHalfJSON {
+  family: "R" | "S";
+  weight: number;
+  unit: "probability" | "footprint_z" | "layer_z" | "own_token_z" | "energy_z";
+  lens: string | null;
+  tokens: UnitTokenJSON[];
+  absent: string | null;
+}
+
+/**
+ * A catalog label (neuron-lens, by Claude Haiku 5.5): what the unit fires
+ * on, attends to (heads) and writes, with confidences; its legibility
+ * tests; the credit and the unit's neuron-lens.com page.
+ */
+export interface UnitLabelJSON {
+  fires?: string | null;
+  fires_conf?: number | null;
+  attends?: string | null;
+  attends_conf?: number | null;
+  writes?: string | null;
+  writes_conf?: number | null;
+  note?: string | null;
+  legible?: Record<string, unknown> | null;
+  credit: string;
+  url: string;
+  /** Open shape — the producer may carry more than the
+   *  contract names; unknown keys ride through. */
+  [key: string]: unknown;
+}
+
+/**
+ * A unit vector read at ``(layer, site)``: S and R halves; ``hubs`` is
+ * ``hidden`` when the halves rank by the layer-contrastive z.
+ */
+export interface UnitPlaceJSON {
+  layer: number;
+  site: "out" | "mid";
+  depth: number;
+  hubs: "shown" | "hidden";
+  s: UnitHalfJSON;
+  r: UnitHalfJSON;
+}
+
+export interface UnitScalarsJSON {
+  w_norm: number;
+  cos_ab: number;
+  null_share: number;
+  mean_act: number | null;
+}
+
+/** One ranked token of a unit read, in its half's ``unit``. */
+export interface UnitTokenJSON {
+  token_id: number;
+  token: string;
+  value: number;
+}
+
+/**
+ * One family's score of a pole for the token: the layer-contrastive
+ * ``z``, the raw read (R ``probability``, S ``footprint_z``), the weight.
+ */
+export interface UnitTopHalfJSON {
+  z: number | null;
+  weight: number;
+  lens: string | null;
+  probability?: number | null;
+  footprint_z?: number | null;
+}
+
+export interface UnitTopHitJSON {
+  unit: string;
+  layer: number;
+  index: number;
+  pole: "+" | "-";
+  score: number;
+  r: UnitTopHalfJSON;
+  s: UnitTopHalfJSON;
+  label: UnitLabelJSON | null;
+}
+
+/**
+ * ``GET .../instruments/units/top`` — the neuron poles that write or fire
+ * on a token most specifically.
+ */
+export interface UnitTopJSON {
+  token_id: number;
+  token: string;
+  by: "writes" | "fires";
+  hits: UnitTopHitJSON[];
+  layers: Record<string, UnitTopLayerJSON>;
+}
+
+export interface UnitTopLayerJSON {
+  weights: Record<string, number>;
+  lens: Record<string, string | null>;
+  absent: Record<string, string | null>;
 }
 
 /**

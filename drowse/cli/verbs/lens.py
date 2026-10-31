@@ -362,25 +362,38 @@ def run_decompose(args: argparse.Namespace) -> None:
             args.selector, k=args.top_k, layers=layers, dictionary=args.dictionary,
         )
     mean_share = sum(share for share, _ in out.values()) / len(out)
+    neurons = args.dictionary == "neurons"
     if args.json_output:
         emit_json({
             "selector": args.selector, "model": args.model, "k": args.top_k,
             "dictionary": args.dictionary,
             "mean_share": round(mean_share, 4),
             "layers": {
-                str(layer): {
-                    "share": round(share, 4),
-                    "tokens": [{"token": t, "coeff": round(c, 4)} for t, c in tokens],
-                }
-                for layer, (share, tokens) in out.items()
+                str(layer): {"share": round(share, 4), **_decompose_atoms(atoms, neurons=neurons)}
+                for layer, (share, atoms) in out.items()
             },
         })
         return
     print(f"{args.dictionary} share of '{args.selector}' (k={args.top_k}):")
     print(f"  mean over {len(out)} layers: {mean_share:.1%}")
     for layer in sorted(out):
-        share, tokens = out[layer]
-        print(f"  L{layer:>3}  {share:>6.1%}  {'  '.join(t.strip() or repr(t) for t, _ in tokens[:6])}")
+        share, atoms = out[layer]
+        if neurons:
+            # Signed: the sign is the pole (`unit find` adds the labels).
+            line = "  ".join(f"{'+' if c > 0 else '-'}{name} {abs(c):.2f}" for name, c in atoms[:6])
+        else:
+            line = "  ".join(t.strip() or repr(t) for t, _ in atoms[:6])
+        print(f"  L{layer:>3}  {share:>6.1%}  {line}")
+
+
+def _decompose_atoms(atoms: list[tuple[str, float]], *, neurons: bool) -> dict[str, Any]:
+    """One layer's atoms as JSON: ``tokens`` for a token dictionary, or
+    ``neurons`` (each with its pole, the coefficient's sign) for ``neurons``."""
+    if not neurons:
+        return {"tokens": [{"token": t, "coeff": round(c, 4)} for t, c in atoms]}
+    return {"neurons": [
+        {"unit": name, "pole": "+" if c > 0 else "-", "coeff": round(c, 4)} for name, c in atoms
+    ]}
 
 
 _MODEL_POS = arg("model", help="Model ID")
@@ -504,19 +517,21 @@ GROUP = Verb(
         Verb(
             "decompose", "Split a steerable direction against a token dictionary",
             run=run_decompose,
-            description="Best sparse nonnegative combination of k token atoms per "
-                        "layer: the variance share and the contributing tokens. "
-                        "tokens-out (default) is W_U J_l through the R-family lens "
-                        "(how verbalizable the direction is); tokens-in is the "
-                        "S-family footprint K_l e_v over the token mask (which "
-                        "tokens it reads as having seen).",
+            description="Best sparse combination of k atoms per layer: the "
+                        "variance share and the contributing atoms. tokens-out "
+                        "(default) is W_U J_l through the R-family lens (how "
+                        "verbalizable the direction is); tokens-in is the S-family "
+                        "footprint K_l e_v over the token mask (which tokens it "
+                        "reads as having seen); neurons is the layer's neuron "
+                        "writes, signed (the sign is the pole; `unit find` adds "
+                        "labels).",
             args=(
                 arg("selector", help="Steerable direction (concept, ns/name, "
                                      "jlens/<word> or slens/<word>)"),
                 MODEL_REQ,
                 arg("-k", "--top-k", type=positive_int, default=16, metavar="K",
                     help="Sparsity budget (default 16)"),
-                arg("--dictionary", choices=("tokens-out", "tokens-in"),
+                arg("--dictionary", choices=("tokens-out", "tokens-in", "neurons"),
                     default="tokens-out", help="Atom dictionary (default tokens-out)"),
                 layers_arg("Layer indices or a mode (default: every fitted layer "
                            "the direction covers)"),

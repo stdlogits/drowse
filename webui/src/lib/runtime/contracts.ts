@@ -6,6 +6,7 @@ import type {
   CreateTemplateRequest,
   FilterMatchesJSON,
   FitManifoldRequest,
+  HeadReadJSON,
   GenerateManifoldRequest,
   InstallManifoldRequest,
   InstrumentFamily,
@@ -17,6 +18,7 @@ import type {
   ManifoldListResponse,
   MeasurementsEnvelopeJSON,
   MergeManifoldRequest,
+  NeuronReadJSON,
   NodeDiffJSON,
   PairwiseCompareResponse,
   PreparationOp,
@@ -35,6 +37,9 @@ import type {
   TemplateSummary,
   TranscriptLoadResponseJSON,
   UnitActivityJSON,
+  UnitCatalogJSON,
+  UnitFindJSON,
+  UnitTopJSON,
   VectorInfo,
   WSClientMessage,
   WSGenerateRequest,
@@ -601,6 +606,20 @@ export interface RuntimeInstrumentsService {
     options?: UnitActivityOptions,
     id?: string,
   ): Promise<UnitActivityJSON>;
+  /**
+   * Unit reads (optional: a runtime without them omits these members, and
+   * `unitReadsAvailable` hides the unit views). `unitRead` is one unit from
+   * its weights: per neuron pole its writes and what it fires on, per head
+   * its copies, suppressions and inputs, each through the depth rule's S/R
+   * pair, with firing statistics and the catalog label.
+   */
+  unitRead?(unit: string, options?: { k?: number; hideHubs?: boolean }, id?: string): Promise<NeuronReadJSON | HeadReadJSON>;
+  /** Neuron poles that write (`by: "writes"`) or fire on (`"fires"`) a token. */
+  unitTop?(token: string, options?: { by?: "writes" | "fires"; layers?: string; k?: number }, id?: string): Promise<UnitTopJSON>;
+  /** A direction (a selector, or a vector at a layer) split over each layer's neuron writes. */
+  unitFind?(body: UnitFindBody, id?: string): Promise<UnitFindJSON>;
+  /** The model's neuron-lens catalog binding; fetch it with `startPreparation("units", { operation: "fetch" })`. */
+  unitCatalog?(id?: string): Promise<UnitCatalogJSON>;
 }
 
 export interface TokenAnatomyOptions {
@@ -640,6 +659,16 @@ export function replayCapabilities(
     tokenAnatomy: typeof instruments.tokenAnatomy === "function",
     unitActivity: typeof instruments.unitActivity === "function",
   };
+}
+
+/** `unitFind`'s target: one steerable selector, or a residual vector at a layer. */
+export type UnitFindBody =
+  | { selector: string; k?: number; layers?: string }
+  | { vector: number[]; layer: number; k?: number; layers?: string };
+
+/** Whether this runtime serves the unit reads (the unit view, top, find and the catalog). */
+export function unitReadsAvailable(client: Pick<RuntimeClient, "instruments">): boolean {
+  return typeof client.instruments.unitRead === "function";
 }
 
 export interface InstalledInstrumentPackActivationRequest {
@@ -763,6 +792,10 @@ export const RUNTIME_SERVICE_METHODS = Object.freeze({
     saeFeaturesMetadata: true,
     tokenAnatomy: true,
     unitActivity: true,
+    unitRead: true,
+    unitTop: true,
+    unitFind: true,
+    unitCatalog: true,
   }),
 }) satisfies {
   [Service in RuntimeServiceName]: Readonly<
