@@ -394,6 +394,13 @@ class UnitsInstrument:
             self.probes.clear()
             self._scales.clear()
 
+    def end_capture(self) -> None:
+        """Remove the current run's tap hooks; its ring stays readable for the
+        finalize aggregate (the decode loop's last forward has run)."""
+        tap = self.current_run.tap
+        if tap is not None:
+            tap.detach()
+
     @property
     def hooks_attached(self) -> bool:
         """Whether the current run's tap has hooks on the model (they route a

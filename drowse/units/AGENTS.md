@@ -96,7 +96,9 @@ included), each an `index_select` of its units' coordinates at the last
 position into a preallocated ring row (`out=`), plus `vector_norm(…, out=)` of
 the output row for a sandwich head. No allocation, no host sync; the module
 that runs last in a forward advances the count. The ring is `AGG_TAIL_DEPTH`
-forwards deep. `values_at(fwd)` computes the values after the forward, as one
+forwards deep. The hooks come off with the residual capture when decode ends
+(`ReadPlane.end` → `end_capture`), so nothing after the last decode forward
+moves the ring. `values_at(fwd)` computes the values after the forward, as one
 fp32 vector; the run moves it to the host once per step (stashed by `step_id`,
 so the gate callback and the token tap share it) and once for the aggregate.
 

@@ -396,8 +396,10 @@ class ReadPlane:
         )
 
     def end(self) -> None:
-        """Detach the capture hooks (buffers stay readable for finalize)."""
+        """Detach the capture hooks and the units tap (buffers and the tap's
+        ring stay readable for finalize)."""
         self.capture.detach()
+        self._units.end_capture()
 
     def reset(self) -> None:
         """Back to the between-generations state: FULL, no rows."""

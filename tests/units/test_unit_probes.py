@@ -160,6 +160,27 @@ def test_unit_probes_ride_the_generation(tiny_session: Any) -> None:
         assert not block.mlp.down._forward_hooks and not block.attn.o._forward_hooks
 
 
+def test_the_tap_leaves_the_model_when_decode_ends(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hooks come off with the residual capture; the ring still serves the
+    finalize aggregate."""
+    plane = tiny_session._read_plane
+    end = plane.end
+    seen: list[tuple[bool, bool]] = []
+
+    def spy() -> None:
+        before = tiny_session.units.hooks_attached
+        end()
+        seen.append((before, tiny_session.units.hooks_attached))
+
+    monkeypatch.setattr(plane, "end", spy)
+    tiny_session.add_probe("neuron/L1n3")
+    result = tiny_session.generate("hello", stateless=True, sampling=_sampling()).first
+    assert seen[0] == (True, False)  # the decode's end; teardown may end again
+    assert "neuron/L1n3" in _units_channel(result.measurements)["readings"]
+
+
 def test_the_units_live_switch_drops_per_token_readings_only(tiny_session: Any) -> None:
     session = tiny_session
     session.add_probe("neuron/L1n3")
