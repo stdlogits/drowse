@@ -68,6 +68,8 @@
     return ms === null ? "" : etaLabel(ms);
   });
   const fitShare = $derived(lensFit.state.total > 0 ? Math.min(1, lensFit.state.current / lensFit.state.total) : 0);
+  /** The stage until the first document is in ("Streaming 64 documents from …"), then the count. */
+  const progressText = $derived(fitProgressText(lensFit.state.current, lensFit.state.total, lensFit.state.message));
 
   // ---------- a local fit: documents (the server's default, doubled or halved), kind, sites ----------
   const ladder = $derived(documentLadder(lensSourceState.fitDocuments ?? 1));
@@ -143,7 +145,7 @@
                 aria-valuemax={Math.max(lensFit.state.total, 1)} aria-valuenow={lensFit.state.current}>
                 <i style:--lens-fill={family === "S" ? "var(--deep)" : "var(--late)"} style:width={`${(fitShare * 100).toFixed(1)}%`}></i>
               </span>
-              <span class="meta"><MorphText text={fitProgressText(lensFit.state.current, lensFit.state.total, lensFit.state.message)} /></span>
+              <span class="meta stage" data-tip={progressText}><MorphText text={progressText} /></span>
               {#if left}<span class="meta"><MorphText text={left} /></span>{/if}
               <span class="meta">Generation pauses while documents are fitted</span>
             </span>
@@ -221,6 +223,10 @@
   .replace { justify-self: start; }
 
   .prog { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); min-width: 0; }
+  /* One line beside the meter; a long stage (the corpus and its commit) ends in an ellipsis and
+   * shows whole in its tip. */
+  .stage { flex: 1 1 160px; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .stage :global(.morph-text) { display: block; overflow: hidden; text-overflow: ellipsis; }
   .meter { position: relative; width: 96px; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
   .meter > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--lens-fill); transition: width var(--glide) var(--ease); }
 
