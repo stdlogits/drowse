@@ -2293,7 +2293,7 @@ class LensInstrument:
         *,
         layers: "Sequence[int] | None" = None,
     ) -> list[int]:
-        """Stream the J-lens readout live during generation.
+        """Stream the R family's lens readout live during generation.
 
         The selected layers' ``J_l`` move device-resident here, once;
         ``layers`` defaults to every fitted lens layer.  Attaches no

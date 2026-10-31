@@ -866,7 +866,7 @@ Beyond those rules:
   on MPS.
 - The whole flat geometry roster shares one Woodbury `Σ⁻¹h` apply and batched
   reduced-space products per layer.
-- Live J-lens and SAE reads reuse the generation's capture and stashes; no
+- The R family's live lens readout and SAE reads reuse the generation's capture and stashes; no
   second forward.
 - The alternative-token width is resolved once per generation and shared by
   logits, J-lens, SAE, hover and replay.

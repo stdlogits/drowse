@@ -4,7 +4,10 @@ Startup order: effective config → bind/model checks → parse ``-S`` (YAML
 ``vectors:`` fills an unset flag) → load the session → preflight the default
 steering through the session (a missing concept fails here, with a ``manifold
 extract`` hint, instead of on the first request) → ``create_app`` → warm-up
-(``--compile`` only) → live J-lens → live SAE (dashboard only) → uvicorn.
+(``--compile`` only) → the R-family lens (its live readout) → the S-family
+lens → live SAE (dashboard only) → uvicorn.  The two lens families name the
+6.0 model's two axes: the R family (an R- or J-lens) reads toward what the
+model will say, the S family (an S- or K-lens) toward what it has read.
 """
 
 from __future__ import annotations
@@ -69,7 +72,8 @@ def warm_up(session: Any) -> None:
 
 
 def enable_live_lens(session: Any) -> bool:
-    """Stream the live J-lens readout when a compatible lens is selected.
+    """Stream the R family's live readout when a compatible R-family lens (an
+    R- or J-lens) is selected.
 
     The policy, in full:
 
@@ -93,9 +97,9 @@ def enable_live_lens(session: Any) -> bool:
         if active is not None:
             if not session.lens.has_compatible():
                 note(
-                    f"Live J-lens readout: off — the active source "
-                    f"{LENS_SOURCES.format(active)} does not match the loaded "
-                    f"weights (`drowse lens use {model_id} <source>` to switch)"
+                    f"R-family lens {LENS_SOURCES.format(active)}: does not match "
+                    f"the loaded weights, live readout off "
+                    f"(`drowse lens use {model_id} <source>` to switch)"
                 )
                 return False
         else:
@@ -116,10 +120,12 @@ def enable_live_lens(session: Any) -> bool:
                     LENS_SOURCES.clear_if_active(model_id, tried)
                 return False
         layers = session.lens.set_live(True).layers or ()
-        note(f"Live J-lens readout: on ({len(layers)} fitted layers)")
+        chosen = LENS_SOURCES.active(model_id, "output")
+        label = "" if chosen is None else f" {LENS_SOURCES.format(chosen)}"
+        note(f"R-family lens{label}: live readout on ({len(layers)} fitted layers)")
         return True
     except Exception as e:  # noqa: BLE001 — never block serve startup
-        note(f"Live J-lens readout: enable failed ({e})")
+        note(f"R-family lens: live readout failed to start ({e})")
         return False
 
 
@@ -149,12 +155,12 @@ def select_s_lens(session: Any) -> bool:
             label = LENS_SOURCES.format(active)
             if not session.lens.has_compatible_input():
                 note(
-                    f"S-lens: the active source {label} does not match the "
-                    f"loaded weights (`drowse lens use {model_id} <source>` "
+                    f"S-family lens {label}: does not match the loaded weights, "
+                    f"slens/ unavailable (`drowse lens use {model_id} <source>` "
                     f"to switch)"
                 )
                 return False
-            note(f"S-lens: {label}")
+            note(f"S-family lens {label}: slens/ reads, probes and atoms")
             return True
         for row in list_lens_sources(model_id):
             if LensKey(str(row["lens"])).side != "input" or "out" not in row["sites"]:
@@ -165,14 +171,14 @@ def select_s_lens(session: Any) -> bool:
             except Exception:  # noqa: BLE001 — try the next prepared source
                 continue
             if compatible:
-                note(f"S-lens: {row['source']}")
+                note(f"S-family lens {row['source']}: slens/ reads, probes and atoms")
                 return True
         tried = LENS_SOURCES.active(model_id, "input")
         if tried is not None:
             LENS_SOURCES.clear_if_active(model_id, tried)
         return False
     except Exception as e:  # noqa: BLE001 — never block serve startup
-        note(f"S-lens: selection failed ({e})")
+        note(f"S-family lens: selection failed ({e})")
         return False
 
 

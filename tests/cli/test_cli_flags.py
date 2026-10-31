@@ -387,9 +387,10 @@ def _active_lens(model_id: str) -> str | None:
     return None if ref is None else LENS_SOURCES.format(ref)
 
 
-def test_serve_keeps_a_compatible_active_lens_selection() -> None:
+def test_serve_keeps_a_compatible_active_lens_selection(capsys: pytest.CaptureFixture[str]) -> None:
     """Regression: serve re-pointed ``active.json`` to its preferred source,
-    overwriting the user's ``lens use`` choice."""
+    overwriting the user's ``lens use`` choice.  The banner names the lens by
+    its 6.0 family (it said "Live J-lens readout" for any output lens)."""
     from drowse.cli.verbs.serve import enable_live_lens
     from drowse.lens.sources import LENS_SOURCES, use_lens_source
 
@@ -398,6 +399,8 @@ def test_serve_keeps_a_compatible_active_lens_selection() -> None:
     before = LENS_SOURCES.active_path("org/model").read_bytes()
     session = _lens_session({"local:j", "local:r"})
     assert enable_live_lens(session)
+    err = capsys.readouterr().err
+    assert "R-family lens local:j: live readout on" in err and "J-lens readout" not in err
     assert session.selected == [] and session.lens.live
     assert LENS_SOURCES.active_path("org/model").read_bytes() == before
 
@@ -464,7 +467,7 @@ def _active_s_lens(model_id: str) -> str | None:
     return None if ref is None else LENS_SOURCES.format(ref)
 
 
-def test_serve_adopts_the_best_compatible_s_lens_holding_out() -> None:
+def test_serve_adopts_the_best_compatible_s_lens_holding_out(capsys: pytest.CaptureFixture[str]) -> None:
     """Regression: serve auto-selected only the R family, so a prepared S lens
     stayed unselected and ``slens/`` refused until a manual ``lens use``.  It
     adopts the preferred compatible S-family source that holds ``out``."""
@@ -474,6 +477,7 @@ def test_serve_adopts_the_best_compatible_s_lens_holding_out() -> None:
     _save_s_family("org/model", "K", ("out",))
     session = _lens_session({"local:s", "local:k"})
     assert select_s_lens(session)
+    assert "S-family lens local:k" in capsys.readouterr().err
     assert session.selected == ["local:k"]
     assert _active_s_lens("org/model") == "local:k"
     assert _active_lens("org/model") is None  # the R family untouched

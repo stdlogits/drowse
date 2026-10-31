@@ -1254,7 +1254,7 @@ class DrowseSession:
     ) -> str:
         """Attach a read-side probe — any shape — and return its name.
 
-        ``jlens/<word>`` reads the J-lens readout channel and ``sae/<id>`` an
+        ``jlens/<word>`` reads the R family's lens readout channel and ``sae/<id>`` an
         SAE feature; any other selector is a geometry probe, one attach for
         vector and manifold probes alike (a vector is the rank-1 case of the
         unified subspace readout).  It rides the ``[ns/]name[:variant]`` shape
