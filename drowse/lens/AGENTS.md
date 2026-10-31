@@ -148,8 +148,11 @@ sets, so a pack carrying `split_half` (or a `mid` site) needs its follow-up.
   unreadable. `lens_fit_lock` is cross-process and spans a whole fit or
   removal, on a `.fit` sibling so pointer reads aren't blocked.
 - `save_lens` and checkpoint promotion publish **and select** for the lens's
-  side. `save_lens_at(lens, dir, provenance, split_half=None)` writes the same
-  layout anywhere without selecting it; it is the packaging path.
+  side when it can serve that side (`key.lens_selectable`): every output read
+  surface reads `out`, so an output-kind lens without it is published but
+  never displaces the selected output source. `save_lens_at(lens, dir,
+  provenance, split_half=None)` writes the same layout anywhere without
+  selecting it; it is the packaging path.
 
 ## Sources and selection (`sources.py`)
 
@@ -174,8 +177,9 @@ name.
 - Default order (`lens_source_preference_key`): `workspace-r`, `neuronpedia`,
   `workspace-j`, then `local:r`, `local:j`, then tagged fits. Listings and
   serve's auto-selection (`cli/verbs/serve.py::enable_live_lens`) use it.
-- A fit, a promotion or a fetch replaces its side's selection. Removal
-  unselects only an exact match. `select_source` evicts the resident lens.
+- A fit, a promotion or a fetch replaces its side's selection (an
+  output-kind fit only when it holds `out`). Removal unselects only an exact
+  match. `select_source` evicts the resident lens.
 - `matches_loaded_model` decides compatibility. A local fit must match the
   loaded-weight fingerprint exactly. An external lens must match the model id,
   the live `config._commit_hash`, `d_model` and the layer range, so a model
@@ -300,8 +304,9 @@ refused, since one artifact has one corpus identity. Pass the full layer set or
 `force`. When a payload fails to load, the executor drops it and re-plans.
 
 An input-kind (K/S) fit adopts nothing: the resident lens is the output
-side's. An output fit without the `out` site leaves nothing resident (the
-resident readout reads `out`).
+side's. Nor does an output fit without the `out` site, which the resident
+readout reads: the resident lens, its live readout and the output selection
+stay as they were.
 
 `prove_lens_fit_noop` proves a no-op without the model. A file corpus is
 identified by its raw digest, a pinned Hub corpus by spec plus prompt count

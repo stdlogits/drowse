@@ -62,7 +62,7 @@ from drowse.base.shards import (
 from drowse.base.source_registry import LOCAL, SourceRef
 from drowse.lens.corpus import LENS_CORPUS_PREPROCESS_VERSION, LENS_DOC_CHARS
 from drowse.lens.jlens import SKIP_FIRST_POSITIONS, JacobianLens, LensNotFittedError
-from drowse.lens.key import LENS_KINDS, LENS_SITES, LensKey, local_lens_kind
+from drowse.lens.key import LENS_KINDS, LENS_SITES, LensKey, lens_selectable, local_lens_kind
 
 log = logging.getLogger(__name__)
 
@@ -618,7 +618,9 @@ def save_lens(
     forward and every other layer is written anew.  Every site the lens
     holds is written.  ``split_half`` (``{site: {layer: value}}``) is
     recorded for each site it covers at every layer.  Publication makes the
-    lens active for its side.
+    lens active for its side when it can serve that side
+    (:func:`~drowse.lens.key.lens_selectable`: an output-kind lens needs the
+    ``out`` site), and otherwise leaves the selection alone.
     """
     from drowse.lens.sources import LENS_SOURCES
 
@@ -635,7 +637,8 @@ def save_lens(
                 checkpoint=False, name=name, reuse_layers=reuse_layers,
                 verified_reuse_proof=_verified_reuse_proof, split_half=split_half,
             )
-    LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
+    if lens_selectable(lens.kind, lens.sites):
+        LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
     return path
 
 
@@ -1199,7 +1202,7 @@ def promote_lens_checkpoint(
     lens again would duplicate a potentially multi-GiB write.  Promote only
     after cheap exact identity checks (``site_layers`` must name exactly the
     checkpoint's sites and layers); callers fall back to :func:`save_lens`
-    on ``False``.
+    on ``False``.  Selects the promoted lens as :func:`save_lens` does.
     """
     from drowse.lens.sources import LENS_SOURCES
 
@@ -1258,7 +1261,8 @@ def promote_lens_checkpoint(
         fsync_directory(directory)
         _cleanup_unreferenced_generations(directory)
         fsync_directory(directory)
-    LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
+    if lens_selectable(durable["kind"], durable["sites"]):
+        LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
     return True
 
 

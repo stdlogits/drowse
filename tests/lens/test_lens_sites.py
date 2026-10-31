@@ -193,6 +193,32 @@ def test_save_lens_at_writes_every_site_without_selecting(tmp_path: Path) -> Non
     assert LENS_SOURCES.active(_MODEL, "input") is None
 
 
+def _mid_only(kind: str) -> JacobianLens:
+    return JacobianLens(mid=_mats(range(4), 2), n_prompts=5, d_model=_D, key=LensKey(kind))
+
+
+def test_publishing_an_output_lens_without_out_leaves_the_selection_alone() -> None:
+    """Every output read surface reads ``out``: an R lens fitted at ``mid``
+    only publishes, but never displaces the selected output source."""
+    save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("J")), _MODEL, _PROV)
+    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    save_lens(_mid_only("R"), _MODEL, _PROV)
+    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    loaded = load_local_lens(_MODEL, "r")
+    assert loaded is not None and loaded[0].sites == ("mid",)
+    # The promotion path follows the same rule.
+    _checkpoint("R", _mid_only("R"))
+    assert promote_lens_checkpoint(
+        _MODEL, name="r", n_prompts=5, site_layers={"mid": [0, 1, 2, 3]},
+        corpus_sha256=_PROV.corpus_sha256, corpus_hash_kind="token_ids_v1",
+        seq_len=64, d_model=_D, model_fingerprint=cast(str, None),
+    )
+    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    # An input lens at mid only is still its side's source.
+    save_lens(_mid_only("S"), _MODEL, _PROV)
+    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "s")
+
+
 def test_a_d_emb_v7_cannot_record_is_refused() -> None:
     lens = JacobianLens(_mats(range(1), 0, d_in=4), n_prompts=1, d_model=_D, d_emb=4, key=LensKey("S"))
     with pytest.raises(ValueError, match="d_emb == d_model"):

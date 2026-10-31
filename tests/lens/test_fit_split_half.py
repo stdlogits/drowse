@@ -6,8 +6,9 @@ layer of the site) when a fit measured it; checkpoints also carry
 which promotion drops.  Through the lifecycle: an interrupted fit resumes
 with the same split-half as an uninterrupted one, a top-up keeps the old
 site's values and measures the new one, a durable corpus extension (no
-halves) records none, an input-kind fit never touches the output-side
-resident lens, and the model is verified once per fit.
+halves) records none, neither an input-kind fit nor a ``mid``-only output
+fit touches the output selection or resident lens, and the model is
+verified once per fit.
 """
 
 from __future__ import annotations
@@ -254,13 +255,26 @@ def test_an_input_kind_fit_leaves_the_output_resident_alone() -> None:
     assert any("nothing to do" in m for m in messages)
 
 
-def test_an_output_fit_without_the_out_site_leaves_nothing_resident() -> None:
+def test_a_mid_only_output_fit_leaves_the_output_source_and_readout_alone() -> None:
+    """The resident readout reads ``out``: an R fit at ``mid`` only publishes
+    ``local:r`` unselected and leaves the selected output source, the
+    resident lens and live readout as they were."""
+    from drowse.base.source_registry import LOCAL, SourceRef
+    from drowse.lens.sources import LENS_SOURCES
+
     harness = LensHarness()
-    harness.lens.fit(_DOCS[:2], kind="J", force=True)
-    assert harness.lens.resident_lens is not None
+    resident = harness.lens.fit(_DOCS[:2], kind="J", force=True)
+    harness.lens.set_live(True)
+    live = harness.lens.live_config()
+    assert harness.lens.resident_lens is resident and live is not None
     mid_only = harness.lens.fit(_DOCS[:2], kind="R", sites=["mid"], force=True)
     assert mid_only.sites == ("mid",)
-    assert harness.lens.resident_lens is None
+    assert LENS_SOURCES.active(TOY_MODEL_ID, "output") == SourceRef(LOCAL, "j")
+    assert harness.lens.resident_lens is resident
+    assert harness.lens.live_config() == live
+    assert harness.lens.readout(_DOCS[0], top_k=1)
+    sidecar = load_local_lens_sidecar(TOY_MODEL_ID, "r")
+    assert sidecar is not None and list(sidecar["sites"]) == ["mid"]
 
 
 def test_a_lifecycle_fit_verifies_the_model_once(monkeypatch: pytest.MonkeyPatch) -> None:

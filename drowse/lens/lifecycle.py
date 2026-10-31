@@ -494,8 +494,10 @@ class LensResidency(Protocol):
 
 
 class _NoResidency:
-    """The residency of a side nothing holds resident (input kinds): a fit
-    publishes and selects, and adopts nothing."""
+    """The residency of a fit nothing reads as resident: an input kind, or
+    an output kind without the ``out`` site the resident readout reads.  The
+    fit publishes (selecting only what can serve its side) and adopts
+    nothing; the resident lens and its live readout stay as they were."""
 
     resident_lens: JacobianLens | None = None
     resident_identity: str | None = None
@@ -562,8 +564,8 @@ class LensFitter:
 
     The caller holds the fit lock and the model-exclusive guard, unsteered:
     the fit verifies the model's block description and runs transport
-    passes through it.  ``residency`` is the output side's resident lens; an
-    input-kind fit adopts nothing.
+    passes through it.  ``residency`` is the output side's resident lens; a
+    fit that does not fit the ``out`` site of an output kind adopts nothing.
     """
 
     def __init__(
@@ -628,7 +630,9 @@ class LensFitter:
             policy=lens_estimator_policy(request.kind),
         )
         residency = (
-            self._residency if LensKey(request.kind).side == "output" else _NoResidency()
+            self._residency
+            if LensKey(request.kind).side == "output" and "out" in request.sites
+            else _NoResidency()
         )
         run = _FitRun(
             self, model, spec, identity, request, residency,
@@ -713,7 +717,8 @@ class _FitRun:
         restore_live: bool = False,
     ) -> JacobianLens:
         """Make ``lens`` resident; a lens without the ``out`` site, which
-        the resident readout reads, leaves nothing resident instead."""
+        the resident readout reads, leaves nothing resident instead (a fit
+        that does not fit ``out`` never gets here: it adopts nothing)."""
         if "out" not in lens.sites:
             self.residency.evict()
             return lens

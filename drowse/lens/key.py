@@ -24,6 +24,7 @@ without importing the readout math.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import re
 
@@ -95,6 +96,17 @@ def site_layers(kind: str, site: str, n_layers: int) -> list[int]:
     key = LensKey(kind, site)
     top = n_layers - 1 if (key.side == "output" and site == "out") else n_layers
     return list(range(max(top, 0)))
+
+
+def lens_selectable(kind: str, sites: Iterable[str]) -> bool:
+    """Whether a ``kind`` lens holding ``sites`` can be its side's active source.
+
+    Every output-side read surface reads the ``out`` site, so an output-kind
+    lens without it cannot serve the output side: publishing one leaves the
+    selection where it was, rather than displace a readable source with one
+    every readout refuses.  An input-kind lens always can.
+    """
+    return LensKey(kind).side == "input" or "out" in set(sites)
 
 
 def local_lens_name(kind: str, tag: str | None = None) -> str:
