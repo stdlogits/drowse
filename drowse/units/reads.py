@@ -886,7 +886,7 @@ class UnitReader:
     ) -> list[PlaceRead]:
         """Raw reads of ``rows`` at ``(layer, site)`` through the lens
         instrument's read, the last ``out`` R half filled by the logit lens."""
-        reads = self.lens.read(rows, int(layer), site, k=k)
+        reads = self.lens.read(rows, int(layer), site, of="direction", k=k)
         assert isinstance(reads, list)
         r_halves = [UnitHalf.of(read.r) for read in reads]
         if not reads[0].r.present:

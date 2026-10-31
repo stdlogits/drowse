@@ -128,6 +128,28 @@ def test_neuron_writes_and_fires_on_by_hand(lensed: Any) -> None:
         assert _ids(fires.s) == z.topk(4).indices.tolist()
 
 
+def test_unit_rows_take_the_lens_direction_read(lensed: Any) -> None:
+    """A unit's rows are weight directions: their raw halves are the lens's
+    uncentred direction read, never a residual read centred on the neutral
+    mean at the site."""
+    session, _r, _s = lensed
+    spec = model_spec(session.model)
+    L, n = 1, 5
+    read = cast(NeuronRead, session.units.read(f"neuron/L{L}n{n}", k=4))
+    w = neuron_write(spec.blocks[L], n)
+    direction = session.lens.read(w, L, "out", of="direction", k=4)
+    residual = session.lens.read(w, L, "out", of="residual", k=4)
+    assert not direction.s.centred and residual.s.centred
+    writes = read.poles[0].writes
+    assert _ids(writes.s) == [t.token_id for t in direction.s.tokens]
+    assert [t.value for t in writes.s.tokens] == pytest.approx(
+        [t.value for t in direction.s.tokens], rel=1e-5,
+    )
+    assert [t.value for t in writes.s.tokens] != pytest.approx(
+        [t.value for t in residual.s.tokens], rel=1e-3,
+    )
+
+
 def test_neuron_scalars_by_hand(lensed: Any) -> None:
     session, _r, _s = lensed
     spec = model_spec(session.model)
