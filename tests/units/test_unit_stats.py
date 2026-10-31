@@ -203,6 +203,23 @@ def test_an_undescribed_model_still_gets_its_cache_with_units_unavailable(
         torch.testing.assert_close(reloaded.activations[layer], rows)
 
 
+def test_a_quantized_projection_makes_units_unavailable() -> None:
+    """bitsandbytes projections subclass nn.Linear but hold packed integer
+    weights; the block description refuses them instead of reading bytes."""
+    from drowse.fit.neutral import _unit_accumulator
+
+    model = tiny_model("llama")
+    down = model.model.layers[1].mlp.down_proj
+    down.weight = torch.nn.Parameter(
+        torch.zeros(down.weight.shape, dtype=torch.int8), requires_grad=False,
+    )
+    with pytest.raises(UnsupportedBlockError, match="quantized weights") as info:
+        model_spec(model)
+    assert info.value.layer == 1 and info.value.user_message()[0] == 422
+    accumulator, reason = _unit_accumulator(model)
+    assert accumulator is None and reason is not None and "quantized" in reason
+
+
 def test_an_older_cache_is_recomputed_not_migrated(tiny_session: Any) -> None:
     from drowse.base.paths import model_dir
     from drowse.fit.neutral import load_or_compute_neutral_cache
