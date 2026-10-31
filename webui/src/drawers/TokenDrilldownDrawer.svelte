@@ -678,7 +678,7 @@
     if ((lensSteered || !lensTokenReplayAvailable) && captured) {
       lensReadout.adopt(
         captured,
-        token?.measurements?.instruments.lens?.binding.source ?? null,
+        token?.measurements?.instruments.lens?.binding.sources.R ?? null,
       );
       return;
     }
@@ -690,8 +690,9 @@
     if (!nodeId || rawIndex == null) return;
     const replayTokenId = token?.tokenId ?? -1;
     const replayTokenText = token?.text ?? "";
+    // The readout is the R family's: its source, never an active S lens.
     const fallbackSource =
-      lensSourceState.sources.find((source) => source.active)?.source ?? null;
+      lensSourceState.sources.find((source) => source.active && source.family !== "S")?.source ?? null;
     lensReadout.replay(
       "lens",
       nodeId,
@@ -713,7 +714,7 @@
             layers: lens.readout.layers,
           },
           source:
-            lens?.binding.source ??
+            lens?.binding.sources.R ??
             fallbackSource ??
             null,
         };

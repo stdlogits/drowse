@@ -389,6 +389,9 @@ export async function refreshProbeList(): Promise<void> {
     const seen = new Set<string>();
     const changed = new Set<InstrumentFamily>();
     for (const info of r.probes) {
+      // Unit probes (neuron/…, head/…) have no dashboard view yet: the
+      // rack lists the residual-reading families only.
+      if (info.family === "units") continue;
       seen.add(info.name);
       const prev = probeRack.entries.get(info.name);
       if (JSON.stringify(prev?.info) !== JSON.stringify(info)) {

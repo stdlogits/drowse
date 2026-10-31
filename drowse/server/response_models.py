@@ -711,7 +711,13 @@ class SaeDescriptionSourceJSON(TypedDict):
 
 
 class InstrumentSourceJSON(TypedDict):
-    """One usable artifact source (lens binding / SAE source row)."""
+    """One usable artifact source (lens binding / SAE source row).
+
+    A lens row names its kind (``lens``: J/R/K/S), the family slot it
+    selects into (``family``: ``R`` or ``S``), the sites it carries and,
+    for a provider binding, the repository file bound per site
+    (``checkpoints``).
+    """
 
     __pydantic_config__ = _Open  # type: ignore[misc]
 
@@ -719,10 +725,13 @@ class InstrumentSourceJSON(TypedDict):
     kind: NotRequired[str]
     name: NotRequired[str]
     active: NotRequired[bool]
+    lens: NotRequired[Literal["J", "R", "K", "S"]]
+    family: NotRequired[Literal["R", "S"]]
+    sites: NotRequired[list[Literal["out", "mid"]]]
     provider: NotRequired[str]
     repo_id: NotRequired[str]
     repo_revision: NotRequired[str]
-    checkpoint: NotRequired[str]
+    checkpoints: NotRequired[dict[str, str]]
     layer: NotRequired[int]
     features: NotRequired[int]
     description_source: NotRequired[SaeDescriptionSourceJSON | None]

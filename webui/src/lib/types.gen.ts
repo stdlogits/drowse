@@ -165,16 +165,26 @@ export interface InstrumentFamilyBlock {
   capabilities: InstrumentCapabilities;
 }
 
-/** One usable artifact source (lens binding / SAE source row). */
+/**
+ * One usable artifact source (lens binding / SAE source row).
+ *
+ * A lens row names its kind (``lens``: J/R/K/S), the family slot it
+ * selects into (``family``: ``R`` or ``S``), the sites it carries and,
+ * for a provider binding, the repository file bound per site
+ * (``checkpoints``).
+ */
 export interface InstrumentSourceJSON {
   source: string;
   kind?: string;
   name?: string;
   active?: boolean;
+  lens?: "J" | "R" | "K" | "S";
+  family?: "R" | "S";
+  sites?: ("out" | "mid")[];
   provider?: string;
   repo_id?: string;
   repo_revision?: string;
-  checkpoint?: string;
+  checkpoints?: Record<string, string>;
   layer?: number;
   features?: number;
   description_source?: SaeDescriptionSourceJSON | null;
@@ -212,8 +222,19 @@ export interface LensAggregateTokenJSON {
   spread: number;
 }
 
+/**
+ * What the lens channel was measuring: the source of each lens family
+ * that produced its data, keyed ``R`` (``jlens/`` readings, the native
+ * readout) and ``S`` (``slens/`` readings), present only for a family that
+ * did; and the recipe steering.
+ */
+export interface LensBindingJSON {
+  sources: Record<string, string | null>;
+  steering: string | null;
+}
+
 export interface LensInstrumentJSON {
-  binding: MeasurementBindingJSON;
+  binding: LensBindingJSON;
   readings?: Record<string, ScalarReadingJSON>;
   readout?: LensReadoutBlockJSON;
 }
@@ -426,6 +447,7 @@ export interface MeasurementInstrumentsJSON {
   geometry?: GeometryInstrumentJSON;
   lens?: LensInstrumentJSON;
   sae?: SaeInstrumentJSON;
+  units?: UnitsInstrumentJSON;
 }
 
 /** The one versioned read-side wire record. */
@@ -519,7 +541,7 @@ export interface ProbeLayerGeometry {
 }
 
 export interface ProbeListResponse {
-  probes: (GeometryProbeInfo | LensProbeInfo | SaeProbeInfo)[];
+  probes: (GeometryProbeInfo | LensProbeInfo | SaeProbeInfo | UnitsProbeInfo)[];
 }
 
 /** A curved fit's curve/surface overlay, sampled into the whitened frame. */
@@ -873,6 +895,31 @@ export interface TreeRestoreResponse {
   root_id: string;
   active_node_id: string;
   nodes: number;
+}
+
+/**
+ * The units family: attached ``neuron/…`` / ``head/…`` probe readings.
+ * ``binding.source`` is always ``None`` (units are the model's own parts).
+ */
+export interface UnitsInstrumentJSON {
+  binding: MeasurementBindingJSON;
+  readings: Record<string, ScalarReadingJSON>;
+}
+
+/**
+ * One attached unit probe: an MLP neuron or attention head, read at its
+ * own layer in units of its neutral ``act_top``.
+ */
+export interface UnitsProbeInfo {
+  family: "units";
+  name: string;
+  unit: string;
+  kind: "neuron" | "head";
+  layer: number;
+  index: number;
+  layers: number[];
+  intrinsic_dim: number;
+  feature_space: string;
 }
 
 /** ``profile_to_json`` — a registered steering profile's identity. */

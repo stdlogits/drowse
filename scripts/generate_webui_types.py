@@ -60,6 +60,7 @@ SCHEMA_RENAMES: dict[str, str] = {
     "SaeChannel": "SaeInstrumentJSON",
     "UnitsChannel": "UnitsInstrumentJSON",
     "MeasurementBinding": "MeasurementBindingJSON",
+    "LensBinding": "LensBindingJSON",
     "LensReadout": "LensReadoutBlockJSON",
     "LensReadoutLayer": "LensReadoutLayerJSON",
     "LensReadoutToken": "LensReadoutTokenJSON",
