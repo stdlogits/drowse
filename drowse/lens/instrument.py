@@ -399,6 +399,11 @@ class LensInstrument:
         self._centre_stacks: BoundedLRU[
             tuple[str, tuple[int, ...]], tuple[Any, torch.Tensor]
         ] = BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
+        # The digest of those means per layer set (an ``slens/`` probe's
+        # identity binds them), beside the means mapping it was taken from.
+        self._centre_digests: BoundedLRU[tuple[int, ...], tuple[Any, str]] = (
+            BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
+        )
         #: The read plane's capture buffer: the per-step reads consume its
         #: latest slices.
         self._capture = capture
@@ -1739,27 +1744,45 @@ class LensInstrument:
         (output bias, projection, scaling, final soft-capping), so the digest
         folds in the lens artifact's identity: the same word read through a
         different lens — another source, a re-fit — is a different probe.
+        An ``slens/`` probe reads a centred residual, so its digest also binds
+        the neutral out means it centres on (built at attach).
         """
         with self.state_lock:
             spec = self.probes.get(name)
             if spec is None:
                 return None
+            word, token_id = spec["word"], spec["token_id"]
+            layers = tuple(int(layer) for layer in spec["layers"])
+            identity: Any
             if _spec_side(spec) == "input":
                 # The footprint channel: the S lens identity and the token
                 # mask the z divides by (the tokenizer is the model's).
-                head: tuple[Any, ...] = ("slens-footprint-z-v1", self.input_runtime.identity)
+                tag, identity = "slens-footprint-z-v2", self.input_runtime.identity
             else:
-                head = ("jlens-readout-v5", self.runtime.identity)
-            return hashlib.sha256(
-                repr(
-                    (
-                        head[0], self.model_id,
-                        spec["word"], spec["token_id"],
-                        tuple(spec["layers"]),
-                        head[1],
-                    )
-                ).encode("utf-8")
-            ).hexdigest()
+                tag, identity = "jlens-readout-v5", self.runtime.identity
+        if tag.startswith("slens"):
+            identity = (identity, self._centre_digest(layers))
+        return hashlib.sha256(
+            repr((tag, self.model_id, word, token_id, layers, identity)).encode("utf-8")
+        ).hexdigest()
+
+    def _centre_digest(self, layers: tuple[int, ...]) -> str:
+        """A digest of the neutral out means at ``layers`` (their fp32 CPU
+        bytes), taken once per means mapping: a residual read centred on
+        other means (other neutral statements, another baseline) is another
+        reading."""
+        means = self._neutral_means("out")
+        cached = self._centre_digests.get(layers)
+        if cached is not None and cached[0] is means:
+            return cached[1]
+        digest = hashlib.sha256()
+        for layer in layers:
+            mean = self.neutral_mean("out", layer).detach()
+            digest.update(f"{layer}:".encode("ascii"))
+            digest.update(mean.to(device="cpu", dtype=torch.float32).contiguous().numpy().tobytes())
+        value = digest.hexdigest()
+        self._centre_digests.put(layers, (means, value))
+        return value
 
     # ---------------------------------------------------------------- scoring
 

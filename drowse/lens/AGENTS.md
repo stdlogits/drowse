@@ -528,7 +528,9 @@ the per-layer softmax probability `p_l(v)`.
   layer has S weight), `per_layer` every `z_L`, and a depth summary weighted
   by `w_S(L) max(z_L, 0)` (basis `footprint_z`). Layers come from the lens
   the reading uses, never the registry. `probe_hash` folds in the S
-  lens identity (`slens-footprint-z-v1`). It joins the final aggregate, the
+  lens identity and a digest of the neutral out means at the probe's layers
+  (`slens-footprint-z-v2`: the reading is of a centred residual, so other
+  means are another probe). It joins the final aggregate, the
   gate path and, with live readout on, the per-step readings.
 - **Gate.** `@when:jlens/<word> > x` (also `[0]` or `#<id>`) fires only for an
   attached probe. The strength channel is the only one

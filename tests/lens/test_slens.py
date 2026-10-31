@@ -299,6 +299,34 @@ def test_slens_probe_reads_footprint_z(make_tiny_session: Any) -> None:
     assert both["jlens/a"].unit == "mean_token_probability"
 
 
+def test_an_slens_probe_identity_binds_the_neutral_means_it_centres_on(
+    make_tiny_session: Any,
+) -> None:
+    """Regression: slens/ readings centre on the neutral out mean, but the
+    probe hash did not bind it, so a transcript scored on other means (other
+    neutral statements, an uncentred build) validated as the same probe."""
+    session = make_tiny_session(warm=False)
+    _install_s_lens(session)
+    means = session.layer_means
+    shifted = {L: mean + 1.0 for L, mean in means.items()}
+
+    def attached(out: Any) -> Any:
+        harness = LensHarness(
+            model=session.model, tokenizer=session.tokenizer, layers=session.layers,
+            model_id=session.model_id, neutral_means={"out": out},
+        )
+        harness.lens.attach("slens/a")
+        return harness.lens
+
+    same, copy, other = attached(means), attached(dict(means)), attached(shifted)
+    digest = same.probe_hash("slens/a")
+    assert digest is not None and digest == copy.probe_hash("slens/a")
+    assert other.probe_hash("slens/a") != digest
+    # The session's own probe binds the same means.
+    session.add_probe("slens/a")
+    assert session.lens.probe_hash("slens/a") == digest
+
+
 def test_slens_gate_scalars_and_the_step_stash(make_tiny_session: Any) -> None:
     session = make_tiny_session(warm=False)
     _install_s_lens(session)
