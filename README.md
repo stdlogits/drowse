@@ -235,6 +235,28 @@ having read it; as probes, `jlens/` reads the mean readout probability and
 faithful read (weighted by depth, early layers most), and either can gate a
 term (`@when:slens/owl > 3`).
 
+### Neurons and heads
+
+Every MLP neuron (`neuron/L8n344`) and attention head (`head/L20h17`) is an
+object Drowse reads, probes, gates on and steers. `drowse unit read` says what
+one is about from its weights alone, through the same depth rule as the lens
+reads: a neuron per pole (its activation takes both signs) *writes* (its
+output direction, read where it lands, at the block output) and *fires on*
+(its input direction, read at the MLP input); a head *copies* or
+*suppresses* tokens (its OV circuit) and has a query, key and value that pick
+up tokens at the layer below. Hub tokens that top many reads at once from the
+lens's geometry can be hidden (`--hide-hubs`), which ranks each token against
+the rest of the layer. `drowse unit top owl --by writes` finds the neurons that
+write a token most specifically, and `drowse unit find honest` the neurons a
+steering direction is made of.
+
+For Qwen3-8B and Gemma 4 12B the
+[neuron-lens catalog](https://huggingface.co/datasets/stdlogits/neuron-lens)
+adds a label to every neuron pole and head, written by Claude Haiku 5.5, and
+how often each fires; `drowse unit fetch MODEL` binds it (labels and small
+tables only, pinned to a commit), and every unit view then links to the unit's
+page on [neuron-lens.com](https://neuron-lens.com).
+
 ### Sparse autoencoders
 
 Drowse can either use a published SAELens release or train a local SAE.
@@ -387,6 +409,13 @@ drowse lens fetch Qwen/Qwen3-8B rs-s
 drowse lens top Qwen/Qwen3-8B "The capital of France is" --site out
 # Which input tokens' footprints a direction resembles
 drowse lens decompose honest.deceptive -m Qwen/Qwen3-8B --dictionary tokens-in
+
+# Neurons and heads: what one is about, who writes a token, what a direction is made of
+drowse unit fetch Qwen/Qwen3-8B                      # the neuron-lens labels (Qwen3-8B, Gemma 4 12B)
+drowse unit read neuron/L8n344 -m Qwen/Qwen3-8B --hide-hubs
+drowse unit read head/L20h17 -m Qwen/Qwen3-8B
+drowse unit top owl -m Qwen/Qwen3-8B --by fires --layers 0-12
+drowse unit find honest.deceptive -m Qwen/Qwen3-8B
 
 # Fetch an SAE (needs the [sae] extra) or train a local source
 drowse sae fetch google/gemma-3-4b-it saelens:gemma-scope-2-4b-it-res
@@ -626,6 +655,10 @@ source is derived from the framing in Anthropic's
 [Assistant Axis paper](https://arxiv.org/abs/2601.10387). J-LENS support implements
 the verbalizable-workspace method of
 [Gurnee et al., 2026](https://transformer-circuits.pub/2026/workspace/index.html).
+Unit reads follow [neuron-lens](https://neuron-lens.com)'s definitions (its
+layer-contrastive reads, Elhage et al.'s copying score, Gurnee et al. 2024's
+prediction neurons, Stolfo et al. 2024's entropy neurons); its catalog's labels
+are by Claude Haiku 5.5.
 
 If you use Drowse in published research, please cite the relevant upstream methods
 alongside the Drowse version and exact model checkpoint you used.

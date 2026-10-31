@@ -18,7 +18,7 @@ security boundary.
 | `operations.py` | `run_operation` (SSE-or-JSON jobs), `OperationLedger` (receipts), `Preparation` / `PreparationGroup` (polled jobs) |
 | `request_helpers.py` | `build_sampling_config` (the one `SamplingConfig` construction site for all protocols), `compose_request_steering`, `flatten_content`, `validate_logit_bias` |
 | `compat/` | `__init__`: `CompatGeneration` + the shared driver; `openai.py`, `ollama.py`: request models and formatters; `model_names.py`: Ollama aliases (`_HF_TO_OLLAMA_ALIASES` wins, else `<family>:<size>`) |
-| `*_routes.py` + `*_models.py` | Native REST: sessions, profiles, probes, tree, manifolds, templates, instruments |
+| `*_routes.py` + `*_models.py` | Native REST: sessions, profiles, probes, tree, manifolds, templates, instruments, units (`unit_routes.py`) |
 | `ws_stream.py`, `ws_models.py`, `ws_events.py` | `WS /sessions/{id}/stream`, its frame schemas, `GET /sessions/{id}/requests/{id}` |
 | `response_models.py` | Response `TypedDict`s for every non-streaming native route |
 
@@ -246,7 +246,7 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   | geometry | 404 | 404 | yes | 404 |
   | lens | yes | `fetch`, `fit` | yes | yes |
   | sae | yes | `fetch`, `train` | yes | 409: loading weights is the `fetch` preparation |
-  | units | 404 | 404 | yes | 404 |
+  | units | 404 | `fetch` (the neuron-lens catalog) | yes | 404 |
 
   `POST live` forwards extras to `instrument.set_live`, whose `TypeError` is
   the one rejection rule (400); `top_k` is refused for every family because
@@ -256,6 +256,16 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   `instrument.token_readout`, which builds the whole `scope="replay"`
   envelope and rejects knobs it can't honor (400); the route reshapes nothing.
   `sae/features/metadata` is network and disk cache only and takes no lock.
+- **Units** (`unit_routes.py`, under `S/instruments/units/`; the CLI's
+  `drowse unit`). `GET read?unit=&k=&hide_hubs=` is the unit view
+  (`NeuronReadJSON | HeadReadJSON`, discriminated by `kind`), `GET
+  top?token=&by=writes|fires&layers=&k=` (`UnitTopJSON`), `POST find {selector
+  | vector + layer, k, layers}` (`UnitFindJSON`; exactly one target, else 400),
+  all model work under the session lock; `GET catalog` (`UnitCatalogJSON`) is
+  disk only. The catalog fetch is the units `fetch` preparation (no session
+  lock, network and disk; an uncatalogued model is 404 at POST; `DELETE` is
+  409, a fetch is not cancellable). The paths are literal segments beside the
+  `{family}` routes, which name other segments.
 
 ## Long-running operations (`operations.py`)
 

@@ -22,7 +22,7 @@ from drowse.model.units import (
 )
 from drowse.naming import HeadRef, NeuronRef
 from drowse.units.reads import (
-    HeadRead, NeuronRead, PlaceRead, copy_score, logit_moments, own_token_z, token_logits,
+    HeadRead, NeuronRead, PlaceRead, copy_score, full_logits, logit_moments, own_token_z, token_logits,
 )
 
 pytestmark = pytest.mark.usefixtures("isolated_home")
@@ -237,6 +237,25 @@ def test_token_logits_match_the_readout(lensed: Any) -> None:
     ids = torch.tensor([3, 40, 77])
     full = _readout(session)(rows).float()
     assert token_logits(_readout(session), rows, ids) == pytest.approx(full[:, ids], rel=1e-5, abs=1e-5)
+    assert full_logits(_readout(session), rows) == pytest.approx(full, rel=1e-5, abs=1e-5)
+
+
+def test_low_precision_logits_agree_between_one_token_and_all(lensed: Any) -> None:
+    """Regression: on a bf16 model the population ``logsumexp`` came from the
+    readout's bf16 logits and a pole's token logit from an fp32 product, so
+    ``top`` reported probabilities above 1; both are now the fp32 product."""
+    import copy
+
+    from drowse.model.readout import LogitReadout
+
+    session, _r, _s = lensed
+    readout = LogitReadout(copy.deepcopy(session.model).to(torch.bfloat16))
+    rows = 4 * torch.randn(64, 32, generator=torch.Generator().manual_seed(5))
+    ids = torch.arange(0, 200, 7)
+    full = full_logits(readout, rows)
+    assert token_logits(readout, rows, ids) == pytest.approx(full[:, ids], rel=1e-6, abs=1e-6)
+    probs = (token_logits(readout, rows, ids) - full.logsumexp(-1, keepdim=True)).exp()
+    assert float(probs.max()) <= 1.0
 
 
 # -- heads ---------------------------------------------------------------------
@@ -347,6 +366,7 @@ def test_top_ranks_poles_by_the_weighted_layer_z(lensed: Any) -> None:
     expected = [(int(i) % f, "+" if int(i) < f else "-") for i in best.indices]
     assert [(hit.ref.index, hit.pole) for hit in result.hits] == expected
     assert [hit.score for hit in result.hits] == pytest.approx(best.values.tolist(), rel=1e-4)
+    assert all(0.0 <= hit.r["probability"] <= 1.0 for hit in result.hits)
     top = result.hits[0]
     probs = _r_probs(session, (writes[top.ref.index] * (1 if top.pole == "+" else -1))[None], r.matrix(L, "out"))[0]
     assert top.r["probability"] == pytest.approx(float(probs[v]), rel=1e-3)
@@ -412,3 +432,12 @@ def test_reads_without_lenses_are_absent_halves(make_tiny_session: Any) -> None:
     payload = head.to_dict()
     assert payload["kind"] == "head" and payload["inputs"]["query"]["s"]["absent"]
     assert HeadRef(layer=1, index=0).qualified == payload["unit"]
+
+
+@pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+def test_copy_score_takes_device_factors_on_mps() -> None:
+    """Regression: the eigenvalues were cast to float64 on the device, which
+    MPS lacks; the factors go to the host first."""
+    gen = torch.Generator().manual_seed(0)
+    A, B = torch.randn(50, 4, generator=gen), torch.randn(50, 4, generator=gen)
+    assert copy_score(A.to("mps"), B.to("mps")) == pytest.approx(copy_score(A, B), rel=1e-5)

@@ -37,6 +37,7 @@ $DROWSE_HOME/
     alignments/<safe_src>.json     pointer -> <safe_src>.layer-<L>.gen-<hex>.safetensors
     manifold_capture/              content-addressed fit captures (fit/capture_cache.py)
     lens/, sae/                    source families (lens/AGENTS.md, sae/AGENTS.md)
+    units/contrast/, units/catalog/  unit reads' contrast cache and the neuron-lens binding (units/AGENTS.md)
   .staging/<uuid>/                 scratch for one whole-folder build (base/staging.py)
   .staging/backup/<path>           the parked old folder during a swap
 ```

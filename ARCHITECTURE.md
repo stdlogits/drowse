@@ -465,6 +465,20 @@ the neutral pass (neutral cache v5: a neuron's mean activation and per-pole
 `act_top`, a head's mean `z_h` and write-norm `act_top`). A gate on a unit
 needs no attached probe. `drowse/units/AGENTS.md` owns the definitions.
 
+Units are also read statically, from their weights
+(`units/reads.py::UnitReader`, `session.units.read|top|find`): each unit
+vector goes through `LensInstrument.read` at the place the lens rule assigns
+it (a neuron's write at `out`, its read direction at `mid`; a head's OV write
+at `mid`, its query/key/value inputs at `L − 1` out), so every place returns
+the depth rule's S and R halves. Hub tokens are hidden by neuron-lens's
+layer-contrastive z, whose per-layer population statistics are a derived
+cache under `models/<id>/units/contrast/`. The neuron-lens catalog
+(`units/catalog.py`, Qwen3-8B and Gemma 4 12B) is a commit-pinned binding of
+labels and firing tables under `models/<id>/units/catalog/`; its labels are
+data shown with their credit and link, never inputs to a computation. The
+`neurons` dictionary of `lens decompose` (each layer's signed neuron writes,
+Mahalanobis like the token dictionaries) is `unit find`.
+
 Geometry readings carry coordinates, fraction, nearest labels, residual,
 membership/assignment, per-layer traces and depth summaries. Every geometry
 probe is a fitted `Manifold`, flat or curved, read in the whitened metric and

@@ -22,7 +22,7 @@ at a place through both, by the four-lens rule. Inside a session the face is
 | `depth.py` | `LensBand`, `kind_weights`: which kind reads a place, by depth. Torch-free. |
 | `footprint.py` | `token_mask`, `TokenEmbeddings` (masked embedding mean and `Σ_E`, fp32), footprint z, `pullback_rows`, `depth_moments_positive`. Torch only. |
 | `read.py` | `read_vectors`, `LensRead` / `FamilyRead` / `TokenScore`: the read of a vector at `(layer, site)` through both families |
-| `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `TokensIn` (`K_l ẽ_v`), `sparse_decompose`, `DICTIONARIES` |
+| `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `TokensIn` (`K_l ẽ_v`), `NeuronWrites` (the layer's neuron writes, signed), `sparse_decompose`, `DICTIONARIES` |
 | `transport.py` | The estimator's per-document block maps: `linearize`, `jvp`, `vjp`, the sweeps, `document_estimate` |
 | `fit.py` | `fit_lens` (transport over a corpus), `LensSums`, `LensFit`, `fit_site_layers`. No runtime path imports it. |
 | `relp.py` | `RELP_RULES`, `HALF_RULE_BETA`: the RelP rules the R/S kinds are taken under |
@@ -553,7 +553,13 @@ the per-layer softmax probability `p_l(v)`.
   recomputes them. Selection is norm-normalized. It re-solves NNLS but takes
   the exact unconstrained solve when that is already nonnegative, and tiny
   solves run on CPU. `share` is the Mahalanobis variance fraction the atoms
-  carry. `LensDictionary` leaves room for signed `neurons`.
+  carry. `neurons` (`NeuronWrites`, `decompose_neurons(directions, …)` for raw
+  vectors) needs no lens: block `l`'s neuron writes (`model.units.neuron_writes`,
+  Gemma's post-feedforward gain included), whitened, signed (selection by
+  `|score|`, an unconstrained solve; a negative coefficient is the `−` pole),
+  named `neuron/L<l>n<i>`. `unit find` adds poles and catalog labels.
+  `token_embeddings()` is the public face of the S read's masked embedding
+  statistics (the unit reads use it).
 
 ## Errors, seams, tests
 

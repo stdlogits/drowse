@@ -75,11 +75,14 @@ drowse lens fit MODEL [--kind r|j|s|k] [--sites out,mid] [--corpus FILE | --hf-c
 drowse lens fetch MODEL [rs-r|rs-s|neuronpedia|workspace-r|workspace-j] [--repo R] [--revision REV] [-f]
 drowse lens ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
 drowse lens top MODEL "PROMPT" [-k K] [--layers L|sample|workspace|all] [--position P] [--site out|mid]
-drowse lens decompose SELECTOR -m MODEL [-k K] [--dictionary tokens-out|tokens-in] [--layers L]
+drowse lens decompose SELECTOR -m MODEL [-k K] [--dictionary tokens-out|tokens-in|neurons] [--layers L]
 drowse sae train MODEL NAME [--corpus FILE] [--layer L] [--tokens N] [...training knobs]
 drowse sae fetch MODEL saelens:RELEASE [--layer L] [--revision REV]
 drowse sae ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
 drowse config show [-c PATH...] [--no-default] [-m MODEL] | validate FILE
+drowse unit read UNIT -m MODEL [-k K] [--hide-hubs] | stats UNIT -m MODEL      # neuron/L8n344, head/L20h17
+drowse unit top TOKEN -m MODEL [--by writes|fires] [--layers L] [-k K] | find SELECTOR -m MODEL [-k K] [--layers L]
+drowse unit fetch MODEL [-f] | catalog [MODEL] | rm MODEL -y   # neuron-lens catalog: Qwen3-8B, Gemma 4 12B
 
 pytest -q -m "not gpu"             # the CI suite (CPU)
 pytest -q -n auto -m "not perf"    # everything this machine can run
@@ -92,7 +95,7 @@ python scripts/regenerate_bundled.py [TARGETS...]         # bundled corpora + ne
 ```
 
 Model-loading verbs also take `-d/--device` and `-q/--quantize 4bit|8bit`;
-most read verbs take `-j/--json`. The root parser has exactly these eight
+most read verbs take `-j/--json`. The root parser has exactly these nine
 verbs; a bare verb or group prints its help and exits 0, and `drowse MODEL` is
 an argparse error. Precedence is CLI > YAML > runner default; every verb with
 `-c` composes `$DROWSE_HOME/config.yaml` first. Flags, config keys, the serve
@@ -287,7 +290,7 @@ with a dist-drift check. Details: `tests/AGENTS.md`.
 All state lives under `$DROWSE_HOME` (default `~/.drowse`): `config.yaml`,
 prompt/neutral overrides, `templates/`, `manifolds/<ns>/<name>/` and
 `models/<safe_model_id>/` (neutral activations, alignments, capture cache,
-`lens/`, `sae/`). The full tree is in `drowse/store/AGENTS.md`; the lens and
+`lens/`, `sae/`, `units/`: the contrast cache and the catalog binding). The full tree is in `drowse/store/AGENTS.md`; the lens and
 SAE subtrees in their packages. Conversations are never autosaved; they are
 browser downloads or explicit `LoomTree.save(path)` targets.
 

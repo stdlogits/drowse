@@ -400,7 +400,8 @@ def own_token_z(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 def copy_score(A: torch.Tensor, B: torch.Tensor) -> float:
     """Elhage et al.'s copying score ``Σλ / Σ|λ|`` of ``A Bᵀ`` from the
     eigenvalues of ``Bᵀ A`` (its nonzero ones): +1 copies, −1 suppresses."""
-    lam = torch.linalg.eigvals((B.T @ A).detach().to("cpu", torch.float64))
+    # To the host first: MPS has no float64.
+    lam = torch.linalg.eigvals((B.T @ A).detach().cpu().double())
     denom = float(lam.abs().sum())
     return float(lam.real.sum()) / denom if denom > 0 else 0.0
 
@@ -412,20 +413,18 @@ def logit_moments(logits: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
     return centred.pow(3).mean(-1) / var.pow(1.5), centred.pow(4).mean(-1) / var.pow(2)
 
 
-def token_logits(readout: Any, rows: torch.Tensor, token_ids: torch.Tensor) -> torch.Tensor:
-    """The model's logits of ``token_ids`` only, ``[n, m]`` fp32, for final
-    residuals ``rows`` ``[n, d]``: the :class:`~drowse.model.readout.LogitReadout`
-    path (final norm, optional projection, the head's rows, scale, divisor,
-    softcap) without the full vocabulary product."""
+def _final_hidden(readout: Any, rows: torch.Tensor) -> torch.Tensor:
+    """The final norm (and projection) of :class:`~drowse.model.readout.LogitReadout`,
+    in the model's dtype as the model runs it, then fp32."""
     weight = readout.head.weight
     hidden = readout.norm(rows.to(weight.dtype))
     if readout.projection is not None:
         hidden = readout.projection(hidden)
-    ids = token_ids.to(device=weight.device, dtype=torch.long)
-    logits = (hidden.float() @ weight.index_select(0, ids).float().T)
-    bias = getattr(readout.head, "bias", None)
-    if bias is not None:
-        logits = logits + bias.index_select(0, ids).float()
+    return hidden.float()
+
+
+def _logit_tail(readout: Any, logits: torch.Tensor) -> torch.Tensor:
+    """LogitReadout's elementwise tail (scale, divisor, softcap) in fp32."""
     if readout.scale != 1.0:
         logits = logits * readout.scale
     if readout.divisor != 1.0:
@@ -433,6 +432,36 @@ def token_logits(readout: Any, rows: torch.Tensor, token_ids: torch.Tensor) -> t
     if readout.softcap is not None:
         logits = (logits / readout.softcap).tanh() * readout.softcap
     return logits
+
+
+def full_logits(readout: Any, rows: torch.Tensor, *, chunk: int = VOCAB_CHUNK) -> torch.Tensor:
+    """The model's logits ``[n, V]`` for final residuals ``rows``, the
+    vocabulary product in fp32 (chunked over the head's rows), so a
+    population's ``logsumexp`` and a single token's logit agree exactly."""
+    weight = readout.head.weight
+    hidden = _final_hidden(readout, rows)
+    vocab = int(weight.shape[0])
+    out = torch.empty(hidden.shape[0], vocab, dtype=torch.float32, device=hidden.device)
+    bias = getattr(readout.head, "bias", None)
+    for start in range(0, vocab, chunk):
+        block = hidden @ weight[start:start + chunk].detach().float().T
+        if bias is not None:
+            block = block + bias[start:start + chunk].float()
+        out[:, start:start + chunk] = block
+    return _logit_tail(readout, out)
+
+
+def token_logits(readout: Any, rows: torch.Tensor, token_ids: torch.Tensor) -> torch.Tensor:
+    """The model's logits of ``token_ids`` only, ``[n, m]`` fp32: the
+    :func:`full_logits` path without the full vocabulary product."""
+    weight = readout.head.weight
+    hidden = _final_hidden(readout, rows)
+    ids = token_ids.to(device=weight.device, dtype=torch.long)
+    logits = hidden @ weight.index_select(0, ids).detach().float().T
+    bias = getattr(readout.head, "bias", None)
+    if bias is not None:
+        logits = logits + bias.index_select(0, ids).float()
+    return _logit_tail(readout, logits)
 
 
 def _drain(device: torch.device) -> None:
@@ -677,7 +706,7 @@ class UnitReader:
         x = rows.to(device=self.device, dtype=torch.float32)
         if matrix is not None:
             x = x @ matrix.T
-        return self._readout()(x).float()
+        return full_logits(self._readout(), x)
 
     def _s_covectors(self, rows: torch.Tensor, matrix: torch.Tensor) -> torch.Tensor:
         """``u = x K_L`` ``[n, d_emb]`` fp32."""
@@ -1592,6 +1621,7 @@ __all__ = [
     "contrast_dir",
     "copy_score",
     "logit_moments",
+    "full_logits",
     "own_token_z",
     "token_logits",
 ]
