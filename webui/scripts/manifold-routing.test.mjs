@@ -41,13 +41,14 @@ try {
   const unfitted = render(DiagnosticsPanel, { props: { manifold: { ...manifold, resolved_fit_mode: null, fitted: [] } } }).body;
   assert.match(unfitted, /fit for diagnostics/);
 
-  // Trigger pill: one state per engine preset, labels match the engine phases.
-  const { TRIGGER_ORDER, TRIGGER_LABEL, nextTrigger } = await server.ssrLoadModule("/src/panels/rack/triggers.ts");
-  assert.deepEqual(TRIGGER_ORDER, ["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"]);
-  assert.match(TRIGGER_LABEL.BEFORE, /prompt prefill only/);
-  assert.doesNotMatch(TRIGGER_LABEL.BEFORE, /response/);
-  assert.match(TRIGGER_LABEL.RESPONSE, /thinking included/);
-  assert.equal(nextTrigger("RESPONSE"), "BOTH");
+  // The term editor's When: one choice per engine preset, in phase order, tips matching the phases.
+  const { WHEN } = await server.ssrLoadModule("/src/lib/steering/terms.ts");
+  assert.deepEqual(WHEN.map(option => option.value), ["BOTH", "BEFORE", "RESPONSE", "THINKING", "AFTER"]);
+  const hint = Object.fromEntries(WHEN.map(option => [option.value, option.hint]));
+  assert.match(hint.BEFORE, /prompt only/);
+  assert.doesNotMatch(hint.BEFORE, /response/i);
+  assert.match(hint.RESPONSE, /thinking included/);
+  assert.deepEqual(WHEN.filter(option => option.thinking).map(option => option.value), ["THINKING", "AFTER"]);
 
   // Racks saved with the old alias pill values still import, as the canonical preset.
   const { serializeExpression } = await server.ssrLoadModule("/src/lib/expression.ts");

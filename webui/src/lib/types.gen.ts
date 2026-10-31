@@ -1022,11 +1022,33 @@ export interface SourcesResponse {
   fit_documents?: number;
 }
 
-/** ``POST .../steering/validate`` — a form result, not a failed request. */
+/**
+ * Where one validated term acts (``SteeringComposer.term_layers``).
+ *
+ * ``fitted`` are the layers the term can act on, ``share`` its weight at
+ * each (aligned with ``fitted``, mean 1 over them), ``layers`` the ones its
+ * ``{…}`` clause selects (``fitted`` without one).  ``key`` is the term's
+ * canonical key, clause included.
+ */
+export interface SteeringTermLayersJSON {
+  key: string;
+  fitted: number[];
+  share: number[];
+  layers: number[];
+}
+
+/**
+ * ``POST .../steering/validate`` — a form result, not a failed request.
+ *
+ * A valid, non-empty expression also carries the model's depth and where
+ * each of its terms acts (the term editor's depth strip).
+ */
 export interface SteeringValidationResponse {
   valid: boolean;
   expression: string;
   error: string | null;
+  n_layers?: number;
+  terms?: SteeringTermLayersJSON[];
 }
 
 export interface TemplateContextJSON {

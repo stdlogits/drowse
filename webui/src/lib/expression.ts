@@ -3,10 +3,12 @@
 // Mirrors drowse/steering/grammar.py (serialize direction only):
 //
 //   expr     := term (("+" | "-") term)*
-//   term     := [coeff "*"?] ["!"] selector ["@" trigger]
+//   term     := [coeff "*"?] ["!"] selector ["{" layers "}"] ["@" trigger]
+//   layers   := indices and a-b ranges ("4-8,20") | "workspace"   (lib/steering/layers.ts)
 //   selector := atom (("~" | "|") atom | "%" coord_list)?
 //   coord_list := signed_num ("," signed_num)*
 //   atom     := [ns "/"] NAME ["." NAME] [":" variant]
+//             | ("neuron" | "head") "/" UNIT                     (no clause: a unit has its layer)
 //   trigger  := before|after|both|thinking|response|prompt|generated
 //   variant  := raw | sae | sae-<release> | role | role-<name>
 //             | from | from-<safe-source-model>
@@ -33,6 +35,7 @@ import type {
   UnitSteerEntry,
   Variant,
 } from "./types";
+import { layerClause, termIsInert } from "./steering/layers";
 
 // ----------------------------------------------- triggers ----------------
 
@@ -48,8 +51,9 @@ const TRIGGER_TO_KEYWORD: Record<Trigger, string | null> = {
 
 // ----------------------------------------------- formatter ---------------
 
-/** Render the rack as a canonical expression string.  Disabled entries are
- * skipped; subspace (flat) terms emit first, then manifold (curved) terms.
+/** Render the rack as a canonical expression string.  Disabled entries, and
+ * entries scoped to no layer, are skipped; subspace (flat) terms emit first,
+ * then lens and SAE atoms, units, and manifold (curved) terms.
  * Every term is a ``%`` position; the coefficient slot is the shared
  * ``subspaceAlong`` master for subspace terms and the per-card
  * ``along[,onto]`` for manifold terms.  Empty/all-disabled racks return "". */
@@ -58,31 +62,32 @@ export function serializeExpression(
   subspaceAlong = 1,
 ): string {
   const parts: string[] = [];
-  for (const [name, entry] of rack) {
-    if (entry.enabled && entry.mode === "subspace") {
-      parts.push(formatSubspaceTerm(name, entry, subspaceAlong));
+  for (const mode of TERM_ORDER) {
+    for (const [name, entry] of rack) {
+      if (entry.mode !== mode || !entry.enabled || termIsInert(entry.mode === "unit" ? null : entry.layers)) continue;
+      parts.push(formatTerm(name, entry, subspaceAlong));
     }
   }
-  for (const [name, entry] of rack) {
-    if (entry.enabled && entry.mode === "jlens") {
-      parts.push(formatJLensTerm(name, entry));
-    }
+  return joinTerms(parts);
+}
+
+/** The order families emit in: flat terms first (they share one slide), then the atoms, units
+ *  and curved terms. */
+const TERM_ORDER: readonly SteerEntry["mode"][] = ["subspace", "jlens", "sae", "unit", "manifold"];
+
+/** Render one rack entry as its own term (whatever ``enabled`` says). */
+export function formatTerm(name: string, entry: SteerEntry, subspaceAlong: number): string {
+  switch (entry.mode) {
+    case "subspace": return formatSubspaceTerm(name, entry, subspaceAlong);
+    case "jlens": return formatJLensTerm(name, entry);
+    case "sae": return formatSaeTerm(name, entry);
+    case "unit": return formatUnitTerm(name, entry);
+    case "manifold": return formatManifoldTerm(name, entry);
   }
-  for (const [name, entry] of rack) {
-    if (entry.enabled && entry.mode === "sae") {
-      parts.push(formatSaeTerm(name, entry));
-    }
-  }
-  for (const [name, entry] of rack) {
-    if (entry.enabled && entry.mode === "unit") {
-      parts.push(formatUnitTerm(name, entry));
-    }
-  }
-  for (const [name, entry] of rack) {
-    if (entry.enabled && entry.mode === "manifold") {
-      parts.push(formatManifoldTerm(name, entry));
-    }
-  }
+}
+
+/** Join rendered terms: the first keeps its leading sign, the rest join with `` + `` or `` - ``. */
+function joinTerms(parts: readonly string[]): string {
   if (parts.length === 0) return "";
   // First term keeps its leading sign verbatim; subsequent terms join
   // with " + " or " - " depending on coefficient sign.
@@ -106,13 +111,14 @@ export function formatSubspaceTerm(
   entry: SubspaceSteerEntry,
   subspaceAlong: number,
 ): string {
+  const clause = layerClause(entry.layers);
   if (entry.ablate) {
     const selector = `!${nameWithVariant(name, entry.variant)}`;
-    return `${formatCoeff(subspaceAlong)} ${selector}${formatTriggerSuffix(entry.trigger)}`;
+    return `${formatCoeff(subspaceAlong)} ${selector}${clause}${formatTriggerSuffix(entry.trigger)}`;
   }
   const position = entry.label ?? entry.coords.map((c) => formatCoeff(c)).join(",");
   const selector = `${nameWithVariant(name, entry.variant)}%${position}`;
-  return `${formatCoeff(subspaceAlong)} ${selector}${formatTriggerSuffix(entry.trigger)}`;
+  return `${formatCoeff(subspaceAlong)} ${selector}${clause}${formatTriggerSuffix(entry.trigger)}`;
 }
 
 function nameWithVariant(name: string, variant: Variant): string {
@@ -136,19 +142,19 @@ function formatTriggerSuffix(trigger: Trigger): string {
  *  engine resolves it through ``lens.register_direction``); per-chip
  *  ``alpha`` because lens atoms run hotter than concept vectors. */
 export function formatJLensTerm(name: string, entry: JLensSteerEntry): string {
-  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
+  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
 }
 
 export function formatSaeTerm(name: string, entry: SaeSteerEntry): string {
-  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
+  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
 }
 
-/** Render one unit term: a push ``<α> neuron/L31n4410`` (a negative α pushes the − pole) or an
- *  ablation, written bare (``!neuron/…``) at α 1, exact mean-ablation. */
+/** Render one unit term — ``<alpha> neuron/L31n4410`` (a push; a negative α takes the other pole)
+ *  or ``<alpha> !neuron/…`` / ``<alpha> !head/…`` (silenced toward the neutral mean).  A unit
+ *  carries its own layer, so it never writes a clause; a head is only ever silenced. */
 export function formatUnitTerm(name: string, entry: UnitSteerEntry): string {
-  const suffix = formatTriggerSuffix(entry.trigger);
-  if (entry.ablate) return `${entry.alpha === 1 ? "" : `${formatCoeff(entry.alpha)} `}!${name}${suffix}`;
-  return `${formatCoeff(entry.alpha)} ${name}${suffix}`;
+  const silence = entry.ablate || name.startsWith("head/");
+  return `${formatCoeff(entry.alpha)} ${silence ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
 }
 
 /** Render one manifold (curved) rack entry — ``<along[,onto]>
@@ -167,5 +173,5 @@ export function formatManifoldTerm(name: string, entry: ManifoldSteerEntry): str
     (entry.onto ?? 0) > 0
       ? `${formatCoeff(entry.blend)},${formatCoeff(entry.onto)}`
       : formatCoeff(entry.blend);
-  return `${coeff} ${selector}${formatTriggerSuffix(entry.trigger)}`;
+  return `${coeff} ${selector}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
 }

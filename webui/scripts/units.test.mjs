@@ -223,10 +223,10 @@ try {
   store.toggleUnitTerm("neuron/L31n4410", "minus");
   assert.equal(steering.currentSteeringExpression(), "-0.35 neuron/L31n4410", "the − pole keeps the strength");
   store.toggleUnitTerm("head/L28h12", "silence");
-  assert.equal(steering.currentSteeringExpression(), "-0.35 neuron/L31n4410 + !head/L28h12");
+  assert.equal(steering.currentSteeringExpression(), "-0.35 neuron/L31n4410 + 1 !head/L28h12");
   store.toggleUnitTerm("neuron/L31n4410", "minus");
   assert.equal(store.unitTerm("neuron/L31n4410"), null, "pressing the held term takes it out");
-  assert.equal(steering.currentSteeringExpression(), "!head/L28h12");
+  assert.equal(steering.currentSteeringExpression(), "1 !head/L28h12");
   assert.equal(serializeExpression(new Map([["neuron/L8n3", { mode: "unit", ablate: true, alpha: 0.5, trigger: "RESPONSE", enabled: true }]])), "0.5 !neuron/L8n3@response");
   store.toggleUnitTerm("head/L28h12", "silence");
   assert.equal(steering.steerRack.entries.size, 0);
@@ -237,7 +237,7 @@ try {
   assert.equal(steering.currentSteeringExpression(), "-0.2 neuron/L30n637");
   store.setUnitOperation("neuron/L30n637", true);
   assert.deepEqual([steering.steerRack.entries.get("neuron/L30n637").ablate, steering.steerRack.entries.get("neuron/L30n637").alpha], [true, 1]);
-  assert.equal(steering.currentSteeringExpression(), "!neuron/L30n637");
+  assert.equal(steering.currentSteeringExpression(), "1 !neuron/L30n637");
   assert.equal(store.unitTerm("neuron/L30n637"), "silence");
   steering.patchSteerEntry("neuron/L30n637", { alpha: 0.5 }, ["unit"]);
   store.setUnitOperation("neuron/L30n637", true);
@@ -387,7 +387,7 @@ try {
   await edit({ selector: "neuron/L30n637", alpha: -0.2 });
   assert.equal(steering.currentSteeringExpression(), "-0.2 neuron/L30n637");
   await edit({ selector: "neuron/L30n637", ablate: true });
-  assert.equal(steering.currentSteeringExpression(), "!neuron/L30n637", "an ablation runs at α 1");
+  assert.equal(steering.currentSteeringExpression(), "1 !neuron/L30n637", "an ablation runs at α 1");
   await assert.rejects(edit({ selector: "neuron/L30n637", alpha: -0.2 }), /must not be negative/);
   await assert.rejects(edit({ selector: "neuron/L30n637", ablate: true, alpha: -0.5 }), /must not be negative/);
   await assert.rejects(edit({ selector: "head/L28h12", ablate: false }), /no push/);

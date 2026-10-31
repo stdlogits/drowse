@@ -6,12 +6,10 @@ import { startTheme } from "./lib/theme";
 import { initializeInputModality } from "./lib/inputModality";
 import { loadWebMcp } from "./lib/webmcp/loader";
 // Side-effect CSS imports, extracted into the bundled CSS. Ledger first (its faces, tokens and base),
-// then the temporary bridge that maps the old token names the unrestyled components still read onto
-// Ledger values (scripts/check-ledger.mjs ratchets its uses down to zero), then the app's own globals.
-// Imported here (not from App.svelte) so svelte-check, which runs without Vite's CSS plugin, doesn't
-// trip on missing module declarations; vite/client above declares ``*.css``.
+// then the app's own globals. Imported here (not from App.svelte) so svelte-check, which runs
+// without Vite's CSS plugin, doesn't trip on missing module declarations; vite/client above
+// declares ``*.css``.
 import "@stdlogits/ledger/ledger.css";
-import "./lib/style/bridge.css";
 import "./lib/style/global.css";
 
 const target = document.getElementById("app");

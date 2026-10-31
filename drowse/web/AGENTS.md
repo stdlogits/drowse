@@ -63,23 +63,25 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
   `scripts/check_package_isolation.py check`. The wheel's dashboard files must equal the
   sdist's and the source tree's.
 - `npm run check` runs `svelte-check`, `check-theme.mjs` (every referenced CSS custom
-  property must be declared, here or in `@stdlogits/ledger`), `check-ledger.mjs` (the Ledger
-  ratchet, below), `check-runtime-boundary.mjs`, the `test:*` node suites and
-  `check-test-coverage.mjs`. The last requires every `scripts/*.test.mjs` to be reachable
-  from `check`, so a new test file needs a line in `package.json`.
-- `check-ledger.mjs` counts, per file, the uses of the bridge's old token names
-  (`lib/style/bridge.css`) and the departures from Ledger: borders; outlines outside a
-  `:focus`/`:focus-visible` rule; shadows other than a marked token's 2px same-colour spread
+  property must be declared, here or in `@stdlogits/ledger`, so an old token name fails
+  here), `check-ledger.mjs` (the Ledger ratchet, below), `check-runtime-boundary.mjs`, the
+  `test:*` node suites and `check-test-coverage.mjs`. The last requires every
+  `scripts/*.test.mjs` to be reachable from `check`, so a new test file needs a line in
+  `package.json`.
+- `check-ledger.mjs` counts, per file, the departures from Ledger: borders; outlines outside
+  a `:focus`/`:focus-visible` rule; shadows other than a marked token's 2px same-colour spread
   (the tip's `--float` is Ledger's own, so any use here counts); monospace; capitals;
   letter-spaced text; easing off the one curve; animations that loop; colours outside the
   tokens; colour mixes outside oklch (the accent's) and oklab (a grey's: Chrome renders a
   near-grey mixed in oklch with a red cast); and text coloured by the depth accent (`--tint`,
-  `--deep`, `--late` or a bridge name for them). It reads `style:prop={…}` directives as
-  `prop: …` declarations. It fails if any count differs from `webui/ledger-ratchet.json`. A
-  count that rises fails; one that falls asks for `node scripts/check-ledger.mjs --write`,
-  which lowers the ratchet and never raises it. A category the ratchet does not record yet
-  fails the check until `--write` takes today's count as its first ceiling. `--cut` (the 6.0
-  cut) requires every count at zero and the bridge deleted.
+  `--deep`, `--late`, or a component's own accent property). It reads `style:prop={…}`
+  directives as `prop: …` declarations. It fails if any count differs from
+  `webui/ledger-ratchet.json`, which holds every count at zero: the bridge that once mapped
+  the old token names onto Ledger is gone, and with it the ratchet's bridge category. A count
+  that rises fails; one that falls asks for `node scripts/check-ledger.mjs --write`, which
+  lowers the ratchet and never raises it. A category the ratchet does not record yet fails
+  the check until `--write` takes today's count as its first ceiling. `--cut` (the 6.0 cut)
+  requires every count at zero.
 
 ## Generated REST types (`lib/types.gen.ts`)
 
@@ -211,17 +213,20 @@ opportunistically and never blocks the current store. `lib/theme.ts` (the stored
 ```
 main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
 panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread
-panels/inspector/     Inspector (by selection), Instruments, TermView, UnitView (+ UnitTrace)
+panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace)
 panels/rooms/         RoomSections (Manifolds, Model), LensRoom (lens/: the depth axis, a family
                       column, a card), UnitsRoom (+ UnitAtlas)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
-                      ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/
+                      ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/ (the probe
+                      cards; TermEditor and LayerStrip, the term editor under the chips)
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
 lib/api.ts            HTTP + SSE + WS client (imported only by runtime/http-client.ts)
 lib/runtime/          RuntimeClient contract, registry, HTTP impl, errors, capability gating
 lib/types.ts          the import surface (re-exports types.gen.ts)
 lib/stores.svelte.ts  barrel over lib/stores/ slices
 lib/expression.ts     rack → steering expression (serialize only)
+lib/steering/         the term editor's logic: layers.ts (the clause, the strip's arithmetic),
+                      terms.ts (what a term reads as), termLayers.svelte.ts (where it acts)
 lib/highlight.ts      the one per-token highlight; tokens.ts is its store-free ramp math
 lib/templates.ts      client mirror of the template validator
 lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
@@ -229,7 +234,7 @@ lib/units.ts          unit IDs, reads, activity and atlas arithmetic (store-free
 lib/unitTerms.ts      a unit's recipe terms and their one validity rule (import-free)
 lib/lensRoom.ts       the Lens room's arithmetic (band spans, site series, family sources, fit ladder)
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
-lib/style/            drowse.css (the shell's Ledger classes), global.css, bridge.css (temporary)
+lib/style/            drowse.css (the shell's Ledger classes), global.css, cursors.css
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
 ```
 
@@ -310,7 +315,11 @@ drowse.ai too.
 
 - **Expression.** `lib/expression.ts` only serializes; the server's grammar is the only
   parser. Terms come out as subspace terms (at the shared `subspaceAlong`), `jlens/`
-  atoms, `sae/` atoms, then manifold terms (at their own `along[,onto]`). Keep `Variant`
+  atoms, `sae/` atoms, units (`neuron/…` pushed or silenced, `head/…` only silenced), then
+  manifold terms (at their own `along[,onto]`). A term's `layers` writes its `{…}` clause after
+  the selector and before `@` (`lib/steering/layers.ts` mirrors `format_layer_indices`:
+  `{4-8,20}`, `{workspace}`, none for every fitted layer); a unit carries its layer and never
+  writes one, and a term scoped to no layer sits out of the expression. Keep `Variant`
   in step with the grammar (`raw`, `sae`, `sae-*`, `role`, `role-*`, `from`, `from-*`).
   `applyCustomSteeringExpression` clears the visual rack, because the rack cannot show
   every projection or gate form and must not misstate what generation uses.
@@ -355,15 +364,27 @@ drowse.ai too.
 - **Visual.** Ledger: flat and borderless (fills only: paper, wash, wash2), the one shadow
   under the tip, Wix Madefor only with tabular numbers, no capitals, one easing curve.
   Colour is depth: the one accent is `--tint`, a layer's place on the `--deep` → `--late`
-  ramp, and it only fills; signed negatives are ink at low alpha, interaction is ink. The
-  components not yet redrawn read old token names through `lib/style/bridge.css`, which the
-  ratchet counts down. Token tints are the depth accent (or ink, for a negative) mixed with
-  transparent in oklch up to 22%, with a 2px spread in the same mix. Popups, menus and toasts
-  are wash2 fills with no shadow; a dialog and the command palette are paper over a wash2 scrim.
-- **A departure from the canvas, for a9 to ratify.** A selected steering term opens in the
-  Inspector (`panels/inspector/TermView.svelte`, the rack's controls) rather than in place
-  under the chips as the Steering artboard draws it (a wash surface with Strength, When, Where
-  and the live expression). The in-place term editor is the term-editor lane's.
+  ramp, and it only fills; signed negatives are ink at low alpha, interaction is ink. Every
+  component is drawn in Ledger's own tokens. Token tints are the depth accent (or ink, for a
+  negative) mixed with transparent in oklch up to 22%, with a 2px spread in the same mix.
+  Popups, menus and toasts are wash2 fills with no shadow; a dialog and the command palette
+  are paper over a wash2 scrim.
+- **The term editor.** A chip selects its term (`{kind: "term"}`) and opens
+  `panels/rack/TermEditor.svelte` in place under the chips, as the Steering artboard draws it:
+  the name and what it is, Push or Without (a rank-one direction or a neuron), On, the
+  strength (a readout that scrubs sideways over the term's dial, `terms.ts::strengthDial`:
+  flat terms share one `subspaceAlong` from 0 to 2, a curved term runs from 0 to 1 because
+  composition refuses a negative curved along, an atom is signed), When (the trigger
+  presets; the thinking pair only on a thinking model),
+  the position on its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
+  as tall as the term's share, painted by dragging; All fitted, Workspace, Clear) and the
+  term as the expression writes it. While a term is selected the Inspector shows the
+  instruments, and the phone's sheet stays down. Where a term acts comes from `POST
+  .../steering/validate` (`terms`, `n_layers`), asked once per term text at strength 1 and
+  `@response`, so a probe never drops the cached prefix (`termLayers.svelte.ts`); a runtime
+  that does not report them hides the strip. The probe names the term's position, so a moved
+  position asks again once it has rested (`SETTLE_MS`), and until the answer comes the term
+  keeps the strip and span it last showed.
 
 ## Testing
 

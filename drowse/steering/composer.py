@@ -15,6 +15,7 @@ exclusive model lock and the event bus.
 """
 from __future__ import annotations
 
+import math
 import warnings
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Mapping
@@ -164,6 +165,56 @@ def select_term_layers(
             f"layers: {have_text}"
         )
     return tuple(scope)
+
+
+@dataclass(frozen=True)
+class TermLayers:
+    """Where one resolved steering term acts, for the term editor's depth strip.
+
+    ``fitted`` are the layers the term can act on (a vector's or ablation
+    target's profile layers, a projection's projected layers, a manifold's
+    fitted layers, a unit's own layer); ``share`` is the term's weight at each
+    of them, mean 1 over ``fitted``; ``layers`` are the ones its ``{…}`` clause
+    selects (``fitted`` when it has none).  See
+    :meth:`SteeringComposer.term_layers`.
+    """
+
+    fitted: tuple[int, ...]
+    share: tuple[float, ...]
+    layers: tuple[int, ...]
+
+
+def _push_share(
+    basis_dirs: dict[int, torch.Tensor],
+    coord_dirs: dict[int, torch.Tensor],
+    whitener: Any,
+) -> dict[int, float]:
+    """A lone push's raw per-layer share: its whitened displacement ``‖Δ_L‖_M``.
+
+    The share :func:`~drowse.geometry.inject.synthesize_subspace` weights a
+    push by when it is the only term at a layer (``Δ_L = coords_L @ basis_L``).
+    """
+    out: dict[int, float] = {}
+    for L, basis in basis_dirs.items():
+        rows = basis.detach().to(device="cpu", dtype=torch.float32)
+        if rows.ndim == 1:
+            rows = rows.reshape(1, -1)
+        coords = coord_dirs.get(L)
+        if coords is None:
+            out[L] = 0.0
+            continue
+        delta = coords.detach().to(device="cpu", dtype=torch.float32).reshape(-1) @ rows
+        out[L] = float(whitener.mahalanobis_norms(L, delta.reshape(1, -1))[0])
+    return out
+
+
+def _mean_one(raw: Mapping[int, float], layers: tuple[int, ...]) -> tuple[float, ...]:
+    """``raw`` over ``layers`` scaled to mean 1; uniform when it carries no signal."""
+    values = [max(0.0, float(raw.get(L, 0.0))) for L in layers]
+    total = sum(values)
+    if not layers or not math.isfinite(total) or total <= 0.0:
+        return tuple(1.0 for _ in layers)
+    return tuple(v / total * len(layers) for v in values)
 
 
 def _restrict(
@@ -382,6 +433,10 @@ class SteeringScope:
         tb: TracebackType | None,
     ) -> None:
         self.close()
+
+    def term_layers(self) -> dict[str, TermLayers]:
+        """Where each of this scope's terms acts (:meth:`SteeringComposer.term_layers`)."""
+        return self._composer.term_layers(self._entries)
 
     def close(self, *, internal: bool = False, swallow: bool = False) -> None:
         """Pop this scope if it is entered (idempotent).
@@ -918,6 +973,76 @@ class SteeringComposer:
             if synth.layers:
                 plan.add_subspace(f"__affine__{i}", synth, trigger=trigger)
         return plan
+
+    def term_layers(
+        self, entries: Mapping[str, SteeringStackEntry],
+    ) -> dict[str, TermLayers]:
+        """Where each resolved term acts: its fitted layers, its share there, its selection.
+
+        What the term editor draws a term's depth strip from (``POST
+        .../steering/validate``).  Each term is weighed alone and unscoped, the
+        way composition weighs it: a push (a vector, a pole, a projection, an
+        affine ``%`` position) by its whitened displacement ``‖Δ_L‖_M``, a
+        curved ``%`` term by its baked Mahalanobis share, an ablation evenly
+        (its coefficient is exact at every layer it touches), a unit at its own
+        layer.  Shares are mean 1 over the fitted layers; the selection is
+        :func:`select_term_layers`, so a clause composition would refuse raises
+        the same :class:`~drowse.errors.SteeringCompositionError`.  ``entries``
+        come from :meth:`resolve`.  Nothing installed changes.
+        """
+        artifacts = self._artifacts
+        n_layers = len(self._layers)
+        with self._lock:
+            neutral = self._neutral
+            neutral.ensure()
+            means = neutral.require_means()
+            whitener = neutral.resident_whitener
+            out: dict[str, TermLayers] = {}
+            for name, entry in entries.items():
+                scope: LayerScope
+                if isinstance(entry, UnitAblationTerm):
+                    layer = int(entry.unit.layer)
+                    out[name] = TermLayers((layer,), (1.0,), (layer,))
+                    continue
+                if isinstance(entry, AblationTerm):
+                    fitted = tuple(sorted(artifacts.profiles[entry.target]))
+                    raw: dict[int, float] = dict.fromkeys(fitted, 1.0)
+                    scope = entry.layers
+                elif isinstance(entry, ManifoldTerm):
+                    manifold = artifacts.manifolds[entry.manifold]
+                    fitted = tuple(sorted(manifold.layers))
+                    if manifold.is_affine:
+                        raw = _push_share(
+                            *affine_manifold_push(manifold, entry.position), whitener,
+                        )
+                    else:
+                        raw = {L: float(manifold.mahalanobis_share[L]) for L in fitted}
+                    scope = entry.layers
+                else:
+                    bare, scope = split_layer_clause(name)
+                    if isinstance(entry, ProjectedTerm):
+                        scope = entry.layers
+                        directions = self.projection(name)
+                        if directions is None:
+                            directions = project_profile(
+                                artifacts.profiles[entry.base],
+                                artifacts.profiles[entry.onto],
+                                entry.operator, whitener=whitener,
+                            )
+                    else:
+                        directions = artifacts.profiles[bare]
+                    fitted = tuple(sorted(directions))
+                    folded = fold_directions_to_subspace(
+                        bare, directions, means, whitener=whitener,
+                    )
+                    raw = _push_share(
+                        *affine_manifold_push(folded, folded.node_labels[0]), whitener,
+                    ) if folded.layers else {}
+                chosen = select_term_layers(name, fitted, scope, n_layers=n_layers)
+                out[name] = TermLayers(
+                    fitted, _mean_one(raw, fitted), fitted if chosen is None else chosen,
+                )
+            return out
 
     def plan_for(self, entries: dict[str, SteeringStackEntry]) -> SteeringPlan:
         """The composed plan for a flattened stack head, cached by its entries.

@@ -201,7 +201,10 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   preserves. `POST S/steering/validate` enters and exits
   `session.steering(parsed)` under the lock, so a green result composes
   exactly as a generation would; a rejection is in band (`{valid: false,
-  error}`), not a failed request.
+  error}`), not a failed request. A valid, non-empty expression also carries
+  `n_layers` and `terms` (`SteeringScope.term_layers`: each term's key, fitted
+  layers, share and selected layers), which the term editor draws its depth
+  strip from.
 - **Profiles.** `pairwise` and `correlation` read `session.analytics_profile`,
   CPU snapshots built inside the exclusive-GPU section, so a polled read never
   copies off the device during a model op. Both are Mahalanobis-only and 409

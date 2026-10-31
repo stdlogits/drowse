@@ -33,6 +33,7 @@ import type {
   ScoreTemplateResponse,
   SessionInfo,
   SourcesResponse,
+  SteeringValidationResponse,
   TemplateDetail,
   TemplateSummary,
   TranscriptLoadResponseJSON,
@@ -432,11 +433,14 @@ export interface RuntimeSessionsService {
     }>,
     id?: string,
   ): Promise<SessionInfo>;
+  /** Parse, resolve and dry-install an expression. A valid one may also carry the model's depth
+   *  and where each term acts (``n_layers``, ``terms``: the term editor's depth strip); a runtime
+   *  without them leaves both out and the strip stays hidden. */
   validateSteering(
     expression: string,
     id?: string,
     options?: SteeringValidationOptions,
-  ): Promise<{ valid: boolean; expression: string; error: string | null }>;
+  ): Promise<SteeringValidationResponse>;
 }
 
 export interface SteeringValidationOptions {

@@ -866,6 +866,8 @@ export interface SubspaceSteerEntry {
    *  the card today (kept for round-trip of pasted/legacy expressions). */
   variant: Variant;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   /** When false, the term is excluded from serialization (visual but
    * not active). */
   enabled: boolean;
@@ -890,6 +892,8 @@ export interface ManifoldSteerEntry {
   /** Tensor variant — rides the atom (``name:sae%pos``). */
   variant: Variant;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
@@ -906,6 +910,8 @@ export interface JLensSteerEntry {
   /** Push coefficient (the plain-atom α slot). */
   alpha: number;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
@@ -916,29 +922,34 @@ export interface SaeSteerEntry {
   ablate: boolean;
   alpha: number;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
-/** A unit term (``α neuron/L31n4410``, ``!neuron/…``, ``!head/…``): a neuron's write pushed
- *  (a negative α pushes its − pole) or a neuron or head mean-ablated. The rack key is the full
- *  unit reference; a head is only ever ablated. */
+/** One MLP neuron or attention head (``neuron/L31n4410``, ``head/L28h12``: the rack key).  A
+ *  unit carries its own layer, so it takes no layer clause.  A neuron pushes along its write (the
+ *  sign of ``alpha`` picks the pole) or is silenced; a head has no single write direction and is
+ *  only ever silenced (``ablate`` is always true).  Silencing replaces the unit's activation by
+ *  its neutral mean, blended by ``alpha`` (1 = fully). */
 export interface UnitSteerEntry {
   mode: "unit";
   ablate: boolean;
-  /** Signed push strength; an ablation's blend (1 is exact mean-ablation). */
+  /** Signed push strength (a neuron's − pole below zero); an ablation's blend, never negative
+   *  (1 is exact mean-ablation; lib/unitTerms.ts holds the rule). */
   alpha: number;
   trigger: Trigger;
   enabled: boolean;
 }
 
-/** The single-direction *atom* families — a J-lens token direction, an
- *  SAE decoder row and a unit.  All rack as ``α <prefix><id>`` with one
- *  per-card coefficient and no geometry, so they share a card and a
- *  mutator set; only the key prefix, the accent hue, and the marker
- *  glyph differ. */
-export type AtomMode = "jlens" | "sae" | "unit";
+/** The two single-direction *atom* families — a J-lens token direction
+ *  and an SAE decoder row.  Both rack as ``α <prefix><id>`` with one
+ *  coefficient and no geometry, so they share a mutator set; only the key
+ *  prefix differs.  A unit (``UnitSteerEntry``) is its own mode: it
+ *  carries its layer and follows lib/unitTerms.ts. */
+export type AtomMode = "jlens" | "sae";
 
-export type AtomSteerEntry = JLensSteerEntry | SaeSteerEntry | UnitSteerEntry;
+export type AtomSteerEntry = JLensSteerEntry | SaeSteerEntry;
 
 /** A racked steering term — subspace (flat), manifold (curved), or a
  *  single-direction atom. */
@@ -948,6 +959,11 @@ export type SteerEntry =
   | JLensSteerEntry
   | SaeSteerEntry
   | UnitSteerEntry;
+
+/** A term's ``{…}`` layer clause: ``null`` (or absent) acts at every layer the term is fitted at;
+ *  ``"workspace"`` at the workspace band; a sorted index list at exactly those layers, and the
+ *  empty list at none (the term is left out of the expression until it has a layer again). */
+export type LayerScope = null | "workspace" | number[];
 
 // ----------------------------------------------------- probe rack --
 

@@ -121,7 +121,14 @@ class TestSessions:
         materialize_bundled_artifacts()
         selectors.invalidate()
 
+        from drowse.steering.composer import TermLayers
+
         session, client = session_and_client
+        session.layers = [object()] * 6
+        scope = session.steering.return_value.__enter__.return_value
+        scope.term_layers.return_value = {
+            "default/honest.deceptive%honest": TermLayers((1, 2, 3), (0.5, 1.0, 1.5), (2, 3)),
+        }
         resp = client.post(
             "/drowse/v1/sessions/default/steering/validate",
             json={"expression": "0.2 default/honest.deceptive@response"},
@@ -131,8 +138,16 @@ class TestSessions:
             "valid": True,
             "expression": "0.2 default/honest.deceptive%honest@response",
             "error": None,
+            "n_layers": 6,
+            "terms": [{
+                "key": "default/honest.deceptive%honest",
+                "fitted": [1, 2, 3],
+                "share": [0.5, 1.0, 1.5],
+                "layers": [2, 3],
+            }],
         }
         session.steering.assert_called_once()
+        scope.term_layers.assert_called_once_with()
 
     def test_validate_steering_returns_expected_errors_in_band(
         self, session_and_client: Any,

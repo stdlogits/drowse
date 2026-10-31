@@ -139,12 +139,33 @@ class SessionListResponse(TypedDict):
     sessions: list[SessionInfo]
 
 
+class SteeringTermLayersJSON(TypedDict):
+    """Where one validated term acts (``SteeringComposer.term_layers``).
+
+    ``fitted`` are the layers the term can act on, ``share`` its weight at
+    each (aligned with ``fitted``, mean 1 over them), ``layers`` the ones its
+    ``{…}`` clause selects (``fitted`` without one).  ``key`` is the term's
+    canonical key, clause included.
+    """
+
+    key: str
+    fitted: list[int]
+    share: list[float]
+    layers: list[int]
+
+
 class SteeringValidationResponse(TypedDict):
-    """``POST .../steering/validate`` — a form result, not a failed request."""
+    """``POST .../steering/validate`` — a form result, not a failed request.
+
+    A valid, non-empty expression also carries the model's depth and where
+    each of its terms acts (the term editor's depth strip).
+    """
 
     valid: bool
     expression: str
     error: str | None
+    n_layers: NotRequired[int]
+    terms: NotRequired[list[SteeringTermLayersJSON]]
 
 
 # -------------------------------------------------------------------- loom --

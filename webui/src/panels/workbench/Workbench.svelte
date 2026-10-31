@@ -20,13 +20,15 @@
   let threadOpen = $state(false);
   const loomPage = $derived(workbenchUi.page === "loom");
   // The loom page takes the phone's whole column, so the sheet waits until the conversation is back.
-  const sheetShown = $derived(!loomPage && (selection.current.kind !== "none" || workbenchUi.sheet));
+  // A steering term opens in place over the composer, not in the sheet.
+  const selecting = $derived(selection.current.kind !== "none" && selection.current.kind !== "term");
+  const sheetShown = $derived(!loomPage && (selecting || workbenchUi.sheet));
   const LOOM_VIEWS: Record<string, string> = { weave: "Weave", map: "Map", path: "Path", options: "Next options", saved: "Starred" };
 
   $effect(() => {
     // A fresh selection on the phone rises at the peek height. Clearing the selection to show the
     // instruments in the sheet (the sampling line, the crumb) keeps the sheet where it was asked.
-    if (selection.current.kind === "none" && !untrack(() => workbenchUi.sheet)) workbenchUi.sheetOpen = false;
+    if (!selecting && !untrack(() => workbenchUi.sheet)) workbenchUi.sheetOpen = false;
   });
 
   function closeSheet(): void {
