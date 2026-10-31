@@ -398,6 +398,27 @@ class TestSources:
         assert rows[0]["source"] == "local:j"
         assert "path" not in rows[0]  # path stripped
 
+    def test_active_lens_rows_say_whether_they_load(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """Each family's active row carries ``compatible`` (its own family's
+        check, never paged in); an inactive row carries nothing."""
+        session, client = session_and_client
+        monkeypatch.setattr(
+            "drowse.lens.sources.list_lens_sources",
+            lambda _m: [
+                {"source": "rs-r", "kind": "huggingface", "family": "R", "active": True},
+                {"source": "local:r", "kind": "local", "family": "R", "active": False},
+                {"source": "rs-s", "kind": "huggingface", "family": "S", "active": True},
+            ],
+        )
+        session.lens.has_compatible = MagicMock(return_value=False)
+        session.lens.has_compatible_input = MagicMock(return_value=True)
+        rows = {row["source"]: row for row in client.get(f"{_BASE}/lens/sources").json()["sources"]}
+        assert rows["rs-r"]["compatible"] is False
+        assert rows["rs-s"]["compatible"] is True
+        assert "compatible" not in rows["local:r"]
+
     def test_lens_sources_carry_the_band_providers_and_fit_default(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
@@ -997,6 +1018,34 @@ class TestPreparations:
         _wait_idle(client, "lens")
         assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
         assert session.lens.fit.call_args.kwargs["force"] is True
+
+    def test_only_a_replace_refusal_marks_the_fit_replaceable(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """The dashboard offers the forced fit only for the refusal to replace
+        an artifact; any other failure (and the next start) clears the mark."""
+        from drowse.lens.jlens import JacobianLensError
+        from drowse.lens.lifecycle import LensReplaceRefused
+
+        session, client = session_and_client
+        monkeypatch.setattr(
+            "drowse.lens.corpus.stream_lens_corpus",
+            lambda _n, _corpus, *, cancel_event=None: (["a long enough prompt."], "spec"),
+        )
+
+        def _fit(error: BaseException) -> dict[str, Any]:
+            session.lens.fit.side_effect = error
+            resp = client.post(f"{_BASE}/lens/preparations", json={"operation": "fit", "prompts": 1})
+            assert resp.status_code == 202
+            assert resp.json()["replaceable"] is False
+            _wait_idle(client, "lens")
+            return client.get(f"{_BASE}/lens/preparations").json()
+
+        refused = _fit(LensReplaceRefused("local:r already holds an R lens over 25 documents"))
+        assert refused["state"] == "error" and refused["replaceable"] is True
+        assert "already holds" in refused["error"]
+        other = _fit(JacobianLensError("no usable prompts were fitted"))
+        assert other["state"] == "error" and other["replaceable"] is False
 
     def test_lens_fit_rejects_a_malformed_hub_corpus(
         self, session_and_client: Any,

@@ -263,9 +263,12 @@ def register_instrument_routes(app: FastAPI) -> None:
     session = app.state.session
     router = session_router()
 
-    lens_fetch = Preparation("fetch", label="J-lens fetch", fields=("source", "live_layers"))
+    lens_fetch = Preparation("fetch", label="lens fetch", fields=("source", "live_layers"))
+    # ``replaceable`` marks a fit refused only because it would replace the
+    # artifact at its name (``LensReplaceRefused``): the same request with
+    # ``force`` is the one way on, and no other failure offers it.
     lens_fit = Preparation(
-        "fit", label="lens fit", fields=("source", "live_layers"),
+        "fit", label="lens fit", fields=("source", "live_layers", "replaceable"),
         cancel_exc=JacobianLensCancelled, progress_unit="prompts", progress_pattern=_FIT_PROGRESS_RE,
     )
     sae_fetch = Preparation("fetch", label="SAE fetch", fields=("release", "info"))
@@ -274,7 +277,7 @@ def register_instrument_routes(app: FastAPI) -> None:
         cancel_exc=SaeTrainingCancelled, progress_unit="tokens", progress_pattern=_TRAIN_PROGRESS_RE,
     )
     preparations = {
-        "lens": PreparationGroup("a J-lens artifact operation is already running", lens_fetch, lens_fit),
+        "lens": PreparationGroup("a lens artifact operation is already running", lens_fetch, lens_fit),
         "sae": PreparationGroup("an SAE artifact operation is already running", sae_fetch, sae_train),
     }
 
@@ -367,6 +370,13 @@ def register_instrument_routes(app: FastAPI) -> None:
             from drowse.lens.sources import lens_providers, list_lens_sources
 
             rows = list_lens_sources(session.model_id)
+            # Each family's active row says whether it matches the loaded
+            # weights (checked, never paged in), as ``jlens_fitted`` does
+            # for the R family.
+            checks = {"R": session.lens.has_compatible, "S": session.lens.has_compatible_input}
+            for row in rows:
+                if row.get("active") and row.get("family") in checks:
+                    row["compatible"] = await run_in_thread(checks[row["family"]])
             band = session.lens.band
             weights = kind_weights(len(session.layers), band)
             return {
@@ -433,6 +443,7 @@ def register_instrument_routes(app: FastAPI) -> None:
     async def lens_fit_body(body: LensFitRequest, layers: list[int] | str, corpus: Any) -> None:
         from drowse.lens.corpus import pin_lens_corpus, stream_lens_corpus
         from drowse.lens.key import LensKey, lens_selectable
+        from drowse.lens.lifecycle import LensReplaceRefused
 
         kind = body.kind.upper()
         source = f"local:{kind.lower()}"
@@ -478,13 +489,17 @@ def register_instrument_routes(app: FastAPI) -> None:
             stream_lens_corpus, body.prompts, corpus, cancel_event=lens_fit.cancel_event,
         )
         lens_fit.report("fitting…")
-        await run_in_thread(
-            session.lens.fit, docs,
-            kind=kind, sites=body.sites,
-            corpus_spec=spec, layers=layers, seq_len=body.seq_len,
-            force=body.force,
-            on_progress=lens_fit.report, cancel_event=lens_fit.cancel_event,
-        )
+        try:
+            await run_in_thread(
+                session.lens.fit, docs,
+                kind=kind, sites=body.sites,
+                corpus_spec=spec, layers=layers, seq_len=body.seq_len,
+                force=body.force,
+                on_progress=lens_fit.report, cancel_event=lens_fit.cancel_event,
+            )
+        except LensReplaceRefused:
+            lens_fit.state["replaceable"] = True
+            raise
         if reads_out:
             await enable_live_after(lens_fit, enable)
         lens_fit.report("done")
@@ -504,7 +519,7 @@ def register_instrument_routes(app: FastAPI) -> None:
         lens_fit.start(
             lambda: lens_fit_body(body, layers, corpus),
             message="starting…", current=0, total=body.prompts,
-            source=f"local:{body.kind}",
+            source=f"local:{body.kind}", replaceable=False,
         )
 
     async def sae_fetch_body(body: SaeFetchRequest, source: str, release: str) -> None:

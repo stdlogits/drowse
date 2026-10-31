@@ -22,6 +22,7 @@ from drowse.errors import RequestError
 from drowse.lens.jlens import JacobianLens, JacobianLensError
 from drowse.lens.lifecycle import (
     CORPUS_HASH_KIND,
+    LensReplaceRefused,
     LensFitCorpus,
     LensFitIdentity,
     LensFitPlan,
@@ -184,7 +185,8 @@ def test_plan_skips_a_durable_artifact_that_cannot_be_a_base() -> None:
 def test_plan_refuses_to_extend_a_subset_of_durable_layers() -> None:
     identity = _identity(_ROWS, sources=(0,))
     durable = _sidecar(identity, n=2, layers=[0, 1])
-    with pytest.raises(JacobianLensError, match="layers the request omits"):
+    # Its own class, so the server can offer the forced fit for this refusal only.
+    with pytest.raises(LensReplaceRefused, match="layers the request omits"):
         plan_lens_fit(identity, durable=durable, checkpoint=None, resident=None)
 
 
@@ -194,14 +196,14 @@ def test_plan_refuses_to_replace_a_larger_or_wider_durable_fit() -> None:
     from 100 to 25) or one holding a layer the request omits."""
     identity = _identity(_ROWS[:2])
     larger = _sidecar(_identity(_ROWS), n=4, layers=[0, 1])
-    with pytest.raises(JacobianLensError, match="over 4 documents; fitting 2 .* would replace it"):
+    with pytest.raises(LensReplaceRefused, match="over 4 documents; fitting 2 .* would replace it"):
         plan_lens_fit(identity, durable=larger, checkpoint=None, resident=None)
     # A resumable checkpoint of the smaller corpus would publish over it too.
     partial = _sidecar(identity, n=1, layers=[0, 1], checkpoint=True)
-    with pytest.raises(JacobianLensError, match="would replace it"):
+    with pytest.raises(LensReplaceRefused, match="would replace it"):
         plan_lens_fit(identity, durable=larger, checkpoint=partial, resident=None)
     wider = _sidecar(_identity([[9] * 20] * 4), n=4, layers=[0, 1, 2])
-    with pytest.raises(JacobianLensError, match=r"layers this request omits \({'out': \[2\]}\)"):
+    with pytest.raises(LensReplaceRefused, match=r"layers this request omits \({'out': \[2\]}\)"):
         plan_lens_fit(_identity(_ROWS), durable=wider, checkpoint=None, resident=None)
     # force replaces it, and an artifact of other semantics is not this fit's.
     assert plan_lens_fit(

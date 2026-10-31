@@ -172,9 +172,10 @@ export interface InstrumentFamilyBlock {
  * selects into (``family``: ``R`` or ``S``), the sites it carries, each
  * site's layers (``layers``), its documents (``n_prompts``), each site's
  * recorded split-half difference by layer where the fit kept one
- * (``split_half``, ``{site: {layer: difference}}``; imports lack it) and,
- * for a provider binding, the repository file bound per site
- * (``checkpoints``).
+ * (``split_half``, ``{site: {layer: difference}}``; imports lack it),
+ * on a family's active row whether it matches the loaded weights
+ * (``compatible``) and, for a provider binding, the repository file bound
+ * per site (``checkpoints``).
  */
 export interface InstrumentSourceJSON {
   source: string;
@@ -187,6 +188,7 @@ export interface InstrumentSourceJSON {
   layers?: Record<string, number[]>;
   n_prompts?: number;
   split_half?: Record<string, Record<string, number>>;
+  compatible?: boolean;
   provider?: string;
   repo_id?: string;
   repo_revision?: string;
@@ -524,7 +526,13 @@ export interface PreparationProgress {
   unit: string;
 }
 
-/** One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``. */
+/**
+ * One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``.
+ *
+ * A lens fit's ``replaceable`` is true only when it failed because it
+ * would replace the artifact at its name; the same request with ``force``
+ * replaces it.
+ */
 export interface PreparationStatusJSON {
   state: string;
   operation: string | null;
@@ -536,6 +544,7 @@ export interface PreparationStatusJSON {
   cancellable: boolean;
   live_layers?: number[] | null;
   source?: string | null;
+  replaceable?: boolean | null;
   release?: string | null;
   name?: string | null;
   info?: SaeRuntimeInfo | null;

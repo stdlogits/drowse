@@ -717,9 +717,10 @@ class InstrumentSourceJSON(TypedDict):
     selects into (``family``: ``R`` or ``S``), the sites it carries, each
     site's layers (``layers``), its documents (``n_prompts``), each site's
     recorded split-half difference by layer where the fit kept one
-    (``split_half``, ``{site: {layer: difference}}``; imports lack it) and,
-    for a provider binding, the repository file bound per site
-    (``checkpoints``).
+    (``split_half``, ``{site: {layer: difference}}``; imports lack it),
+    on a family's active row whether it matches the loaded weights
+    (``compatible``) and, for a provider binding, the repository file bound
+    per site (``checkpoints``).
     """
 
     __pydantic_config__ = _Open  # type: ignore[misc]
@@ -734,6 +735,7 @@ class InstrumentSourceJSON(TypedDict):
     layers: NotRequired[dict[str, list[int]]]
     n_prompts: NotRequired[int]
     split_half: NotRequired[dict[str, dict[str, float]]]
+    compatible: NotRequired[bool]
     provider: NotRequired[str]
     repo_id: NotRequired[str]
     repo_revision: NotRequired[str]
@@ -817,7 +819,12 @@ class SaeRuntimeInfo(TypedDict):
 
 
 class PreparationStatusJSON(TypedDict):
-    """One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``."""
+    """One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``.
+
+    A lens fit's ``replaceable`` is true only when it failed because it
+    would replace the artifact at its name; the same request with ``force``
+    replaces it.
+    """
 
     state: str
     operation: str | None
@@ -829,6 +836,7 @@ class PreparationStatusJSON(TypedDict):
     cancellable: bool
     live_layers: NotRequired[list[int] | None]
     source: NotRequired[str | None]
+    replaceable: NotRequired[bool | None]
     release: NotRequired[str | None]
     name: NotRequired[str | None]
     info: NotRequired[SaeRuntimeInfo | None]
