@@ -29,10 +29,10 @@ if TYPE_CHECKING:
 LENS_KINDS: tuple[str, ...] = tuple(kind.lower() for kind in FITTABLE_KINDS)
 
 _KIND_TITLES = {
-    "R": "R-lens (RelP, output side)",
-    "J": "J-lens (standard, output side)",
-    "S": "S-lens (RelP, input side)",
-    "K": "K-lens (standard, input side)",
+    "R": "R-lens (RelP, R family)",
+    "J": "J-lens (standard, R family)",
+    "S": "S-lens (RelP, S family)",
+    "K": "K-lens (standard, S family)",
 }
 
 
