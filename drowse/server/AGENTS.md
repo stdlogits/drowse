@@ -298,12 +298,14 @@ cancels a running lens fit (else 409; a fetch is not cancellable) or SAE train
 
 - Lens `fetch` takes a provider from `LENS_PROVIDERS` (400 at POST),
   downloads into the HF cache without the lock, then selects it and goes live.
-- Lens `fit {kind: r|j = r, ...}`: `kind` picks the estimator and destination
-  `local:<kind>`; `layers=sample` is 400. The corpus is pinned in the isolated
+- Lens `fit {kind: r|j|s|k = r, sites: [out, mid], prompts = 25, ...}`:
+  `kind` picks the lens and destination `local:<kind>`, `sites` the residual
+  sites; `layers=sample` is 400. The corpus is pinned in the isolated
   spawned corpus worker (cancellable, never resolved in the server process).
   Unless `force`, a proven no-op (`session.lens.fit_is_noop`) only selects
   `local:<kind>`; otherwise documents stream in the worker and
-  `session.lens.fit` runs.
+  `session.lens.fit` runs. Only an output-kind (r/j) fit turns the live
+  readout on afterwards.
 - SAE `fetch` takes `local:<name>` or `saelens:<release>` (a bare release is
   400) and loads under the lock. SAE `train` streams `ceil(tokens / seq_len)`
   default-corpus documents, then trains.
