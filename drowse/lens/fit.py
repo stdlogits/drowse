@@ -568,15 +568,20 @@ def _pass(
     if device.type == "cpu":
         return stage
     host = stage.to("cpu")
-    # Metal reports command-queue exhaustion asynchronously: nothing raises
-    # and the work comes back as zeros.  No lens row is ever exactly zero
-    # (the residual path alone contributes), so a zero row is lost work.
+    _refuse_zero_rows(host)
+    return host
+
+
+def _refuse_zero_rows(host: torch.Tensor) -> None:
+    """Metal reports command-queue exhaustion asynchronously: nothing raises
+    and the work comes back as zeros.  No lens row is ever exactly zero (the
+    residual path alone contributes), so a zero row is lost work; the error
+    reads as an out of memory, so the pass retries at a smaller width."""
     if bool((host.abs().sum(dim=-1) == 0).any()):
         raise _AsyncZeroRows(
             "a transport pass came back with zero rows from the device — an "
             "asynchronous out of memory on the command queue"
         )
-    return host
 
 
 def _commit(
