@@ -36,12 +36,14 @@ LENS_SIDES = ("output", "input")
 #: Kinds the transport estimator fits: all four, at either or both sites.
 FITTABLE_KINDS = LENS_KINDS
 #: Documents a local fit averages over unless asked otherwise.  At 25
-#: FineWeb-Edu documents on SmolLM2-360M the split-half difference is large:
-#: the R-lens's ``out`` site ranges from 0.04 (last layers) to 0.45 (early
-#: layers), median 0.27; the S-lens's from 0.12 to 0.37, median 0.18.
-#: The default trades that noise for wall time (110 to 136 s per kind there,
-#: on MPS); the research lenses of record used 1,000.
-DEFAULT_FIT_DOCUMENTS = 25
+#: FineWeb-Edu documents on SmolLM2-360M the split-half difference was large:
+#: the R-lens's ``out`` site ranged from 0.04 (last layers) to 0.45 (early
+#: layers), median 0.27; the S-lens's from 0.12 to 0.37, median 0.18, at 110
+#: to 136 s per kind on MPS.  64 documents split into even 32/32 halves and,
+#: since the difference is averaging noise (1/sqrt n), should land near 0.6x
+#: those values for about 2.5x the wall time.  The research lenses of record
+#: used 1,000.
+DEFAULT_FIT_DOCUMENTS = 64
 
 #: A local lens directory: the kind's letter, optionally ``-<tag>``
 #: (``r``, ``j``, ``r-chat``).  The name carries the kind, so ``local:r`` is

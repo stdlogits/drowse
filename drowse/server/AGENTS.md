@@ -299,7 +299,7 @@ cancels a running lens fit (else 409; a fetch is not cancellable) or SAE train
 
 - Lens `fetch` takes a provider from `LENS_PROVIDERS` (400 at POST),
   downloads into the HF cache without the lock, then selects it and goes live.
-- Lens `fit {kind: r|j|s|k = r, sites: [out, mid], prompts = 25, ...}`:
+- Lens `fit {kind: r|j|s|k = r, sites: [out, mid], prompts = 64, ...}`:
   `kind` picks the lens and destination `local:<kind>`, `sites` the residual
   sites; `layers=sample` is 400. The corpus is pinned in the isolated
   spawned corpus worker (cancellable, never resolved in the server process).

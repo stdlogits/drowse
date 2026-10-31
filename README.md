@@ -393,7 +393,7 @@ drowse sae fetch google/gemma-3-4b-it saelens:gemma-scope-2-4b-it-res
 drowse sae train org/model my-sae --layer 20 --tokens 1000000
 ```
 
-A local fit averages 25 documents by default and prints its split-half
+A local fit averages 64 documents by default and prints its split-half
 difference per site (how differently two halves of the corpus read: the
 signal for whether more documents would help). Fits run on dense models
 (llama, mistral, qwen2/3, gemma 2/3/4 text); mixture-of-experts and hybrid

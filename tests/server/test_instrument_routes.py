@@ -598,7 +598,7 @@ class TestPreparations:
         from drowse.server.instrument_routes import LensFitRequest
 
         body = LensFitRequest()
-        assert body.kind == "r" and body.sites == ["out", "mid"] and body.prompts == 25
+        assert body.kind == "r" and body.sites == ["out", "mid"] and body.prompts == 64
         for kind in ("j", "s", "k"):
             assert LensFitRequest(kind=kind).kind == kind
         assert LensFitRequest(sites=["mid"]).sites == ["mid"]
