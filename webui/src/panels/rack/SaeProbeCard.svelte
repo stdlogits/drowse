@@ -1,118 +1,97 @@
 <script lang="ts">
-  import TraceDetail from "../../lib/charts/TraceDetail.svelte";
-  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
-  // SAE probe card — one feature of the resident SAE, pinned (a
-  // ``sae/<id>`` readout probe — persistent, gate-able) or unpinned (a
-  // live discovery row from the per-step top-k).  Both card kinds are the
-  // same shape, exactly like the lens workspace cards — pinning just makes
-  // the card persistent:
-  //
-  //   statline : ▲ (pinned, click to unpin) / △ (unpinned, click to pin) ·
-  //              id · label · L<layer> · history sparkline
-  //   body     : the strength bar — ``activation / maxActApprox``, the
-  //              normalized 0..1 unit every SAE surface reads (the lens
-  //              cards' absolute-scale convention).  Features without
-  //              Neuronpedia metadata fall back to the raw activation on
-  //              the panel-shared scale, so bars and numbers always rank
-  //              identically across visible cards.
-
-  import Bar from "../../lib/charts/Bar.svelte";
-  import Sparkline from "../../lib/charts/Sparkline.svelte";
-  import { detachProbe, highlightState } from "../../lib/stores.svelte";
+  // One feature of the resident SAE as a unit row: its ID, its label, a meter and the value. The
+  // meter reads strength, ``activation / maxActApprox`` (the 0..1 unit every SAE surface and the
+  // ``@when:sae/<id>`` gate read); a feature without Neuronpedia metadata reads its raw activation
+  // on the panel's shared scale, so meters and numbers rank alike. Pinned (a persistent ``sae/<id>``
+  // probe), the row can be chosen: the reply is tinted by it and the Inspector shows its trace.
+  // Unpinned (a feature the live readout found), its marker pins it.
+  import { Meter } from "@stdlogits/ledger";
+  import { detachProbe, highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
   import { userFacingError } from "../../lib/runtime/userFacingError";
-  import RackCard from "./RackCard.svelte";
+  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
+  import InstrumentRow from "./InstrumentRow.svelte";
   import ProbePinButton from "./ProbePinButton.svelte";
-  import ProbeHighlightButton from "./ProbeHighlightButton.svelte";
-  import ProbeReadingRow from "./ProbeReadingRow.svelte";
 
   interface Props {
     /** Feature index into the resident SAE's dictionary. */
     id: number;
     probeName?: string;
     measured?: boolean;
-    /** Optional human label (e.g. from Neuronpedia metadata). */
+    /** The feature's label (Neuronpedia's, when it has one). */
     label?: string | null;
-    /** The resident SAE's hook layer — identity context, not a per-card fit. */
+    /** The resident SAE's hook layer. */
     layer: number | null;
-    /** Latest reading (live step, or the settled end-of-gen aggregate).
-     *  Raw activation for discovery cards; a pinned card's probe channel,
-     *  which is already strength when the probe has ``max_act``
-     *  (``valueIsStrength``). */
+    /** Latest reading: raw activation for a discovery row; a pinned probe's channel, already
+     *  strength when the probe has ``max_act`` (``valueIsStrength``). */
     value: number;
-    /** Neuronpedia ``maxActApprox`` — the strength unit; null = no
-     *  metadata (bar falls back to the raw panel scale). */
+    /** Neuronpedia ``maxActApprox``, the strength unit; null without metadata. */
     maxAct?: number | null;
-    /** True when ``value`` (and ``series``) are already normalized
-     *  server-side (pinned probes with metadata). */
     valueIsStrength?: boolean;
-    /** Panel-shared raw scale for metadata-less cards — the max raw
-     *  reading across visible cards, so their bars stay comparable. */
+    /** The panel's shared raw scale for rows without metadata. */
     fallbackScale?: number;
-    /** Recent reading history driving the sparkline (same unit as
-     *  ``value``; the sparkline is shape-only, so the unit cancels). */
-    series: number[];
     pinned: boolean;
-    /** Disables the pin glyph while the panel validates another feature. */
+    /** Disables the marker while the panel validates another feature. */
     busy?: boolean;
-    /** Unpinned cards only — the panel owns validation + attach. */
+    /** Unpinned rows only: the panel owns validation and attach. */
     onpin?: (id: number) => void;
   }
 
   let {
-    id,
-    probeName,
-    measured = true,
-    label = null,
-    layer,
-    value,
-    maxAct = null,
-    valueIsStrength = false,
-    fallbackScale = 1,
-    series,
-    pinned,
-    busy = false,
-    onpin,
+    id, probeName, measured = true, label = null, layer, value, maxAct = null,
+    valueIsStrength = false, fallbackScale = 1, pinned, busy = false, onpin,
   }: Props = $props();
 
   const name = $derived(probeName ?? `sae/${id}`);
   const isHighlight = $derived(highlightState.target === name);
   /** Normalized 0..1 strength when the unit is known; null keeps raw. */
   const strength = $derived(
-    valueIsStrength ? value : maxAct != null && maxAct > 0
-      ? value / maxAct
-      : null,
+    valueIsStrength ? value : maxAct != null && maxAct > 0 ? value / maxAct : null,
   );
-  /** Raw activation view (reconstructed for a normalized pinned card). */
-  const rawValue = $derived(
-    valueIsStrength && maxAct != null ? value * maxAct : value,
-  );
+  /** The raw activation (reconstructed for a normalized pinned row). */
+  const rawValue = $derived(valueIsStrength && maxAct != null ? value * maxAct : value);
+  const share = $derived(strength ?? rawValue / Math.max(fallbackScale, 1));
 
   let unpinBusy = $state(false);
 
   async function onUnpin(): Promise<void> {
     if (unpinBusy) return;
     unpinBusy = true;
-    // Unpinning destroys this keyed card. Capture its reactive identity before
-    // the request so the completion path never reads a derived owned by the
-    // now-destroyed component effect (Svelte's `derived_inert` warning).
+    // Unpinning destroys this keyed row: capture its identity before the request so the
+    // completion path never reads a derived owned by the destroyed component.
     const featureName = name;
     try {
       await detachProbe(featureName);
       pushToast(`unpinned ${featureName}`, { kind: "info" });
     } catch (e) {
-      pushToast(userFacingError(e, `Unable to unpin ${featureName}. Try again.`), {
-        kind: "error",
-        ttlMs: null,
-      });
+      pushToast(userFacingError(e, `Unable to unpin ${featureName}. Try again.`), { kind: "error", ttlMs: null });
     } finally {
       unpinBusy = false;
     }
   }
+
+  function choose(): void {
+    setHighlightTarget(name);
+    openDrawer("probe_inspector", { name });
+  }
 </script>
 
-<RackCard accent="--tint" disabled={false} active={isHighlight}>
-  {#snippet statline()}
+<InstrumentRow pressed={pinned && isHighlight} onselect={pinned ? choose : undefined} title={name}>
+  {#snippet lead()}
+    <span class="n is-id">{#if layer !== null}L{layer} {/if}f{id}</span>
+  {/snippet}
+  {#snippet sub()}{label ?? ""}{/snippet}
+  {#snippet mark()}
+    {#if measured}
+      <Meter value={Math.max(0, share)} width={56}
+        label={strength !== null ? `Strength ${strength.toFixed(2)}` : `Activation ${rawValue.toFixed(2)}`} />
+    {/if}
+  {/snippet}
+  {#snippet value()}
+    {#if !measured}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>
+    {:else}<RollingNumber value={strength ?? rawValue} digits={strength !== null ? 2 : 1} />{/if}
+  {/snippet}
+  {#snippet action()}
     <ProbePinButton
       shape="triangle"
       {pinned}
@@ -121,114 +100,5 @@
       title={pinned ? "unpin" : "pin"}
       ariaLabel={`${pinned ? "Unpin" : "Pin"} probe ${name}`}
     />
-
-    <span class="name" {...{ "aria-description": "probe " + (name) }}>
-      {id}
-    </span>
-
-    {#if layer !== null}
-      <span class="layer" {...{ "aria-description": "hook layer" }}>L{layer}</span>
-    {/if}
-
-    <span class="spacer"></span>
-
-    {#if pinned}
-      <ProbeHighlightButton {name} />
-    {/if}
-
-    <Sparkline points={series} width={56} height={14} color="var(--card-accent)" />
   {/snippet}
-
-  {#snippet body()}
-    {#if label}<p class="feature-description">{label}</p>{/if}
-    {#if !measured}
-      <span class="row-label">Not measured</span>
-    {:else if strength !== null}
-      <!-- Strength: activation / maxActApprox — absolute 0..1 scale, the
-           same convention as the lens cards; the @when:sae/<id> gate
-           channel reads this unit. -->
-      <ProbeReadingRow ariaLabel={`Strength ${strength.toFixed(2)}`}>
-        {#snippet left()}
-          <span
-            class="row-label"
-            {...{ "aria-description": "normalized activation" }}
-          >strength</span>
-        {/snippet}
-        {#snippet bar()}
-          <Bar value={Math.max(strength, 0)} max={1} width={160} height={8} color="var(--card-accent)" />
-        {/snippet}
-        {#snippet middle()}<span aria-hidden="true"></span>{/snippet}
-        {#snippet right()}<span class="value"><RollingNumber value={strength} digits={2} /></span>{/snippet}
-      </ProbeReadingRow>
-    {:else}
-      <!-- No Neuronpedia metadata (offline / unlisted feature): raw
-           activation on the panel-shared scale, so bars still rank
-           consistently with the numbers across cards. -->
-      <ProbeReadingRow ariaLabel={`Activation ${rawValue.toFixed(2)}`}>
-        {#snippet left()}
-          <span
-            class="row-label"
-            {...{ "aria-description": "raw activation" }}
-          >activation</span>
-        {/snippet}
-        {#snippet bar()}
-          <Bar value={Math.max(rawValue, 0)} max={Math.max(fallbackScale, 1)} width={160} height={8} color="var(--card-accent)" />
-        {/snippet}
-        {#snippet middle()}<span aria-hidden="true"></span>{/snippet}
-        {#snippet right()}<span class="value"><RollingNumber value={rawValue} digits={2} /></span>{/snippet}
-      </ProbeReadingRow>
-    {/if}
-    <TraceDetail points={series} />
-  {/snippet}
-</RackCard>
-
-<style>
-  @media (prefers-reduced-motion: no-preference) { .feature-description { animation: description-reveal 160ms ease-out; } }
-  @keyframes description-reveal { from { opacity: .4; } to { opacity: 1; } }
-  .feature-description {
-    margin: 0 0 var(--space-3);
-    color: var(--fg-strong);
-    font-size: var(--text-sm);
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-  }
-  /* ----- statline (mirrors JLensProbeCard) ----- */
-  .name {
-    color: var(--fg-strong);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .layer {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-    flex: 0 0 auto;
-  }
-  .spacer {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  /* ----- body: reading-row content; ProbeReadingRow owns geometry. ----- */
-  .row-label {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    text-align: end;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .value {
-    color: var(--fg-muted);
-    font-variant-numeric: tabular-nums;
-    min-width: 3.5em;
-    text-align: end;
-    flex: 0 0 auto;
-  }
-</style>
+</InstrumentRow>

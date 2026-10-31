@@ -1,514 +1,60 @@
 <script lang="ts">
-  import TraceDetail from "../../lib/charts/TraceDetail.svelte";
-  import { MorphText } from "@stdlogits/ledger";
-  import { Icon } from "@stdlogits/ledger";
-  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
-  // Unified probe card — one row for every probe shape.  Replaces the
-  // SubspaceProbeCard / ManifoldProbeCard split: the store already
-  // normalises ``current`` / ``sparkline`` / ``perLayer`` per family
-  // (``_primaryScalar`` / ``_primaryPerLayer``), so this row reads those
-  // uniformly and branches only on *presentation*.
-  //
-  //   statline : ●/◆ attached marker (click to detach) · name · @com
-  //              ±spread · inspect · highlight · sparkline
-  //   body     : the subspaceness row (white 0→1 bar segmented into
-  //                intrinsic-dim notches · nearest node · fraction), then
-  //                one signed bar per coordinate axis (poles on a rank-1
-  //                concept axis, "c0…cR-1" labels otherwise), then the
-  //                curved-only residual meta, the per-layer heatmap strip,
-  //                and a 2-D box-domain mini-map.
-  //
-  // Family is signalled by accent (flat or curved, as a depth tint)
-  // and glyph.  A dedicated action toggles the transcript highlight for
-  // *every* family — the per-token score map is keyed by probe name
-  // regardless of geometry, so curved probes are valid highlight targets
-  // (the top-bar dropdown already lists them; this wires the click too).
-
-  import type {
-    GeometryProbeInfo,
-    ProbeReadingJSON,
-    ProbeRackEntry,
-  } from "../../lib/types";
+  // A geometry probe as one row of the Instruments: its name and the layer it peaks at, its
+  // reading token by token (bars on its depth's place on the ramp), and the latest value. A flat
+  // probe reads its signed axis-0 coordinate, a curved one the share of the activation on its
+  // surface. Choosing the row tints the reply by it and shows the probe in the Inspector, where its
+  // trace, layers, coordinates and geometry live (drawers/ProbeInspectorDrawer.svelte).
+  import type { GeometryProbeInfo, ProbeReadingJSON, ProbeRackEntry } from "../../lib/types";
   import Bar from "../../lib/charts/Bar.svelte";
-  import Sparkline from "../../lib/charts/Sparkline.svelte";
+  import Trace from "../../lib/charts/Trace.svelte";
+  import { depthTint, layerDepth, peakLayer, readingText } from "../../lib/charts/depth";
   import { nodeCoordExtent, parseProbeTarget } from "../../lib/tokens";
-  import ManifoldMiniMap from "../manifold/ManifoldMiniMap.svelte";
-  import {
-    detachProbe,
-    highlightState,
-    openDrawer,
-    setHighlightTarget,
-  } from "../../lib/stores.svelte";
-  import { pushToast } from "../../lib/stores/toasts.svelte";
-  import { userFacingError } from "../../lib/runtime/userFacingError";
-  import { polesOf } from "../../lib/concepts";
-  import RackCard from "./RackCard.svelte";
-  import ProbePinButton from "./ProbePinButton.svelte";
-  import LayerStrip from "./LayerStrip.svelte";
-  import ProbeReadingRow from "./ProbeReadingRow.svelte";
+  import { highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
+  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
+  import InstrumentRow from "./InstrumentRow.svelte";
 
-  interface Props {
-    name: string;
-    entry: ProbeRackEntry;
-  }
+  let { name, entry }: { name: string; entry: ProbeRackEntry } = $props();
 
-  let { name, entry }: Props = $props();
-
-  // The rack renders GEOMETRY probes only — the lens and SAE families
-  // have their own cards in their own tabs (``ProbeRack`` filters them
-  // out), so this row reads the whitened reading shape directly.
   const info = $derived(entry.info as GeometryProbeInfo);
-  /** Flat (affine) ⇒ subspace family; curved ⇒ manifold family. */
   const affine = $derived(info.is_affine);
-
-  const accent = $derived(affine ? "--accent" : "--tint");
-
-  /** Saturation scale for the per-layer heatmap strip + token tint — the
-   *  axis-0 node extent for a flat probe ("full = as far along as the most
-   *  extreme node"), the fixed unit scale for a curved probe's [0,1]
-   *  fraction. */
-  const axisScale = $derived(affine ? nodeCoordExtent(info.node_coords, 0) : 1);
-
-  // ---------- latest reading: live during gen, settled (aggregate) after ----------
-  const latest = $derived(
-    (entry.aggregate ?? entry.reading) as ProbeReadingJSON | null,
-  );
-  /** Subspaceness — share of the centered activation living in this probe's
-   *  subspace, [0,1].  Backs the white top-row bar. */
-  const fraction = $derived(
-    latest?.fraction ?? entry.savedFraction ?? null,
-  );
-  /** Domain-frame coordinates, one per intrinsic dimension — each gets its
-   *  own signed bar below the subspaceness row. */
-  const coordVec = $derived(
-    latest?.coords ?? entry.savedCoordinates ?? (affine && entry.savedAggregate !== null
-      ? [entry.savedAggregate]
-      : []),
-  );
-  /** Coordinate-bar count — the intrinsic dim, falling back to the live
-   *  coord-vector length for a row reporting 0. */
-  const nDim = $derived(
-    info.intrinsic_dim > 0 ? info.intrinsic_dim : coordVec.length,
-  );
-  /** One {axis index, value, per-axis node extent} per coordinate bar. */
-  const axes = $derived(
-    Array.from({ length: nDim }, (_, i) => ({
-      i,
-      value: coordVec[i] ?? 0,
-      scale: nodeCoordExtent(info.node_coords, i),
-    })),
-  );
-  /** Pole labels (neg ◄─► pos) instead of a "c0" axis label — only a rank-1
-   *  affine concept axis (2-node bipolar / 1-node monopolar) has poles;
-   *  every higher-rank fan and curved fit labels its axes c0…cR-1. */
-  const showPoles = $derived(affine && nDim === 1 && info.node_count <= 2);
-
-  const sparkline = $derived(entry.sparkline ?? []);
-  // Lit when this probe is the highlight target on any of its axes — a
-  // per-PC target (``personas[3]``) still belongs to the ``personas`` card.
-  const isHighlight = $derived(
-    highlightState.target !== null &&
-      parseProbeTarget(highlightState.target).base === name,
-  );
-
-  /** Display name — bare manifold name, namespace prefix stripped; full
-   *  name stays in the accessible description. */
+  /** Where a full bar sits: the most extreme node on axis 0 for a flat probe, 1 for a share. */
+  const scale = $derived(affine ? nodeCoordExtent(info.node_coords, 0) : 1);
   const displayName = $derived(name.split("/").pop() ?? name);
 
-  // ---------- bipolar poles ----------
-  const poles = $derived(polesOf(info.manifold || name));
-  const monopolar = $derived(poles.negative === null);
-
-  // ---------- nearest (store keeps this settled post-gen) ----------
-  const topNearest = $derived(entry.nearest.length > 0 ? entry.nearest[0] : null);
-  const nearestLabel = $derived(topNearest?.[0] ?? "");
-  const nearestDistance = $derived(topNearest?.[1] ?? null);
-
-  // ---------- curved settled meta (end-of-gen aggregate) ----------
-  const aggregate = $derived(
-    (entry.aggregate ?? null) as ProbeReadingJSON | null,
-  );
-  const residual = $derived(aggregate?.residual ?? null);
-  const trajectory = $derived(entry.trajectory ?? []);
-
-  // ---------- depth stats (where in the layer stack the probe reads) ----------
-  const depthCom = $derived(latest?.depth_com?.[0] ?? null);
-  const depthSpread = $derived(latest?.depth_spread?.[0] ?? null);
-
-  /** Mini-map gating — only 2-D box-domain probes with attached node coords
-   *  render the visual (intrinsic_dim 1 of a 2-node axis and the custom
-   *  carrier of a flat discover fan both fall out here). */
-  const showMiniMap = $derived.by(() => {
-    if (info.intrinsic_dim !== 2) return false;
-    const d = info.domain as { type?: string };
-    if (d?.type !== "box") return false;
-    return !!info.node_coords && info.node_coords.length > 0;
+  const latest = $derived((entry.aggregate ?? entry.reading) as ProbeReadingJSON | null);
+  const sparkline = $derived(entry.sparkline ?? []);
+  const reading = $derived.by((): number | null => {
+    if (latest !== null || sparkline.length > 0) return entry.current;
+    if (affine) return entry.savedCoordinates?.[0] ?? entry.savedAggregate ?? null;
+    return entry.savedFraction ?? entry.savedAggregate ?? null;
   });
 
-  // ---------- per-layer strip (store-normalised primary column) ----------
-  const layerKeys = $derived<string[]>(
-    entry.perLayer
-      ? Object.keys(entry.perLayer).sort((a, b) => Number(a) - Number(b))
-      : [],
+  const peak = $derived(peakLayer(entry.perLayer));
+  const deepest = $derived(Math.max(0, ...(info.layers ?? []), ...Object.keys(entry.perLayer ?? {}).map(Number)));
+  const tint = $derived(depthTint(latest?.depth_com?.[0] ?? (peak === null ? null : layerDepth(peak, deepest))));
+
+  const isHighlight = $derived(
+    highlightState.target !== null && parseProbeTarget(highlightState.target).base === name,
   );
 
-  function cellTooltip(layer: string): string {
-    const v = entry.perLayer?.[layer];
-    if (typeof v !== "number" || !Number.isFinite(v)) {
-      return `L${layer} · no reading`;
-    }
-    // Flat per-layer is signed (axis-0); curved is a [0,1] fraction.
-    const sign = affine && v >= 0 ? "+" : "";
-    return `L${layer} · ${sign}${v.toFixed(3)}`;
-  }
-
-  const layerCells = $derived(
-    layerKeys.map((layer) => ({
-      layer: Number(layer),
-      value: entry.perLayer?.[layer],
-      title: cellTooltip(layer),
-    })),
-  );
-
-  function fmtFraction(v: number): string {
-    return Number.isFinite(v) ? v.toFixed(2) : "0.00";
-  }
-  function fmtDistance(v: number | null): string {
-    return v !== null && Number.isFinite(v) ? v.toFixed(2) : "-";
-  }
-
-  // ---------- highlight select / detach ----------
-
-  // The leading marker now means persistence in every probe family. CAA's
-  // transcript-highlight selection is an explicit sibling action instead
-  // of overloading the same glyph used for J-LENS/SAE pinning.
-  function toggleHighlight(): void {
-    setHighlightTarget(isHighlight ? null : name);
-  }
-
-  // Open the per-probe inspector (whitened geometry plot + live trail).
-  // Distinct gesture from the identity-cluster highlight toggle, so
-  // ``stopPropagation`` keeps the two from colliding.
-  function onInspect(): void {
+  function choose(): void {
+    setHighlightTarget(name);
     openDrawer("probe_inspector", { name });
-  }
-
-  async function onDetach(): Promise<void> {
-    try {
-      await detachProbe(name);
-      pushToast(`detached probe ${name}`, { kind: "info" });
-    } catch (e) {
-      pushToast(userFacingError(e, `Unable to detach ${name}. Try again.`), {
-        kind: "error",
-        ttlMs: null,
-      });
-    }
   }
 </script>
 
-<RackCard {accent} disabled={false} active={isHighlight}>
-  {#snippet statline()}
-    <ProbePinButton
-      shape={affine ? "circle" : "diamond"}
-      pinned={true}
-      onclick={() => void onDetach()}
-      title="detach"
-      ariaLabel={`Detach probe ${name}`}
-    />
-
-    <span class="name" {...{ "aria-description": "probe " + (name) }}>{displayName}</span>
-
-    {#if depthCom !== null}
-      <span
-        class="com"
-        {...{ "aria-description": "depth ± spread" }}
-      >@<RollingNumber value={depthCom} digits={2} />{#if depthSpread !== null} ±<RollingNumber value={depthSpread} digits={2} />{/if}</span>
-    {/if}
-
-    <span class="spacer"></span>
-
-    <button
-      type="button"
-      class="icon inspect"
-      aria-label="Inspect probe {name}"
-      {...{ "aria-description": "inspect" }}
-      onclick={onInspect}
-    ><Icon name="right" /></button>
-
-    <button
-      type="button"
-      class="highlight-action"
-      class:on={isHighlight}
-      aria-pressed={isHighlight}
-      aria-label={isHighlight
-        ? `Deselect ${name} as transcript highlight target`
-        : `Select ${name} as transcript highlight target`}
-      {...{ "aria-description": "highlight" }}
-      onclick={toggleHighlight}
-    >{isHighlight ? "highlighted" : "highlight"}</button>
-
-    <!-- Curved (fraction) probes are [0,1]-bounded → cap the sparkline at 1;
-         flat (signed) probes auto-scale.  Trace wears the pillar hue. -->
-    <Sparkline
-      points={sparkline}
-      width={56}
-      height={14}
-      cap={affine ? undefined : 1}
-      color="var(--card-accent)"
-    />
-
+<InstrumentRow pressed={isHighlight} onselect={choose} {tint} title={name}>
+  {#snippet lead()}
+    <span class="n">{displayName}</span>{#if peak !== null}<span class="meta">L{peak}</span>{/if}
   {/snippet}
-
-  {#snippet body()}
-    <!-- Subspaceness row: white 0→1 bar · nearest node · fraction.  "How
-         much of the centered activation lives in this probe's subspace" —
-         the scale runs higher for higher-rank fits, which is expected. -->
-    <ProbeReadingRow
-      ariaLabel={fraction === null ? "Subspace fraction unavailable" : `Subspace fraction ${fmtFraction(fraction)}${topNearest ? `, nearest ${nearestLabel}` : ""}`}
-    >
-      {#snippet left()}
-        <span
-          class="row-label"
-          {...{ "aria-description": "Share of the centered activation in this subspace · 0 to 1 · not confidence" }}
-        >subspace</span>
-      {/snippet}
-      {#snippet bar()}
-        {#if fraction !== null}
-          <Bar percentage value={fraction} max={1} width={160} height={8} color="var(--fg)" />
-        {/if}
-      {/snippet}
-      {#snippet middle()}
-        <span
-          class="nearest"
-          {...{ "aria-description": (topNearest
-            ? `nearest · ${nearestLabel} · ${fmtDistance(nearestDistance)} typical label spacings away · smaller is closer`
-            : "awaiting first token") }}
-        >
-          {#if topNearest}
-            <span class="nearest-label"><MorphText text={nearestLabel} numbers={false} /></span>
-            <span class="nearest-dist">d={#if nearestDistance !== null && Number.isFinite(nearestDistance)}<RollingNumber value={nearestDistance} digits={2} />{:else}-{/if}</span>
-          {:else}
-            <span class="nearest-empty">-</span>
-          {/if}
-        </span>
-      {/snippet}
-      {#snippet right()}<span class="value">{#if fraction !== null}<RollingNumber value={fraction} digits={2} />{:else}-{/if}</span>{/snippet}
-    </ProbeReadingRow>
-
-    <!-- One signed bar per coordinate axis.  A rank-1 concept axis carries
-         pole labels (neg ◄─► pos); higher-rank fans and curved fits label
-         axes c0…cR-1.  Each bar normalizes by its own node extent. -->
-    {#each axes as ax (ax.i)}
-      <ProbeReadingRow ariaLabel={`Coordinate ${ax.i}, ${ax.value.toFixed(2)}`}>
-        {#snippet left()}
-          {#if showPoles}
-            <span class="pole neg" aria-hidden={monopolar}>
-              {#if !monopolar}{poles.negative}{/if}
-            </span>
-          {:else}
-            <span class="row-label axis">c{ax.i}</span>
-          {/if}
-        {/snippet}
-        {#snippet bar()}
-          <Bar value={ax.value} max={ax.scale} width={160} height={8} bipolar />
-        {/snippet}
-        {#snippet middle()}
-          {#if showPoles}
-            <span class="pole pos" {...{ "aria-description": (`positive pole (${poles.positive})`) }}>
-              {poles.positive}
-            </span>
-          {:else}
-            <span class="pole pos" aria-hidden="true"></span>
-          {/if}
-        {/snippet}
-        {#snippet right()}
-          <span class="value" class:pos={ax.value > 0} class:neg={ax.value < 0}>
-            <RollingNumber value={ax.value} digits={2} signed />
-          </span>
-        {/snippet}
-      </ProbeReadingRow>
-    {/each}
-
-    {#if !affine && residual !== null}
-      <!-- Settled meta: the curved-only off-surface residual (the depth
-           CoM moved to the statline, right of the probe name). -->
-      <div class="meta">
-        <span class="meta-item" {...{ "aria-description": "residual" }}>
-          residual <RollingNumber value={Number.isFinite(residual) ? residual : 0} digits={2} />
-        </span>
-      </div>
+  {#snippet mark()}
+    {#if sparkline.length > 1}
+      <Trace values={sparkline} limit={32} {scale} label={`${displayName} by token`} />
+    {:else if reading !== null}
+      <Bar value={reading} max={scale} width={140} height={4} bipolar={affine} title={`${displayName} ${readingText(reading, { signed: affine })}`} />
     {/if}
-
-    <!-- Per-layer heatmap strip with L0 / Ln endcaps. -->
-    <LayerStrip
-      cells={layerCells}
-      scale={axisScale}
-      ariaLabel={`Per-layer readings for ${name}`}
-      emptyMessage={entry.savedAggregate !== null || (entry.savedCoordinates?.length ?? 0) > 0
-        ? "saved aggregate; per-layer detail was not retained"
-        : "no data yet, generate a token first"}
-    />
-
-    {#if showMiniMap}
-      <div class="map-wrap">
-        <ManifoldMiniMap
-          {info}
-          trajectory={trajectory}
-          settled={aggregate?.coords ?? null}
-        />
-      </div>
-    {/if}
-    <TraceDetail points={sparkline} />
   {/snippet}
-</RackCard>
-
-<style>
-  /* ----- statline ----- */
-  .name {
-    color: var(--fg-strong);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .com {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-    flex: 0 0 auto;
-  }
-  .spacer {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-  .icon {
-    min-width: var(--control-target);
-    min-height: var(--control-target);
-    background: transparent;
-    border: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-base);
-    line-height: 1;
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius);
-    flex: 0 0 auto;
-    cursor: pointer;
-    transition: color var(--dur) var(--ease-out),
-      background var(--dur) var(--ease-out);
-  }
-  .icon:hover:not(:disabled) {
-    color: var(--fg-strong);
-    background: var(--bg-elev);
-  }
-  .inspect:hover:not(:disabled) {
-    color: var(--ink);
-  }
-  .highlight-action {
-    min-height: var(--control-target);
-    padding: var(--space-1) var(--space-3);
-    color: var(--fg-muted);
-    background: var(--glass);
-    border: 1px solid transparent;
-    border-radius: var(--radius-sm);
-    font-size: var(--text-xs);
-    flex: 0 0 auto;
-  }
-  .highlight-action:hover,
-  .highlight-action.on {
-    color: var(--ink);
-    background: color-mix(in oklch, var(--card-accent) 10%, var(--glass));
-  }
-
-  /* ----- body: ProbeReadingRow content -----
-     Left-column axis caption — the subspaceness "subspace" tag and the
-     "c0…cR-1" coordinate labels.  Hugs the bar (right-aligned) like the
-     neg pole it shares the slot with. */
-  .row-label {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    text-align: end;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .row-label.axis {
-    color: var(--fg-dim);
-  }
-  .pole {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    font-size: var(--text-sm);
-  }
-  .pole.neg {
-    color: var(--fg-muted);
-    text-align: end;
-  }
-  .pole.pos {
-    color: var(--fg-strong);
-    text-align: start;
-  }
-  .nearest {
-    display: inline-flex;
-    flex-direction: column;
-    overflow: hidden;
-    white-space: nowrap;
-    font-size: var(--text-sm);
-    color: var(--fg-strong);
-    text-align: start;
-    min-width: 0;
-  }
-  .nearest-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    color: var(--fg-strong);
-    line-height: 13px;
-  }
-  .nearest-dist {
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
-    line-height: 11px;
-  }
-  .nearest-empty {
-    color: var(--fg-muted);
-    font-style: italic;
-  }
-  .value {
-    color: var(--fg-muted);
-    font-variant-numeric: tabular-nums;
-    min-width: 3.5em;
-    text-align: end;
-    flex: 0 0 auto;
-  }
-  .value.pos {
-    color: var(--ink);
-  }
-  .value.neg {
-    color: var(--accent-red);
-  }
-
-  /* ----- body: curved settled meta ----- */
-  .meta {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-3);
-    color: var(--ink);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-  }
-  .meta-item {
-    flex: 0 0 auto;
-  }
-
-  /* ----- body: mini-map ----- */
-  .map-wrap {
-    display: flex;
-    justify-content: center;
-  }
-</style>
+  {#snippet value()}
+    {#if reading !== null}<RollingNumber value={reading} digits={2} signed={affine} />{:else}–{/if}
+  {/snippet}
+</InstrumentRow>

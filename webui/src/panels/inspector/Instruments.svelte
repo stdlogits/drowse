@@ -1,15 +1,18 @@
 <script lang="ts">
-  // The Inspector with nothing selected: the instruments, as Ledger sections (the Instruments
-  // canvas). Probes (flat and curved geometry readings), the live lens readout, SAE features,
-  // sampling, and which sources the lens and SAE read through (picked in the Lens room).
+  // The Inspector with nothing selected: the instruments (the Instruments canvas). Probes as rows,
+  // the lens live, the SAE's features, sampling, and the sources the lens and SAE read through,
+  // one line each (they are chosen in the Lens room).
+  import { tokenParts } from "@stdlogits/ledger";
   import ProbeRack from "../ProbeRack.svelte";
   import JLensPanel from "../JLensPanel.svelte";
   import SaePanel from "../SaePanel.svelte";
   import SamplingStrip from "../SamplingStrip.svelte";
   import { saeLoaded, sessionState } from "../../lib/stores/session.svelte";
+  import { tokenHoverState } from "../../lib/stores.svelte";
   import { goto } from "../../lib/stores/rooms.svelte";
 
   const saeOn = $derived(saeLoaded());
+  const hovered = $derived(tokenHoverState.active ? tokenParts(tokenHoverState.tokenText) : null);
 
   const sources = $derived.by(() => {
     const blocks = sessionState.info?.instruments ?? [];
@@ -21,22 +24,23 @@
   });
 </script>
 
+{#snippet at()}
+  {#if hovered}<span class="meta">at <span class="dw-ws">{hovered.lead ? "·" : ""}</span>{hovered.text}</span>{/if}
+{/snippet}
+
 <div class="instruments">
   <section class="dw-sec" id="instrument-probes" aria-labelledby="instrument-probes-head">
-    <div class="dw-sec-head"><span class="head" id="instrument-probes-head">Probes</span></div>
-    <div class="racks">
-      <div id="instrument-subspace"><ProbeRack family="subspace" /></div>
-      <div id="instrument-manifold"><ProbeRack family="manifold" /></div>
-    </div>
+    <div class="dw-sec-head"><span class="head" id="instrument-probes-head">Probes</span>{@render at()}</div>
+    <ProbeRack />
   </section>
 
   <section class="dw-sec" id="instrument-lens" aria-labelledby="instrument-lens-head">
-    <div class="dw-sec-head"><span class="head" id="instrument-lens-head">Live</span><span class="meta">lens readout</span></div>
+    <div class="dw-sec-head"><span class="head" id="instrument-lens-head">Live</span>{@render at()}</div>
     <JLensPanel sources={false} />
   </section>
 
   <section class="dw-sec" id="instrument-sae" aria-labelledby="instrument-sae-head">
-    <div class="dw-sec-head"><span class="head" id="instrument-sae-head">Features</span>{#if !saeOn}<span class="meta">Off</span>{/if}</div>
+    <div class="dw-sec-head"><span class="head" id="instrument-sae-head">Features</span>{#if !saeOn}<span class="meta">Off</span>{:else}{@render at()}{/if}</div>
     {#if saeOn}
       <SaePanel sources={false} />
     {:else}
@@ -53,32 +57,26 @@
     <span class="head" id="instrument-sources-head">Sources</span>
     <div class="srcs">
       {#each sources as row (row.key)}
-        <div class="src"><span class="sk">{row.key}</span><span class="sv" class:none={!row.value}>{row.value ?? "none"}</span><span class="meta">{row.meta}</span></div>
+        <div class="src">
+          <span class="sk">{row.key}</span>
+          <span class="sv" class:none={!row.value}>{row.value ?? "none"}</span>
+          <span class="meta">{row.meta}</span>
+          <button type="button" class="dw-text change" onclick={() => goto("lens")} aria-label={`Change the ${row.key} source`}>Change</button>
+        </div>
       {/each}
     </div>
-    <button type="button" class="dw-text room-link" onclick={() => goto("lens")}>Lens room</button>
   </section>
 </div>
 
 <style>
   .instruments { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; }
-  /* The rack panels were drawn for a fixed-height column with scrolling middles; in the inspector
-   * they flow with the page. (They go when the instruments lane redraws them.) */
-  .instruments :global(:is(.rack, .jlens, .sae, .rack .strips, .jlens .section, .sae .section, .steer-cards, .jlens .scroll, .sae .scroll)) {
-    display: flex;
-    flex: none;
-    height: auto;
-    max-height: none;
-    min-height: 0;
-    overflow: visible;
-  }
-  .instruments :global(:is(.rack, .jlens, .sae, .jlens .section, .sae .section)) { padding-inline: 0; }
-  .instruments :global(:is(.jlens, .sae)) { flex-direction: column; }
-  .racks { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s5); min-width: 0; }
   .srcs { display: grid; gap: var(--s2); }
-  .src { display: grid; grid-template-columns: 96px auto minmax(0, 1fr); gap: var(--s4); align-items: baseline; }
+  .src { display: grid; grid-template-columns: 96px auto minmax(0, 1fr) auto; gap: var(--s4); align-items: baseline; }
   .sk { color: var(--ink2); font: var(--type-small); }
   .sv { color: var(--ink); font: 600 14px/20px var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
   .sv.none { color: var(--ink3); font: var(--type-small); }
-  .room-link { justify-self: start; }
+  .change { font: var(--type-meta); }
+  @media (max-width: 720px) {
+    .src { grid-template-columns: 64px auto minmax(0, 1fr) auto; gap: var(--s3); }
+  }
 </style>
