@@ -13,6 +13,9 @@
 .mf-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); min-width: 0; }
 .mf-head .dw-title { font: var(--type-mark); letter-spacing: -0.01em; }
 
+/* A field's value reads in ink (Ledger's base lets fields inherit the surrounding ink2). */
+.mf-tool :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea) { color: var(--ink); }
+
 /* A section: a quiet head (with a meta on its right) over its content. */
 .mf-sec { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; }
 .mf-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s1) var(--s4); min-width: 0; }
@@ -44,7 +47,7 @@
 
 /* A row's depth strip: the ramp's cells, filled where the thing is fitted. */
 .mf-depth { display: inline-flex; flex: none; gap: 2px; }
-.mf-depth > i { width: 4px; height: 12px; border-radius: 1px; background: var(--wash2); transition: background-color var(--glide) var(--ease), opacity var(--glide) var(--ease); }
+.mf-depth > i { width: 6px; height: 4px; border-radius: 1px; background: var(--wash2); transition: background-color var(--glide) var(--ease), opacity var(--glide) var(--ease); }
 .mf-depth.is-fitted > i { background: color-mix(in oklch, var(--deep) var(--p), var(--late)); }
 .mf-depth.is-stale > i { opacity: 0.45; }
 
@@ -61,6 +64,9 @@
 .mf-search { display: flex; align-items: center; gap: var(--s2); min-width: 0; height: 44px; padding: 0 var(--s4); border-radius: var(--r-pill); background: var(--wash); color: var(--ink3); }
 .mf-search input { flex: 1 1 auto; min-width: 0; min-height: 0; height: 100%; padding: 0; background: transparent; font: var(--type-small); }
 .mf-search input:focus-visible { outline: none; }
+.mf-search input::-webkit-search-cancel-button { display: none; }
+.mf-search .clear { display: inline-grid; flex: none; place-items: center; width: 28px; height: 28px; margin-right: calc(var(--s2) * -1); padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink3); cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease); }
+@media (hover: hover) { .mf-search .clear:hover { color: var(--ink); background: var(--wash2); } }
 .mf-search:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
 
 /* ---------- the builder's stepwise form */
@@ -79,7 +85,7 @@
 .mb-form .label, .mb-form .mini-label { color: var(--ink3); font: var(--type-meta); }
 .mb-form .input { width: 100%; min-width: 0; }
 .mb-form textarea.input { min-height: 88px; resize: vertical; }
-.mb-form :is(input, textarea)[aria-invalid="true"] { background: color-mix(in oklab, var(--ink) 10%, var(--wash)); }
+.mb-form :is(input, textarea)[aria-invalid="true"] { background: color-mix(in oklab, var(--ink) 6%, var(--wash)); }
 .mb-form .field-error { margin: 0; color: var(--ink); font: var(--type-meta); overflow-wrap: anywhere; }
 
 /* A line of numbers and words under a field. */

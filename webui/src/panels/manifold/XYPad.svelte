@@ -177,9 +177,10 @@
    * surrounding axis name and readout so the whole row reads locked. */
   .xypad.locked .sliders { opacity: 0.7; }
   .sliders { display: grid; gap: var(--s3); }
-  .plane { border-radius: var(--r-box); background: var(--wash); touch-action: none; }
+  /* It sits in a steer card, which is a wash, so the plane steps up to wash2. */
+  .plane { border-radius: var(--r-box); background: var(--wash2); touch-action: none; }
   .plane.live { cursor: crosshair; }
-  .cross { stroke: var(--wash2); stroke-width: 1; }
+  .cross { stroke: var(--paper); stroke-width: 1; }
   .node { fill: var(--ink3); }
   .here { fill: var(--tint); stroke: var(--paper); stroke-width: 2; transition: cx var(--fast) var(--ease), cy var(--fast) var(--ease); }
   .axis-row { display: grid; grid-template-columns: minmax(40px, auto) minmax(0, 1fr) 48px; align-items: center; gap: var(--s3); min-width: 0; }

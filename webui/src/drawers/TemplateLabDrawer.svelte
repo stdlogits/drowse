@@ -562,6 +562,7 @@
     .mf-row.stack { grid-template-columns: minmax(0, 1fr); }
     .stack .mf-end { justify-content: flex-start; }
     .rank { margin-left: 0; }
+    .bar-row { grid-template-columns: 88px minmax(0, 1fr) 76px; padding: 0 var(--s2); }
     .turn-row { grid-template-columns: minmax(0, 1fr) auto; }
     .turn-row > :global(:first-child) { grid-column: 1 / -1; }
   }

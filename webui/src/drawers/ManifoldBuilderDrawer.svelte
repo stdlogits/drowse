@@ -96,13 +96,14 @@
   {/if}
 
   <div class="mb-form">
-    <div class="mode" inert={busy}><Segmented
+    <!-- Held still while a job runs (not inert: the gliding thumb hides inside an inert subtree). -->
+    <div class="mode" class:busy aria-disabled={busy || undefined}><Segmented
       value={authoringMode}
-      onchange={(mode) => (authoringMode = mode)}
+      onchange={(mode) => { if (!busy) authoringMode = mode; }}
       options={[
-        { value: "discover", label: "Generate examples", hint: "Name two or more contrasting concepts; drowse writes the examples and fits a direction" },
-        { value: "templated", label: "Use a template", hint: "A template's possible answers (days, months, directions) become the examples" },
-        { value: "authored", label: "Use your examples", hint: "Your own labelled statements, on coordinates you place or a layout drowse finds" },
+        { value: "discover", label: "Generate", hint: "Name two or more contrasting concepts; drowse writes the examples and fits a direction" },
+        { value: "templated", label: "Template", hint: "A template's possible answers (days, months, directions) become the examples" },
+        { value: "authored", label: "Your examples", hint: "Your own labelled statements, on coordinates you place or a layout drowse finds" },
       ]}
       label="Authoring mode"
     /></div>
@@ -161,7 +162,7 @@
 </section>
 
 <style>
-  .mode { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
-  .mode::-webkit-scrollbar { display: none; }
+  .mode { min-width: 0; transition: opacity var(--fast) var(--ease); }
+  .mode.busy { opacity: 0.4; pointer-events: none; }
   .authoring-form[hidden] { display: none; }
 </style>

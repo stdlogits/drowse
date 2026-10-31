@@ -442,6 +442,7 @@
             bind:value={query}
             oninput={scheduleSearch}
           />
+          {#if query}<button type="button" class="clear" aria-label="Clear the search" onclick={() => { query = ""; scheduleSearch(); }}><Icon name="close" /></button>{/if}
         </label>
         {#if !query.trim()}
           <p class="meta">Public, browser-compatible drowse packs</p>
@@ -484,7 +485,7 @@
 </section>
 
 <style>
-  .views { align-items: center; min-height: 40px; }
+  .views { align-items: center; min-height: 40px; max-width: 760px; }
   .catalog-count { margin-left: auto; }
   .panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; max-width: 760px; }
   .stage { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
