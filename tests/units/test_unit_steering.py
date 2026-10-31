@@ -146,6 +146,8 @@ def test_a_gated_unit_ablation_follows_its_gate(tiny_session: Any) -> None:
     ablated = patched_forward_logits(
         tiny_session.model, _ids(tiny_session), {block.mlp.down: _neuron_patch(mean, 3)},
     )
+    plain = forward_logits(tiny_session, TEXT).float()
+    assert not torch.allclose(plain, ablated, rtol=1e-5, atol=1e-5)
     ctx = tiny_session._steering.ctx
     with tiny_session.steering("!neuron/L1n3@when:head/L0h0>1"):
         ctx.probe_scores = {"head/L0h0": 2.0}
@@ -153,10 +155,7 @@ def test_a_gated_unit_ablation_follows_its_gate(tiny_session: Any) -> None:
             forward_logits(tiny_session, TEXT).float(), ablated, rtol=1e-5, atol=1e-5,
         )
         ctx.probe_scores = {"head/L0h0": 0.5}
-        torch.testing.assert_close(
-            forward_logits(tiny_session, TEXT).float(),
-            forward_logits(tiny_session, TEXT).float(),
-        )
+        torch.testing.assert_close(forward_logits(tiny_session, TEXT).float(), plain)
     ctx.reset()
 
 
