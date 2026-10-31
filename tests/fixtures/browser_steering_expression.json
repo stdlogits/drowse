@@ -169,6 +169,11 @@
     "honest~neuron/L1n2",
     "!neuron/L1n2|honest",
     "neuron/L1n2%x",
-    "x@when:neuron/L8x3>0"
+    "x@when:neuron/L8x3>0",
+    "x@when:neuron/L8n344~x>0.5",
+    "x@when:head/L3h1~foo>0.5",
+    "x@when:neuron/L8n344:fraction>0",
+    "x@when:neuron/L8n344@x>0",
+    "x@when:head/L3h1[0]>0"
   ]
 }

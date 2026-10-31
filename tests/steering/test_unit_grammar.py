@@ -97,6 +97,11 @@ def test_referenced_selectors_carry_canonical_unit_names() -> None:
     ("!head/L3h1{3}", "take no layer clause", 10),
     ("x@when:neuron/L8x3>0", "not a neuron reference", 14),
     ("x@when:head/L8h3.y>0", "takes no '.'", 16),
+    ("0.5 honest@when:neuron/L8n344~x > 0.5", "takes no channel suffix ('~')", 29),
+    ("x@when:head/L3h1~foo > 0.5", "takes no channel suffix ('~')", 16),
+    ("x@when:neuron/L8n344:fraction>0", "takes no channel suffix (':')", 20),
+    ("x@when:neuron/L8n344@x>0", "takes no channel suffix ('@')", 20),
+    ("x@when:head/L3h1[0]>0", "takes no channel suffix ('[')", 16),
 ])
 def test_malformed_unit_expressions_fail_with_a_column(text: str, fragment: str, col: int) -> None:
     with pytest.raises(SteeringExprError, match=re.escape(fragment)) as info:

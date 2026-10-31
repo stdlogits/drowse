@@ -88,7 +88,9 @@ unit (`neuron/L8h344`, `neuron/8`), a `.` after a unit, a `:variant`, a unit
 as an operand of `~`, `|` or `%` (either side), a layer clause, and a head
 without `!` (`a head has no single write direction; silence it with
 !head/…`). Gate probes take units too (`@when:neuron/L8n344 > 2`), stored
-canonical.
+canonical; a unit probe is one scalar, so a channel suffix after it
+(`:fraction`, `@label`, `~label`, `[i]`) is a parse error rather than a gate
+that never fires.
 
 | Form | IR value (`Steering.alphas` key) | Lowered as |
 |---|---|---|

@@ -31,7 +31,8 @@ Grammar::
                  | [ns "/"] NAME "~" NAME              # soft-assignment prob ∈ [0,1]
                  | "sae" "/" INT                       # resident SAE feature
                  | ("jlens" | "slens") "/" "#" INT     # token probe by vocab id
-                 | ("neuron" | "head") "/" UNIT        # unit probe
+                 | ("neuron" | "head") "/" UNIT        # unit probe (one scalar:
+                                                       # no channel suffix)
     op          := ">" | ">=" | "<" | "<="
     coeff       := signed_float ("," signed_float)?  # comma-run of ≤2;
                                                        # >1 value is valid
@@ -807,7 +808,19 @@ class _Parser:
             # composes with it; stored verbatim, matching the scalar keys the
             # instruments emit.
             self._consume()
+            namespace = probe
             probe = f"{probe}/{self._namespaced_name(probe)}"
+            if namespace in UNIT_NAMESPACES and self._peek().kind in (
+                "COLON", "AT", "TILDE", "LBRACK",
+            ):
+                # A unit emits one scalar under its bare name: a channel
+                # suffix would name a key no instrument writes, and the gate
+                # would sit inactive forever.
+                raise SteeringExprError(
+                    f"a unit probe ('{probe}') is one scalar and takes no "
+                    f"channel suffix ('{self._peek().value}')",
+                    col=self._peek().col,
+                )
         nxt = self._peek().kind
         if nxt == "COLON":
             # Manifold subspace-fraction gate: ``<manifold>:fraction``.
