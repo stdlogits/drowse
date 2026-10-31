@@ -9,7 +9,7 @@ injected, where, when, and how strongly.
 
 | Module | Owns |
 |---|---|
-| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr`, `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
+| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr`, `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
 | `terms.py` | `Steering` (frozen IR), `AlphaEntry`, `SteeringStackEntry`, `term_entry` / `entry_trigger` / `entry_coeff` |
 | `triggers.py` | `Trigger` + presets, `ProbeGate`, `TriggerContext` |
 | `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries), `SteeringScope`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
@@ -45,6 +45,7 @@ selector   := atom [("~" | "|") atom | "%" position]
 position   := signed_num ("," signed_num)* | IDENT     # coord list | node label
 atom       := ("jlens" | "slens") "/" "#" INT          # exact vocab id
             | "sae" "/" INT                            # SAE feature
+            | ("neuron" | "head") "/" UNIT             # L8n344 / L20h17
             | [IDENT "/"] IDENT ["." IDENT] [":" IDENT]  # ns / name . name : variant
 trigger    := phase ["&" gate] | gate
 phase      := preset | ("first" | "after") ":" INT
@@ -53,9 +54,10 @@ gate       := "when" ":" probe op signed_num
 probe      := [IDENT "/"] pname ( ":" ("fraction" | "membership")
                                 | ("@" | "~") IDENT
                                 | ["." IDENT] ["[" INT "]"] )
-pname      := IDENT | "#" INT (jlens/slens) | INT (sae)
+pname      := IDENT | "#" INT (jlens/slens) | INT (sae) | UNIT (neuron/head)
 op         := ">" | ">=" | "<" | "<="
 signed_num := ["+" | "-"] NUM
+UNIT       := "L" INT ("n" | "h") INT                  # any letter case; n under neuron/, h under head/
 ```
 
 Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`); a term's sign
@@ -77,13 +79,26 @@ a `~`/`|`/`%` after the clause, a clause after `@` (gate probes take none),
 and a clause on a selector with a `neuron/` or `head/` atom (unit atoms carry
 their own layer).
 
+**Unit atoms.** `neuron/L8n344` and `head/L20h17` name one MLP neuron or one
+attention head. The name lexes as one `IDENT` and goes through
+`naming.parse_unit_ref` (any letter case, leading zeros dropped), so the key,
+`format_expr` and `referenced_selectors` carry the canonical `L8n344`; the
+letter must match the namespace. Parse errors, each with a `col`: a malformed
+unit (`neuron/L8h344`, `neuron/8`), a `.` after a unit, a `:variant`, a unit
+as an operand of `~`, `|` or `%` (either side), a layer clause, and a head
+without `!` (`a head has no single write direction; silence it with
+!head/…`). Gate probes take units too (`@when:neuron/L8n344 > 2`), stored
+canonical.
+
 | Form | IR value (`Steering.alphas` key) | Lowered as |
 |---|---|---|
 | `α x` | `ManifoldTerm` via the bare-atom ladder, else `α` / `(α, Trigger)` under `x` | push |
 | `α a~b` / `α a\|b` | `ProjectedTerm` under `a~b` / `a\|b` | Mahalanobis LEACE `project_profile`: keep / remove the component of `a` along `b`, then push |
 | `α !x` | `AblationTerm` under `!x` | `h' = h − α(h·d̂ − μ·d̂)d̂`; bare `!x` is α = 1 |
+| `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's write at its layer; the sign of α picks the pole (units lane) |
+| `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | the unit's activation (a neuron's `act`, a head's `z_h`) replaced by its neutral mean, blended by α, as a unit hook (units lane); never a residual direction ablation |
 | `along[,onto] m%pos` | `ManifoldTerm` under `m%pos` | affine fit: push fragment; curved fit: own term |
-| any of these `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`honest{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
+| any of these but a unit atom `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`honest{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
 
 `LayerScope` is `None` (every fitted layer), `"workspace"`, or a sorted index
 tuple; `{all}` is `None`. The clause is part of the term's identity: the same
@@ -183,10 +198,11 @@ and is an interface change for drowse.ai.
   bare labels stay unambiguous; `@` is forbidden (HF revision separator).
 - **Reserved namespaces** (`RESERVED_NAMESPACES`: `jlens`, `slens`, `sae`,
   `neuron`, `head`) name instrument units: the name is kept verbatim and
-  case-preserving (`jlens/Paris` ≠ `jlens/paris`), takes no `:variant` (not
-  even `:raw`), and skips every manifold tier. The session wires resolvers for
-  `jlens` and `sae` (`ArtifactRegistry.set_atom_resolver`); `slens`, `neuron`
-  and `head` parse but raise `ProfileNotRegisteredError` when steered.
+  case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are the
+  exception, canonicalized as above), takes no `:variant` (not even `:raw`),
+  and skips every manifold tier. The session wires resolvers for `jlens` and
+  `sae` (`ArtifactRegistry.set_atom_resolver`); a `slens` or `neuron` push
+  parses but raises `ProfileNotRegisteredError` when steered.
 - **Variants**: `raw` (default), `sae` / `sae-<release>`, `role` /
   `role-<id>` (role-augmented fit; its role becomes the scope's assistant
   label), `from` / `from-<src>` (cross-model transfer). There is no `pca`
@@ -263,6 +279,7 @@ layer (`WhitenerError` otherwise; there is no Euclidean path).
 | `(α, trigger)` vector | profile → `fold_directions_to_subspace` (neutral-anchored rank-1 ray, + pole at `‖d_L‖`) → `affine_manifold_push(folded, "+")`, coefficient α |
 | `ProjectedTerm` | `project_profile(base, onto, op, whitener=…)`, memoized on the identities of base, onto and whitener under the clause-free key (one projection serves every clause) and never registered → folded and pushed like a vector |
 | `AblationTerm` | target profile's per-layer direction(s) → ablate fragment with its coefficient |
+| `UnitAblationTerm` | not wired yet: `resolve` passes it through (nothing to load) and `compose` raises `SteeringCompositionError` (422, "unit ablation is not wired yet"), so the error surfaces on `__enter__` |
 | affine `ManifoldTerm` | `affine_manifold_push(manifold, position)`, coefficient `along` (`onto` is vacuous and dropped) |
 | curved `ManifoldTerm` | `SteeringPlan.add_manifold(…, layers=…)` (its own term) |
 
@@ -415,7 +432,8 @@ belong in compose or lower.
 ## Tests
 
 All CPU, in `tests/steering/`: grammar and round trips
-(`test_steering_expr.py`, `test_manifold_grammar.py`), triggers
+(`test_steering_expr.py`, `test_manifold_grammar.py`, unit atoms in
+`test_unit_grammar.py`), triggers
 (`test_triggers.py`), scopes on a real session and on
 `tests/support/composer.py::SteeringRig` (`test_steering_context.py`,
 `test_steering_context_ablation.py`), installed state and offset buffers

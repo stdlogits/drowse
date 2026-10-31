@@ -146,9 +146,13 @@ Both use `base/source_registry.py::SourceFamily`: an `active.json` selection,
 Drowse-owned `local/<name>/` artifacts, and commit-pinned provider bindings
 whose payloads stay in the Hugging Face cache.
 
-- A lens is one fp32 `J_l = E[∂h_final/∂h_l]` per fitted source layer, keyed
-  by `LensKey` (kind J standard or R RelP; stored as format v7, `local:j` and
-  `local:r`). Providers: `neuronpedia`, `workspace-r`, `workspace-j`.
+- A lens is one kind (`LensKey`: J/R output, K/S input) with fp32 per-layer
+  matrices at one or both residual sites (`out`, `mid`): `J_l =
+  E[∂h_final/∂h_l]` for output kinds, `K_l = E[∂h_l/∂e]` for input kinds.
+  Format v7 stores every kind and site (`local:j`, `local:r`, `local:s`,
+  `local:k`); only J/R at `out` are fitted today. Providers: `neuronpedia`,
+  `workspace-r`, `workspace-j`. Which kind reads a place is a depth rule
+  (`lens/depth.py`): S early, R late, both weighted in a crossover band.
 - An SAE is a local ReLU dictionary trained here or a SAELens release (the
   `[sae]` extra), held resident at one hook layer per session.
 
@@ -322,6 +326,7 @@ in `drowse/steering/AGENTS.md`. In brief:
 | `@response`, `@after`, `@first:N`, … | restrict the token phase or window |
 | `@when:probe>t` | fire only while a read-side scalar holds |
 | `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces |
+| `neuron/L8n344`, `!head/L20h17` | model units: a neuron push along its write, a unit mean-ablation (`UnitAblationTerm`) |
 
 ### 6.2 Resolution and composition
 
@@ -836,8 +841,19 @@ executable statement of why a boundary is strict.
 ## 16. Known boundaries
 
 - J-lens atoms and probes name one tokenizer token; multi-token words raise
-  `MultiTokenWordError`. `slens`, `neuron` and `head` are reserved but not yet
-  steerable.
+  `MultiTokenWordError`. `slens` and `neuron` pushes parse but raise
+  `ProfileNotRegisteredError`, and `!neuron/…`/`!head/…` parse to
+  `UnitAblationTerm` but raise `SteeringCompositionError` until unit
+  interventions are wired.
+- `BlockSpec` (`model/blocks.py`) describes dense decoders only: llama,
+  mistral, qwen2/3 and gemma2/3/4 without per-layer inputs, KV sharing or MoE.
+  MoE, fused gate-up or qkv projections, hybrid linear-attention stacks,
+  attention sinks and unknown norms raise `UnsupportedBlockError` (422), so
+  transport fits and unit reads refuse those models. Discovery is structural;
+  `verify_model_spec` is what catches a forward term the structure hides.
+- Lens format v7 records no embedding width, so stored K/S lenses have
+  `d_emb = d_model`. drowse.ai's browser reader accepts only J/R packs with
+  one `out` site; packs with a `mid` site or an input kind need its loader.
 - Provider lenses and SAEs exist only for covered models and revisions; local
   fits are explicit, expensive workflows.
 - Curved manifolds are slower than flat steering, and overlapping curved spans
@@ -874,6 +890,6 @@ executable statement of why a boundary is strict.
 - **Blending.** Off-node midpoints between distinct persona nodes produce
   coherent blended content at the sweet-spot α. Whether interpolation between
   basins holds generally, and on curved fits, is open.
-- **Input-side lenses.** `LensKey` reserves the input-side kinds K and S and the
-  `mid` site, and `slens` is a reserved namespace; only the output-side J/R
-  estimators exist.
+- **Input-side lenses.** One `JacobianLens` holds K/S and the `mid` site and
+  the store persists them, and `slens` is a reserved namespace; only the
+  output-side J/R estimators at `out` exist.

@@ -121,7 +121,7 @@ no code reads a session private (`session._x`, `sess._x`, `<x>.session._x`,
 
 | Layer | Package | Owns | Doc |
 |---|---|---|---|
-| 0 | `errors.py`, `naming.py`, `events.py` | the error family; canonical names and `RESERVED_NAMESPACES`; the synchronous `EventBus` | below |
+| 0 | `errors.py`, `naming.py`, `events.py` | the error family; canonical names, `RESERVED_NAMESPACES` and unit references; the synchronous `EventBus` | below |
 | 1 | `base/` | torch-free primitives: paths and `$DROWSE_HOME`, atomic writes and artifact locks, integrity, shards, staging, Hub access, `SourceFamily`, `ExclusiveGuard`, LRU | below |
 | 2 | `geometry/` | pure tensor math: frames, domains, RBF, the kernel, whitener, topology, fold/`Profile`, transfer | `drowse/geometry/AGENTS.md` |
 | 3 | `model/` | loading, fingerprints, layer discovery, logits path, layer selectors, chat traits, roles, scene grammar, compile/StaticCache | `drowse/model/AGENTS.md` |
@@ -146,8 +146,9 @@ needs a `LAYERS` entry.
 
 Unlisted homes: `errors.py` holds the cross-module errors (subsystem-local ones
 live beside their code); `naming.py` holds `canonical_concept_name`,
-`BIPOLAR_SEP = "."` and `RESERVED_NAMESPACES` (`jlens`, `slens`, `sae`,
-`neuron`, `head`); `base/exclusive.py::ExclusiveGuard` is the one
+`BIPOLAR_SEP = "."`, `RESERVED_NAMESPACES` (`jlens`, `slens`, `sae`,
+`neuron`, `head`) and the unit references (`NeuronRef`, `HeadRef`,
+`parse_unit_ref`: `L8n344` / `L20h17`); `base/exclusive.py::ExclusiveGuard` is the one
 exclusive-section type; `base/source_registry.py::SourceFamily` is the shared
 per-model source shape for lens and SAE. `notebook/` (optional `[notebook]`
 extra) holds plotly/pandas helpers over the public result types. `drowse/data/`

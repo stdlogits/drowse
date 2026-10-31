@@ -1,8 +1,8 @@
 # model/
 
 Everything drowse knows about a Hugging Face causal LM below steering:
-loading and identity, where the residual blocks are, the logits path, layer
-selectors, token spans, chat-template facts, role substitution, the scene
+loading and identity, where the residual blocks are and what they compute
+(`BlockSpec`), unit directions, the logits path, layer selectors, token spans, chat-template facts, role substitution, the scene
 stitcher, and compile/StaticCache plumbing. The package imports only
 `errors`/`naming`/`events`, `base` and `geometry`
 (`tests/invariants/test_layering.py`) and holds no session state: every
@@ -21,6 +21,8 @@ package supplies the mechanisms.
 | `fingerprint.py` | Source and loaded-model identities, `resolve_model_revision` |
 | `arch.py` | `get_layers`, `TESTED_ARCHS`, `text_extractable`, `config_model_shape`, `workspace_layer_indices` |
 | `readout.py` | Final residual → logits (`LogitReadout`, `get_unembedding`, `get_final_norm`) |
+| `blocks.py` | `BlockSpec`/`ModelSpec`: dense decoder blocks described for transport and unit reads; `model_spec`, `block_specs`, `verify_model_spec`, the reference `block_forward` |
+| `units.py` | Neuron writes and pole reads, head write and read rows, from a `BlockSpec` (fp32, CPU) |
 | `layers.py` | The one layer-selector parser, formatter and resolvers (`--layers`, `layers=`, steering `{…}`) |
 | `tokens.py` | `special_token_ids`, `last_content_index` |
 | `chat.py` | `ChatTraits`: per-session chat facts and render cache |
@@ -151,6 +153,83 @@ Cohere `logit_scale` or Falcon-H1 `lm_head_multiplier`, Granite
 `logits_scaling`, then the `final_logit_softcapping` tanh cap. A family with
 another logits quirk needs a branch here and a numerics case. A model whose
 forward ignores `past_key_values` is handled in `generation/decode.py`.
+
+## Blocks and units (`blocks.py`, `units.py`)
+
+A `BlockSpec` describes one dense decoder block in semantic terms, so the
+lens transport estimator and the unit reads consume one description instead
+of each family's attribute names. Every described block computes
+
+```text
+h_mid = h + attn_out_norm(o(attention(q(a), k(a), v(a)))),   a = attn_in_norm(h)
+h_out = (h_mid + mlp_out_norm(down(act(gate(m)) * up(m)))) * scalar,   m = mlp_in_norm(h_mid)
+```
+
+with causal softmax attention over grouped KV heads, optional per-head q/k/v
+RMSNorms before RoPE, scores `q·k · scaling` capped by
+`logit_softcap·tanh(s/logit_softcap)` when set, and an optional sliding window
+(position `i` sees `j` iff `i − window < j ≤ i`).
+
+| Field | Holds |
+|---|---|
+| `attn_in_norm`, `mlp_in_norm` | the pre-norms (`NormSpec`: module, `eps`, `offset` 0 for `w` or 1 for `1 + w`, `weighted`) |
+| `attn_out_norm`, `mlp_out_norm` | Gemma's sandwich norms; `None` elsewhere |
+| `attn` (`AttentionSpec`) | `q`/`k`/`v`/`o` (`nn.Linear`; `v is None` means the value is `k`'s raw output, Gemma 4's full layers), `q_norm`/`k_norm`/`v_norm`, `n_heads`, `n_kv_heads`, `head_dim`, `scaling`, `sliding_window`, `logit_softcap`, `rope_table` (the layer type a per-type rotary table takes), `qkv_bias`, `o_bias`, `kv_head(h)` |
+| `mlp` (`MLPSpec`) | `gate`/`up`/`down`, `act` (`silu` or `gelu_tanh`), `d_ff`, `bias` |
+| `scalar` | Gemma 4's `layer_scalar` (`scale()` is 1.0 without one) |
+
+`ModelSpec` adds the embedding and `embed_scale` (√d on Gemma), the final
+norm, `final_logit_softcap`, `unembed`, the rotary module (and whether it takes
+a layer type), `n_layers`, `d_model`, `d_ff` (the widest block's) and `vocab`.
+`activation`, `activation_factor` (the RelP identity rule's `act(g)/g`) and
+`activation_derivative` are the two activations' math.
+
+- **Discovery is structural.** `model_spec(model)` (and `block_specs(model)`)
+  finds parts by module presence and config fields, never `model_type`. A
+  block with `pre_feedforward_layernorm` is a sandwich block: its
+  `post_attention_layernorm` normalizes the attention output. Norm conventions
+  and the activation are identified by running the module on a probe and
+  matching its output, and each gated MLP is checked to compute exactly
+  `down(act(gate(x)) * up(x))`. Specs hold live module references; weights are
+  read when used.
+- **Refusals** raise `UnsupportedBlockError` (422, in `errors.py`) naming the
+  layer (`layer` is `None` for the model-level part) and what was found: a
+  mixture-of-experts MLP or block, a fused gate-up or qkv projection, a
+  linear-attention layer (hybrid stacks), attention sinks or any other
+  attention tensor, KV sharing, non-causal or NoPE attention, a norm that is
+  not an RMSNorm with a `w` or `1 + w` weight, an activation other than SiLU
+  or tanh-GELU, any unrecognized submodule (Gemma 4's per-layer inputs), a
+  config multiplier (`*_multiplier`, `logits_scaling`, `logit_scale`) other
+  than 1, and `llama_4_scaling_beta` query scaling.
+- **Covered:** `llama`, `mistral`, `qwen2`, `qwen3`, `gemma2`, `gemma3_text`
+  (and the `gemma3` composite), `gemma4_text` and `gemma4_unified_text` without
+  per-layer inputs, KV sharing or MoE. `glm`/`glm4` (fused gate-up),
+  `qwen3_5` (hybrid), `qwen3_5_moe`, `gpt_oss` (MoE, sinks) and `ministral3`
+  (query scaling) are refused.
+- **Verification.** A forward term the structure does not show is invisible
+  to discovery (helium is llama-shaped but rotates RoPE pairs interleaved).
+  `verify_model_spec(model)` runs the model once on probe tokens and holds
+  every block to `block_forward` (the formula above, fp32, from the spec
+  alone): the attention update `mid − h` from the block's real input and the
+  output from its real `mid`, within 5% of the update. It runs a forward, so
+  the caller holds the model exclusively and unsteered. Transport fits call
+  it; static unit reads need only `model_spec`.
+
+Unit directions (`units.py`) are fp32 CPU tensors, with neuron-lens's
+definitions. Neuron `n` is coordinate `n` of the down projection's input.
+`neuron_write(spec, n)` is `s · γ_out ⊙ W_down[:, n]` (`γ_out` the MLP output
+norm's gain where the block has one, `s` the per-layer scalar), the `+` pole's
+write as it lands at `out`; the `−` pole writes its negation.
+`neuron_read(spec, n, pole)` is `â + b̂` or `â − b̂` for the unit rows
+`a = γ_in ⊙ W_gate[n]`, `b = γ_in ⊙ W_up[n]` (`γ_in` the MLP input norm's
+gain), not renormalized. `neuron_writes`/`neuron_reads`/`neuron_read_rows`
+are the whole-layer matrices. `head_write_matrix(spec, h)` is
+`γ_attn_out ⊙ W_O[:, h·hd:(h+1)·hd]`, `[d, head_dim]`, landing at `mid`
+before the scalar applies; `head_read_rows(spec, h)` gives the query rows and
+its KV head's key and value rows (keys as values when `v` is absent), each
+times the attention input norm's gain. An index outside the block raises
+`UnitIndexError` (400); whether a `NeuronRef`/`HeadRef` names a block of the
+model is the caller's check.
 
 ## Layer selectors and token spans
 
@@ -332,7 +411,10 @@ hybrid caches. Whether steering may take the static path is decided in
 
 ## Tests
 
-`tests/model/` runs on CPU without downloads: loader plan/ladder/extraction
+`tests/model/` runs on CPU without downloads: `test_blocks.py` and
+`test_units.py` (every covered family's spec reproduces the model's forward;
+the refusals; units against hand computation, on `tests/support/blocks.py`),
+loader plan/ladder/extraction
 and checkpoint hardening on mocked transformers, real module trees and 14 tiny
 real architectures for `get_layers` and `LogitReadout` numerics, and the splice
 and stitcher against the Jinja fakes in `tests/support/chat_templates.py`

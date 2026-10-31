@@ -2,11 +2,12 @@
 
 The Jacobian lens family (Gurnee et al., "Verbalizable Representations Form a
 Global Workspace in Language Models", Transformer Circuits 2026). It is a
-**per-model** artifact. A lens holds one fp32 matrix per source layer, `J_l =
-E[∂h_final/∂h_l]`, averaged over positions and a text corpus. Three surfaces
-read it: the vocabulary readout `softmax(W_U · norm(J_l h))`, the
-`jlens/<word>` steering atom `W_U[v] @ J_l`, and the J-space decomposition of a
-steerable direction. Inside a session the face is `session.lens`
+**per-model** artifact. A lens holds one fp32 matrix per layer at each of its
+sites: `J_l = E[∂h_final/∂h_l]` for the output kinds, `K_l = E[∂h_l/∂e]` for
+the input kinds, averaged over positions and a text corpus. Three surfaces
+read the output side today: the vocabulary readout
+`softmax(W_U · norm(J_l h))`, the `jlens/<word>` steering atom `W_U[v] @ J_l`,
+and the J-space decomposition of a steerable direction. Inside a session the face is `session.lens`
 (`LensInstrument`). The package sits beside `sae`, above `readout` and below
 `steering.composer`, and imports only `errors`, `base`, `model` and `readout`
 (`tests/invariants/test_layering.py`, which counts `TYPE_CHECKING` imports).
@@ -14,7 +15,8 @@ steerable direction. Inside a session the face is `session.lens`
 | Module | Owns |
 |---|---|
 | `key.py` | `LensKey` (kind × site), `FITTABLE_KINDS`, local-name grammar. Torch-free. |
-| `jlens.py` | `JacobianLens`, readout math, token-atom resolution, error types, fit defaults. Imports only torch and errors (decode-step code imports it). |
+| `jlens.py` | `JacobianLens` (one kind, both sites), readout math, token-atom resolution, error types, fit defaults. Imports only torch, errors and `key` (decode-step code imports it). |
+| `depth.py` | `LensBand`, `kind_weights`: which kind reads a place, by depth. Torch-free. |
 | `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `sparse_decompose` |
 | `fit.py` | `fit_jacobian_lens`, the only backward passes in drowse. No runtime path imports it. |
 | `relp.py` | `relp_backward_rules`, `RELP_RULES` (the R-lens backward graph) |
@@ -28,17 +30,54 @@ steerable direction. Inside a session the face is `session.lens`
 ## Identity: `LensKey`
 
 A lens's **kind** is the Jacobian's direction crossed with its backward rules:
-J (output, standard), R (output, RelP), K/S (input, standard/RelP). Its
-**site** is `out` (block output) or `mid` (post-attention residual). Only J/R
-at `out` have an estimator. Every store, binding and selection path is already
-keyed on `LensKey`, and every readout surface here assumes the output side.
+J (output, standard), R (output, RelP), K/S (input, standard/RelP). A
+**site** is `out` (block output) or `mid` (post-attention residual, the MLP's
+input). `LensKey(kind, site)` names one kind at one site. Only J/R at `out`
+have an estimator (`FITTABLE_KINDS`). Every store, binding and selection path
+is keyed on `LensKey`, and every readout surface here reads the output side at
+`out`.
+
+**One lens, both sites.** A `JacobianLens` holds its kind (`key`, whose site
+is `out`; `kind`) and fp32 per-layer matrices at one or both sites:
+`jacobians` (positional) is the `out` site and `mid=` the `mid` site. Read a
+site explicitly with `matrices(site)`, `layers(site)` or `matrix(layer, site)`;
+`sites` lists what it holds and `site_key(site)` gives `R:mid`.
+`jacobians`/`source_layers` and the `token_direction`/`atom_norms` readers
+default to `out`, so the output-side readout code reads `out` unchanged. A
+read at a site the lens lacks raises `LensNotFittedError` (404) naming the
+sites it holds; it never falls back to the other site. `select_layers` and
+`union_layers` work site by site (a selection must exist at every kept site;
+pass `sites=` to keep fewer).
+
+**Orientation follows the kind.**
+
+| Kind | Matrix | Shape | Reads |
+|---|---|---|---|
+| J/R (output) | `J_L = E[Σ_{t'≥t} ∂h_final(t')/∂h_L(t)]` | `[d, d]` | `transport(h, L, site)` = `h @ J_Lᵀ`, into the final basis |
+| K/S (input) | `K_L = E[Σ_{s≤t} ∂h_L(t)/∂e(s)]` | `[d, d_emb]` | `pullback(c, L, site)` = `c @ K_L` (a residual covector into the embedding basis); `footprint(ẽ, L, site)` = `K_L ẽ` (an embedding-space vector into the residual) |
+
+K/S follow rs-lenses' `s-lens/{out,mid}.pt` layout. A read of the wrong
+orientation raises `JacobianLensError` (422). Construction checks every matrix
+against `matrix_shape`; `d_emb` defaults to `d_model` and an output kind has
+none of its own. The R-family's `out` site stops below the last layer (its
+target); `mid` and the S family cover every layer.
+
+**Which kind reads a place** (`depth.py`). Site follows the object's position
+(the lens rule: `out` reads residuals at a block's output, neuron writes and a
+head's inputs at `L − 1`; `mid` reads neuron read directions and head
+writes). Kind follows depth: S is the faithful read early, R late, both
+weighted inside a crossover band. `LensBand(lo, hi)` gives the band as
+fractions of depth (`layer / (n_layers − 1)`, default 0.15 and 0.35 until
+measured per model); `kind_weights(n_layers, band)` returns `(w_S, w_R)` per
+layer, `w_S = 1` below `lo`, 0 above `hi`, linear inside, summing to 1.
 
 - A local directory name carries its kind (`^[jrks](-tag)?$`: `r`, `j`,
   `r-chat`). Every writer refuses a mismatch, so a fit cannot land in or resume
   from another kind's shards. Fits always write the untagged `local:j` or
   `local:r`; a tagged name appears only through a direct `save_lens(name=…)`.
 - `JacobianLens` defaults to `key=LensKey("J")` and casts every matrix to fp32.
-  Code that builds an R-lens by hand must pass `key=LensKey("R")`.
+  Code that builds an R-lens by hand must pass `key=LensKey("R")`; a key with
+  site `mid` is refused (pass `mid=` matrices).
 
 ## On disk (format v7)
 
@@ -48,11 +87,12 @@ models/<safe_model_id>/lens/
   bindings/<name>.json   commit-pinned provider binding (format 2)
   local/<kind>[-<tag>]/
     manifest.json        atomic pointer;  checkpoint.json only during a resumable fit
-    out[.partial].layer-<L>.gen-<id>.safetensors    immutable fp32 [d, d] shards
+    <site>[.partial].layer-<L>.gen-<id>.safetensors   immutable fp32 [d, d] shards (site out, mid)
 ```
 
-The manifest schema is exact. It records `kind`, `sites.out.{layers,
-tensor_files, tensor_sha256}`, `n_prompts`, `d_model`, the `LensProvenance`
+The manifest schema is exact. It records `kind`, `sites.<site>.{layers,
+tensor_files, tensor_sha256}` for each site the lens holds (`out`, `mid`, or
+both), `n_prompts`, `d_model`, the `LensProvenance`
 fields and `estimator_policy`. The provenance fields are the corpus spec, the
 token-id sha256 (`token_ids_v1`), raw corpus digest and counts, `seq_len`,
 `dim_batch`, layer count, and the loaded-weight and source fingerprints. The
@@ -60,6 +100,18 @@ policy is `{direction, rules, skip_first_positions, corpus_preprocess_version,
 doc_chars}`, with `rules = RELP_RULES` for RelP kinds. There is no `method`
 field.
 
+- **Every kind and site.** `save_lens`, `save_lens_at` and `load_local_lens`
+  write and read every site the lens holds; local names carry the kind
+  (`local:s`, `local:k` for input kinds). Every shard is `[d_model, d_model]`:
+  v7 records no embedding width, so K/S shards hold `K_L` with
+  `d_emb = d_model` (a text lens reads the token embedding in the residual
+  basis), and saving a lens with another `d_emb` raises. Shard shapes are
+  checked per kind on save and load. A selective load (`requested_layers`)
+  needs each requested layer at every site. `save_lens_checkpoint` takes
+  per-site raw sums (`{site: {layer: sum}}`) and `promote_lens_checkpoint`
+  per-site layers (`site_layers`); a checkpoint is subsumed only when the final
+  artifact covers it at every site. `load_lens` and `load_lens_sidecar` take a
+  `side` (`output` by default, `input` for K/S).
 - **The policy is checked by equality on every load.** Editing `RELP_RULES`,
   `LENS_CORPUS_PREPROCESS_VERSION` or `LENS_DOC_CHARS` makes every stored lens
   of the affected kinds load as "no lens". Change them only for a genuinely new
@@ -322,9 +374,12 @@ the per-layer softmax probability `p_l(v)`.
   `JacobianLens(key=)`, `fit_jacobian_lens(kind=)`, `relp_backward_rules` and
   `RELP_RULES`. drowse.ai's hosted fit (`browser-runtime/fit_hosted_jlens.py`)
   calls `fit_jacobian_lens` and `save_lens_at`, and its browser reader
-  accepts v7 packs only (`sites.out`, `out.layer-L` shards).
+  accepts v7 packs only, and only J/R with a single `sites.out` (`out.layer-L`
+  shards): a pack with a `mid` site or an S/K kind is a drowse.ai follow-up.
 - Tests: CPU tests in `tests/lens/` (one file per module plus
-  `test_migrate_lens_v7.py`) run on the toy model in
+  `test_migrate_lens_v7.py`; `test_lens_sites.py` pins kinds × sites in the
+  object and the store, `test_lens_depth.py` the depth rule) run on the toy
+  model in
   `tests/support/jlens_toys.py`. They use `tests/support/lens.py`
   (`LensHarness`, `lens_instrument(**kw)`, `lens_kwargs(**kw)`,
   `FakeCapture`), which builds a real `LensInstrument` with session-shaped
