@@ -16,6 +16,7 @@
   import type { AtomMode, AtomSteerEntry } from "../../lib/types";
   import Slider from "../../lib/Slider.svelte";
   import { ATOM_PREFIX, patchSteerEntry, removeSteerEntry } from "../../lib/stores.svelte";
+  import { setUnitOperation } from "../../lib/stores/units.svelte";
   import RackCard from "./RackCard.svelte";
   import RackMarker from "./RackMarker.svelte";
   import type { RackMarkerShape } from "./RackMarker.svelte";
@@ -29,6 +30,7 @@
   > = {
     jlens: { accent: "--tint", marker: "square", noun: "j-lens token atom" },
     sae: { accent: "--tint", marker: "triangle", noun: "SAE decoder-row atom" },
+    unit: { accent: "--tint", marker: "square", noun: "unit" },
   };
 
   interface Props {
@@ -44,6 +46,13 @@
 
   function cycleTrigger(): void {
     patchSteerEntry(name, { trigger: nextTrigger(entry.trigger) });
+  }
+
+  /** Push or ablate. A unit switches strength with the operation (α 1 holds it at its neutral
+   *  mean; a push comes back at the default), since its push α would amplify as an ablation. */
+  function operate(ablate: boolean): void {
+    if (mode === "unit") setUnitOperation(name, ablate);
+    else patchSteerEntry(name, { ablate }, [mode]);
   }
 </script>
 
@@ -90,20 +99,21 @@
         type="button"
         class:active={!entry.ablate}
         aria-pressed={!entry.ablate}
-        onclick={() => patchSteerEntry(name, { ablate: false }, [mode])}
+        disabled={mode === "unit" && name.startsWith("head/")}
+        onclick={() => operate(false)}
       >push</button>
       <button
         type="button"
         class:active={entry.ablate}
         aria-pressed={entry.ablate}
-        onclick={() => patchSteerEntry(name, { ablate: true }, [mode])}
+        onclick={() => operate(true)}
       >ablate</button>
     </div>
     <div class="alpha-row">
       <span class="alpha-label">α</span>
       <Slider
         value={entry.alpha}
-        min={0}
+        min={mode === "unit" && !entry.ablate ? -1 : 0}
         max={1}
         step={0.05}
         ariaLabel="alpha for {name}"

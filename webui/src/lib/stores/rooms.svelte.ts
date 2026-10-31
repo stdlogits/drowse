@@ -3,6 +3,8 @@
 // A room may hold sections (``#/manifolds/packs``), and the tools that used to open as drawers
 // live in them: opening one of those drawers (``openDrawer("manifold_pack")``) goes to its room.
 import type { DrawerName } from "../types";
+import { getRuntimeClient } from "../runtime/registry";
+import { unitReadsAvailable } from "../runtime/contracts";
 
 export type Room = "workbench" | "manifolds" | "units" | "lens" | "model";
 
@@ -18,6 +20,11 @@ export interface RoomSection {
   value: string;
   label: string;
   drawer: DrawerName;
+}
+
+/** The rooms this runtime has: Units needs a runtime that reads units (``unitReadsAvailable``). */
+export function shownRooms(): readonly { value: Room; label: string }[] {
+  return ROOMS.filter(room => room.value !== "units" || unitReadsAvailable(getRuntimeClient()));
 }
 
 /** The drawers each room hosts, in display order. ``local_runtime`` and ``health`` are the two

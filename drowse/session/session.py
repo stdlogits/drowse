@@ -958,12 +958,22 @@ class DrowseSession:
     ) -> UnitActivityJSON:
         """Every neuron's and head's activity over a loom node's tokens: the
         top units by peak, traces of ``units`` and, with ``raw_index``, that
-        token's whole population.  See
+        token's whole population.  Each peak carries the bound catalog's
+        label of the pole that peaked (a head's label), or ``None``.  See
         :meth:`drowse.loom.node_replay.NodeReplayer.unit_activity`."""
-        return self._node_replay.unit_activity(
+        result = self._node_replay.unit_activity(
             node_id, top=top, units=units, raw_index=raw_index, layers=layers,
             apply_steering=apply_steering, raw=raw,
         )
+        catalog = self._unit_reader.catalog.get()
+        if catalog is not None:
+            for peak in result["top"]:
+                peak["label"] = (
+                    catalog.neuron_label(peak["layer"], peak["index"], 1 if peak["peak"] >= 0 else -1)
+                    if peak["kind"] == "neuron"
+                    else catalog.head_label(peak["layer"], peak["index"])
+                )
+        return result
 
     @property
     def sae(self) -> "SaeInstrument":
@@ -1266,6 +1276,20 @@ class DrowseSession:
         generation is running (retry when idle).
         """
         self._roster.detach(name)
+
+    def probe_geometry(self, name: str) -> dict[str, Any]:
+        """An attached geometry probe's static geometry for the inspector plot
+        (:meth:`drowse.readout.monitor.Monitor.probe_geometry`), copied off the
+        device inside the exclusive-GPU section: its whitened factors are
+        resident, and a copy off MPS beside another thread's model op aborts
+        the process.  ``KeyError`` for a name not attached;
+        ``ConcurrentExtractionError`` (409) while another model op holds the
+        GPU."""
+        with self._model_exclusive(
+            "probe geometry requested while another model use is in flight; "
+            "retry shortly",
+        ):
+            return self.monitor.probe_geometry(name)
 
     def _resolve_probe_manifold(self, selector: str) -> "Manifold":
         """Resolve a probe selector to a loaded :class:`Manifold`.

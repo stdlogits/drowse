@@ -6,7 +6,7 @@
 // down. A tool a room hosts opens its room (``openDrawer`` routes it, lib/stores/rooms.svelte.ts).
 
 import { RAIL_CATEGORIES } from "../drawers";
-import { ROOMS, type Room } from "./stores/rooms.svelte";
+import { shownRooms, type Room } from "./stores/rooms.svelte";
 import type { DrawerName } from "./types";
 import type { InspectorTab } from "./stores.svelte";
 
@@ -35,7 +35,7 @@ const ROOM_KEYWORDS: Record<Room, string> = {
 
 /** The flattened index: the rooms first, then the instruments, then every registry tool. */
 export function paletteCommands(): PaletteCommand[] {
-  const cmds: PaletteCommand[] = ROOMS.map(room => ({
+  const cmds: PaletteCommand[] = shownRooms().map(room => ({
     label: room.label,
     group: "Rooms",
     action: { kind: "room", room: room.value },

@@ -165,11 +165,14 @@ class TokenReplayer:
         # the scope inside the exclusive guard would self-deadlock.
         scope = self._open_scope(steering) if steering else nullcontext()
         with scope:
-            ids = self._producing_ids(anchor, raw=raw)
             with self._exclusive(
                 f"{label} called while another model use is in flight",
                 phase_msg=f"{label} called while a generation is in flight",
             ):
+                # The render uploads the ids to the model's device, which is
+                # device work like the forward's: outside the section it would
+                # share MPS's one command buffer with whatever thread holds it.
+                ids = self._producing_ids(anchor, raw=raw)
                 result = run(ReplayForward(
                     ids=ids,
                     prompt_length=int(ids.shape[1]) - anchor.raw_index,

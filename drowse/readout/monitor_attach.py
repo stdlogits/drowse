@@ -236,6 +236,11 @@ class AttachedManifoldProbe:
     # Per-layer Mahalanobis-share weight, normalized to sum to 1 across
     # attached layers.
     share_weights: dict[int, float] = field(default_factory=dict)
+    # The authoring node coords ``(K, n)``, a host copy taken at attach for the
+    # lock-free probe listing: reading the resident ``manifold.node_coords``
+    # there copies off the MPS device while another thread's model op holds
+    # its one command buffer, which aborts the process.
+    node_coords_host: list[list[float]] = field(default_factory=list)
     # Per-candidate soft-assignment bandwidth ``τ`` ``(Kc,)`` in the **whitened**
     # metric (the metric the nearest-node distances live in), share-weighted across
     # layers, candidate order = nodes then the neutral anchor (when injected).
@@ -586,6 +591,10 @@ def _attach_on_host(
         label_to_candidate_idx=label_to_candidate_idx,
         node_values_reduced=node_values_reduced,
         share_weights=share_weights,
+        node_coords_host=[
+            [float(x) for x in row]
+            for row in manifold.node_coords.detach().to("cpu").tolist()
+        ],
     )
     probe.whitened = _build_whitened_factors(whitener, probe, stack_for)
     bw, lvb = _compute_assign_bandwidth(probe, embedded)

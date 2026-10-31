@@ -30,6 +30,7 @@ import type {
   SteerEntry,
   SubspaceSteerEntry,
   Trigger,
+  UnitSteerEntry,
   Variant,
 } from "./types";
 
@@ -70,6 +71,11 @@ export function serializeExpression(
   for (const [name, entry] of rack) {
     if (entry.enabled && entry.mode === "sae") {
       parts.push(formatSaeTerm(name, entry));
+    }
+  }
+  for (const [name, entry] of rack) {
+    if (entry.enabled && entry.mode === "unit") {
+      parts.push(formatUnitTerm(name, entry));
     }
   }
   for (const [name, entry] of rack) {
@@ -135,6 +141,14 @@ export function formatJLensTerm(name: string, entry: JLensSteerEntry): string {
 
 export function formatSaeTerm(name: string, entry: SaeSteerEntry): string {
   return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
+}
+
+/** Render one unit term: a push ``<α> neuron/L31n4410`` (a negative α pushes the − pole) or an
+ *  ablation, written bare (``!neuron/…``) at α 1, exact mean-ablation. */
+export function formatUnitTerm(name: string, entry: UnitSteerEntry): string {
+  const suffix = formatTriggerSuffix(entry.trigger);
+  if (entry.ablate) return `${entry.alpha === 1 ? "" : `${formatCoeff(entry.alpha)} `}!${name}${suffix}`;
+  return `${formatCoeff(entry.alpha)} ${name}${suffix}`;
 }
 
 /** Render one manifold (curved) rack entry — ``<along[,onto]>

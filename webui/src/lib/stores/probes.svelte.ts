@@ -269,6 +269,7 @@ export function probeRequestFromInfo(info: ProbeInfo): ProbeRequest {
   if (info.family === "lens") {
     return { selector: `jlens/${info.word}`, name: info.name };
   }
+  if (info.family === "units") return { selector: info.unit, name: info.name };
   return { selector: `sae/${info.feature_id}`, name: info.name };
 }
 
@@ -389,9 +390,6 @@ export async function refreshProbeList(): Promise<void> {
     const seen = new Set<string>();
     const changed = new Set<InstrumentFamily>();
     for (const info of r.probes) {
-      // Unit probes (neuron/…, head/…) have no dashboard view yet: the
-      // rack lists the residual-reading families only.
-      if (info.family === "units") continue;
       seen.add(info.name);
       const prev = probeRack.entries.get(info.name);
       if (JSON.stringify(prev?.info) !== JSON.stringify(info)) {

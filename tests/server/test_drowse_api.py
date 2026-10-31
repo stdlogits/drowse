@@ -261,8 +261,9 @@ class TestProbes:
             whitener=isotropic_whitener(means, 2),
         )
         session.add_probe.return_value = "happy"
+        coords = [[float(x) for x in row] for row in mani.node_coords.tolist()]
         session.monitor.attached_probes.return_value = {
-            "happy": SimpleNamespace(top_n=3, manifold=mani),
+            "happy": SimpleNamespace(top_n=3, manifold=mani, node_coords_host=coords),
         }
         resp = client.post(
             "/drowse/v1/sessions/default/probes", json={"selector": "happy"},
@@ -270,6 +271,7 @@ class TestProbes:
         assert resp.status_code == 201
         session.add_probe.assert_called_once_with("happy", as_name=None, top_n=3)
         assert resp.json()["name"] == "happy"
+        assert resp.json()["node_coords"] == coords
 
     def test_attach_empty_selector(self, session_and_client: Any) -> None:
         _, client = session_and_client

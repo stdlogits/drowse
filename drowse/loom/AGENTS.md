@@ -231,7 +231,9 @@ one capture forward, and hands `{layer: (hidden,) fp32}` pooled at the
 producing position to the family's `read`. The steering scope opens
 **outside** the exclusive-GPU section (`base/exclusive.py::ExclusiveGuard`):
 composer push/pop take the generation lock blocking, so nesting would
-deadlock. `layers` and `read` resolve inside it. `apply_steering=False` reads
+deadlock. The render (which uploads the ids to the device), `layers` and
+`read` all run inside it: a device upload outside the section once raced a
+lock-free device read for MPS's one command buffer and aborted the server. `apply_steering=False` reads
 the unsteered counterfactual. Always-active affine terms reproduce exactly;
 phase/gated terms fire as the trigger context's rest state decides (the node
 replay below drives the context instead).
@@ -291,7 +293,9 @@ without the node's own terms. Pinned against the live unit readings of
 - **Unit activity** (`unit_activity(node_id, top=32, units=(), raw_index=None,
   layers=None)`): anchored at the node's last token, so one forward covers
   every token's producing position; per-layer hooks reduce on the device
-  (`drowse/units/AGENTS.md`).
+  (`drowse/units/AGENTS.md`). Each peak's `label` is `None` here; the session
+  fills it from a bound catalog (the label of the pole that peaked, a head's
+  label), so the Units room can list and filter labelled units.
 
 Everything a result carries is packed into one fp32 vector and moved to the
 host once (`_Pack`); the lens reads ride the same transfer through

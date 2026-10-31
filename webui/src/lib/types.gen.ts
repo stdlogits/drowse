@@ -25,7 +25,9 @@ export interface ActivePathJSON {
 
 /**
  * One unit's peak over the node: its signed value (over scale) at the
- * token where ``|value|`` peaks.
+ * token where ``|value|`` peaks, and the catalog's label of the pole that
+ * peaked (a head's label), ``None`` without a bound catalog or a row (the
+ * session fills it; the replay leaves it ``None``).
  */
 export interface ActivityPeak {
   unit: string;
@@ -34,6 +36,7 @@ export interface ActivityPeak {
   index: number;
   peak: number;
   raw_index: number;
+  label: UnitLabelJSON | null;
 }
 
 export interface ActivityPopulation {

@@ -1,11 +1,13 @@
 <script lang="ts">
   // The Inspector: whatever is selected (lib/stores/selection.svelte.ts). Nothing shows the
   // instruments; a token its drilldown; a probe its trace and geometry; a steering term its card; a
-  // unit its view, once the engine has units. The crumbs lead back to the instruments.
+  // unit (a neuron or a head) its view (UnitView). The crumbs lead back to the instruments.
   import { IconButton, Swap } from "@stdlogits/ledger";
   import DrawerOutlet from "../../drawers/DrawerOutlet.svelte";
   import Instruments from "./Instruments.svelte";
   import TermView from "./TermView.svelte";
+  import UnitView from "./UnitView.svelte";
+  import { unitTitle } from "../../lib/units";
   import { clearSelection, selection } from "../../lib/stores/selection.svelte";
   import { steerRack } from "../../lib/stores/steering.svelte";
   import { workbenchUi } from "../../lib/stores/workbench.svelte";
@@ -18,7 +20,7 @@
       case "token": return "Token";
       case "probe": return "Probe";
       case "term": return steerRack.entries.has(current.name) ? "Steering" : "Term";
-      case "unit": return current.id;
+      case "unit": return unitTitle(current.id);
       default: return "Instruments";
     }
   });
@@ -46,7 +48,7 @@
     {/if}
   </div>
 
-  <Swap key={current.kind === "term" ? `term:${current.name}` : current.kind}>
+  <Swap key={current.kind === "term" ? `term:${current.name}` : current.kind === "unit" ? `unit:${current.id}` : current.kind}>
     {#if current.kind === "token"}
       <DrawerOutlet name="token_drilldown" docked active mobile={sheet} params={current.params} onclose={clearSelection} />
     {:else if current.kind === "probe"}
@@ -54,7 +56,7 @@
     {:else if current.kind === "term"}
       <TermView name={current.name} />
     {:else if current.kind === "unit"}
-      <div class="dw-empty"><span class="head">{current.id}</span><p>Units arrive with the engine.</p></div>
+      <UnitView id={current.id} />
     {:else}
       <Instruments />
     {/if}

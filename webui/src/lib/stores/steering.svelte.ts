@@ -335,6 +335,7 @@ export const ATOM_DEFAULT_ALPHA = 0.3;
 export const ATOM_PREFIX: Record<AtomMode, string> = {
   jlens: "jlens/",
   sae: "sae/",
+  unit: "",
 };
 
 function addAtomToRack(mode: AtomMode, id: string): void {
@@ -364,4 +365,27 @@ export function addJLensToRack(word: string): void {
 /** Add a resident-SAE decoder-row steering chip (``α sae/<id>``). */
 export function addSaeToRack(featureId: number): void {
   addAtomToRack("sae", String(featureId));
+}
+
+/** Put a unit's one term into the recipe (``id`` is ``neuron/L31n4410`` or ``head/L28h12``): a push
+ *  along its write (``alpha`` signed, the − pole's below zero) or an exact mean-ablation; ``null``
+ *  takes it out. A unit holds one term at a time, so a push replaces an ablation and back. Queued
+ *  behind a running generation like every rack edit. */
+export function setUnitTerm(id: string, term: { ablate: boolean; alpha: number } | null): void {
+  const what = term === null ? `remove ${id}` : term.ablate ? `ablate ${id}` : `push ${id} ${term.alpha}`;
+  enqueueOrApply(what, () => {
+    if (term === null) {
+      steerRack.entries.delete(id);
+      return;
+    }
+    const prev = steerRack.entries.get(id);
+    steerRack.customExpression = null;
+    steerRack.entries.set(id, {
+      mode: "unit",
+      ablate: term.ablate,
+      alpha: term.alpha,
+      trigger: prev?.mode === "unit" ? prev.trigger : "BOTH",
+      enabled: true,
+    });
+  });
 }
