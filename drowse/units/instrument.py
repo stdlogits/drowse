@@ -24,7 +24,7 @@ from __future__ import annotations
 
 import hashlib
 import threading
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import torch
@@ -525,6 +525,11 @@ class UnitsInstrument:
     def catalog_status(self) -> dict[str, Any]:
         """The model's neuron-lens catalog binding (disk only)."""
         return self.reads.catalog.status()
+
+    def labels(self, units: "Sequence[str | UnitRef]") -> dict[str, Any]:
+        """The catalog's labels for ``units``, per neuron pole and per head
+        (disk only; :meth:`~drowse.units.reads.UnitReader.labels`)."""
+        return self.reads.labels(units)
 
     def fetch_catalog(
         self, *, force: bool = False, on_progress: Callable[[str], None] | None = None,

@@ -99,3 +99,20 @@ def test_find_on_a_whitened_selector_matches_lens_decompose(tiny_session: Any) -
     assert find["layers"]["1"]["neurons"][0]["coeff"] == pytest.approx(out[1][1][0][1], rel=1e-5)
     with pytest.raises(Exception, match="residual-width"):
         tiny_session.units.find(torch.ones(3), layer=1)
+
+
+def test_labels_route_answers_the_binding_and_refuses_bad_units(
+    tiny_session: Any, app_client: Any,
+) -> None:
+    client = app_client(tiny_session)
+    resp = client.get(f"{_BASE}/labels", params={"units": "neuron/L1n3, head/L2h1"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body == tiny_session.units.labels(["neuron/L1n3", "head/L2h1"])
+    assert body["labels"] == [] and body["catalog"]["bound"] is False
+    assert "no neuron-lens catalog" in body["catalog"]["reason"]
+    bad = client.get(f"{_BASE}/labels", params={"units": "neuron/L1n9999"})
+    assert bad.status_code == 400 and "outside block 1" in bad.json()["detail"]
+    assert client.get(f"{_BASE}/labels", params={"units": " , "}).status_code == 400
+    many = ",".join(f"neuron/L1n{i % 8}" for i in range(129))
+    assert client.get(f"{_BASE}/labels", params={"units": many}).status_code == 400

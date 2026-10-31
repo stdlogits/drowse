@@ -275,8 +275,10 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   (`NeuronReadJSON | HeadReadJSON`, discriminated by `kind`), `GET
   top?token=&by=writes|fires&layers=&k=` (`UnitTopJSON`), `POST find {selector
   | vector + layer, k, layers}` (`UnitFindJSON`; exactly one target, else 400),
-  all model work under the session lock; `GET catalog` (`UnitCatalogJSON`) is
-  disk only. The catalog fetch is the units `fetch` preparation (no session
+  all model work under the session lock; `GET catalog` (`UnitCatalogJSON`) and
+  `GET labels?units=a,b` (`UnitLabelsJSON`: both poles of each neuron, a head
+  once, at most 128 units; unbound, no rows and the reason) are disk only. The
+  catalog fetch is the units `fetch` preparation (no session
   lock, network and disk; an uncatalogued model is 404 at POST; `DELETE` is
   409, a fetch is not cancellable). The node replay's `GET units/activity`
   (above) sits beside these. The paths are literal segments beside the

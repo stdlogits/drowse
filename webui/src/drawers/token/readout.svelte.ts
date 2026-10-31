@@ -9,8 +9,9 @@
 // This class is the one implementation the three tabs share.
 
 import { describeError } from "../../lib/runtime/services";
-import type { RuntimeProgressEvent } from "../../lib/runtime/contracts";
+import type { RuntimeProgressEvent, TokenAnatomyOptions } from "../../lib/runtime/contracts";
 import {
+  cachedTokenAnatomy,
   cachedTokenReadout,
   tokenReadoutCacheEpoch,
 } from "../../lib/runtime/tokenReadoutCache";
@@ -102,6 +103,29 @@ export class ReplayReadout<T> {
     },
   ): void {
     const key = replayKey(family, nodeId, rawIndex, opts);
+    this.#start(key, rawIndex, (onProgress) => cachedTokenReadout(family, nodeId, rawIndex, opts, onProgress), map);
+  }
+
+  /** One token's anatomy (the node replay), queued and kept as the family replays are. */
+  anatomy(
+    nodeId: string,
+    rawIndex: number,
+    opts: TokenAnatomyOptions,
+    map: (env: MeasurementsEnvelopeJSON) => { data: T; source: string | null },
+  ): void {
+    const key = JSON.stringify([
+      "anatomy", tokenReadoutCacheEpoch("lens"), nodeId, rawIndex,
+      opts.k ?? null, opts.units ?? null, opts.patterns ?? null, opts.steered ?? true, opts.raw ?? false,
+    ]);
+    this.#start(key, rawIndex, (onProgress) => cachedTokenAnatomy(nodeId, rawIndex, opts, onProgress), map);
+  }
+
+  #start(
+    key: string,
+    rawIndex: number,
+    request: (onProgress: (event: RuntimeProgressEvent) => void) => Promise<{ measurements: MeasurementsEnvelopeJSON }>,
+    map: (env: MeasurementsEnvelopeJSON) => { data: T; source: string | null },
+  ): void {
     this.#selectedKey = key;
     const cached = this.#entries.get(key);
     if (cached && cached.state !== "failed") {
@@ -125,7 +149,7 @@ export class ReplayReadout<T> {
     };
     this.#entries.set(key, entry);
     this.#show(key, entry);
-    cachedTokenReadout(family, nodeId, rawIndex, opts, (event) => {
+    request((event) => {
         const progress = readoutProgress(event);
         if (progress === null) return;
         entry.progress = progress;

@@ -200,6 +200,26 @@ try {
     "a replayed SAE readout hides the SAE pins captured with the token");
   assert.deepEqual(readings.pinnedReadings(recorded, { lens: null, sae: null }), {}, "no readout yet, no pins");
   assert.deepEqual(readings.pinnedReadings(undefined, { lens: "captured", sae: "captured" }), {});
+  // The anatomy is always a replay: where it shows, the lens pins follow the steering switch, so a
+  // steered anatomy keeps the pins it replays (the lens readout is cleared, its origin null).
+  assert.equal(readings.lensPinOrigin(true, true, null), "captured");
+  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: readings.lensPinOrigin(true, true, null), sae: null })), ["lens-pin"],
+    "a steered anatomy shows the lens pins captured with the token");
+  assert.equal(readings.lensPinOrigin(true, false, null), null, "an unsteered anatomy hides them");
+  assert.equal(readings.lensPinOrigin(false, true, "replayed"), "replayed", "without the anatomy the readout's origin rules");
+  assert.equal(readings.lensPinOrigin(false, false, "captured"), "captured");
+  // The lens side replays as the anatomy (any active lens, an S lens alone included) or as the
+  // readout (the R lens only); the view and the WebMCP inspector gate Unsteered on the same answer.
+  const gate = (o) => readings.lensReplay({ anatomy: false, tokenReadout: false, rLens: false, activeLens: false, replayContext: true, ...o });
+  assert.deepEqual(gate({ anatomy: true, activeLens: true }), { available: true, ready: true, anatomy: true },
+    "an S lens alone is enough for the anatomy");
+  assert.deepEqual(gate({ tokenReadout: true, activeLens: true }), { available: true, ready: false, anatomy: false },
+    "the readout needs the R lens");
+  assert.deepEqual(gate({ rLens: true, activeLens: true }), { available: false, ready: true, anatomy: false });
+  assert.deepEqual(gate({ anatomy: true, tokenReadout: true }), { available: true, ready: false, anatomy: false },
+    "no lens ready: the readout's view (the capture, or the missing-lens state) stands in");
+  assert.deepEqual(gate({ anatomy: true, tokenReadout: true, rLens: true, replayContext: false }), { available: true, ready: true, anatomy: false },
+    "a token without its replay record keeps the lens readout's captured view");
   assert.equal(readings.probeNote("confident.uncertain", "confident"), "", "a first pole beside its own name says nothing");
   assert.equal(readings.probeNote("default/Formal.casual", "formal"), "");
   assert.equal(readings.probeNote("individualist.collectivist", "axis 1"), "axis 1");

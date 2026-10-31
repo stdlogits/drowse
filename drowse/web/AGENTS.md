@@ -163,7 +163,11 @@ moving or renaming any of these, grep drowse.ai's `webui/{src,hosted,scripts,e2e
 `RUNTIME_SERVICE_METHODS` is compile-checked against the interfaces. A member a runtime may
 lack is optional (`?`) with an entry there and a check the UI tests before showing it:
 `instruments.tokenAnatomy?` and `instruments.unitActivity?` (the node replay), reported by
-`replayCapabilities(instruments)`.
+`replayCapabilities(instruments)`; the unit reads (`unitRead?` and its siblings, by
+`unitReadsAvailable`); and `unitLabels?`, the catalog's labels for the token anatomy's rows.
+The token view shows the anatomy (`drawers/token/TokenAnatomy.svelte`, queued with the
+token readouts in `runtime/tokenReadoutCache.ts`) where `tokenAnatomy` exists, and the lens
+readout (`LensReading.svelte`) where it does not.
 
 `main.ts` installs `HttpRuntimeClient` into `runtime/registry.ts` before it imports `App`.
 The registry refuses a second runtime. drowse.ai also installs `RuntimeCapabilities` and a

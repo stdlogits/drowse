@@ -1025,6 +1025,33 @@ class UnitFindJSON(TypedDict):
     catalog: dict[str, Any]
 
 
+class UnitCatalogSummaryJSON(TypedDict):
+    """The catalog binding without a unit: bound, or why not."""
+
+    bound: bool
+    slug: str | None
+    credit: str | None
+    reason: str | None
+
+
+class UnitLabelRowJSON(TypedDict):
+    """One catalog label: a neuron pole's (``pole`` ``+``/``-``) or a head's
+    (``pole`` ``None``); ``label`` is ``None`` where the catalog has no row."""
+
+    unit: str
+    pole: Literal["+", "-"] | None
+    label: UnitLabelJSON | None
+
+
+class UnitLabelsJSON(TypedDict):
+    """``GET .../instruments/units/labels`` — the catalog's labels for some
+    units (disk only): every pole of each neuron, each head once.  Unbound:
+    no rows, and ``catalog.reason`` says why."""
+
+    catalog: UnitCatalogSummaryJSON
+    labels: list[UnitLabelRowJSON]
+
+
 class UnitCatalogBindingJSON(TypedDict):
     revision: str | None
     fetched_at: str | None

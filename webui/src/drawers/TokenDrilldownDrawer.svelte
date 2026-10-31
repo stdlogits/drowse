@@ -11,7 +11,10 @@
   //
   // Each reading prefers the token's loom-owned measurements envelope (what was captured) and
   // otherwise replays through the family's token-readout route (keyed and shared, one at a time).
-  // "Unsteered" replays all three families without the recipe's steering; the alternatives stay as
+  // Where the runtime has the node replay, the lens side is the token's anatomy instead (one
+  // request: by depth, layer by layer, the units that pushed it, the top heads' attention); a token
+  // it cannot replay (no lens ready, no replay record) keeps the lens readout's captured view.
+  // "Unsteered" replays everything without the recipe's steering; the alternatives stay as
   // sampled, since a replay has no sampler.
   import { IconButton, MorphText, Segmented, expand, tokenParts } from "@stdlogits/ledger";
   import { onDestroy, onMount, tick } from "svelte";
@@ -42,8 +45,13 @@
     LensTokenReadoutJSON,
     SaeTokenReadoutJSON,
     ScalarReadingJSON,
+    TokenAnatomy as TokenAnatomyRecord,
     TokenScore,
   } from "../lib/types";
+  import { replayCapabilities } from "../lib/runtime/contracts";
+  import { getRuntimeClient } from "../lib/runtime/registry";
+  import TokenAnatomy from "./token/TokenAnatomy.svelte";
+  import { UnitLabels } from "./token/labels.svelte";
   import { clampCursor, jumpTurn, segmentTokens, segmentsOf, stepCursor, type SegmentKind, type TokenCursor } from "./token/cursor";
   import { ReplayReadout, type GeometryTokenReadout } from "./token/readout.svelte";
   import { drilldownUi, type DrilldownTab } from "./token/drilldown.svelte";
@@ -52,7 +60,7 @@
   import ProbeReadings from "./token/ProbeReadings.svelte";
   import FeatureReadings from "./token/FeatureReadings.svelte";
   import { formatP, lastLayer } from "./token/layers";
-  import { pinnedReadings } from "./token/readings";
+  import { lensPinOrigin, lensReplay, pinnedReadings } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
@@ -218,7 +226,8 @@
 
   const loomNode = $derived(loomNodeId ? (loomTree.nodes.get(loomNodeId) ?? null) : null);
   const recipeSampling = $derived(loomNode?.recipe?.sampling ?? null);
-  const recipeSteering = $derived(loomNode?.recipe?.steering ?? inspected?.appliedSteering ?? null);
+  /** The steering the token was generated under; an empty recipe expression is none. */
+  const recipeSteering = $derived((loomNode?.recipe?.steering ?? inspected?.appliedSteering) || null);
   function fmtSetting(value: number | null | undefined): string {
     if (value == null || !Number.isFinite(value)) return "–";
     return String(Number(value.toFixed(2)));
@@ -343,10 +352,16 @@
   const lensReadout = new ReplayReadout<LensTokenReadoutJSON>();
   const saeReadout = new ReplayReadout<SaeTokenReadoutJSON>();
   const geometryReadout = new ReplayReadout<GeometryTokenReadout>();
+  /** The token layer by layer (the node replay): one request in place of the lens readout, where
+   *  the runtime has it (drowse.ai does not, and keeps the lens readout). */
+  const anatomyAvailable = replayCapabilities(getRuntimeClient().instruments).tokenAnatomy;
+  const anatomyReadout = new ReplayReadout<TokenAnatomyRecord>();
+  const unitLabels = typeof getRuntimeClient().instruments.unitLabels === "function" ? new UnitLabels() : null;
   onDestroy(() => {
     lensReadout.dispose();
     saeReadout.dispose();
     geometryReadout.dispose();
+    anatomyReadout.dispose();
   });
   let lensSteered = $state(true);
   let saeSteered = $state(true);
@@ -354,11 +369,24 @@
 
   /** Steered or unsteered, for all three at once (an agent may still set one family alone). */
   const steeredAll = $derived(lensSteered && saeSteered && geometrySteered);
-  const anyReplay = $derived(lensTokenReplayAvailable || saeTokenReplayAvailable || geometryTokenReplayAvailable);
+  /** The lens side replays as the anatomy where the runtime has it, else as the lens readout; it is
+   *  ready with an R lens, or (for the anatomy) any active lens. The anatomy shows where a lens is
+   *  ready and the token has its replay record; otherwise the lens readout's view stands in (the
+   *  capture, or why there is none). The WebMCP inspector gates on the same answer. */
+  const lensGate = $derived(lensReplay({
+    anatomy: anatomyAvailable,
+    tokenReadout: lensTokenReplayAvailable,
+    rLens: jlensFitted,
+    activeLens: lensSourceState.sources.some((source) => source.active),
+    replayContext: hasReplayContext,
+  }));
+  const lensReplayAvailable = $derived(lensGate.available);
+  const anatomyShown = $derived(lensGate.anatomy);
+  const anyReplay = $derived(lensReplayAvailable || saeTokenReplayAvailable || geometryTokenReplayAvailable);
   const showSteering = $derived(anyReplay && hasReplayContext && (recipeSteering !== null || !steeredAll));
   function setSteered(next: "steered" | "unsteered"): void {
     const on = next === "steered";
-    lensSteered = on || !lensTokenReplayAvailable;
+    lensSteered = on || !lensReplayAvailable;
     saeSteered = on || !saeTokenReplayAvailable;
     geometrySteered = on || !geometryTokenReplayAvailable;
   }
@@ -398,9 +426,13 @@
     return { steering: geometry.binding?.steering ?? null, readings: geometry.readings };
   });
 
-  /** The lens and SAE probes pinned while the token was generated, beside their capture only. */
+  /** The lens and SAE probes pinned while the token was generated, beside their capture only (for
+   *  the lens, beside the steered anatomy too: it replays the generation they were captured in). */
   const pinned = $derived<Record<string, ScalarReadingJSON>>(
-    pinnedReadings(token?.measurements?.instruments, { lens: lensReadout.origin, sae: saeReadout.origin }),
+    pinnedReadings(token?.measurements?.instruments, {
+      lens: lensPinOrigin(anatomyShown, lensSteered, lensReadout.origin),
+      sae: saeReadout.origin,
+    }),
   );
 
   // One effect per family: adopt the capture while steered, else replay. Declared geometry, SAE,
@@ -458,17 +490,33 @@
   });
 
   $effect(() => {
+    if (!active || !anatomyAvailable) return;
+    void token;
+    const nodeId = loomNodeId;
+    const rawIndex = token?.rawIndex;
+    if (!anatomyShown || !nodeId || rawIndex == null) { anatomyReadout.clear(); return; }
+    anatomyReadout.anatomy(nodeId, rawIndex, { k: Math.min(256, Math.max(1, readoutTopK)), units: 8, patterns: 4, steered: lensSteered, raw: effectiveRawMode() }, (m) => {
+      const anatomy = m.anatomy;
+      if (!anatomy) throw new Error("No anatomy came back for this token. Select it again to retry.");
+      return { data: anatomy, source: anatomy.binding.sources.R ?? null };
+    });
+  });
+
+  // The lens readout: where the anatomy shows, nothing; where it cannot (no lens ready, or no replay
+  // record), the capture still draws, and only a runtime without the anatomy replays the readout.
+  $effect(() => {
     if (!active) return;
+    if (anatomyShown) { lensReadout.clear(); return; }
     void token;
     void loomNodeId;
     const captured = capturedLensData;
-    if (!lensTokenReplayAvailable && !lensSteered) lensSteered = true;
-    if ((lensSteered || !lensTokenReplayAvailable) && captured) {
+    if (!lensReplayAvailable && !lensSteered) lensSteered = true;
+    if ((lensSteered || !lensReplayAvailable) && captured) {
       lensReadout.adopt(captured, token?.measurements?.instruments.lens?.binding.sources.R ?? null);
       return;
     }
     lensReadout.clear();
-    if (!lensTokenReplayAvailable) return;
+    if (anatomyAvailable || !lensTokenReplayAvailable) return;
     if (!jlensFitted) return;
     const nodeId = loomNodeId;
     const rawIndex = token?.rawIndex;
@@ -488,7 +536,9 @@
   });
 
   /** The model's deepest layer, as the lens readout names it (the SAE layer's place on the ramp). */
-  const deepest = $derived(lensReadout.data ? lastLayer(lensReadout.data.layers) : null);
+  const deepest = $derived(
+    anatomyReadout.data ? anatomyReadout.data.layers.length - 1 : lensReadout.data ? lastLayer(lensReadout.data.layers) : null,
+  );
 
   // ---- sections, for the WebMCP inspector's "tab" ------------------------
 
@@ -513,7 +563,7 @@
     if (!active) return;
     return registerInterfaceController("token_inspector", {
       schema: tokenInspectorSchema,
-      read: () => ({ values: { cursor: effCursor, branch, tab: drilldownUi.tab, apply_recipe: { geometry: geometrySteered, lens: lensSteered, sae: saeSteered }, presentation: docked ? "dock" : "drawer" }, node_id: loomNodeId, raw_index: token?.rawIndex ?? null, shadow_available: hasAbPair, replay: { geometry: geometryTokenReplayAvailable, lens: lensTokenReplayAvailable, sae: saeTokenReplayAvailable } }),
+      read: () => ({ values: { cursor: effCursor, branch, tab: drilldownUi.tab, apply_recipe: { geometry: geometrySteered, lens: lensSteered, sae: saeSteered }, presentation: docked ? "dock" : "drawer" }, node_id: loomNodeId, raw_index: token?.rawIndex ?? null, shadow_available: hasAbPair, replay: { geometry: geometryTokenReplayAvailable, lens: lensReplayAvailable, sae: saeTokenReplayAvailable } }),
       update: async (change) => {
         if (change.move && (change.cursor || change.branch)) throw new ToolError("INVALID_INPUT", "Choose a relative move or an explicit cursor and branch.");
         const target = (change.cursor as TokenCursor | undefined) ?? effCursor;
@@ -525,9 +575,9 @@
         const targetToken = segmentTokens(chosen ?? null, target.seg)[target.tokenIdx];
         if (!targetToken) throw new ToolError("NOT_FOUND", "The requested token is not present on that branch and segment.");
         const recipe = change.apply_recipe as Record<string, boolean> | undefined;
-        for (const [family, supported] of [["geometry", geometryTokenReplayAvailable], ["lens", lensTokenReplayAvailable], ["sae", saeTokenReplayAvailable]] as const) {
+        for (const [family, supported] of [["geometry", geometryTokenReplayAvailable], ["lens", lensReplayAvailable], ["sae", saeTokenReplayAvailable]] as const) {
           if (recipe?.[family] === false && (!supported || targetToken.rawIndex == null)) throw new ToolError("UNAVAILABLE", `Unsteered ${family} inspection requires token replay support and a recorded raw token index.`);
-          if (recipe?.[family] === false && ((family === "geometry" && !hasGeometryProbes) || (family === "lens" && !jlensFitted) || (family === "sae" && !saeResident))) throw new ToolError("UNAVAILABLE", `Prepare the ${family} instrument before requesting an unsteered replay.`);
+          if (recipe?.[family] === false && ((family === "geometry" && !hasGeometryProbes) || (family === "lens" && !lensGate.ready) || (family === "sae" && !saeResident))) throw new ToolError("UNAVAILABLE", `Prepare the ${family} instrument before requesting an unsteered replay.`);
         }
         let moved: TokenCursor | null = null;
         if (change.move) {
@@ -594,8 +644,13 @@
     {/if}
 
     <div class="part" use:sectionRef={"lens"}>
-      <LensReading readout={lensReadout} tokenText={token.text} {jlensFitted} {hasReplayContext}
-        modelId={sessionState.info?.model_id ?? null} replayAvailable={lensTokenReplayAvailable} />
+      {#if anatomyShown}
+        <TokenAnatomy readout={anatomyReadout} tokenText={token.text} labels={unitLabels} />
+      {:else}
+        <!-- The capture, or why there is none: no lens ready, or no replay record. -->
+        <LensReading readout={lensReadout} tokenText={token.text} jlensFitted={lensGate.ready} {hasReplayContext}
+          modelId={sessionState.info?.model_id ?? null} replayAvailable={lensReplayAvailable} />
+      {/if}
     </div>
     <div class="part" use:sectionRef={"geometry"}>
       <ProbeReadings readout={geometryReadout} {pinned} {hasGeometryProbes} {hasReplayContext}

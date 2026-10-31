@@ -382,3 +382,30 @@ def test_unit_activity_peaks_carry_the_label_of_the_pole_that_peaked(
         else:
             assert label["attends"] == "the previous token"
             assert label["url"].endswith(f"/L{peak['layer']}/h{peak['index']}")
+
+
+def test_labels_read_every_pole_from_the_catalog(
+    hub: dict[str, Any], monkeypatch: pytest.MonkeyPatch, make_tiny_session: Any,
+) -> None:
+    """``units.labels`` (the token anatomy's rows): both poles of a neuron,
+    a head once, each unit once in the order asked; unbound, no rows and the
+    reason."""
+    session = make_tiny_session()
+    monkeypatch.setattr(cat, "CATALOG_MODELS", {
+        **cat.CATALOG_MODELS, session.model_id.lower(): cat.CatalogModel(session.model_id, SLUG),
+    })
+    unbound = session.units.labels(["neuron/L1n3"])
+    assert unbound["labels"] == [] and unbound["catalog"]["bound"] is False
+    assert "not fetched" in unbound["catalog"]["reason"]
+    session.units.fetch_catalog()
+    out = session.units.labels(["head/L2h1", "neuron/L1n3", "neuron/L1n3"])
+    assert out["catalog"] == {
+        "bound": True, "slug": SLUG, "credit": "Labels by Claude Haiku 5.5", "reason": None,
+    }
+    assert [(row["unit"], row["pole"]) for row in out["labels"]] == [
+        ("head/L2h1", None), ("neuron/L1n3", "+"), ("neuron/L1n3", "-"),
+    ]
+    head, plus, minus = (row["label"] for row in out["labels"])
+    assert head["attends"] == "the previous token"
+    assert plus["fires"] == "L1 n3 + fires" and minus["fires"] == "L1 n3 - fires"
+    assert plus["url"] == f"https://neuron-lens.com/{SLUG}/L1/n3"
