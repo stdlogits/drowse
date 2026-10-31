@@ -1534,8 +1534,10 @@ class LensInstrument:
         One forward; ``out`` reads each block's output, ``mid`` the residual
         after its attention (the MLP's input).  Residuals: each S half reads
         ``h − μ``, ``μ`` the neutral mean at ``site``.  ``layers`` defaults to
-        every layer either family's lens holds at ``site``; ``positions`` to
-        the final position.  Every read leaves the device in one transfer.
+        every layer either family's lens reads at ``site`` (the R family's
+        ``out`` includes the last block, read through the identity:
+        :func:`~drowse.lens.read.output_transport`); ``positions`` to the
+        final position.  Every read leaves the device in one transfer.
         Returns ``{position: [LensRead per layer]}``.
         """
         if site not in LENS_SITES:
@@ -1546,6 +1548,8 @@ class LensInstrument:
         for lens in (self.resident(), self.resident_input()):
             if lens is not None and site in getattr(lens, "sites", ("out",)):
                 held.update(int(layer) for layer in lens.layers(site))
+                if lens.key.side == "output" and site == "out":
+                    held.add(self.runtime.n_layers - 1)
         if not held:
             from drowse.lens.jlens import LensNotFittedError
 

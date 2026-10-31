@@ -186,8 +186,9 @@ the neutral mean). `session.units.read(unit, k=8, hide_hubs=False)`:
   post-feedforward gain and layer scalar included) at `out` of its layer,
   `fires_on` reads `â ± b̂` at `mid`, both through
   `LensInstrument.read`. The last block's `out` is the final residual, where
-  the R read is exactly the logit lens (`J = I`); a lens that stops a layer
-  short gets it there, labelled `logit`. Scalars as neuron-lens: `w_norm`,
+  the R read is exactly the logit lens (`J = I`), labelled `logit`: the lens
+  read's own rule (`lens/read.py::output_transport`), which `_r_matrix` (the
+  population statistics, `R-logit` in the contrast cache) shares. Scalars as neuron-lens: `w_norm`,
   `cos_ab`, `null_share` (squared-norm share in the bottom 1% of
   right-singular directions of `W_U diag(γ_final)`, the basis built once per
   session), per pole the logit-lens skew (the `−` pole's is negated) and

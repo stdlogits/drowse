@@ -68,7 +68,15 @@ K/S follow rs-lenses' `s-lens/{out,mid}.pt` layout. A read of the wrong
 orientation raises `JacobianLensError` (422). Construction checks every matrix
 against `matrix_shape`; `d_emb` defaults to `d_model` and an output kind has
 none of its own. The R-family's `out` site stops below the last layer (its
-target); `mid` and the S family cover every layer.
+target); `mid` and the S family cover every layer. At the last block's `out`
+the output kinds' transport is the identity (`J = I` exactly, under the
+standard and RelP rules alike: no block lies between the site and the
+target), so every read there is the logit lens, labelled `logit`:
+`read.py::output_transport` is the one place a read meets that layer
+(`plan_reads`' R half, `read_prompt`'s default layers, the unit reads'
+population statistics, and the anatomy's contribution cotangent, which is the
+token's own logit cotangent `u` there). The steering atoms (`jlens/`), probes
+and the live readout keep the fitted layers.
 
 **Which kind reads a place** (`depth.py`). Site follows the object's position
 (the lens rule: `out` reads residuals at a block's output, neuron writes and a
@@ -101,7 +109,9 @@ path; `footprint_z`), `lens` (the label read through, `R:mid`, `J:out`,
 token, value)`, top-k descending) and `absent`, the reason when there is no
 lens of the family, no lens at the site, or no matrix at the layer. A vector
 whose width is not the model's residual width is a `RequestError`. A half is
-never read from the other site or family. The weights stay raw, so a consumer
+never read from the other site or family. The R half at the last block's
+`out` reads through the identity (`output_transport`, above), so it is present
+whenever the R lens holds the `out` site. The weights stay raw, so a consumer
 fades a light half or says that a heavy one is missing. `plan_reads(requests,
 k)` (`VectorRead(rows, layer, site, of)` each) computes a batch on the device
 and returns `PendingReads`, whose `tensor` leaves in one transfer (alone or

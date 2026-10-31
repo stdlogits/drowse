@@ -12,8 +12,9 @@ light half is still returned, for the UI to fade).
   :func:`~drowse.model.units.neuron_write`) read at ``out`` of its layer
   through :meth:`~drowse.lens.instrument.LensInstrument.read` as a direction
   (uncentred).  The last block's ``out`` is the final residual, where the R
-  read is the logit lens exactly (``J = I``); a lens that stops a layer short
-  of it gets that read here, labelled ``logit``.
+  read is the logit lens exactly (``J = I``), labelled ``logit``: the lens
+  read's own rule (:func:`~drowse.lens.read.output_transport`), which the
+  population statistics here share.
 - **fires on** — the pole's read direction ``â ± b̂`` (unit gate and up rows
   times the MLP input norm's gain) read at ``mid``.
 
@@ -98,7 +99,7 @@ from drowse.base.paths import ensure_within, model_dir
 from drowse.errors import RequestError, WhitenerError
 from drowse.lens.depth import kind_weights, layer_depth
 from drowse.lens.jlens import LensNotFittedError
-from drowse.lens.read import FamilyRead, TokenScore
+from drowse.lens.read import LOGIT_LENS, FamilyRead, TokenScore, output_transport
 from drowse.model.blocks import BlockSpec, NormSpec
 from drowse.model.units import head_read_rows, head_write_matrix, neuron_read_rows, neuron_writes
 from drowse.naming import HeadRef, NeuronRef, UnitRef, parse_unit_ref
@@ -681,19 +682,20 @@ class UnitReader:
             return None
 
     def _r_matrix(self, lenses: _Lenses, layer: int, site: str) -> tuple[torch.Tensor | None, str | None]:
-        """The R transport at ``(layer, site)`` and its label: the lens's
-        matrix, else at the last block's ``out`` the identity (the final
-        residual's own read, the logit lens), else ``(None, None)``."""
-        matrix = self._matrix(lenses.r, layer, site)
-        if matrix is not None:
-            return matrix, lenses.r.site_key(site).label
-        if site == "out" and int(layer) == self.n_layers - 1:
-            return None, "logit"
-        return None, None
+        """The R transport at ``(layer, site)`` and its label, by the lens
+        read's rule (:func:`~drowse.lens.read.output_transport`): the lens's
+        matrix, at the last block's ``out`` ``None`` (the identity, the logit
+        lens), and ``(None, None)`` where the lens has none."""
+        if lenses.r is None or site not in lenses.r.sites:
+            return None, None
+        try:
+            return output_transport(lenses.r, layer, site, self.n_layers, self.device)
+        except LensNotFittedError:
+            return None, None
 
     def _r_key(self, lenses: _Lenses, layer: int, site: str) -> str:
         matrix_label = self._r_matrix(lenses, layer, site)[1]
-        if matrix_label == "logit":
+        if matrix_label == LOGIT_LENS:
             return "R-logit"
         return f"R-{lenses.r_identity}"
 
@@ -885,22 +887,13 @@ class UnitReader:
         self, rows: torch.Tensor, layer: int, site: str, *, k: int, lenses: _Lenses,
     ) -> list[PlaceRead]:
         """Raw reads of ``rows`` at ``(layer, site)`` through the lens
-        instrument's read, the last ``out`` R half filled by the logit lens."""
+        instrument's read (at the last block's ``out`` the R half is the logit
+        lens, by the read's own rule)."""
         reads = self.lens.read(rows, int(layer), site, of="direction", k=k)
         assert isinstance(reads, list)
-        r_halves = [UnitHalf.of(read.r) for read in reads]
-        if not reads[0].r.present:
-            matrix, label = self._r_matrix(lenses, layer, site)
-            if label == "logit":
-                probs = self._r_logits(rows, matrix).softmax(-1)
-                lists = self._top_tokens(probs, k)
-                r_halves = [
-                    UnitHalf("R", half.weight, "probability", "logit", tokens)
-                    for half, tokens in zip(r_halves, lists, strict=True)
-                ]
         return [
-            PlaceRead(read.layer, read.site, read.depth, UnitHalf.of(read.s), r_half)
-            for read, r_half in zip(reads, r_halves, strict=True)
+            PlaceRead(read.layer, read.site, read.depth, UnitHalf.of(read.s), UnitHalf.of(read.r))
+            for read in reads
         ]
 
     def _hubless(

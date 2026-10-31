@@ -30,7 +30,12 @@ readout is the model's own.  A residual read with no mean to centre on raises
 
 A half with no lens, no lens at this site, or no matrix at this layer comes
 back absent with the reason; it is never filled from the other site or the
-other family.  The weights are the depth rule's ``(w_S, w_R)`` at the layer
+other family.  One layer needs no matrix: an output kind's target is the last
+block's output, so at that layer's ``out`` its transport is the identity
+(``J = I`` exactly, under the standard and the RelP rules alike: no block lies
+between the site and the target).  An output fit therefore stops a layer short
+there (:func:`~drowse.lens.key.site_layers`), and the R half at the last
+``out`` is the logit lens, labelled ``logit`` (:func:`output_transport`).  The weights are the depth rule's ``(w_S, w_R)`` at the layer
 whether or not a half is present, so a consumer can fade a light half or say
 that a heavy one is missing.
 
@@ -173,23 +178,51 @@ Readout = Callable[[torch.Tensor], torch.Tensor]
 Centre = Callable[[str, int], torch.Tensor]
 
 
+#: The R half's lens label at the last block's ``out``, where the transport is
+#: the identity and the read is the logit lens (:func:`output_transport`).
+LOGIT_LENS = "logit"
+
+
 def _matrix(lens: JacobianLens, layer: int, site: str, device: torch.device) -> torch.Tensor:
     return lens.matrix(layer, site).to(device=device, dtype=torch.float32)
 
 
+def output_transport(
+    lens: JacobianLens, layer: int, site: str, n_layers: int, device: torch.device,
+) -> tuple[torch.Tensor | None, str]:
+    """An output-kind (J/R) lens's transport at ``(layer, site)`` on ``device``
+    and the label its read carries: the fitted ``J_L`` and the lens's label,
+    or, at the last block's ``out``, ``None`` (the identity: that output is
+    the lens's own target) and :data:`LOGIT_LENS`.  The identity needs a lens
+    that holds the ``out`` site; anything else the lens lacks raises
+    :class:`~drowse.lens.jlens.LensNotFittedError`, as :meth:`JacobianLens.matrix`
+    does.  The one place a read meets the last layer: :func:`plan_reads` and
+    the unit reads' population statistics both ask here."""
+    if lens.key.side != "output":
+        raise ValueError(f"a {lens.kind} lens has no output transport")
+    if site == "out" and int(layer) == int(n_layers) - 1:
+        lens.matrices("out")
+        return None, LOGIT_LENS
+    return _matrix(lens, int(layer), site, device), lens.site_key(site).label
+
+
 def read_r(
     vectors: torch.Tensor,
-    matrix: torch.Tensor,
+    matrix: torch.Tensor | None,
     readout: Readout,
     *,
     k: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """R-family top-k for rows ``[n, d]``: ``(p [n, k], ids [n, k])``.
 
-    ``matrix`` is ``J_L`` at the site; rows transport as ``x @ J_Lᵀ`` and the
-    readout supplies the final norm and the vocabulary head.
+    ``matrix`` is ``J_L`` at the site, or ``None`` for the identity (the last
+    block's ``out``, :func:`output_transport`); rows transport as
+    ``x @ J_Lᵀ`` and the readout supplies the final norm and the vocabulary
+    head.
     """
-    transported = vectors.to(device=matrix.device, dtype=torch.float32) @ matrix.T
+    transported = vectors.to(dtype=torch.float32)
+    if matrix is not None:
+        transported = transported.to(device=matrix.device) @ matrix.T
     logits = readout(transported)
     return topk_probabilities(logits, min(int(k), int(logits.shape[-1])))
 
@@ -323,15 +356,19 @@ def plan_reads(
 
         def half(
             family: LensFamily, lens: JacobianLens | None, weight: float, unit: ReadUnit,
-            missing: str, run: Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]],
+            missing: str, run: Callable[[torch.Tensor | None], tuple[torch.Tensor, torch.Tensor]],
             *, centred: bool = False,
         ) -> _Half:
             nonlocal offset
             if lens is None:
                 return _Half(family, weight, unit, None, False, absent=missing)
             label = lens.site_key(request.site).label
+            matrix: torch.Tensor | None
             try:
-                matrix = _matrix(lens, layer, request.site, device)
+                if family == "R":
+                    matrix, label = output_transport(lens, layer, request.site, n_layers, device)
+                else:
+                    matrix = _matrix(lens, layer, request.site, device)
             except LensNotFittedError as exc:
                 return _Half(family, weight, unit, label, False, absent=str(exc))
             values, ids = run(matrix)
@@ -342,7 +379,8 @@ def plan_reads(
             offset += 2 * n * width
             return planned_half
 
-        def s_run(matrix: torch.Tensor, *, rows: torch.Tensor = rows) -> tuple[torch.Tensor, torch.Tensor]:
+        def s_run(matrix: torch.Tensor | None, *, rows: torch.Tensor = rows) -> tuple[torch.Tensor, torch.Tensor]:
+            assert matrix is not None, "an S read always has its K_L"
             x = rows.to(device=matrix.device, dtype=torch.float32)
             if request.of == "residual":
                 if centre is None:
@@ -355,7 +393,7 @@ def plan_reads(
 
         r_half = half(
             "R", r_lens, w_r, "probability", no_r_lens,
-            lambda matrix, rows=rows: read_r(rows, matrix, readout(), k=k),
+            lambda matrix, rows=rows: read_r(rows.to(device), matrix, readout(), k=k),
         )
         s_half = half(
             "S", s_lens, w_s, "footprint_z", no_s_lens, s_run,
@@ -404,6 +442,7 @@ __all__ = [
     "Centre",
     "FamilyRead",
     "LensFamily",
+    "LOGIT_LENS",
     "LensRead",
     "PendingReads",
     "READ_OF",
@@ -411,6 +450,7 @@ __all__ = [
     "ReadUnit",
     "TokenScore",
     "VectorRead",
+    "output_transport",
     "plan_reads",
     "read_r",
     "read_s",

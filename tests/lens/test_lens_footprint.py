@@ -225,9 +225,46 @@ def test_an_absent_half_says_why_and_never_reads_the_other_site() -> None:
     _head, _emb, (read,) = _read(
         vectors=torch.ones(D), layer=3, site="out",
         r_lens=JacobianLens({0: torch.eye(D)}, n_prompts=1, d_model=D, key=LensKey("R")),
-        s_lens=None, n_layers=4,
+        s_lens=None, n_layers=5,
     )
     assert "layer 3 not in fitted R:out" in str(read.r.absent)
+
+
+def test_the_last_out_reads_through_the_identity_as_the_logit_lens() -> None:
+    """An output kind's target is the last block's output: no fit holds that
+    layer at ``out`` (``site_layers``), and its transport is the identity, so
+    the R half there is the logit lens, labelled ``logit``.  ``mid`` at the
+    last layer keeps its matrix; the S half is untouched; a lens without the
+    ``out`` site gets no identity."""
+    from drowse.lens.key import site_layers
+    from drowse.lens.read import LOGIT_LENS, output_transport
+
+    n = 4
+    gen = torch.Generator().manual_seed(7)
+    mats = {L: torch.randn(D, D, generator=gen) for L in range(n)}
+    held = {L: m for L, m in mats.items() if L in site_layers("R", "out", n)}
+    assert sorted(held) == [0, 1, 2], "an output fit stops below the last block"
+    r = JacobianLens(held, mid=dict(mats), n_prompts=1, d_model=D, key=LensKey("R"))
+    x = torch.randn(2, D, generator=gen)
+    head, _emb, reads = _read(vectors=x, layer=n - 1, site="out", r_lens=r, s_lens=None, n_layers=n)
+    expected = head(x.double()).float().softmax(-1).topk(3)
+    for row, read in enumerate(reads):
+        assert read.r.present and read.r.lens == LOGIT_LENS
+        assert [t.token_id for t in read.r.tokens] == expected.indices[row].tolist()
+        assert [t.value for t in read.r.tokens] == pytest.approx(expected.values[row].tolist(), abs=1e-6)
+    assert output_transport(r, n - 1, "out", n, torch.device("cpu")) == (None, LOGIT_LENS)
+    matrix, label = output_transport(r, 1, "out", n, torch.device("cpu"))
+    assert label == "R:out" and matrix is not None and torch.equal(matrix, mats[1])
+    # mid at the last layer is an ordinary site of the fit.
+    head, _emb, (read,) = _read(vectors=x[0], layer=n - 1, site="mid", r_lens=r, s_lens=None, n_layers=n)
+    expected = head((x[0] @ mats[n - 1].T).double()).float().softmax(-1).topk(3)
+    assert read.r.lens == "R:mid" and [t.token_id for t in read.r.tokens] == expected.indices.tolist()
+    # A lens that does not hold the out site has no identity there either.
+    mid_only = JacobianLens(None, mid=dict(mats), n_prompts=1, d_model=D, key=LensKey("R"))
+    _head, _emb, (read,) = _read(vectors=x[0], layer=n - 1, site="out", r_lens=mid_only, s_lens=None, n_layers=n)
+    assert not read.r.present and "no 'out' site" in str(read.r.absent)
+    with pytest.raises(ValueError, match="no output transport"):
+        output_transport(JacobianLens(None, mid=dict(mats), n_prompts=1, d_model=D, key=LensKey("S")), n - 1, "out", n, torch.device("cpu"))
 
 
 def test_read_refuses_bad_places_and_crossed_families() -> None:

@@ -1054,8 +1054,10 @@ class NodeReplayer:
             return {layer: g[i] for i, layer in enumerate(layers)}
 
         g_out = cotangents("out")
-        if g_out and n - 1 not in g_out:
-            g_out[n - 1] = u     # the R target: h_final is the last block's output
+        if g_out:
+            # The R target: h_final is the last block's output, whose transport
+            # is the identity (drowse.lens.read.output_transport, the reads' rule).
+            g_out[n - 1] = u
         g_mid = cotangents("mid")
         neuron_c = {
             L: neuron_contributions(spec.blocks[L], g, taps.acts[L], taps.mlp_out[L])

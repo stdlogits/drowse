@@ -31,8 +31,10 @@ pytestmark = pytest.mark.usefixtures("isolated_home")
 
 
 def _install_lens(session: Any, kind: str, *, seed: int) -> JacobianLens:
-    """Publish (and select) a local lens of ``kind`` at both sites, every
-    layer, for the session's exact weights."""
+    """Publish (and select) a local lens of ``kind`` at both sites for the
+    session's exact weights: every layer, except that an output kind's ``out``
+    stops below the last block, as a fit's does (its transport there is the
+    identity)."""
     from drowse.lens.store import LensProvenance, save_lens
     from drowse.model.fingerprint import loaded_model_fingerprint
 
@@ -40,7 +42,8 @@ def _install_lens(session: Any, kind: str, *, seed: int) -> JacobianLens:
     d = int(session.model.get_input_embeddings().weight.shape[1])
     gen = torch.Generator().manual_seed(seed)
     mats = {L: torch.eye(d) + 0.2 * torch.randn(d, d, generator=gen) for L in range(n)}
-    lens = JacobianLens(mats, mid=dict(mats), n_prompts=3, d_model=d, key=LensKey(kind))
+    out = {L: m for L, m in mats.items() if not (LensKey(kind).side == "output" and L == n - 1)}
+    lens = JacobianLens(out, mid=dict(mats), n_prompts=3, d_model=d, key=LensKey(kind))
     save_lens(lens, session.model_id, LensProvenance(
         corpus_spec="test", corpus_sha256="a" * 64, seq_len=8, dim_batch=1,
         model_fingerprint=loaded_model_fingerprint(session.model, session.model_id),
@@ -205,6 +208,17 @@ def test_token_anatomy_reads_every_layer_and_its_units(
     assert layer1["attention"]["s"]["lens"] == "S:mid"
     assert all(layer["steering"] is None for layer in anatomy["layers"])
 
+    # The last block's out: the R lens stops a layer short there, and its
+    # transport is the identity, so the residual and the MLP write read through
+    # the logit lens (labelled ``logit``); the attention write keeps R:mid.
+    last = anatomy["layers"][n - 1]
+    for key in ("reads_as", "mlp"):
+        assert last[key]["r"]["absent"] is None and last[key]["r"]["lens"] == "logit"
+    assert last["attention"]["r"]["lens"] == "R:mid"
+    with torch.inference_mode():
+        logits = session.lens.runtime.readout_modules()[1](taps.out[-1][None].float())[0].float()
+    assert [t["token_id"] for t in last["reads_as"]["r"]["tokens"]] == logits.softmax(-1).topk(3).indices.tolist()
+
     # Contributions against a brute-force Jacobian of the linearized logit.
     v = int(token["token_id"])
     h = taps.out[-1].clone().requires_grad_(True)
@@ -217,7 +231,8 @@ def test_token_anatomy_reads_every_layer_and_its_units(
     torch.testing.assert_close(u, u_brute)
     for L, layer in enumerate(anatomy["layers"]):
         assert 0 < len(layer["neurons"]) <= 4 and 0 < len(layer["heads"]) <= 4
-        neurons = _brute_neurons(session, L, taps, r_lens.matrix(L, "out"), u)
+        J_out = torch.eye(u.shape[0]) if L == n - 1 else r_lens.matrix(L, "out")
+        neurons = _brute_neurons(session, L, taps, J_out, u)
         heads = _brute_heads(session, L, taps, r_lens.matrix(L, "mid"), u)
         top_n = neurons.abs().topk(len(layer["neurons"])).indices.tolist()
         assert [unit["index"] for unit in layer["neurons"]] == top_n
@@ -272,7 +287,8 @@ def test_sandwich_blocks_hold_their_output_norms_scale(tmp_path: Any, monkeypatc
                 x = block.mlp.down(act)
                 r = torch.rsqrt(x.pow(2).mean() + block.mlp_out_norm.eps).detach()  # type: ignore[union-attr]
                 out = (taps.mid[L] + x * r * block.mlp_out_norm.gain()) * block.scale()  # type: ignore[union-attr]
-                (g_act,) = torch.autograd.grad(u @ (r_lens.matrix(L, "out") @ out), act)
+                J_out = torch.eye(u.shape[0]) if L == len(spec.blocks) - 1 else r_lens.matrix(L, "out")
+                (g_act,) = torch.autograd.grad(u @ (J_out @ out), act)
                 o = block.attn.o(z)
                 r = torch.rsqrt(o.pow(2).mean() + block.attn_out_norm.eps).detach()  # type: ignore[union-attr]
                 mid = taps.block_in[L] + o * r * block.attn_out_norm.gain()  # type: ignore[union-attr]
