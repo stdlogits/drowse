@@ -285,8 +285,16 @@
   .ask input:hover { background: var(--wash2); }
   .ask input:focus { outline: none; }
   .ask input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  /* On the phone's sheet (itself a wash) the well steps up to wash2, and hover steps one further. */
+  :global(.sheet) .ask input { background: var(--wash2); }
+  :global(.sheet) .ask input:hover { background: color-mix(in oklab, var(--wash2), var(--ink) 6%); }
   .sort { margin-left: auto; font: var(--type-meta); }
 
+  /* Phone sizes: every target 44 px (the field, its text buttons, the switch). */
+  @media (max-width: 720px), (pointer: coarse) {
+    .ask .dw-text { min-height: 44px; padding: 0 var(--s1); }
+    .live :global(.switch) { height: 44px; }
+  }
   @media (max-width: 720px) {
     .ask input { height: 44px; font: var(--type-body); }
   }

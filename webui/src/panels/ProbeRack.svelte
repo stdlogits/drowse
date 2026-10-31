@@ -99,4 +99,10 @@
   .end { display: flex; align-items: center; gap: var(--s4); margin-left: auto; }
   .sort { font: var(--type-meta); }
   .live[inert] { opacity: 0.4; }
+
+  /* Phone sizes: every target 44 px (the sort, the switch). */
+  @media (max-width: 720px), (pointer: coarse) {
+    .sort { min-height: 44px; padding: 0 var(--s1); }
+    .live :global(.switch) { height: 44px; }
+  }
 </style>

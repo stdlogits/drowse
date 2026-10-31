@@ -3,7 +3,8 @@
   // bars) and the value, with an optional trailing action. A row that can be chosen is a button,
   // pressed while it is the reading the reply is tinted by. ``tint`` sets the row's depth colour,
   // which its mark fills with. With a ``sub`` (a feature's label) the row takes the unit layout:
-  // ID, label, a short meter, the value.
+  // ID, label, a short meter, the value. The mark narrows with the row (a container query), so a
+  // narrow column such as the Inspector beside a tablet's page keeps room for the name.
   import type { Snippet } from "svelte";
 
   let {
@@ -47,6 +48,7 @@
 
 <style>
   .row {
+    container-type: inline-size;
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -58,7 +60,7 @@
   .row.pressed, .row.pressed:hover { background: var(--wash2); }
   .main {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--mark-width, 112px) 44px;
+    grid-template-columns: minmax(0, 1fr) 112px 44px;
     gap: var(--s3);
     align-items: center;
     min-width: 0;
@@ -87,7 +89,9 @@
   .mark :global(.bar) { width: 100%; }
   .value { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 
-  @media (max-width: 720px) {
-    .main { --mark-width: 80px; }
+  /* A narrow column (a phone, the Inspector beside a tablet's page): a shorter mark, a tighter value
+   * and inset, so a probe's name keeps its width. */
+  @container (max-width: 360px) {
+    .main { grid-template-columns: minmax(0, 1fr) 72px 40px; gap: var(--s2); padding: var(--s2); }
   }
 </style>

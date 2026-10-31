@@ -817,7 +817,7 @@
           />
         </label>
         <label class="row-label">
-          <span>top_n</span>
+          <span>nearest nodes</span>
           <input
             type="number"
             class="text-input small"
@@ -1262,7 +1262,10 @@
   .node-role { color: var(--ink3); font: var(--type-meta); }
 
   @media (max-width: 720px) {
-    .act, .nodes-toggle { min-height: 44px; }
+    /* A narrow row keeps its name whole: the actions go under it, starting at its edge. */
+    .row-line { grid-template-columns: minmax(0, 1fr); gap: var(--s1); }
+    .actions { justify-content: flex-start; }
+    .act, .nodes-toggle, .cat-header, .refresh { min-height: 44px; }
     .text-input, .search { height: 44px; font: var(--type-body); }
     .selector-row { grid-template-columns: auto minmax(0, 1fr); }
     .selector-row .sel { grid-column: 1 / -1; }
