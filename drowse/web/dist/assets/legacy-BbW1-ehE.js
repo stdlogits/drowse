@@ -1,0 +1,1 @@
+import{bt as e}from"./index-client-C5yUpD3K.js";e();

@@ -1,1 +1,0 @@
-import{Et as e}from"./index-client-Co1aPFPi.js";e();

@@ -1,1 +1,0 @@
-export{X as tick}from"./index-client-Co1aPFPi.js";
