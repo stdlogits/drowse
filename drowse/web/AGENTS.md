@@ -160,7 +160,10 @@ moving or renaming any of these, grep drowse.ai's `webui/{src,hosted,scripts,e2e
 **RuntimeClient.** The contract lives in `lib/runtime/contracts.ts`. It has a `mode`
 (`http` | `browser` | `fake`); seven services (`sessions`, `profiles`, `probes`,
 `manifolds`, `templates`, `tree`, `instruments`); an `events` channel; and `dispose()`.
-`RUNTIME_SERVICE_METHODS` is compile-checked against the interfaces.
+`RUNTIME_SERVICE_METHODS` is compile-checked against the interfaces. A member a runtime may
+lack is optional (`?`) with an entry there and a check the UI tests before showing it:
+`instruments.tokenAnatomy?` and `instruments.unitActivity?` (the node replay), reported by
+`replayCapabilities(instruments)`.
 
 `main.ts` installs `HttpRuntimeClient` into `runtime/registry.ts` before it imports `App`.
 The registry refuses a second runtime. drowse.ai also installs `RuntimeCapabilities` and a

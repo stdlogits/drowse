@@ -108,7 +108,7 @@ must stay deterministic.
 | `MANIFOLD_CAPTURE_VERSION = 3` (`pipeline.py`) | all fitted tensors and all cached captures |
 | `MANIFOLD_FIT_POLICY_VERSION = 1` (`geometry/manifold.py`) | fitted tensors only |
 | `CAPTURE_CACHE_FORMAT = "5"` (`capture_cache.py`) | capture shards |
-| `NEUTRAL_CAPTURE_VERSION = 1` (`store/neutral.py`) | neutral caches |
+| `NEUTRAL_CAPTURE_VERSION = 2` (`store/neutral.py`; 2 added the mid means) | neutral caches |
 
 Gotchas: `dls` is not in the key, so toggling `--no-dls` on a fitted target
 returns the cached tensor (and the preflight proves a no-op) unless forced.
@@ -248,6 +248,13 @@ a model `model_spec` refuses, a hook that raises anything but an
 out-of-memory error, or an out-of-memory error at batch size 1, publishes the
 cache with `units` unavailable and the reason. A cached units record whose tensor
 names are not the current set recomputes.
+
+The same forward also measures each block's **mid mean** (`neutral.py::MidMeans`:
+one forward hook per block on its MLP input norm, gathering each row at its
+pooled position, fp32 sums on the device), framed beside the unit accumulator
+as one observer (`_Observers`). It needs the block description too, so a model
+`model_spec` refuses, or an abandoned observer, publishes `mid` unavailable
+with the reason; a residual S read at `mid` then raises `NeutralMeansError`.
 
 ## Bake
 

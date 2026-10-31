@@ -18,7 +18,8 @@ recipes; the verbs, `restore_tree`, the joint-logprob cache),
 | `tree.py` | `LoomNode`, `LoomTree` (mutators, reservation, cast roster, persistence), `TokenRow`, `TREE_FORMAT_VERSION`, `TOKEN_SIDECAR_FORMAT_VERSION` |
 | `recipe.py` | `Recipe`, `CastMember`, `compose_call`, `CALL_ONLY_SAMPLING_FIELDS`, regen modifiers, `derive_seed_schedule` |
 | `ops.py` | `append_turn`, seating/thinking checks, `resolve_token_anchor`, `plan_fork`/`plan_prefill` (→ `ForcedTurn`), `begin_generation_turn` |
-| `replay.py` | `TokenReplayer` (implements `readout/replay.py::TokenReplay`) |
+| `replay.py` | `TokenReplayer` (implements `readout/replay.py::TokenReplay`; `forward` hands the producing ids to a caller's own forward), `ReplayForward` |
+| `node_replay.py` | `NodeReplayer` (`session.token_anatomy`, `session.unit_activity`), `tap_token`/`TokenTaps`, the contribution math, the anatomy record builders, `UnitActivityJSON`, the population encoding |
 | `diff.py` | `text_diff`, `readings_diff`, `per_token_diff`, `node_diff`, `steering_delta` |
 | `filter.py` | `parse_filter`, `filter_tree`, `node_token_series`, `FilterParseError` |
 | `transcript.py` | `Transcript`, `Turn`, `ProbeRef`, replay results, `Transcript*Error` |
@@ -234,6 +235,53 @@ deadlock. `layers` and `read` resolve inside it. `apply_steering=False` reads
 the unsteered counterfactual. Always-active affine terms reproduce exactly;
 phase/gated terms fire as the trigger context's rest state decides.
 `raw=True` picks the flat render, which the node does not record.
+
+`TokenReplayer.forward(node_id, raw_index, run=…)` is the same rebuild
+without the capture: `run` receives a `ReplayForward` (`ids`, `prompt_length`,
+the node's `raw_ids`, the anchored `raw_index`; raw token `i` is produced at
+`prompt_length + i − 1`) inside the exclusive section under the scope, and
+owns its forward. `__call__` is its capture use.
+
+## Node replay (`node_replay.py`)
+
+`NodeReplayer` (session-wired over the token replayer, the model, the lens
+instrument, the units runtime, the tokenizer and the tree getter) runs one
+forward over a node's tokens with taps where the model's parts meet the
+residual, stopping after the last block (no vocabulary head over every
+position): each block's input, its `mid` (the MLP input norm's input), its
+output before the steering hooks (a `prepend` hook) and after them, the down
+projection's input and output, and the output projection's input and output.
+Every tap is a forward hook, so it sees what the module used (after a unit
+ablation's pre-hook). Eager attention (the attention config's
+`_attn_implementation`, restored after) runs only when patterns are asked for.
+
+- **Token anatomy** (`token_anatomy(node_id, raw_index, k=8, units=8,
+  patterns=4)`): per layer the residual at `out` read as a residual
+  (`reads_as`, S centred), the attention write `mid − input` read at `mid`, the
+  MLP write `out_pre − mid` and the steering injection `out − out_pre` read at
+  `out` as directions (`input + attention + mlp + steering == out`, pinned),
+  `steering` `None` where nothing was injected; the top `units` neurons and
+  heads by direct contribution to the token's logit through the selected R
+  lens: `u = r·γ ⊙ W_U[v]` (the final norm linearized at the final residual,
+  its scale held; the softcap's slope folded in), `g_L = J_Lᵀ u`, neuron `act_n
+  · (s · γ_out ⊙ W_down[:, n] · r_mlp) · g_out`, head `Σ_i (γ_attn ⊙ g_mid ·
+  W_O)[h·hd+i] z_i · r_attn` (`r` a sandwich norm's per-position scale, held;
+  1 without one), `g` at `out` for neurons (the identity at the last layer,
+  the R target) and `mid` for heads, pinned against an autograd Jacobian;
+  across layers the top `units`; and the attention rows of the top `patterns`
+  heads from the token's producing position. No R lens: `units_absent`.
+  It returns the `scope="replay"` envelope's `anatomy`.
+- **Unit activity** (`unit_activity(node_id, top=32, units=(), raw_index=None,
+  layers=None)`): anchored at the node's last token, so one forward covers
+  every token's producing position; per-layer hooks reduce on the device
+  (`drowse/units/AGENTS.md`).
+
+Everything a result carries is packed into one fp32 vector and moved to the
+host once (`_Pack`); the lens reads ride the same transfer through
+`LensInstrument.plan_reads`. Only decoded tokens (a turn's raw record) are
+addressable, as with `token_readout`; prompt render positions appear only as
+pattern context. On SmolLM2 (MPS, warm) an anatomy takes about 0.3 s, a
+24-token activity about 0.15 s.
 
 ## Diff (`diff.py`)
 

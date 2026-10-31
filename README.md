@@ -222,9 +222,12 @@ one layer up), and `mid`, the residual after attention (where a neuron reads
 and a head writes). Which one to trust is a question of depth: the S read is
 the faithful one early in the model, the R read late, and both show, weighted,
 in between. `drowse lens top` reads every layer of a prompt that way and labels
-each read with the lens it used; `session.lens.read(vector, layer, site)` does
-the same for any vector. The S read reports a footprint z, each token's score
-as a z-score over the vocabulary.
+each read with the lens it used; `session.lens.read(vector, layer, site,
+of=...)` does the same for any vector. The S read reports a footprint z, each
+token's score as a z-score over the vocabulary. A residual (the stream itself)
+carries a large component every position shares, so its S read subtracts the
+model's neutral layer mean first (`of="residual"`); a direction such as a
+steering vector or a neuron's write is read as it is (`of="direction"`).
 
 [`stdlogits/rs-lenses`](https://huggingface.co/stdlogits/rs-lenses) publishes
 both lenses at both places for Qwen3-8B and Gemma 4 12B (`lens fetch MODEL
@@ -514,8 +517,18 @@ The four read families are available as `session.geometry`, `session.lens`,
 `session.sae` and `session.units`; `session.add_probe` attaches a concept, a
 `jlens/<word>` or `slens/<word>` token probe, an `sae/<id>` feature or a
 `neuron/L8n344` / `head/L20h17` unit to the right one.
-`session.lens.read(vector, layer, site)` reads any vector through both lens
-families at once.
+`session.lens.read(vector, layer, site, of="residual" | "direction")` reads any
+vector through both lens families at once.
+
+`session.token_anatomy(node_id, raw_index)` replays one generated token and
+reads it layer by layer: what the residual reads as through both lenses, what
+attention and the MLP (and any steering) added, the neurons and heads that
+pushed the token through the R lens, and where the top heads looked.
+`session.unit_activity(node_id)` reads every neuron and head over a turn's
+tokens: the strongest units with their peak token, per-token traces of named
+units, and one token's whole population. Both are also served at
+`/drowse/v1/sessions/{id}/instruments/token-anatomy` and
+`.../instruments/units/activity`.
 
 Notebook helpers are available from `drowse.notebook` after installing
 `drowse.ai[notebook]`: `plot_alpha_sweep`, `plot_probe_correlation`,

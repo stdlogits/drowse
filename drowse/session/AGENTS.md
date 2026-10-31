@@ -233,8 +233,12 @@ layer; `slens`/`head` raise "reserved and not steerable yet"), then a fitted
 
 **Neutral baseline** (`neutral.py`). One load of the fp32 neutral cache
 (`fit/neutral.py::load_or_compute_neutral_cache`) yields the means
-(`X.mean(0)`), the whitener and the resident `UnitStats` (`unit_stats`, or
-`units_unavailable` with the reason). `session._require_unit_stats` is the
+(`X.mean(0)`), the whitener, the resident `UnitStats` (`unit_stats`, or
+`units_unavailable` with the reason) and the mid means (`mid_means`, or
+`mid_unavailable`). `site_means(site)` is the residual centring mean the lens
+instrument takes as `neutral_means`: `out` the means, `mid` the mid means,
+built on first use under the exclusive section (reentrant, so a caller inside
+it builds in place) and `NeutralMeansError` (422) when the site has none. `session._require_unit_stats` is the
 units runtime's source: it ensures the baseline and raises
 `UnitsUnavailableError` (422) without statistics. `ensure()` is
 unguarded, for callers already holding the lock (composition, generation

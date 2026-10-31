@@ -256,6 +256,13 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   `instrument.token_readout`, which builds the whole `scope="replay"`
   envelope and rejects knobs it can't honor (400); the route reshapes nothing.
   `sae/features/metadata` is network and disk cache only and takes no lock.
+  Beside it, the node replay (`loom/node_replay.py`), under the session lock:
+  `GET token-anatomy` (`node_id`, `raw_index`, `k`, `units`, `patterns`,
+  `steered`, `raw`) returns the replay envelope with `anatomy`
+  (`session.token_anatomy`), and `GET units/activity` (`node_id`, `top`,
+  `units` comma-separated, `raw_index`, `layers` a selector, `steered`, `raw`)
+  returns `UnitActivityJSON` (`session.unit_activity`; units unavailable is
+  the family's 422).
 
 ## Long-running operations (`operations.py`)
 

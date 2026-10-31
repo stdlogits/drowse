@@ -323,7 +323,7 @@ Both use `base/shards.py`: immutable per-layer generations behind an atomic JSON
 pointer, `fit_lock` single-flighting the expensive transaction. Readers never
 mutate; the next writer collects old generations once the new pointer is durable.
 
-- **`neutral`** (format 5, capture version 1): `[N, D]` fp32 per layer, the single
+- **`neutral`** (format 5, capture version 2): `[N, D]` fp32 per layer, the single
   per-model neutral artifact. Probe-centering means are its `X.mean(0)` and the
   whitener is built from it (no `layer_means` cache). fp32 because late gemma-3
   layers exceed the fp16 max (65504) and bf16 loses input precision. Each
@@ -332,12 +332,19 @@ mutate; the next writer collects old generations once the new pointer is durable
   `drowse/units/AGENTS.md`), and the sidecar's exact `units` block is
   `{available: true, n_documents, schema: {L: {name: shape}}}` or `{available:
   false, reason}` (a model the block description refuses: its cache is
-  otherwise complete). The store validates the tensors generically (names,
-  shapes, dtype, finiteness); `load_neutral_cache` returns `NeutralCache
-  (activations, units: NeutralUnits, sidecar)` from one digest-checked read,
-  `load_validated_neutral_cache` the activations only. Identity binds
-  `capture_sha256`, `model_fingerprint`, `model_source_fingerprint` and the
-  layer set. A v4 cache is not migrated: the next load recomputes it.
+  otherwise complete). Each shard also holds the layer's **mid mean**
+  (`mid_mean_<L>`, `[D]` fp32: the residual after the block's attention, the
+  MLP's input, averaged at the activations' pooled positions on the same
+  forward), the centring mean of an S read of a `mid` residual as `X.mean(0)`
+  is at `out`; the sidecar's exact `mid` block is `{available: true}` or
+  `{available: false, reason}`. The store validates the tensors generically
+  (names, shapes, dtype, finiteness); `load_neutral_cache` returns
+  `NeutralCache(activations, units: NeutralUnits, mid: NeutralMid, sidecar)`
+  from one digest-checked read, `load_validated_neutral_cache` the activations
+  only. Identity binds `capture_sha256`, `model_fingerprint`,
+  `model_source_fingerprint` and the layer set. A v4 cache, or a v5 cache from
+  before the mid means (capture version 1, no `mid` block), is not migrated:
+  the next load recomputes it.
   `load_neutral_whitener` is the one offline whitener loader
   (`manifold compare`, offline bake): it never loads a model and raises
   `WhitenerError` with a populate hint. Capture on a miss is `fit/neutral.py`.
