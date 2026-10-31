@@ -41,7 +41,7 @@ from __future__ import annotations
 import base64
 import math
 import weakref
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -480,9 +480,10 @@ def _unit_name(kind: str, layer: int, index: int) -> str:
     return ref.qualified
 
 
-def _anatomy_unit(
+def anatomy_unit(
     kind: str, layer: int, index: int, contribution: float, activation: float | None,
 ) -> AnatomyUnit:
+    """One unit of a token anatomy, rounded as the envelope carries it."""
     return {
         "unit": _unit_name(kind, layer, index),
         "kind": "neuron" if kind == "neuron" else "head",
@@ -490,6 +491,76 @@ def _anatomy_unit(
         "index": int(index),
         "contribution": round(float(contribution), 6),
         "activation": None if activation is None else round(float(activation), 6),
+    }
+
+
+def anatomy_layer(
+    layer: int,
+    reads_as: LensRead,
+    attention: LensRead,
+    mlp: LensRead,
+    steering: LensRead | None,
+    neurons: Sequence[AnatomyUnit],
+    heads: Sequence[AnatomyUnit],
+) -> AnatomyLayer:
+    """One layer of a token anatomy from its four lens reads and its units."""
+    return {
+        "layer": int(layer),
+        "depth": round(reads_as.depth, 6),
+        "reads_as": _read_dict(reads_as),
+        "attention": _read_dict(attention),
+        "mlp": _read_dict(mlp),
+        "steering": None if steering is None else _read_dict(steering),
+        "neurons": list(neurons),
+        "heads": list(heads),
+    }
+
+
+def anatomy_pattern(
+    layer: int, head: int, contribution: float, weights: Sequence[float],
+) -> AnatomyPattern:
+    """A top head's attention row, rounded as the envelope carries it."""
+    return {
+        "unit": _unit_name("head", layer, head),
+        "layer": int(layer),
+        "head": int(head),
+        "contribution": round(float(contribution), 6),
+        "weights": [round(float(w), 6) for w in weights],
+    }
+
+
+def token_anatomy_record(
+    *,
+    raw_index: int,
+    token_id: int,
+    token: str,
+    position: int,
+    prompt_length: int,
+    probability: float,
+    sources: Mapping[str, str | None],
+    steering: str | None,
+    layers: Sequence[AnatomyLayer],
+    units: Sequence[AnatomyUnit],
+    units_absent: str | None,
+    patterns: Sequence[AnatomyPattern] | None,
+    context: Sequence[str] | None,
+) -> TokenAnatomy:
+    """The envelope's ``anatomy`` record (:class:`TokenAnatomy`)."""
+    return {
+        "token": {
+            "raw_index": int(raw_index),
+            "token_id": int(token_id),
+            "token": str(token),
+            "position": int(position),
+            "prompt_length": int(prompt_length),
+            "probability": round(float(probability), 6),
+        },
+        "binding": {"sources": dict(sources), "steering": steering},
+        "layers": list(layers),
+        "units": list(units),
+        "units_absent": units_absent,
+        "patterns": None if patterns is None else list(patterns),
+        "context": None if context is None else list(context),
     }
 
 
@@ -677,32 +748,26 @@ class NodeReplayer:
             if L in neuron_slots:
                 c, idx, act = (_take(host, slot).tolist() for slot in neuron_slots[L])
                 neurons = [
-                    _anatomy_unit("neuron", L, int(i), v, a)
+                    anatomy_unit("neuron", L, int(i), v, a)
                     for v, i, a in zip(c, idx, act, strict=True)
                 ]
             if L in head_slots:
                 c, idx, norm = (_take(host, slot).tolist() for slot in head_slots[L])
                 heads_out = [
-                    _anatomy_unit("head", L, int(i), v, w)
+                    anatomy_unit("head", L, int(i), v, w)
                     for v, i, w in zip(c, idx, norm, strict=True)
                 ]
-            layers.append({
-                "layer": L,
-                "depth": round(reads_as.depth, 6),
-                "reads_as": _read_dict(reads_as),
-                "attention": _read_dict(attention),
-                "mlp": _read_dict(mlp),
-                "steering": _read_dict(steering) if injected[L] > 0 else None,
-                "neurons": neurons,
-                "heads": heads_out,
-            })
+            layers.append(anatomy_layer(
+                L, reads_as, attention, mlp, steering if injected[L] > 0 else None,
+                neurons, heads_out,
+            ))
 
         top_units: list[AnatomyUnit] = []
         if top_slots is not None:
             values, flat_idx = (_take(host, slot).tolist() for slot in top_slots)
             for value, index in zip(values, flat_idx, strict=True):
                 kind, L, unit = flat.unit(int(index))
-                top_units.append(_anatomy_unit(kind, L, unit, value, None))
+                top_units.append(anatomy_unit(kind, L, unit, value, None))
         pattern_rows: list[AnatomyPattern] | None = None
         if pattern_slots is not None:
             rows_host = _take(host, pattern_slots[0])
@@ -711,35 +776,25 @@ class NodeReplayer:
             pattern_rows = []
             for row, index, value in zip(rows_host, flat_heads, values, strict=True):
                 _kind, L, head = flat.unit(int(index))
-                pattern_rows.append({
-                    "unit": _unit_name("head", L, head),
-                    "layer": L,
-                    "head": head,
-                    "contribution": round(float(value), 6),
-                    "weights": [round(float(w), 6) for w in row.tolist()],
-                })
-        return {
-            "token": {
-                "raw_index": forward.raw_index,
-                "token_id": token_id,
-                "token": self._decode(token_id),
-                "position": forward.position,
-                "prompt_length": forward.prompt_length,
-                "probability": round(probability, 6),
-            },
-            "binding": {
-                "sources": {"R": lens.runtime.source, "S": lens.input_runtime.source},
-                "steering": None,
-            },
-            "layers": layers,
-            "units": top_units,
-            "units_absent": absent,
-            "patterns": pattern_rows,
-            "context": (
+                pattern_rows.append(anatomy_pattern(L, head, value, row.tolist()))
+        return token_anatomy_record(
+            raw_index=forward.raw_index,
+            token_id=token_id,
+            token=self._decode(token_id),
+            position=forward.position,
+            prompt_length=forward.prompt_length,
+            probability=probability,
+            sources={"R": lens.runtime.source, "S": lens.input_runtime.source},
+            steering=None,
+            layers=layers,
+            units=top_units,
+            units_absent=absent,
+            patterns=pattern_rows,
+            context=(
                 [self._decode(int(t)) for t in forward.ids[0].tolist()]
                 if pattern_rows is not None else None
             ),
-        }
+        )
 
     def _contributions(
         self, spec: ModelSpec, taps: TokenTaps, token_id: int,
@@ -987,6 +1042,9 @@ __all__ = [
     "PopulationLayer",
     "TokenTaps",
     "UNIT_ACTIVITY_UNIT",
+    "anatomy_layer",
+    "anatomy_pattern",
+    "anatomy_unit",
     "UnitActivityJSON",
     "decode_population",
     "eager_attention",
@@ -995,5 +1053,6 @@ __all__ = [
     "head_write_norms",
     "neuron_contributions",
     "tap_token",
+    "token_anatomy_record",
     "unembed_cotangent",
 ]

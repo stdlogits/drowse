@@ -814,6 +814,81 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
     assert envelope == fixture["expected"]
 
 
+def anatomy_envelope(fixture: dict[str, Any]) -> Any:
+    """The replay envelope carrying the golden's token anatomy, built by the
+    node replay's own record builders (``loom/node_replay.py``) from lens
+    reads whose weights follow the depth rule and whose S half of a residual
+    is centred."""
+    from drowse.lens.depth import kind_weights, layer_depth
+    from drowse.lens.read import FamilyRead, LensRead, TokenScore
+    from drowse.loom.node_replay import (
+        anatomy_layer,
+        anatomy_pattern,
+        anatomy_unit,
+        token_anatomy_record,
+    )
+
+    spec = fixture["anatomy"]
+    n_layers = int(fixture["modelLayerCount"])
+    weights = kind_weights(n_layers, LensBand(*spec["band"]))
+
+    def half(family: str, row: dict[str, Any], weight: float, centred: bool) -> FamilyRead:
+        unit = "probability" if family == "R" else "footprint_z"
+        if row.get("absent") is not None:
+            return FamilyRead(
+                cast(Any, family), weight, cast(Any, unit), lens=row["lens"], absent=row["absent"],
+            )
+        return FamilyRead(
+            cast(Any, family), weight, cast(Any, unit), lens=row["lens"],
+            tokens=tuple(TokenScore(int(i), str(t), float(v)) for i, t, v in row["tokens"]),
+            centred=centred,
+        )
+
+    def read(layer: int, row: dict[str, Any] | None) -> LensRead | None:
+        if row is None:
+            return None
+        w_s, w_r = weights[layer]
+        return LensRead(
+            layer, row["site"], layer_depth(layer, n_layers),
+            r=half("R", row["r"], w_r, False),
+            s=half("S", row["s"], w_s, row["of"] == "residual"),
+            of=row["of"],
+        )
+
+    layers = []
+    for row in spec["layers"]:
+        L = int(row["layer"])
+        reads_as, attention, mlp = (read(L, row[key]) for key in ("readsAs", "attention", "mlp"))
+        assert reads_as is not None and attention is not None and mlp is not None
+        layers.append(anatomy_layer(
+            L, reads_as, attention, mlp, read(L, row["steering"]),
+            [anatomy_unit("neuron", L, i, c, a) for i, c, a in row["neurons"]],
+            [anatomy_unit("head", L, i, c, w) for i, c, w in row["heads"]],
+        ))
+    token = spec["token"]
+    record = token_anatomy_record(
+        raw_index=token["rawIndex"], token_id=token["tokenId"], token=token["token"],
+        position=token["position"], prompt_length=token["promptLength"],
+        probability=token["probability"], sources=spec["sources"],
+        steering=fixture["steering"], layers=layers,
+        units=[anatomy_unit(kind, L, i, c, None) for kind, L, i, c in spec["units"]],
+        units_absent=None,
+        patterns=[
+            anatomy_pattern(p["layer"], p["head"], p["contribution"], p["weights"])
+            for p in spec["patterns"]
+        ],
+        context=spec["context"],
+    )
+    return build_measurements(
+        scope="replay", provenance="replayed", anatomy=record, steering=fixture["steering"],
+    )
+
+
+def test_browser_anatomy_fixture_matches_python_source_of_truth() -> None:
+    fixture = json.loads(MEASUREMENTS.read_text())
+    assert anatomy_envelope(fixture) == fixture["expectedAnatomy"]
+
+
 # ---------------------------------------------------------------------------
 # Structured steering program
 # ---------------------------------------------------------------------------

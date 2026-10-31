@@ -64,6 +64,62 @@
     "activation": -0.75,
     "scale": 0.5
   },
+  "anatomy": {
+    "band": [0.15, 0.35],
+    "sources": {"R": "fixture-lens", "S": "fixture-slens"},
+    "token": {"rawIndex": 2, "tokenId": 17, "token": "calm", "position": 2, "promptLength": 1, "probability": 0.625},
+    "layers": [
+      {
+        "layer": 4,
+        "readsAs": {
+          "site": "out", "of": "residual",
+          "r": {"lens": "R:out", "tokens": [[17, "calm", 0.5], [5, "still", 0.25]]},
+          "s": {"lens": "S:out", "tokens": [[23, "owl", 3.25], [17, "calm", 2.5]]}
+        },
+        "attention": {
+          "site": "mid", "of": "direction",
+          "r": {"lens": "R:mid", "tokens": [[5, "still", 0.75], [17, "calm", 0.125]]},
+          "s": {"lens": null, "absent": "no S-family lens is selected for this model"}
+        },
+        "mlp": {
+          "site": "out", "of": "direction",
+          "r": {"lens": "R:out", "tokens": [[17, "calm", 0.875], [9, "quiet", 0.0625]]},
+          "s": {"lens": "S:out", "tokens": [[23, "owl", 1.75], [9, "quiet", 1.5]]}
+        },
+        "steering": null,
+        "neurons": [[344, 0.75, -1.5], [12, -0.5, 2.0]],
+        "heads": [[3, -0.25, 2.0]]
+      },
+      {
+        "layer": 9,
+        "readsAs": {
+          "site": "out", "of": "residual",
+          "r": {"lens": "R:out", "tokens": [[17, "calm", 0.9375]]},
+          "s": {"lens": "S:out", "tokens": [[23, "owl", 0.5]]}
+        },
+        "attention": {
+          "site": "mid", "of": "direction",
+          "r": {"lens": "R:mid", "absent": "layer 9 not in fitted R:mid lens layers [0, 4]"},
+          "s": {"lens": "S:mid", "tokens": [[9, "quiet", 1.25]]}
+        },
+        "mlp": {
+          "site": "out", "of": "direction",
+          "r": {"lens": "R:out", "tokens": [[17, "calm", 0.5]]},
+          "s": {"lens": "S:out", "tokens": [[17, "calm", 0.75]]}
+        },
+        "steering": {
+          "site": "out", "of": "direction",
+          "r": {"lens": "R:out", "tokens": [[17, "calm", 0.625]]},
+          "s": {"lens": "S:out", "tokens": [[23, "owl", 2.0]]}
+        },
+        "neurons": [[7, 1.25, 0.5]],
+        "heads": [[0, 0.375, 1.0]]
+      }
+    ],
+    "units": [["neuron", 9, 7, 1.25], ["neuron", 4, 344, 0.75], ["head", 9, 0, 0.375]],
+    "patterns": [{"layer": 9, "head": 0, "contribution": 0.375, "weights": [0.5, 0.25, 0.25]}],
+    "context": ["<s>", " calm", "."]
+  },
   "expected": {
     "version": 2,
     "scope": "token",
@@ -161,6 +217,302 @@
       "4": {"local/calm.alert": 0.2, "jlens/calm": 0.25},
       "8": {"neuron/L8n344": -1.5},
       "9": {"local/calm.alert": 0.8, "jlens/calm": 0.75, "sae/8": 0.5}
+    }
+  },
+  "expectedAnatomy": {
+    "version": 2,
+    "scope": "replay",
+    "provenance": "replayed",
+    "instruments": {},
+    "anatomy": {
+      "token": {
+        "raw_index": 2,
+        "token_id": 17,
+        "token": "calm",
+        "position": 2,
+        "prompt_length": 1,
+        "probability": 0.625
+      },
+      "binding": {"sources": {"R": "fixture-lens", "S": "fixture-slens"}, "steering": "0.4 local/calm.alert"},
+      "layers": [
+        {
+          "layer": 4,
+          "depth": 0.363636,
+          "reads_as": {
+            "layer": 4,
+            "site": "out",
+            "depth": 0.363636,
+            "of": "residual",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:out",
+              "centred": false,
+              "tokens": [
+                {"token_id": 17, "token": "calm", "value": 0.5},
+                {"token_id": 5, "token": "still", "value": 0.25}
+              ],
+              "absent": null
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": "S:out",
+              "centred": true,
+              "tokens": [
+                {"token_id": 23, "token": "owl", "value": 3.25},
+                {"token_id": 17, "token": "calm", "value": 2.5}
+              ],
+              "absent": null
+            }
+          },
+          "attention": {
+            "layer": 4,
+            "site": "mid",
+            "depth": 0.363636,
+            "of": "direction",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:mid",
+              "centred": false,
+              "tokens": [
+                {"token_id": 5, "token": "still", "value": 0.75},
+                {"token_id": 17, "token": "calm", "value": 0.125}
+              ],
+              "absent": null
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": null,
+              "centred": false,
+              "tokens": [],
+              "absent": "no S-family lens is selected for this model"
+            }
+          },
+          "mlp": {
+            "layer": 4,
+            "site": "out",
+            "depth": 0.363636,
+            "of": "direction",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:out",
+              "centred": false,
+              "tokens": [
+                {"token_id": 17, "token": "calm", "value": 0.875},
+                {"token_id": 9, "token": "quiet", "value": 0.0625}
+              ],
+              "absent": null
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": "S:out",
+              "centred": false,
+              "tokens": [
+                {"token_id": 23, "token": "owl", "value": 1.75},
+                {"token_id": 9, "token": "quiet", "value": 1.5}
+              ],
+              "absent": null
+            }
+          },
+          "steering": null,
+          "neurons": [
+            {
+              "unit": "neuron/L4n344",
+              "kind": "neuron",
+              "layer": 4,
+              "index": 344,
+              "contribution": 0.75,
+              "activation": -1.5
+            },
+            {
+              "unit": "neuron/L4n12",
+              "kind": "neuron",
+              "layer": 4,
+              "index": 12,
+              "contribution": -0.5,
+              "activation": 2.0
+            }
+          ],
+          "heads": [
+            {
+              "unit": "head/L4h3",
+              "kind": "head",
+              "layer": 4,
+              "index": 3,
+              "contribution": -0.25,
+              "activation": 2.0
+            }
+          ]
+        },
+        {
+          "layer": 9,
+          "depth": 0.818182,
+          "reads_as": {
+            "layer": 9,
+            "site": "out",
+            "depth": 0.818182,
+            "of": "residual",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:out",
+              "centred": false,
+              "tokens": [{"token_id": 17, "token": "calm", "value": 0.9375}],
+              "absent": null
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": "S:out",
+              "centred": true,
+              "tokens": [{"token_id": 23, "token": "owl", "value": 0.5}],
+              "absent": null
+            }
+          },
+          "attention": {
+            "layer": 9,
+            "site": "mid",
+            "depth": 0.818182,
+            "of": "direction",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:mid",
+              "centred": false,
+              "tokens": [],
+              "absent": "layer 9 not in fitted R:mid lens layers [0, 4]"
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": "S:mid",
+              "centred": false,
+              "tokens": [{"token_id": 9, "token": "quiet", "value": 1.25}],
+              "absent": null
+            }
+          },
+          "mlp": {
+            "layer": 9,
+            "site": "out",
+            "depth": 0.818182,
+            "of": "direction",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:out",
+              "centred": false,
+              "tokens": [{"token_id": 17, "token": "calm", "value": 0.5}],
+              "absent": null
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": "S:out",
+              "centred": false,
+              "tokens": [{"token_id": 17, "token": "calm", "value": 0.75}],
+              "absent": null
+            }
+          },
+          "steering": {
+            "layer": 9,
+            "site": "out",
+            "depth": 0.818182,
+            "of": "direction",
+            "r": {
+              "family": "R",
+              "weight": 1.0,
+              "unit": "probability",
+              "lens": "R:out",
+              "centred": false,
+              "tokens": [{"token_id": 17, "token": "calm", "value": 0.625}],
+              "absent": null
+            },
+            "s": {
+              "family": "S",
+              "weight": 0.0,
+              "unit": "footprint_z",
+              "lens": "S:out",
+              "centred": false,
+              "tokens": [{"token_id": 23, "token": "owl", "value": 2.0}],
+              "absent": null
+            }
+          },
+          "neurons": [
+            {
+              "unit": "neuron/L9n7",
+              "kind": "neuron",
+              "layer": 9,
+              "index": 7,
+              "contribution": 1.25,
+              "activation": 0.5
+            }
+          ],
+          "heads": [
+            {
+              "unit": "head/L9h0",
+              "kind": "head",
+              "layer": 9,
+              "index": 0,
+              "contribution": 0.375,
+              "activation": 1.0
+            }
+          ]
+        }
+      ],
+      "units": [
+        {
+          "unit": "neuron/L9n7",
+          "kind": "neuron",
+          "layer": 9,
+          "index": 7,
+          "contribution": 1.25,
+          "activation": null
+        },
+        {
+          "unit": "neuron/L4n344",
+          "kind": "neuron",
+          "layer": 4,
+          "index": 344,
+          "contribution": 0.75,
+          "activation": null
+        },
+        {
+          "unit": "head/L9h0",
+          "kind": "head",
+          "layer": 9,
+          "index": 0,
+          "contribution": 0.375,
+          "activation": null
+        }
+      ],
+      "units_absent": null,
+      "patterns": [
+        {
+          "unit": "head/L9h0",
+          "layer": 9,
+          "head": 0,
+          "contribution": 0.375,
+          "weights": [0.5, 0.25, 0.25]
+        }
+      ],
+      "context": ["<s>", " calm", "."]
     }
   }
 }
