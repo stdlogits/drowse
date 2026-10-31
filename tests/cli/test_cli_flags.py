@@ -805,6 +805,8 @@ def test_extract_corrupt_tensor_is_not_a_cache_hit(
     ["manifold", "generate", "solo", "--concepts", "one", "-m", "m/x"],
     ["manifold", "fit", "anything", "-m", "m/x", "--layers", "sample"],
     ["manifold", "fit", "anything", "-m", "m/x", "--layers", "1,x"],
+    ["manifold", "fit", "anything", "-m", "m/x", "--layers", "8-4"],
+    ["manifold", "fit", "anything", "-m", "m/x", "--layers", "2-4,3"],
 ])
 def test_authoring_rejections_happen_before_the_model_loads(
     argv: list[str], monkeypatch: pytest.MonkeyPatch,
@@ -827,6 +829,8 @@ def test_fit_delegates_overrides_to_the_fit_transaction(monkeypatch: pytest.Monk
     main(["manifold", "fit", str(folder), "-m", "fake/model", "--smoothing", "0.25"])
     assert created[0].fit_kwargs["fit_mode"] is None
     assert created[0].fit_kwargs["hyperparams"] == {"smoothing": 0.25}
+    main(["manifold", "fit", str(folder), "-m", "fake/model", "--layers", "9, 2-4"])
+    assert created[1].fit_kwargs["layers"] == [9, 2, 3, 4]
 
 
 def test_a_folder_path_without_manifold_json_is_reported_as_such(

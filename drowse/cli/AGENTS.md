@@ -216,8 +216,8 @@ does not carry.
   makes each node's corpus reproducible from S and its node index;
   `--role-per-node` uses each slug as its node's role substitution. Fitting is a
   separate step so a flaky generation leaves inspectable corpora.
-- `fit TARGET`: `--layers` takes indices, `workspace` (the 40–90% depth band)
-  or `all`, never `sample`. Overrides apply only to discover folders (authored
+- `fit TARGET`: `--layers` takes indices and `a-b` ranges (`4-8,20`),
+  `workspace` (the 40–90% depth band) or `all`, never `sample`. Overrides apply only to discover folders (authored
   exits 2); only the supplied patch reaches `session.fit`, which merges it under
   the fit lock — the CLI never writes `manifold.json`. `-f` bypasses the tensor
   cache, needed because `fit` does not re-author corpora: an unchanged corpus

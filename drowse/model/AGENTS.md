@@ -21,7 +21,7 @@ package supplies the mechanisms.
 | `fingerprint.py` | Source and loaded-model identities, `resolve_model_revision` |
 | `arch.py` | `get_layers`, `TESTED_ARCHS`, `text_extractable`, `config_model_shape`, `workspace_layer_indices` |
 | `readout.py` | Final residual → logits (`LogitReadout`, `get_unembedding`, `get_final_norm`) |
-| `layers.py` | The one `--layers` / `layers=` parser and resolvers |
+| `layers.py` | The one layer-selector parser, formatter and resolvers (`--layers`, `layers=`, steering `{…}`) |
 | `tokens.py` | `special_token_ids`, `last_content_index` |
 | `chat.py` | `ChatTraits`: per-session chat facts and render cache |
 | `role_templates.py` | `SEAT_HEADERS`, `resolve_seat_headers`, `validate_role`, the splice renderers |
@@ -155,13 +155,20 @@ forward ignores `past_key_values` is handled in `generation/decode.py`.
 ## Layer selectors and token spans
 
 `layers.py` is the one parser for `--layers` / `layers=` (CLI, server, lens,
-manifold fits); torch-free at import because the CLI parses before a model
-loads. Selectors: `None`/`all`, `workspace`, `sample` (`SAMPLE_COUNT = 9`
-evenly spaced, readout only) or an index list; errors are `RequestError`
-(400). `resolve_layer_selector` returns an explicit list as given;
-`resolve_model_layers` (fits) sorts, de-duplicates, bounds-checks and refuses
-`sample`. A manifold fit and its weight-free preflight both resolve through
-`resolve_model_layers`, so a no-op proof covers exactly the fit's layers.
+manifold fits) and the steering grammar's `{…}` layer clause; torch-free at
+import because the CLI parses before a model loads. Selectors: `None`/`all`,
+`workspace`, `sample` (`SAMPLE_COUNT = 9` evenly spaced, readout only) or an
+index list, written as comma-separated indices and inclusive `a-b` ranges
+(`4-8,20`; whitespace is free). `parse_layer_selector` keeps written order and
+raises `LayerSelectorError` (a 400 `RequestError` whose `offset` points at the
+failing entry) on an empty entry, a negative index, a reversed range, a layer
+named twice, or `sample` under `allow_sample=False`.
+`format_layer_indices` is its inverse on index sets (sorted, consecutive runs
+as `a-b`), the canonical form the grammar renders. `resolve_layer_selector`
+returns an explicit list as given; `resolve_model_layers` (fits) sorts,
+bounds-checks and refuses `sample`. A manifold fit and its weight-free
+preflight both resolve through `resolve_model_layers`, so a no-op proof covers
+exactly the fit's layers.
 
 `tokens.last_content_index` is the single definition of the "last content
 token" every single-state read pools from (fit capture, monitor per-token and

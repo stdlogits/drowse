@@ -50,7 +50,7 @@ drowse manifold generate NAME --concepts C... -m MODEL [--kind K] [--system T] [
                          [--seed S] [--role-per-node] [--description TEXT] [-f]
 drowse manifold from-template TEMPLATE [--name N] [--fit-mode pca|spectral|auto] [--max-dim N]
                               [--var-threshold T] [--description TEXT] [-f]
-drowse manifold fit TARGET -m MODEL [--layers L1,L2|workspace|all] [--sae REL] [--method pca|spectral|auto]
+drowse manifold fit TARGET -m MODEL [--layers L1,L2-L3|workspace|all] [--sae REL] [--method pca|spectral|auto]
                     [--max-dim N] [--min-dim N] [--var-threshold T] [--k-nn K] [--bandwidth S]
                     [--max-subspace-dim R] [--smoothing auto|0|LAMBDA] [--persistence-frac F] [--no-dls] [-f]
 drowse manifold bake NAME "0.3 ns/a + 0.5 ns/b" [-m MODEL] [-s] [-f]   # offline, writes local/NAME

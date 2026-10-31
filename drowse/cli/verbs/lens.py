@@ -421,7 +421,7 @@ GROUP = Verb(
                 arg("-k", "--top-k", type=positive_int, default=8, metavar="K",
                     help="Tokens per (layer, position) readout (default 8)"),
                 layers_arg("Layer indices or a mode (default: every fitted layer)",
-                           metavar="L1,L2,...|sample|workspace|all"),
+                           metavar="L1,L2-L3,...|sample|workspace|all"),
                 arg("--position", type=int, action="append", default=None, metavar="P",
                     help="Token position to read (repeatable; negative from the end; "
                          "default: final)"),

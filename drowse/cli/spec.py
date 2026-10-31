@@ -166,7 +166,7 @@ TOP_K_ALTS = arg(
 )
 
 
-def layers_arg(help: str, metavar: str = "L1,L2,...|workspace|all") -> Arg:
+def layers_arg(help: str, metavar: str = "L1,L2-L3,...|workspace|all") -> Arg:
     return arg("--layers", default=None, metavar=metavar, help=help)
 
 
