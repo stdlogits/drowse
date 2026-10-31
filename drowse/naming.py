@@ -61,7 +61,9 @@ def canonical_concept_name(concept: str, baseline: str | None = None) -> str:
 
 #: ``L<layer><letter><index>``, case-insensitive.  The letter form (rather
 #: than ``8.344``) is what the steering lexer can keep as one identifier.
-_UNIT_RE = re.compile(r"[Ll](\d+)([NnHh])(\d+)")
+#: ASCII digits only: ``\d`` would take any Unicode decimal digit and
+#: canonicalize ``L٨n344`` to ``L8n344``.
+_UNIT_RE = re.compile(r"[Ll]([0-9]+)([NnHh])([0-9]+)")
 
 
 @dataclass(frozen=True, order=True)

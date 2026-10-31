@@ -39,6 +39,8 @@ def test_head_refs_parse_case_insensitively_to_canonical_text(text: str) -> None
     ("neuron", "L-1n3"),
     ("neuron", " L8n344"),
     ("neuron", ""),
+    ("neuron", "L\u0668n344"),   # an Arabic-Indic eight: units are ASCII
+    ("head", "L20h\uff11\uff17"),  # fullwidth digits
     ("jlens", "L8n344"),       # not a unit namespace
 ])
 def test_malformed_unit_names_raise_a_request_error(namespace: str, text: str) -> None:
