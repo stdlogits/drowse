@@ -1,7 +1,8 @@
 """The probe roster: one attach/detach surface over the three read families.
 
-A selector routes by namespace: ``jlens/<word>`` to the J-lens instrument (a
-readout-channel probe, never a whitened coordinate), ``sae/<id>`` to the SAE
+A selector routes by namespace: ``jlens/<word>`` and ``slens/<word>`` to the
+lens instrument (a readout-channel probe, never a whitened coordinate),
+``sae/<id>`` to the SAE
 instrument, and everything else to the geometry instrument (a manifold probe
 on the unified Monitor).  The roster also owns the transcript probe-hash
 caches, one per family, and the single place a roster change is reported:
@@ -81,11 +82,12 @@ class ProbeRoster:
     ) -> str:
         """Attach a probe of any shape and return its name.
 
-        ``jlens/`` and ``sae/`` selectors read their family's readout channel;
+        ``jlens/``, ``slens/`` and ``sae/`` selectors read their family's
+        readout channel (the lens family takes both lens namespaces);
         everything else resolves to a manifold probe (``top_n`` is the
         nearest-node list length, geometry only).
         """
-        if selector.startswith("jlens/"):
+        if selector.startswith(("jlens/", "slens/")):
             name = self._lens.attach(selector, as_name=as_name)
         elif selector.startswith("sae/"):
             name = self._sae.attach(selector, as_name=as_name)

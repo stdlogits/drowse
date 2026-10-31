@@ -222,13 +222,15 @@ class LensRuntime:
         ``layers`` (``J_L`` for an R-family lens, ``K_L`` for an S-family one)."""
         target = self.device if device is None else device
         layer_tuple = tuple(int(layer) for layer in layers)
-        return self._stacks.get_or_build(
-            (id(lens), site, str(target), layer_tuple),
-            lambda: torch.stack([
-                lens.matrix(layer, site).to(device=target, dtype=torch.float32)
+
+        def build() -> torch.Tensor:
+            matrices = lens.jacobians if site == "out" else lens.matrices(site)
+            return torch.stack([
+                matrices[layer].to(device=target, dtype=torch.float32)
                 for layer in layer_tuple
-            ]),
-        )
+            ])
+
+        return self._stacks.get_or_build((id(lens), site, str(target), layer_tuple), build)
 
     def readout_modules(self) -> tuple[torch.Tensor, torch.nn.Module]:
         """The unembedding and the model-specific final readout path."""

@@ -764,8 +764,8 @@ def test_jlens_property_rechecks_loaded_pointer_fingerprint(
         "n_prompts": 1,
     }
     replaced = {**compatible, "model_fingerprint": "different-weights"}
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model: compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model: (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
 
     assert session.lens.resident() is None
 
@@ -785,8 +785,8 @@ def test_has_compatible_jlens_rechecks_loaded_pointer_fingerprint(
     replaced = {**compatible, "model_fingerprint": "different-weights"}
     session.lens.runtime.lens = lens
     session.lens.runtime.identity = cast(Any, ("old",))
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model: compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model: (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
 
     assert not session.lens.has_compatible()
 
