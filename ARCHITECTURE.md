@@ -707,9 +707,11 @@ basis seeds sweep through hand-written per-block maps, cotangents down from
 the last block for J/R, tangents up from the embedding for K/S, so one sweep
 covers every layer and both sites. No autograd runs; the autograd estimator
 survives only as the test oracle. Standard rules give J/K, RelP rules
-(`lens/relp.py`: LN, identity, half) give R/S; forwards are unchanged. Every
+(`lens/relp.py`: LN, identity, half) give R/S; forwards are unchanged. A
 fit records its split-half difference per site and layer, the check on
-whether more documents would help. The fit verifies the model's description
+whether more documents would help, unless it is a corpus extension of a
+durable artifact (whose halves are gone) or runs with `split_half=False`
+(`--no-split-half`). The fit verifies the model's description
 first and refuses undescribable blocks (`UnsupportedBlockError`), is
 resumable and checkpointed, adapts to OOM, and on MPS drains the queue and
 guards against zero rows. `lens/lifecycle.py::plan_lens_fit` chooses noop, top-up, resume or

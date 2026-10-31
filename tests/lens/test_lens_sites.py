@@ -193,6 +193,17 @@ def test_save_lens_at_writes_every_site_without_selecting(tmp_path: Path) -> Non
     assert LENS_SOURCES.active(_MODEL, "input") is None
 
 
+def test_save_lens_at_keeps_an_out_only_pack_in_the_browser_readers_shape(tmp_path: Path) -> None:
+    """drowse.ai's v7 reader takes exactly one ``sites.out`` holding exactly
+    ``layers``/``tensor_files``/``tensor_sha256``.  The hosted packaging path
+    (an output lens at ``out`` only, no split-half) must keep writing that."""
+    lens = JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("R"))
+    manifest = json.loads(save_lens_at(lens, tmp_path / "pack", _PROV).read_text())
+    assert manifest["format_version"] == 7
+    assert list(manifest["sites"]) == ["out"]
+    assert sorted(manifest["sites"]["out"]) == ["layers", "tensor_files", "tensor_sha256"]
+
+
 def _mid_only(kind: str) -> JacobianLens:
     return JacobianLens(mid=_mats(range(4), 2), n_prompts=5, d_model=_D, key=LensKey(kind))
 

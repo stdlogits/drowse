@@ -393,7 +393,8 @@ GROUP = Verb(
                 "activation makes the model say (J_l = E[dh_final/dh_l], RelP "
                 "or standard); s and k what put it there (K_l = E[dh_l/de]). "
                 "--sites picks the block output (out), the MLP input (mid) or "
-                "both. Every fit records its split-half difference per layer; "
+                "both. A fit records its split-half difference per layer "
+                "(unless it extends a finished fit's corpus, or --no-split-half); "
                 "interrupted fits checkpoint and resume; an exact repeat is "
                 "proven without loading the model."
             ),

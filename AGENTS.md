@@ -226,8 +226,10 @@ interface here:
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`
   `METHOD_FIT_MODES`, the manifold sidecar and `.drowse` formats, lens format
   v7 (`sites.out`, `out.layer-L` shards);
-- Python it calls: `lens.fit.fit_lens` and
-  `lens.store.save_lens_at`/`LensProvenance`.
+- Python it calls: `lens.store.save_lens_at`/`LensProvenance`, and the
+  lens estimator (today the removed `lens.fit.fit_jacobian_lens`; its hosted
+  fit moving to `lens.fit.fit_lens(kind=, sites=("out",))` is a pending
+  follow-up, `drowse/lens/AGENTS.md`).
 
 A semantic change to any of these regenerates the golden in the same change
 and is an interface change for drowse.ai. A refactor that would need a golden

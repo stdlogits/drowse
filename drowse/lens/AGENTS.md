@@ -113,7 +113,8 @@ extension of a durable artifact, `split_half=False`) lack it;
 mean shards (`<site>.odd.partial.layer-L…`) a resumed fit continues its
 split-half check from (`load_lens_checkpoint_odd`). Promotion drops it and
 generation GC collects the shards. drowse.ai's browser reader checks exact key
-sets, so a pack carrying `split_half` (or a `mid` site) needs its follow-up.
+sets, so a pack carrying `split_half` (or a `mid` site) waits on its reader
+(the external-callers note below).
 
 - **Every kind and site.** `save_lens`, `save_lens_at` and `load_local_lens`
   write and read every site the lens holds; local names carry the kind
@@ -434,11 +435,17 @@ the per-layer softmax probability `p_l(v)`.
   neuron-lens calls `load_local_lens`, `save_lens`, `LensProvenance`,
   `JacobianLens(key=)` and `RELP_RULES` (its tests also call the removed
   `fit_jacobian_lens`). drowse.ai's hosted fit
-  (`browser-runtime/fit_hosted_jlens.py`) calls `fit_lens(kind=, sites=)`
-  (formerly `fit_jacobian_lens`) and `save_lens_at`, and its browser reader
-  accepts v7 packs only, and only J/R with a single `sites.out` and exactly
-  the required site keys: a pack with a `mid` site, a `split_half` field or
-  an S/K kind is a drowse.ai follow-up.
+  (`browser-runtime/fit_hosted_jlens.py`) still imports the removed
+  `fit_jacobian_lens` and calls `save_lens_at`; its browser reader accepts
+  v7 packs only, and only J/R with a single `sites.out` and exactly the
+  required site keys. **Pending drowse.ai follow-up** (before it advances its
+  submodule pin past this fit): move the hosted fit to `fit_lens(kind=,
+  sites=("out",))` and keep calling `save_lens_at` without `split_half`
+  until the reader accepts the optional field and validates or skips `mid`.
+  That out-only shape is unchanged from 5.4
+  (`test_save_lens_at_keeps_an_out_only_pack_in_the_browser_readers_shape`),
+  so v7 is not bumped: its new fields are optional, and a bump would
+  invalidate every 5.4 local fit and reject drowse.ai's out-only packs too.
 - Tests: CPU tests in `tests/lens/` (one file per module plus
   `test_migrate_lens_v7.py`; `test_lens_sites.py` pins kinds × sites in the
   object and the store, `test_lens_depth.py` the depth rule) run on the toy
