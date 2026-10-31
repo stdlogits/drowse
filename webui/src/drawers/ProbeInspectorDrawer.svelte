@@ -623,6 +623,8 @@
     --geom-node: var(--tint);
     --geom-neutral: var(--ink3);
   }
+  /* On the phone's sheet (itself a wash) the plot and the map step up to wash2. */
+  :global(.sheet) .well, :global(.sheet) .map { background: var(--wash2); }
   .well.orbit .plot { cursor: grab; touch-action: none; }
   .well.orbit .plot:active { cursor: grabbing; }
   .plot { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
