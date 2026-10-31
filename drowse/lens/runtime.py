@@ -79,7 +79,14 @@ def matches_loaded_model(
     n_layers = getattr(
         text_config, "num_hidden_layers", getattr(text_config, "n_layer", None),
     )
-    layers = lens_layers(sidecar)
+    # Every site's layers, so a source that carries only ``mid`` (or only
+    # ``out``) is judged on what it holds.
+    sites = sidecar.get("sites")
+    layers = [
+        layer
+        for site in (sites if isinstance(sites, Mapping) else ())
+        for layer in lens_layers(sidecar, str(site))
+    ]
     return bool(
         isinstance(hidden, int)
         and not isinstance(hidden, bool)
@@ -140,7 +147,7 @@ class LensRuntime:
         self.identity: str | None = None
         # Only the transport stacks depend on the resident lens; every other
         # cache is keyed by value and survives a lens swap.
-        self._stacks: BoundedLRU[tuple[int, str, tuple[int, ...]], torch.Tensor] = (
+        self._stacks: BoundedLRU[tuple[int, str, str, tuple[int, ...]], torch.Tensor] = (
             BoundedLRU(DEVICE_STACK_CACHE_MAX)
         )
         self._decoded: BoundedLRU[int, str] = BoundedLRU(DECODE_CACHE_MAX)
@@ -208,17 +215,22 @@ class LensRuntime:
         lens: JacobianLens,
         layers: Sequence[int],
         device: torch.device | None = None,
+        *,
+        site: str = "out",
     ) -> torch.Tensor:
-        """``[L, d, d]`` fp32 device stack of ``lens``'s matrices for ``layers``."""
+        """``[L, d, d]`` fp32 device stack of ``lens``'s ``site`` matrices for
+        ``layers`` (``J_L`` for an R-family lens, ``K_L`` for an S-family one)."""
         target = self.device if device is None else device
         layer_tuple = tuple(int(layer) for layer in layers)
-        return self._stacks.get_or_build(
-            (id(lens), str(target), layer_tuple),
-            lambda: torch.stack([
-                lens.jacobians[layer].to(device=target, dtype=torch.float32)
+
+        def build() -> torch.Tensor:
+            matrices = lens.jacobians if site == "out" else lens.matrices(site)
+            return torch.stack([
+                matrices[layer].to(device=target, dtype=torch.float32)
                 for layer in layer_tuple
-            ]),
-        )
+            ])
+
+        return self._stacks.get_or_build((id(lens), site, str(target), layer_tuple), build)
 
     def readout_modules(self) -> tuple[torch.Tensor, torch.nn.Module]:
         """The unembedding and the model-specific final readout path."""

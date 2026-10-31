@@ -4,11 +4,14 @@ The Jacobian lens family (Gurnee et al., "Verbalizable Representations Form a
 Global Workspace in Language Models", Transformer Circuits 2026). It is a
 **per-model** artifact. A lens holds one fp32 matrix per layer at each of its
 sites: `J_l = E[∂h_final/∂h_l]` for the output kinds, `K_l = E[∂h_l/∂e]` for
-the input kinds, averaged over positions and a text corpus. Three surfaces
-read the output side today: the vocabulary readout
-`softmax(W_U · norm(J_l h))`, the `jlens/<word>` steering atom `W_U[v] @ J_l`,
-and the J-space decomposition of a steerable direction. Inside a session the face is `session.lens`
-(`LensInstrument`). The package sits beside `sae`, above `readout` and below
+the input kinds, averaged over positions and a text corpus. The R family
+(J/R) reads what a vector is disposed to *say*: the vocabulary readout
+`softmax(W_U · norm(J_l h))`, the `jlens/<word>` steering atom `W_U[v] @ J_l`
+and the `tokens-out` decomposition. The S family (K/S) reads what it has
+*read*: the footprint z of every token (`footprint.py`), the `slens/<word>`
+atom `K_l ẽ_v` and the `tokens-in` decomposition. `read.py` reads any vector
+at a place through both, by the four-lens rule. Inside a session the face is
+`session.lens` (`LensInstrument`). The package sits beside `sae`, above `readout` and below
 `steering.composer`, and imports only `errors`, `base`, `model` and `readout`
 (`tests/invariants/test_layering.py`, which counts `TYPE_CHECKING` imports).
 
@@ -17,16 +20,18 @@ and the J-space decomposition of a steerable direction. Inside a session the fac
 | `key.py` | `LensKey` (kind × site), `FITTABLE_KINDS`, `site_layers`, `DEFAULT_FIT_DOCUMENTS`, local-name grammar. Torch-free. |
 | `jlens.py` | `JacobianLens` (one kind, both sites), readout math, token-atom resolution, error types, fit defaults. Imports only torch, errors and `key` (decode-step code imports it). |
 | `depth.py` | `LensBand`, `kind_weights`: which kind reads a place, by depth. Torch-free. |
-| `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `sparse_decompose` |
+| `footprint.py` | `token_mask`, `TokenEmbeddings` (masked embedding mean and `Σ_E`, fp32), footprint z, `pullback_rows`, `depth_moments_positive`. Torch only. |
+| `read.py` | `read_vectors`, `LensRead` / `FamilyRead` / `TokenScore`: the read of a vector at `(layer, site)` through both families |
+| `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `TokensIn` (`K_l ẽ_v`), `sparse_decompose`, `DICTIONARIES` |
 | `transport.py` | The estimator's per-document block maps: `linearize`, `jvp`, `vjp`, the sweeps, `document_estimate` |
 | `fit.py` | `fit_lens` (transport over a corpus), `LensSums`, `LensFit`, `fit_site_layers`. No runtime path imports it. |
 | `relp.py` | `RELP_RULES`, `HALF_RULE_BETA`: the RelP rules the R/S kinds are taken under |
 | `corpus.py` | Hub corpora (pin and stream in a worker), `read_corpus_file`. `sae train` uses it too. |
 | `lifecycle.py` | `plan_lens_fit` (pure), `LensFitter` (executor), `prove_lens_fit_noop` (model-free) |
 | `store.py` | Format-v7 local artifacts: save/load/checkpoint/promote/remove, `LensProvenance`, `lens_estimator_policy`, `lens_identity` |
-| `sources.py` | `LENS_SOURCES` per-side selection, provider bindings and fetch, default source order |
+| `sources.py` | `LENS_SOURCES` per-family selection, multi-site provider bindings and fetch, default source order |
 | `runtime.py` | `LensRuntime` (resident lens, identity, bounded caches, readout primitives), `matches_loaded_model` |
-| `instrument.py` | `LensInstrument` (residency, fit, reads, probes, gates, live, replay) and `LensRun` (per-generation state) |
+| `instrument.py` | `LensInstrument` (residency of both families, fit, reads, probes, gates, live, replay) and `LensRun` (per-generation state) |
 
 ## Identity: `LensKey`
 
@@ -35,8 +40,9 @@ J (output, standard), R (output, RelP), K/S (input, standard/RelP). A
 **site** is `out` (block output) or `mid` (post-attention residual, the MLP's
 input). `LensKey(kind, site)` names one kind at one site. One estimator
 (transport) fits every kind at either or both sites (`FITTABLE_KINDS` is all
-four). Every store, binding and selection path is keyed on `LensKey`, and
-every readout surface here reads the output side at `out`.
+four). Every store, binding and selection path is keyed on `LensKey`. Probes,
+gates, steering atoms and the live readout read block outputs, so they use
+`out`; `read` and `lens top` take the site.
 
 **One lens, both sites.** A `JacobianLens` holds its kind (`key`, whose site
 is `out`; `kind`) and fp32 per-layer matrices at one or both sites:
@@ -72,6 +78,40 @@ weighted inside a crossover band. `LensBand(lo, hi)` gives the band as
 fractions of depth (`layer / (n_layers − 1)`, default 0.15 and 0.35 until
 measured per model); `kind_weights(n_layers, band)` returns `(w_S, w_R)` per
 layer, `w_S = 1` below `lo`, 0 above `hi`, linear inside, summing to 1.
+
+**The read** (`read.py`, `LensInstrument.read`). `read(vector, layer, site,
+k=8)` takes a `[d]` vector (one `LensRead`) or `[n, d]` rows (a list). A
+`LensRead` has `layer`, `site`, `depth` and two `FamilyRead` halves, `r` and
+`s`, each with `weight` (from `kind_weights`, whether or not the half is
+present), `unit` (`probability`: per-layer readout probabilities through the
+model's final path; `footprint_z`), `lens` (the label read through, `R:mid`,
+`J:out`, `S:out`), `tokens` (`TokenScore(token_id, token, value)`, top-k
+descending) and `absent`, the reason when there is no lens of the family, no
+lens at the site, or no matrix at the layer. A vector whose width is not the
+model's residual width is a `RequestError`. A half is never read from the
+other site or family. The weights stay raw, so a consumer fades a light half
+or says that a heavy one is missing. `read_prompt(prompt, site, layers,
+positions, k)` reads a raw prompt's residuals (out: `capture_hidden`; mid: a
+pre-hook on each block's MLP input norm through `model_spec`). `lens.band`
+(`LensBand()`) is the session's crossover band. Token anatomy and unit views
+read through this.
+
+**Footprint z** (`footprint.py`). `u_L = K_Lᵀ h`; `z_L(v) = u_L·ẽ_v /
+sqrt(u_Lᵀ Σ_E u_L)`, with `ẽ_v = scale·W_E[v] − mean` (`scale` from
+`model_spec`, Gemma's `√d`) and `Σ_E` the covariance of `ẽ` over the token
+mask. The mask is the tokenizer's alone: it drops special tokens, every added
+token (special or not: Qwen3's `<think>`/`<tool_call>`, Gemma's
+`<unusedN>`), byte-fallback pieces (spelled `<0xNN>`, including the ASCII ones
+that decode to a control character, or decoding alone to U+FFFD) and
+embedding rows past the tokenizer. `z` is the vocabulary z-score of the raw
+score, so its top-k is neuron-lens's raw `read_S`/`write_S` wherever both keep
+the token. neuron-lens keeps the tokens seen at least five times in its
+corpora instead (rare base tokens differ, and added tokens a corpus contains),
+scores a unit covector in fp16, and its `_z` reads are layer-contrastive
+(across a layer's neurons), which a single read cannot be.
+`TokenEmbeddings` is built once per session on the first S use (model work:
+inside the exclusive section) and holds `Σ_E` on the model device (`d²` fp32).
+A one-token read (`z_of`) costs `O(d²)` per layer, not a vocabulary pass.
 
 - A local directory name carries its kind (`^[jrks](-tag)?$`: `r`, `j`,
   `r-chat`). Every writer refuses a mismatch, so a fit cannot land in or resume
@@ -158,33 +198,53 @@ sets, so a pack carrying `split_half` (or a `mid` site) waits on its reader
 ## Sources and selection (`sources.py`)
 
 `LENS_SOURCES` is a `base.source_registry.SourceFamily` with one active source
-per side (`output`, `input`). A source is `local:<name>` or a bare provider
-name.
+per family: the R family (J/R) in the `output` slot, the S family (K/S) in the
+`input` slot (`lens_source_side(ref)`). A source is `local:<name>` or a bare
+provider name, and carries one or both sites.
 
-| Source | Key | Repository |
+| Source | Kind, sites | Repository |
 |---|---|---|
-| `neuronpedia` | J | `neuronpedia/jacobian-lens`: the paper lens, matched on its config's `hf_model_name`, config sha256 pinned, `_n1000.pt` preferred |
-| `workspace-r` | R | `camilablank/workspace-lenses` `<model>/r-lens/lens.pt`; embedded provenance must name this model and estimator `relp` |
-| `workspace-j` | J | the same repository, `j-lens` arm, estimator `standard`, same forwards as `workspace-r` |
+| `rs-r` | R: `out`, `mid` | `stdlogits/rs-lenses` `<model>/r-lens/lens.pt` (`out`, the identity at the target layer) and `mid.pt`; Qwen3-8B, Gemma 4 12B |
+| `rs-s` | S: `out`, `mid` | the same repository, `<model>/s-lens/out.pt` and `mid.pt` (`K`/`layers`; text only, a `basis` key is refused) |
+| `neuronpedia` | J: `out` | `neuronpedia/jacobian-lens`: the paper lens, matched on its config's `hf_model_name`, config sha256 pinned, `_n1000.pt` preferred |
+| `workspace-r` | R: `out` | `camilablank/workspace-lenses` `<model>/r-lens/lens.pt`; embedded provenance must name this model and estimator `relp` |
+| `workspace-j` | J: `out` | the same repository, `j-lens` arm, estimator `standard`, same forwards as `workspace-r` |
 
 - `fetch_lens_source` is pure IO. It pins the publisher and base-model
   commits, reads the config at that commit (`trust_remote_code=False`), loads
-  the `.pt` with `weights_only=True`, validates dims, layers and finiteness,
-  and writes only the binding. The payload stays in the HF cache.
-  `activate=True` selects it.
-- `load_external_lens` is offline. It rechecks the Neuronpedia config digest,
-  `n_prompts` and the layer roster. **It does not re-hash the checkpoint**
-  against the binding's sha256.
-- Default order (`lens_source_preference_key`): `workspace-r`, `neuronpedia`,
-  `workspace-j`, then `local:r`, `local:j`, then tagged fits. Listings and
-  serve's auto-selection (`cli/verbs/serve.py::enable_live_lens`) use it.
-- A fit, a promotion or a fetch replaces its side's selection (an
+  each `.pt` with `weights_only=True` (memory-mapped), validates dims, layers
+  and finiteness, and writes only the binding. The payload stays in the HF
+  cache. `activate=True` selects it in its family's slot.
+- A layout provider (`_Provider.files`, site → path) binds every site the
+  repository holds for `<model stem>` (the id's last part, casefolded), at
+  least one. A `LensBinding` is one kind (`binding.kind`) and one file per
+  bound site (`binding.sites`, `binding.file(site)`); its schema allows a
+  nonempty subset of the provider's keys. rs-lenses files may embed a fit
+  record (Qwen3-8B's do): it must name the model, estimator `relp`, and the
+  kind and site the file is bound as, and every file of a binding must agree
+  on corpus, `t_max`, `skip_first` and `n_prompts`. Files with no record
+  (Gemma 4's) bind to the card's corpus (`RS_LENSES_CORPUS`, 128 tokens, skip
+  16) with `provenance.embedded = false`.
+- `load_external_lens` is offline and loads every bound site into one
+  `JacobianLens`. It rechecks the Neuronpedia config digest, `n_prompts` and
+  each site's layer roster. **It does not re-hash the checkpoint** against the
+  binding's sha256.
+- Default order (`lens_source_preference_key`): the R family first (`rs-r`,
+  `workspace-r`, `neuronpedia`, `workspace-j`, `local:r`, `local:j`, tagged
+  fits), then the S family (`rs-s`, `local:s`, `local:k`, tagged fits).
+  Listings and serve's auto-selection (`cli/verbs/serve.py::enable_live_lens`,
+  R family only) use it. `list_lens_sources` rows carry `lens` (kind),
+  `family` (`R` or `S`; `output`/`input` is the internal slot name, never
+  shown) and `sites`. Selecting an S-family source over the server checks that
+  it loads for these weights (409 otherwise), as the R family's live enable
+  does.
+- A fit, a promotion or a fetch replaces its family's selection (an
   output-kind fit only when it holds `out`). Removal unselects only an exact
-  match. `select_source` evicts the resident lens.
+  match. `select_source` evicts that family's resident lens.
 - `matches_loaded_model` decides compatibility. A local fit must match the
   loaded-weight fingerprint exactly. An external lens must match the model id,
-  the live `config._commit_hash`, `d_model` and the layer range, so a model
-  loaded without a Hub commit never matches one.
+  the live `config._commit_hash`, `d_model` and the layer range of every site
+  it holds, so a model loaded without a Hub commit never matches one.
 
 ## Estimator (`transport.py`, `fit.py`)
 
@@ -337,17 +397,31 @@ tensors). `LensInstrument` takes every dependency explicitly: model, capture
 - **`state_lock` is the lens-state boundary.** It is a reentrant leaf lock
   over refresh, adopt, evict, registry and live mutations, and `prepare`'s
   snapshot. Take the model-exclusive guard first, never while holding it.
-- `resident()` reconciles with disk on every call: it evicts a removed,
-  replaced or incompatible artifact and adopts a new one. A bound run's pin
-  short-circuits it. `adopt` and `evict` rebuild probe layers, the live
-  stack and the stash in one transaction, and evict every `jlens/` profile.
+- **Two families resident together.** `runtime` holds the R family's lens,
+  `input_runtime` the S family's. `resident()` / `resident_input()` reconcile
+  each with disk on every call: they evict a removed, replaced or incompatible
+  artifact and adopt a new one; a bound run's pin (`run.lens` /
+  `run.input_lens`) short-circuits them. `adopt` dispatches on the lens kind
+  (an input kind goes to `adopt_input`). `adopt` and `evict` rebuild the
+  `jlens/` probes' layers, the live stack and the stash in one transaction and
+  evict every `jlens/` profile; `adopt_input` and `evict_input` do the same
+  for `slens/` probes, profiles and the input stash. A probe spec carries
+  `side` (`output` for `jlens/`, `input` for `slens/`; absent reads as
+  `output`). A source without `out` leaves its family's probes and atoms
+  without layers rather than reading `mid`.
 - **Per generation:** `prepare` → `plan` → `bind` → `close_run`. `prepare`
   refuses while a run is bound, because a stale pin would suppress its
   refresh. Its `LensPrep` is the atomic snapshot (lens, specs, live state,
-  fingerprint). `plan` and `bind` read only the prep, never the registry: a
-  concurrent adoption pairs lens A with lens B's layers, which fails with a
-  `KeyError` in the transport stack. A run is pinned when live readout is on
-  or when probes feed a final aggregate or a gate.
+  fingerprint, and the S family's `input_lens`/`input_pinned`). `plan` and
+  `bind` read only the prep, never the registry: a concurrent adoption pairs
+  lens A with lens B's layers, which fails with a `KeyError` in the transport
+  stack. A run pins the R family when live readout is on or when `jlens/`
+  probes feed a final aggregate or a gate, and the S family when `slens/`
+  probes feed a final aggregate, a gate or the live readout's per-step
+  readings. With live readout on, `plan` also captures the `slens/` probes'
+  band (their S lens's `out` layers), not only the R live layers. A source
+  without `out` pins with its probes layerless; nothing reads its
+  `source_layers`.
 - `fit`, `readout` and `attach` run under the exclusive guard. `fit` takes
   `lens_fit_lock` first and calls `assert_unsteered`. `fit(prompts, kind=,
   sites=, layers=, …)` defaults to `kind="J"` and both sites; the CLI and the
@@ -378,8 +452,6 @@ the per-layer softmax probability `p_l(v)`.
   `sae`, `neuron`, `head`) name instrument units. Names stay verbatim and
   case-sensitive (`jlens/Paris` ≠ `jlens/paris`), take no `:variant`, skip the
   manifold tiers, and no manifold may be authored or installed under them.
-  `slens` (input side, including `#<id>`) parses but has no resolver yet;
-  steering it raises `ProfileNotRegisteredError`.
 - **Steering atom.** `jlens/<word>` or `jlens/#<id>` resolves lazily through
   the registry's `jlens` atom resolver into `register_direction`. That yields
   `W_U[v] @ J_l` on every fitted layer (`W_U P J_l` under an OPT projection),
@@ -390,6 +462,19 @@ the per-layer softmax probability `p_l(v)`.
   (`InvalidTokenIdError`). Lens atoms run hot. On gemma-3-4b α ≈ 0.3 was the
   coherent sweet spot and α ≥ 0.5 over-steered into repetition, because the
   atom is one sharp token direction rather than a distributed contrast.
+- **`slens/` atom.** `slens/<word>` or `slens/#<id>` resolves through the
+  registry's `slens` resolver into `register_input_direction`: the footprint
+  `K_l ẽ_v` at the S lens's `out` site on every layer it holds (steering
+  injects at block outputs), an ordinary profile that pushes, ablates, takes a
+  `{…}` layer clause and goes through the whitener exactly as a `jlens/` atom
+  does. `jlens/` steers toward saying a token, `slens/` toward having read it;
+  they are different directions. No S lens is `LensNotFittedError` (404, names
+  `rs-s`); a mid-only S lens is the same error naming the missing `out` site.
+  `#<id>` is bounds-checked against the input embedding, and a token the
+  footprint mask drops (special, added, byte-fallback, padding) is
+  `InvalidTokenIdError` for atoms and probes alike. Resolution runs in the
+  model-exclusive section (the first S use builds the embedding statistics);
+  the footprints are CPU fp32 against the lens's CPU matrices.
 - **Probe.** `add_probe("jlens/…")` routes through `readout/roster.py` to
   `attach`, never the Monitor: no whitener, no fold. It yields a
   `ScalarReading` (unit `mean_token_probability`) with a per-layer `p_l` trace
@@ -397,6 +482,15 @@ the per-layer softmax probability `p_l(v)`.
   in the lens identity, so the same word under another source or a re-fit is
   a different probe. The final aggregate pools the same last-content-token
   slice as the Monitor and SAE.
+- **`slens/` probe.** `add_probe("slens/…")` routes to the same `attach`
+  (`side: input`) and builds the embedding statistics. Per layer `z_L` of the
+  token (one batched pullback over the S lens's `out` layers, then
+  `TokenEmbeddings.z_of`, one host transfer); the `ScalarReading` is
+  `mean_L z_L` (unit `mean_footprint_z`), `per_layer` the `z_L`, and a depth
+  summary weighted by `max(z_L, 0)` (basis `footprint_z`). Layers come from
+  the lens the reading uses, never the registry. `probe_hash` folds in the S
+  lens identity (`slens-footprint-z-v1`). It joins the final aggregate, the
+  gate path and, with live readout on, the per-step readings.
 - **Gate.** `@when:jlens/<word> > x` (also `[0]` or `#<id>`) fires only for an
   attached probe. The strength channel is the only one
   (`_GATE_CHANNELS = (Axis,)`); `:fraction`, `:membership`, `@label` and
@@ -404,6 +498,13 @@ the per-layer softmax probability `p_l(v)`.
   computed post-forward and stashed by `step_id`, and the display step reuses
   them only from the same forward. A lens gate forces per-step lens reads
   whatever the live toggle says, but never per-token Monitor scoring.
+  `@when:slens/<word> > x` works the same way on the footprint z; its readings
+  are stashed by `step_id` on the run (`input_stash`, which records the probes
+  read on that forward), so the display step reads only the probes the gate
+  did not, and with live readout on the gate reads them all. An `slens/`-only
+  gate never resolves the R family. The live step folds any `slens/` block it
+  reads into its own packed host transfer; a gate callback that reads both
+  families pays two (the R gate stats transfer inside their own helper).
 
 ## Live readout, replay, decomposition
 
@@ -417,12 +518,18 @@ the per-layer softmax probability `p_l(v)`.
   forward through `TokenReplay` (`apply_steering=False` reads the unsteered
   counterfactual). It returns the `scope="replay"` measurement envelope.
   `top_k=None` means 8; valid values are 1 to 256.
-- `decompose(selector, k=16)` is greedy pursuit against `TokensOut`, never
-  materialized, with chunked and cached atom norms. Selection is
-  norm-normalized. It re-solves NNLS but takes the exact unconstrained solve
-  when that is already nonnegative, and tiny solves run on CPU. `share` is the
-  variance fraction the atoms carry, typically 6–15% for concept vectors.
-  `LensDictionary` leaves room for `tokens-in` and signed `neurons`.
+- `decompose(selector, k=16, dictionary="tokens-out")` is greedy pursuit
+  against a dictionary never materialized, with chunked and cached atom norms:
+  `TokensOut` (`W_U J_l`, the R family) or `TokensIn` (`K_l ẽ_v` at the S
+  lens's `out` site, masked tokens scoring `-inf`; its norms are cached per
+  S identity and layer). Selection is norm-normalized. It re-solves NNLS but
+  takes the exact unconstrained solve when that is already nonnegative, and
+  tiny solves run on CPU. `share` is the variance fraction the atoms carry,
+  typically 6–15% for concept vectors against `tokens-out`. `LensDictionary`
+  leaves room for signed `neurons`. Both dictionaries select, solve and score
+  `share` in the Euclidean residual metric, with no whitener: an activation-
+  space metric that `geometry/AGENTS.md` does not list as a deliberate
+  exception. Whether to list it or whiten targets and atoms is open (a9).
 
 ## Errors, seams, tests
 
@@ -448,13 +555,17 @@ the per-layer softmax probability `p_l(v)`.
   invalidate every 5.4 local fit and reject drowse.ai's out-only packs too.
 - Tests: CPU tests in `tests/lens/` (one file per module plus
   `test_migrate_lens_v7.py`; `test_lens_sites.py` pins kinds × sites in the
-  object and the store, `test_lens_depth.py` the depth rule) run on the toy
-  model in `tests/support/jlens_toys.py`, a genuine tiny llama the transport
-  fits. `test_lens_transport.py` holds every dense family × kind × site to
-  the autograd oracle (`tests/support/lens_oracle.py`), every block map to
-  the adjoint identity, and (when `~/Work/neuron-lens` is checked out)
-  agreement with neuron-lens's transport; `test_fit.py` covers `fit_lens`,
-  `test_fit_split_half.py` the split-half records and per-site lifecycle. They use `tests/support/lens.py`
+  object and the store, `test_lens_depth.py` the depth rule,
+  `test_lens_rs_sources.py` the rs-lenses bindings over a synthetic Hub,
+  `test_lens_footprint.py` footprint z, the mask, `read_vectors` and
+  `TokensIn`, `test_slens.py` the S family through a tiny session with a
+  hand-built S lens) run on the toy model in `tests/support/jlens_toys.py`, a
+  genuine tiny llama the transport fits. `test_lens_transport.py` holds every
+  dense family × kind × site to the autograd oracle
+  (`tests/support/lens_oracle.py`), every block map to the adjoint identity,
+  and (when `~/Work/neuron-lens` is checked out) agreement with neuron-lens's
+  transport; `test_fit.py` covers `fit_lens`, `test_fit_split_half.py` the
+  split-half records and per-site lifecycle. They use `tests/support/lens.py`
   (`LensHarness`, `lens_instrument(**kw)`, `lens_kwargs(**kw)`,
   `FakeCapture`), which builds a real `LensInstrument` with session-shaped
   dependencies. Generation-boundary tests use `tiny_session`.

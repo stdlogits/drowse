@@ -266,8 +266,16 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   holding a site or layer the request omits, exits 2 (a 5.4 default fit
   holds 100 documents; ask for `--prompts 100`).
 - `fetch` never loads the model: the payload stays in the Hugging Face cache and
-  Drowse writes, and activates, a commit-pinned binding. `show` / `rm` default to
-  the active output-side source; removing a binding never touches the cache.
+  Drowse writes, and activates in its family's slot, a commit-pinned binding
+  (`rs-r`/`rs-s` bind every site the repository holds). `show` / `rm` default
+  to the active R-family source, else the active S-family one; removing a
+  binding never touches the cache. `ls` prints each source's kind and sites,
+  `show` its layers per site, `use` the family it selected.
+- `top MODEL PROMPT [--site out|mid]` is `session.lens.read_prompt`: each
+  layer's residual read through both families (S footprint z, R readout
+  probability), S line first, each with its depth weight and lens label or
+  the reason it is absent; `-j` emits `LensRead.to_dict()` per position.
+  `decompose --dictionary tokens-out|tokens-in` (default `tokens-out`).
 - `top` reads a raw prompt (no chat template); `decompose SELECTOR -m` takes the
   model as a flag, unlike the rest of the group.
 

@@ -490,11 +490,12 @@ def test_serve_live_sae_prefers_prepared_sources(
 # ---------------------------------------------------------------------------
 
 class _ReadoutLens:
-    def resident(self) -> Any:
-        return SimpleNamespace(source_layers=[3, 4])
+    def read_prompt(self, _prompt: str, **_kw: Any) -> Any:
+        from drowse.lens.read import FamilyRead, LensRead, TokenScore
 
-    def readout(self, _prompt: str, **_kw: Any) -> Any:
-        return {3: [[("a", 0.5)]], 4: [[("b", 0.25)]]}, [[("a", 0.4, 3.0, 0.5)]]
+        r = FamilyRead("R", 0.75, "probability", lens="R:out", tokens=(TokenScore(1, "a", 0.5),))
+        s = FamilyRead("S", 0.25, "footprint_z", absent="no S-lens available")
+        return {7: [LensRead(3, "out", 0.5, r=r, s=s)]}
 
     def decompose(self, _selector: str, **_kw: Any) -> Any:
         return {3: (0.1, [("a", 0.2)]), 4: (0.3, [("b", 0.4)])}

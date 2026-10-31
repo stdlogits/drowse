@@ -39,6 +39,7 @@ class _FakeLens(LensInstrument):
         self.fit = MagicMock()  # type: ignore[method-assign]
         self.select_source = MagicMock()  # type: ignore[method-assign]
         self._require = MagicMock(return_value=object())  # type: ignore[method-assign]
+        self.resident_input = MagicMock(return_value=object())  # type: ignore[method-assign]
         self.runtime.resolve_layers = MagicMock(  # type: ignore[method-assign]
             return_value=[12, 18],
         )
@@ -443,6 +444,30 @@ class TestSourceSwitch:
         assert session.lens.disable_calls == 1
         session.lens.select_source.assert_called_once_with("neuronpedia")
 
+    def test_s_family_switch_selects_without_touching_live(self, session_and_client: Any) -> None:
+        """An S-family source only selects: there is no live S readout, so the
+        R family's live readout stays as it was."""
+        session, client = session_and_client
+        session.lens.layers = [3, 4]
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "rs-s"})
+        assert resp.status_code == 200
+        assert resp.json() == {"source": "rs-s", "live_layers": [3, 4]}
+        assert session.lens.disable_calls == 0 and session.lens.enable_calls == []
+        session.lens.select_source.assert_called_once_with("rs-s")
+
+    def test_s_family_switch_to_an_unloadable_source_is_a_409(
+        self, session_and_client: Any,
+    ) -> None:
+        """Regression: an S-family switch only selected, so a source that
+        cannot load for these weights answered 200 and failed on first use;
+        it now answers 409 like an unloadable R-family switch."""
+        session, client = session_and_client
+        session.lens.resident_input.return_value = None
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "rs-s"})
+        assert resp.status_code == 409
+        assert "cannot load" in resp.json()["detail"]
+        session.lens.select_source.assert_called_once_with("rs-s")
+
     def test_unfitted_lens_switch_is_a_409(self, session_and_client: Any) -> None:
         """Regression: the error-policy collapse turned this route's 409 into
         ``LensNotFittedError``'s generic 404."""
@@ -450,7 +475,7 @@ class TestSourceSwitch:
 
         session, client = session_and_client
         session.lens.enable_error = LensNotFittedError("no fitted J-lens for test/model")
-        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:default"})
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:j"})
         assert resp.status_code == 409
         assert resp.json() == {"detail": "no fitted J-lens for test/model"}
 
@@ -459,18 +484,18 @@ class TestSourceSwitch:
         scrubbed to the generic filesystem message."""
         session, client = session_and_client
         session.lens.select_source.side_effect = FileNotFoundError(
-            "J-lens source local:gone is not available",
+            "J-lens source local:r-gone is not available",
         )
-        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:gone"})
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:r-gone"})
         assert resp.status_code == 404
-        assert resp.json() == {"detail": "J-lens source local:gone is not available"}
+        assert resp.json() == {"detail": "J-lens source local:r-gone is not available"}
 
     def test_os_level_miss_on_switch_stays_scrubbed(self, session_and_client: Any) -> None:
         session, client = session_and_client
         session.lens.select_source.side_effect = FileNotFoundError(
             2, "No such file or directory", "/secret/home/.drowse/models/x/jlens/active.json",
         )
-        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:default"})
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:j"})
         assert resp.status_code == 404
         assert "/secret" not in resp.text
 

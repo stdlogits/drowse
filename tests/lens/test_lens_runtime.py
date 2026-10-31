@@ -139,9 +139,9 @@ def test_jlens_device_stacks_use_a_bounded_lru_cache() -> None:
 
     assert len(session.lens.runtime._stacks) == DEVICE_STACK_CACHE_MAX
     keys = list(session.lens.runtime._stacks)
-    assert (id(lens), str(device), (0,)) in keys
-    assert (id(lens), str(device), (0, 1)) in keys
-    assert (id(lens), str(device), (1,)) not in keys
+    assert (id(lens), "out", str(device), (0,)) in keys
+    assert (id(lens), "out", str(device), (0, 1)) in keys
+    assert (id(lens), "out", str(device), (1,)) not in keys
 
 
 def test_jlens_token_decode_cache_is_bounded() -> None:
@@ -683,20 +683,27 @@ def test_bind_rejects_same_family_plan_prep_crossing(tiny_session: Any) -> None:
         session.lens.bind(plan_other, prep_local)
 
 
-def test_prepare_rejects_a_layerless_pin_demanded_lens(
+def test_prepare_pins_a_mid_only_lens_with_no_probe_layers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A pin-demanded lens without ``source_layers`` is structurally
-    broken (layers align captures, specs, and Jacobians) — it fails at
-    the prepare boundary, not as a mid-generation KeyError."""
+    """Regression: a pin-demanded R lens holding only ``mid`` pins with its
+    ``jlens/`` probes layerless (they read ``out``), as its adoption left
+    them; prepare used to probe ``source_layers``, which raises
+    ``LensNotFittedError`` for such a lens, and failed every generation."""
+    from drowse.lens.jlens import JacobianLens
+    from drowse.lens.key import LensKey
     from drowse.readout.types import ReadRequest
 
     session = LensHarness()
     inst = session.lens
-    monkeypatch.setattr(inst, "resident", lambda: object())  # no source_layers
-    inst.live = {"layers": [0]}
-    with pytest.raises(RuntimeError, match="source_layers"):
-        inst.prepare(ReadRequest(final_aggregate=False, live=True))
+    mid_only = JacobianLens(
+        None, mid={0: torch.eye(4)}, n_prompts=1, d_model=4, key=LensKey("R"),
+    )
+    monkeypatch.setattr(inst, "resident", lambda: mid_only)
+    inst.probes["jlens/a"] = {"word": "a", "token_id": 1, "layers": [], "side": "output"}
+    prep = inst.prepare(ReadRequest(final_aggregate=True, live=False))
+    assert prep.pinned and prep.lens is mid_only
+    assert prep.specs["jlens/a"]["layers"] == []
 
 
 def test_generation_lens_snapshot_avoids_per_token_disk_validation(
@@ -764,8 +771,8 @@ def test_jlens_property_rechecks_loaded_pointer_fingerprint(
         "n_prompts": 1,
     }
     replaced = {**compatible, "model_fingerprint": "different-weights"}
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model: compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model: (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
 
     assert session.lens.resident() is None
 
@@ -785,8 +792,8 @@ def test_has_compatible_jlens_rechecks_loaded_pointer_fingerprint(
     replaced = {**compatible, "model_fingerprint": "different-weights"}
     session.lens.runtime.lens = lens
     session.lens.runtime.identity = cast(Any, ("old",))
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model: compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model: (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
 
     assert not session.lens.has_compatible()
 

@@ -8,9 +8,10 @@ norms.  The pursuit is the paper's gradient-pursuit decomposition: greedily
 pick the atom that best correlates with the residual, re-solve the
 coefficients over the selected atoms, repeat.
 
-One dictionary exists today, :class:`TokensOut` — ``W_U J_l``, the output
-side's token directions.  The interface is the hook for the others the lens
-model implies: ``tokens-in`` (input-side footprints ``K_l ẽ_v``) and
+Two dictionaries exist: :class:`TokensOut` (``tokens-out``, ``W_U J_l``: the
+tokens a direction is disposed to *say*) and :class:`TokensIn`
+(``tokens-in``, the S-family footprints ``K_l ẽ_v`` over the token mask: the
+tokens whose *having been read* it resembles).  The interface leaves room for
 ``neurons`` (``W_down`` columns, *signed* because a neuron has two poles).
 A signed dictionary selects by ``|score|`` and solves its coefficients
 unconstrained; a nonnegative one keeps the NNLS step.
@@ -18,9 +19,15 @@ unconstrained; a nonnegative one keeps the NNLS step.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 import torch
+
+if TYPE_CHECKING:
+    from drowse.lens.footprint import TokenEmbeddings
+
+#: The dictionaries ``decompose`` accepts, by wire name.
+DICTIONARIES = ("tokens-out", "tokens-in")
 
 
 class LensDictionary(Protocol):
@@ -98,6 +105,60 @@ class TokensOut:
     def norms(self) -> torch.Tensor:
         if self.atom_norms is None:
             self.atom_norms = token_atom_norms(self.jacobian, self.unembed)
+        return self.atom_norms.to(device=self.device, dtype=torch.float32)
+
+
+def footprint_atom_norms(
+    matrix: torch.Tensor, embeddings: "TokenEmbeddings", *, chunk: int = 8192,
+) -> torch.Tensor:
+    """Per-atom norms ``‖K ẽ_v‖`` over the vocabulary, in chunks so the
+    ``[vocab, d]`` dictionary never exists in full.  Masked tokens read 1.0
+    (they score ``-inf`` and are never selected)."""
+    norms = torch.ones(embeddings.vocab, dtype=torch.float32, device=embeddings.device)
+    K = matrix.to(device=embeddings.device, dtype=torch.float32)
+    for start in range(0, embeddings.vocab, chunk):
+        ids = torch.arange(start, min(start + chunk, embeddings.vocab), device=embeddings.device)
+        keep = embeddings.keep[ids]
+        if not bool(keep.any()):
+            continue
+        block = embeddings.centred(ids[keep]) @ K.T
+        norms[ids[keep]] = block.norm(dim=-1)
+    return norms
+
+
+@dataclass
+class TokensIn:
+    """``K_l ẽ_v``: the footprint a token leaves at layer ``l`` (S family, ``out``).
+
+    Atoms run over the token mask of ``embeddings``; masked tokens score
+    ``-inf`` and are never selected.  ``atom_norms`` may carry cached norms;
+    otherwise they are computed in chunks on first use.
+    """
+
+    matrix: torch.Tensor
+    embeddings: "TokenEmbeddings"
+    atom_norms: torch.Tensor | None = None
+    kind: str = field(default="tokens-in", init=False)
+    nonneg: bool = field(default=True, init=False)
+
+    def __post_init__(self) -> None:
+        self.matrix = self.matrix.to(device=self.embeddings.device, dtype=torch.float32)
+
+    @property
+    def device(self) -> torch.device:
+        return self.embeddings.device
+
+    def scores(self, residual: torch.Tensor) -> torch.Tensor:
+        # (K ẽ_v) · r = ẽ_v · (Kᵀ r): one pullback, one pass over the vocabulary.
+        u = residual.to(device=self.device, dtype=torch.float32) @ self.matrix
+        return self.embeddings.scores(u.reshape(1, -1))[0]
+
+    def atom(self, index: int) -> torch.Tensor:
+        return self.embeddings.centred([index])[0] @ self.matrix.T
+
+    def norms(self) -> torch.Tensor:
+        if self.atom_norms is None:
+            self.atom_norms = footprint_atom_norms(self.matrix, self.embeddings)
         return self.atom_norms.to(device=self.device, dtype=torch.float32)
 
 

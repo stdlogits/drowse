@@ -1,6 +1,6 @@
-"""``drowse lens <verb>`` — the per-model Jacobian lens: fit, the
-local/external source lifecycle, and the two readouts (``top``,
-``decompose``)."""
+"""``drowse lens <verb>`` — the per-model lenses: fit, the local/external
+source lifecycle (one R-family and one S-family source selected per model),
+and the two readouts (``top``, ``decompose``)."""
 
 from __future__ import annotations
 
@@ -46,8 +46,8 @@ def _sites(text: str) -> tuple[str, ...]:
     return tuple(site for site in LENS_SITES if site in names)
 
 _SOURCES_HELP = (
-    "local:r, local:j (or local:<kind>-<tag>), or a fetched binding "
-    "(neuronpedia, workspace-r, workspace-j)"
+    "local:r, local:j, local:s, local:k (or local:<kind>-<tag>), or a fetched "
+    "binding (rs-r, rs-s, workspace-r, neuronpedia, workspace-j)"
 )
 
 
@@ -182,11 +182,12 @@ def run_fit(args: argparse.Namespace) -> None:
 
 def _lens_source(model_id: str, source: str | None) -> Any:
     """``local:<kind>[-<tag>]`` / a binding name / ``None`` (the active
-    output-side source) → a :class:`~drowse.base.source_registry.SourceRef`."""
+    R-family source, else the active S-family one) → a
+    :class:`~drowse.base.source_registry.SourceRef`."""
     from drowse.lens.sources import LENS_SOURCES
 
     if source is None:
-        ref = LENS_SOURCES.active(model_id, "output")
+        ref = LENS_SOURCES.active(model_id, "output") or LENS_SOURCES.active(model_id, "input")
         if ref is None:
             raise CliError(f"no lens source for {model_id}", exit_code=1)
         return ref
@@ -207,13 +208,14 @@ def run_fetch(args: argparse.Namespace) -> None:
     if args.json_output:
         emit_json(binding.to_json())
         return
-    bound = binding.files[binding.key]
     print(
-        f"Fetched {binding.name} for {args.model}: {binding.key.label} lens, "
-        f"{len(bound.layers)} layers, {binding.n_prompts} prompts"
+        f"Fetched {binding.name} for {args.model}: {binding.kind}-lens at "
+        f"{', '.join(binding.sites)}, {binding.n_prompts} prompts"
     )
     print(f"  provider: {binding.repo_id}@{binding.repo_revision}")
-    print(f"  checkpoint: {bound.path}")
+    for site in binding.sites:
+        bound = binding.file(site)
+        print(f"  {site + ':':<5} {bound.path} ({len(bound.layers)} layers)")
     note("Provider payload remains in the Hugging Face cache; binding is active.")
 
 
@@ -226,20 +228,26 @@ def run_ls(args: argparse.Namespace) -> None:
         return
     if not rows:
         print(f"No lens sources for {args.model}.")
+    width = max((len(str(row["source"])) for row in rows), default=0)
     for row in rows:
-        print(f"{'*' if row['active'] else ' '} {row['source']}")
+        sites = ",".join(row["sites"]) or "unreadable"
+        print(
+            f"{'*' if row['active'] else ' '} {row['source']:<{width}}  "
+            f"{row['lens']}-lens  {sites}"
+        )
 
 
 def run_use(args: argparse.Namespace) -> None:
-    from drowse.lens.sources import use_lens_source
+    from drowse.lens.sources import lens_source_side, use_lens_source
 
     with user_errors(ValueError, exit_code=2):
-        use_lens_source(args.model, args.source)
-    print(f"Active lens for {args.model}: {args.source}")
+        ref = use_lens_source(args.model, args.source)
+    family = "R" if lens_source_side(ref) == "output" else "S"
+    print(f"Active {family}-family lens for {args.model}: {args.source}")
 
 
 def run_show(args: argparse.Namespace) -> None:
-    from drowse.lens.sources import LENS_SOURCES, load_lens_source_sidecar
+    from drowse.lens.sources import LENS_SOURCES, lens_family, load_lens_source_sidecar
     from drowse.lens.store import lens_artifact_size, lens_layers
 
     ref = _lens_source(args.model, args.source)
@@ -257,13 +265,19 @@ def run_show(args: argparse.Namespace) -> None:
             "active": is_active, **sidecar,
         })
         return
-    layers = lens_layers(sidecar)
     skip_first = (
         sidecar["estimator_policy"]["skip_first_positions"] if ref.local
         else sidecar.get("skip_first_positions", "?")
     )
-    print(f"{sidecar['kind']}-lens {label} for {args.model}{' (active)' if is_active else ''}")
-    print(f"  layers:   {layers[0]}..{layers[-1]} ({len(layers)})")
+    family = lens_family(sidecar["kind"])
+    print(
+        f"{sidecar['kind']}-lens {label} for {args.model} ({family} family)"
+        f"{' (active)' if is_active else ''}"
+    )
+    for site in ("out", "mid"):
+        layers = lens_layers(sidecar, site)
+        if layers:
+            print(f"  {site + ':':<9} layers {layers[0]}..{layers[-1]} ({len(layers)})")
     print(f"  d_model:  {sidecar['d_model']}")
     print(f"  prompts:  {sidecar.get('n_prompts', '?')}")
     corpus = f"  corpus:   {sidecar.get('corpus_spec', '?')}"
@@ -300,62 +314,58 @@ def run_rm(args: argparse.Namespace) -> None:
 # readouts
 # ---------------------------------------------------------------------------
 
+def _half_line(half: Any, width: int) -> str:
+    """One family's half of a read as ``R:out 0.70  tok tok tok`` (or why it
+    is absent)."""
+    head = f"{half.lens or half.family}"
+    if not half.present:
+        return f"{head:<6} {half.weight:.2f}  (absent: {half.absent})"
+    tokens = "  ".join(t.token.strip() or repr(t.token) for t in half.tokens[:width])
+    return f"{head:<6} {half.weight:.2f}  {tokens}"
+
+
 def run_top(args: argparse.Namespace) -> None:
     layers = parse_layers(args.layers)
-    positions = args.position or [-1]
     with open_session(args) as session:
-        lens = session.lens.resident()
-        if lens is None:
-            raise CliError(
-                f"no lens for {args.model} — run `drowse lens fetch {args.model}` "
-                f"or `drowse lens fit {args.model}`",
-                exit_code=1,
-            )
-        per_layer, aggregate = session.lens.readout(
-            args.prompt, layers=layers if layers is not None else list(lens.source_layers),
-            positions=args.position, top_k=args.top_k, aggregate=True,
+        reads = session.lens.read_prompt(
+            args.prompt, site=args.site, layers=layers,
+            positions=args.position, k=args.top_k,
         )
     if args.json_output:
         emit_json({
             "model": args.model,
             "prompt": args.prompt,
-            "positions": positions,
-            # Per-layer softmax → mean-probability strength and a
-            # probability-weighted depth center of mass, strength-descending.
-            "aggregate": [
-                [
-                    {"token": t, "strength": round(s, 6), "com": round(c, 4), "spread": round(sp, 4)}
-                    for t, s, c, sp in rows
-                ]
-                for rows in aggregate
-            ],
-            # Per-layer rows carry the unit the aggregate averages: the
-            # per-layer readout probability p_l.
-            "layers": {
-                str(layer): [[{"token": t, "strength": round(p, 6)} for t, p in row] for row in rows]
-                for layer, rows in per_layer.items()
+            "site": args.site,
+            "positions": sorted(reads),
+            # Per position, one read per layer: the R half (per-layer readout
+            # probability p_l) and the S half (footprint z), each with its
+            # depth weight and the lens it read through.
+            "reads": {
+                str(position): [read.to_dict() for read in rows]
+                for position, rows in sorted(reads.items())
             },
         })
         return
-    for i, pos in enumerate(positions):
-        if len(positions) > 1:
-            print(f"\nposition {pos}:")
-        print("  aggregate (all displayed layers):")
-        for t, s, c, sp in aggregate[i]:
-            print(f"    {t.strip() or repr(t):<20} strength {s:.3f}   com {c:.2f} ±{sp:.2f}")
-        print("  per-layer:")
-        for layer in sorted(per_layer):
-            print(f"  L{layer:>3}  {'  '.join(t.strip() or repr(t) for t, _ in per_layer[layer][i])}")
+    for position, rows in sorted(reads.items()):
+        if len(reads) > 1:
+            print(f"\nposition {position}:")
+        for read in rows:
+            # Shallow-faithful first: S, then R, as the depth rule orders them.
+            print(f"  L{read.layer:>3}  {_half_line(read.s, args.top_k)}")
+            print(f"        {_half_line(read.r, args.top_k)}")
 
 
 def run_decompose(args: argparse.Namespace) -> None:
     layers = parse_layers(args.layers)
     with open_session(args) as session:
-        out = session.lens.decompose(args.selector, k=args.top_k, layers=layers)
+        out = session.lens.decompose(
+            args.selector, k=args.top_k, layers=layers, dictionary=args.dictionary,
+        )
     mean_share = sum(share for share, _ in out.values()) / len(out)
     if args.json_output:
         emit_json({
             "selector": args.selector, "model": args.model, "k": args.top_k,
+            "dictionary": args.dictionary,
             "mean_share": round(mean_share, 4),
             "layers": {
                 str(layer): {
@@ -366,7 +376,7 @@ def run_decompose(args: argparse.Namespace) -> None:
             },
         })
         return
-    print(f"J-space share of '{args.selector}' (k={args.top_k}):")
+    print(f"{args.dictionary} share of '{args.selector}' (k={args.top_k}):")
     print(f"  mean over {len(out)} layers: {mean_share:.1%}")
     for layer in sorted(out):
         share, tokens = out[layer]
@@ -378,10 +388,11 @@ _SOURCE_OPT = arg("source", nargs="?", default=None, help=f"{_SOURCES_HELP} (def
 
 GROUP = Verb(
     "lens",
-    "Jacobian lens (fit/fetch/ls/show/use/top/decompose/rm)",
-    description="Per-model Jacobian lens: fit the residual→output transport, read "
-                "out what intermediate activations are disposed to say, and split "
-                "directions into their verbalizable (J-space) component.",
+    "Jacobian lenses (fit/fetch/ls/show/use/top/decompose/rm)",
+    description="Per-model Jacobian lenses: R/J read what a residual is disposed "
+                "to say, S/K what it has read. Fit or fetch them, read a prompt "
+                "through the depth rule (S early, R late), and split directions "
+                "against token dictionaries.",
     verbs=(
         Verb(
             "fit", "Fit one of the model's lenses over a text corpus",
@@ -442,12 +453,16 @@ GROUP = Verb(
             "fetch", "Fetch an external lens into its provider cache",
             run=run_fetch,
             description="Pin an external lens's repository and base-model revisions "
-                        "and write only a small binding; the payload stays in the "
-                        "Hugging Face cache. No model load.",
+                        "and write only a small binding (one file per site it "
+                        "publishes); the payload stays in the Hugging Face cache "
+                        "and the binding becomes its family's active source. No "
+                        "model load.",
             args=(
                 _MODEL_POS,
                 arg("source", nargs="?", default="neuronpedia",
-                    help="neuronpedia (default), workspace-r (RelP), or workspace-j"),
+                    help="neuronpedia (default), rs-r / rs-s (stdlogits/rs-lenses' "
+                         "R- and S-lens, out and mid, Qwen3-8B and Gemma 4 12B), "
+                         "workspace-r (RelP), or workspace-j"),
                 arg("--revision", default="main", help="Provider revision to resolve and pin"),
                 arg("--repo", default=None, metavar="REPO",
                     help="Override the provider repository"),
@@ -462,35 +477,47 @@ GROUP = Verb(
         Verb("use", "Select an already available lens source", run=run_use,
              args=(_MODEL_POS, arg("source", help=_SOURCES_HELP))),
         Verb(
-            "top", "Lens readout on a prompt: top vocabulary tokens per layer",
+            "top", "Read a prompt's residuals per layer through the depth rule",
             run=run_top,
-            description="One forward pass on a raw prompt (no chat template), each "
-                        "selected layer decoded through softmax(W_U · norm(J_l h)), "
-                        "plus the layer-aggregated view.",
+            description="One forward pass on a raw prompt (no chat template); each "
+                        "layer's residual at the site is read through both lens "
+                        "families: the S read (footprint z, faithful early) and "
+                        "the R read (softmax(W_U · norm(J_l h)), faithful late), "
+                        "each with its depth weight and the lens it used.",
             args=(
                 MODEL,
                 arg("prompt", help="Raw prompt to read out"),
                 arg("-k", "--top-k", type=positive_int, default=8, metavar="K",
-                    help="Tokens per (layer, position) readout (default 8)"),
-                layers_arg("Layer indices or a mode (default: every fitted layer)",
+                    help="Tokens per (layer, position) read and family (default 8)"),
+                layers_arg("Layer indices or a mode (default: every layer a lens "
+                           "holds at the site)",
                            metavar="L1,L2-L3,...|sample|workspace|all"),
                 arg("--position", type=int, action="append", default=None, metavar="P",
                     help="Token position to read (repeatable; negative from the end; "
                          "default: final)"),
+                arg("--site", choices=("out", "mid"), default="out",
+                    help="out = each block's output (default); mid = the residual "
+                         "after its attention, the MLP's input"),
                 MODEL_LOAD, JSON,
             ),
         ),
         Verb(
-            "decompose", "Split a steerable direction into its J-space component",
+            "decompose", "Split a steerable direction against a token dictionary",
             run=run_decompose,
-            description="Best sparse nonnegative combination of k J-lens token "
-                        "vectors per layer: the variance share (how verbalizable "
-                        "the direction is) and the contributing tokens.",
+            description="Best sparse nonnegative combination of k token atoms per "
+                        "layer: the variance share and the contributing tokens. "
+                        "tokens-out (default) is W_U J_l through the R-family lens "
+                        "(how verbalizable the direction is); tokens-in is the "
+                        "S-family footprint K_l e_v over the token mask (which "
+                        "tokens it reads as having seen).",
             args=(
-                arg("selector", help="Steerable direction (concept, ns/name, or jlens/<word>)"),
+                arg("selector", help="Steerable direction (concept, ns/name, "
+                                     "jlens/<word> or slens/<word>)"),
                 MODEL_REQ,
                 arg("-k", "--top-k", type=positive_int, default=16, metavar="K",
                     help="Sparsity budget (default 16)"),
+                arg("--dictionary", choices=("tokens-out", "tokens-in"),
+                    default="tokens-out", help="Atom dictionary (default tokens-out)"),
                 layers_arg("Layer indices or a mode (default: every fitted layer "
                            "the direction covers)"),
                 MODEL_LOAD, JSON,

@@ -348,6 +348,7 @@ class DrowseSession:
         self._registry.on_swap(lambda swaps: self._roster.swap(swaps))
         self._registry.set_probe_folder(self._fold_profile_probe)
         self._registry.set_atom_resolver("jlens", lambda atom: self._lens_instrument.register_direction(atom))
+        self._registry.set_atom_resolver("slens", lambda atom: self._lens_instrument.register_input_direction(atom))
         self._registry.set_atom_resolver("sae", lambda atom: self._sae_instrument.register_direction(atom))
         # Neutral means + whitener, built lazily from one neutral load.
         self._neutral = NeutralBaseline(

@@ -72,6 +72,8 @@ DepthBasis = Literal[
     "share_weighted_coord_mass",
     # lens: mass = the token's per-layer readout probability p_l
     "readout_probability_mass",
+    # lens (slens/ probes): mass = max(z_l, 0), the token's per-layer footprint z
+    "footprint_z",
     # sae: the resident hook layer's normalized depth, a constant
     "single_layer",
 ]
@@ -225,6 +227,9 @@ class DepthSummary:
 
 #: The lens strength unit — ``mean_l p_l(v)`` over the fitted layers.
 UNIT_MEAN_TOKEN_PROBABILITY = "mean_token_probability"
+#: The ``slens/`` probe unit — ``mean_l z_l(v)``, the token's footprint z
+#: (a vocabulary z-score) averaged over the S lens's ``out`` layers.
+UNIT_MEAN_FOOTPRINT_Z = "mean_footprint_z"
 #: The SAE strength unit when Neuronpedia ``maxActApprox`` is cached.
 UNIT_ACTIVATION_OVER_MAX = "activation_over_max"
 #: The SAE strength unit with no metadata (offline / unlisted feature).
@@ -355,6 +360,8 @@ class ScalarReading:
 
     * ``"mean_token_probability"`` — lens strength, ``mean_l p_l(v)`` in
       ``[0, 1]``;
+    * ``"mean_footprint_z"`` — an ``slens/`` probe, ``mean_l z_l(v)``, the
+      token's footprint z (a vocabulary z-score, unbounded);
     * ``"activation_over_max"`` — SAE activation normalized by the
       Neuronpedia ``maxActApprox`` corpus max, ~``[0, 1]``;
     * ``"raw_activation"`` — SAE activation with no metadata available
@@ -620,6 +627,9 @@ class LensPrep(InstrumentPrep):
       stamp a concurrently adopted replacement's identity onto a run
       pinned to the older lens.
 
+    * ``input_lens`` / ``input_pinned`` — the same pin for the S-family
+      lens that ``slens/`` probes read (``lens`` is the R family's).
+
     The whole snapshot is taken under the instrument's ``state_lock``
     — the one lens-state boundary that also serializes the getter's
     refresh/adoption/eviction and the registry/live mutations — so it
@@ -631,6 +641,8 @@ class LensPrep(InstrumentPrep):
     specs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     live_state: Mapping[str, Any] | None = None
     fingerprint: str | None = None
+    input_lens: Any = None
+    input_pinned: bool = False
 
 
 @dataclass(frozen=True)
@@ -696,6 +708,7 @@ __all__ = [
     "SaeLiveState",
     "ScalarReading",
     "UNIT_ACTIVATION_OVER_MAX",
+    "UNIT_MEAN_FOOTPRINT_Z",
     "UNIT_MEAN_TOKEN_PROBABILITY",
     "UNIT_RAW_ACTIVATION",
     "as_probe_reading",

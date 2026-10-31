@@ -161,20 +161,34 @@ def test_lens_source_default_preference_order() -> None:
     from drowse.lens.sources import lens_source_preference_key
 
     shuffled = [
+        "local:k",
         "local:j-chat",
+        "local:s",
         "local:j",
+        "rs-s",
         "workspace-j",
         "local:r",
         "neuronpedia",
+        "rs-r",
         "workspace-r",
+        "local:s-chat",
+        "nonsense",
     ]
+    # R family first (rs-r, workspace-r, neuronpedia, workspace-j, local:r,
+    # local:j), then the S family (rs-s, local:s, local:k), unknowns last.
     assert sorted(shuffled, key=lens_source_preference_key) == [
+        "rs-r",
         "workspace-r",
         "neuronpedia",
         "workspace-j",
         "local:r",
         "local:j",
         "local:j-chat",
+        "rs-s",
+        "local:s",
+        "local:k",
+        "local:s-chat",
+        "nonsense",
     ]
 
 
@@ -253,7 +267,7 @@ def test_neuronpedia_fetch_pins_the_resolved_model_commit(
     binding = sources.fetch_lens_source("org/model", "neuronpedia")
     assert binding.model_revision == commit
     assert binding.repo_revision == "lens-commit"
-    assert binding.key == LensKey("J")
+    assert binding.kind == "J" and binding.sites == ("out",)
     bound = binding.files[LensKey("J")]
     assert bound.path == "model/jlens/Salesforce-wikitext/model_jacobian_lens.pt"
     assert bound.sha256 == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
@@ -356,7 +370,7 @@ def test_workspace_lens_fetch_binds_loads_and_switches(
         monkeypatch, tmp_path, _workspace_payload("relp"),
     )
     binding = sources.fetch_lens_source("org/model", "workspace-r")
-    assert binding.key == LensKey("R") and binding.provider == "workspace-lenses"
+    assert binding.kind == "R" and binding.provider == "workspace-lenses"
     assert binding.files[LensKey("R")].path == "model/r-lens/lens.pt"
     assert len(binding.files[LensKey("R")].sha256) == 64
     assert binding.corpus == "NeelNanda/pile-10k"
