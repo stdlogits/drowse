@@ -245,6 +245,53 @@ def test_token_anatomy_reads_every_layer_and_its_units(
     assert anatomy["context"] is not None and len(anatomy["context"]) == token["position"] + 1
 
 
+def test_sandwich_blocks_hold_their_output_norms_scale(tmp_path: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gemma's post-attention and post-feedforward norms: a unit's write
+    passes the norm's gain and its per-position scale, held constant (the LN
+    rule); the contributions match autograd with that scale detached, and
+    activity matches the units family's probes."""
+    from tests.support.sessions import TinyCheckpoint, TinySessionFactory
+
+    factory = TinySessionFactory(TinyCheckpoint.write(tmp_path, "gemma3_text"), tmp_path / "seed")
+    try:
+        session = factory()
+        spec = model_spec(session.model)
+        assert spec.blocks[0].mlp_out_norm is not None and spec.blocks[0].attn_out_norm is not None
+        r_lens = _install_lens(session, "R", seed=4)
+        session.add_probe("head/L1h0")
+        node = _node(session, max_tokens=4)
+        seen = _spy_taps(monkeypatch)
+        anatomy = session.token_anatomy(node.id, 1, units=3, patterns=0)["measurements"]["anatomy"]
+        (_ids, taps), = seen
+        u = unembed_cotangent(spec, taps.out[-1], int(anatomy["token"]["token_id"]))
+        for L, layer in enumerate(anatomy["layers"]):
+            block = spec.blocks[L]
+            act = taps.acts[L].clone().requires_grad_(True)
+            z = taps.z[L].clone().requires_grad_(True)
+            with torch.enable_grad():
+                x = block.mlp.down(act)
+                r = torch.rsqrt(x.pow(2).mean() + block.mlp_out_norm.eps).detach()  # type: ignore[union-attr]
+                out = (taps.mid[L] + x * r * block.mlp_out_norm.gain()) * block.scale()  # type: ignore[union-attr]
+                (g_act,) = torch.autograd.grad(u @ (r_lens.matrix(L, "out") @ out), act)
+                o = block.attn.o(z)
+                r = torch.rsqrt(o.pow(2).mean() + block.attn_out_norm.eps).detach()  # type: ignore[union-attr]
+                mid = taps.block_in[L] + o * r * block.attn_out_norm.gain()  # type: ignore[union-attr]
+                (g_z,) = torch.autograd.grad(u @ (r_lens.matrix(L, "mid") @ mid), z)
+            neurons = (g_act * taps.acts[L]).detach()
+            heads = (g_z * taps.z[L]).detach().reshape(block.attn.n_heads, -1).sum(dim=1)
+            for unit in layer["neurons"]:
+                assert unit["contribution"] == pytest.approx(float(neurons[unit["index"]]), abs=1e-5)
+            for unit in layer["heads"]:
+                assert unit["contribution"] == pytest.approx(float(heads[unit["index"]]), abs=1e-5)
+        activity = session.unit_activity(node.id, units=["head/L1h0"])
+        for raw_index in range(len(node.raw_token_ids)):
+            replay = session.units.token_readout(node.id, raw_index)["measurements"]
+            value = replay["instruments"]["units"]["readings"]["head/L1h0"]["value"]
+            assert activity["traces"]["head/L1h0"][raw_index] == pytest.approx(value, abs=1e-5)
+    finally:
+        factory.close()
+
+
 def test_anatomy_without_an_r_lens_reads_but_has_no_units(tiny_session: Any) -> None:
     session = tiny_session
     node = _node(session)
