@@ -39,6 +39,7 @@
     lensText,
     orderedHalves,
     parseUnit,
+    peakIndex,
     poleOf,
     unitFacts,
     unitTitle,
@@ -52,6 +53,8 @@
   const ref = $derived(parseUnit(id));
   const isHead = $derived(ref?.kind === "head");
   let pole = $state<"+" | "-">("+");
+  /** The side the person chose; until then the view opens on the side that fired here. */
+  let chosen = $state(false);
   let hideHubs = $state(true);
 
   $effect(() => {
@@ -105,7 +108,13 @@
   const activity = $derived(reply ? nodeActivity(reply.nodeId, { units: [id], top: 1 }) : null);
   const trace = $derived(activity?.value?.traces[id] ?? null);
   const traceTokens = $derived(activity?.value?.tokens.map(t => t.token) ?? []);
-  const fired = $derived(trace ? firesOn(trace) : 0);
+  const sign = $derived<1 | -1>(!isHead && pole === "-" ? -1 : 1);
+  const fired = $derived(trace ? firesOn(trace.map(v => (v === null ? null : Math.max(0, v * sign)))) : 0);
+  $effect(() => {
+    if (chosen || isHead || !trace) return;
+    const at = peakIndex(trace);
+    if (at >= 0) pole = (trace[at] ?? 0) < 0 ? "-" : "+";
+  });
 
   // ---------- the recipe
   const term = $derived(unitTerm(id));
@@ -164,7 +173,7 @@
   <div class="dw-sec reads">
     <div class="dw-row split">
       {#if !isHead}
-        <Segmented label="Side" value={pole} onchange={(v) => (pole = v)}
+        <Segmented label="Side" value={pole} onchange={(v) => { pole = v; chosen = true; }}
           options={[{ value: "+", label: "+ side" }, { value: "-", label: "− side" }]} />
       {/if}
       <span class="hubs"><Switch checked={hideHubs} onchange={(on) => (hideHubs = on)} label="Hide hub tokens" /></span>
@@ -211,7 +220,7 @@
         {#if trace}<span class="meta">fires on {fired} of {trace.length} tokens</span>{/if}
       </div>
       {#if trace}
-        <UnitTrace values={trace} tokens={traceTokens} label={`${unitTitle(id)} on each of the ${trace.length} tokens of the reply`} />
+        <UnitTrace values={trace} tokens={traceTokens} {sign} label={`${unitTitle(id)} on each of the ${trace.length} tokens of the reply`} />
       {:else if activity?.status === "error"}
         <div class="dw-row"><span class="meta">{activity.error}</span><button type="button" class="dw-text" onclick={retryUnits}>Try again</button></div>
       {:else}
@@ -265,6 +274,8 @@
   .ghost-tok { display: block; height: 24px; border-radius: var(--r-chip); background: var(--wash); }
   .ghost-plot { display: block; height: 112px; border-radius: var(--r-box); background: var(--wash); }
 
+  /* On the phone's sheet (a wash), the side switch steps up to wash2 like the sheet's other pieces. */
+  :global(.sheet-body) .reads :global(.seg) { background: var(--wash2); }
   @media (max-width: 520px) {
     .grid, .grid.three { grid-template-columns: minmax(0, 1fr); }
   }

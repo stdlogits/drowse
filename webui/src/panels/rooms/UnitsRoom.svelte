@@ -149,7 +149,7 @@
   interface Row { id: string; layer: number; kind: Kind; value: number | null; label: string | null }
   const labelOf = (id: string, label?: UnitLabelJSON | null) => labelText(label) ?? unitLabelFor(id);
   const activeRows = $derived<Row[]>((data?.top ?? []).map(t => ({
-    id: t.unit, layer: t.layer, kind: t.kind, value: t.peak, label: labelOf(t.unit, (t as { label?: UnitLabelJSON | null }).label),
+    id: t.unit, layer: t.layer, kind: t.kind, value: t.peak, label: labelOf(t.unit, t.label),
   })));
   const writerRows = $derived<Row[]>((writers?.value?.hits ?? []).map(h => ({
     id: h.unit, layer: h.layer, kind: "neuron", value: h.score, label: labelOf(h.unit, h.label),
@@ -160,9 +160,9 @@
       const hit = activeRows.find(r => r.id === q.ref!.id);
       return [hit ?? { id: q.ref.id, layer: q.ref.layer, kind: q.ref.kind, value: null, label: unitLabelFor(q.ref.id) }];
     }
-    if (word) return writerRows;
-    if (filter === "labelled") return activeRows.filter(r => r.label);
-    return activeRows;
+    if (word) return kind === "neuron" ? writerRows : [];
+    const mine = activeRows.filter(r => r.kind === kind);
+    return filter === "labelled" ? mine.filter(r => r.label) : mine;
   });
   const rowsLoading = $derived(word ? writers?.status === "loading" || writers === null : loading?.status === "loading" && !data);
   const rowsError = $derived(word ? (writers?.status === "error" ? writers.error : null) : loading?.status === "error" ? loading.error : null);
@@ -178,7 +178,7 @@
     if (q.mode === "id") return { pre: "Matches", word: null, meta: units(rows.length) };
     if (word) return { pre: "Writes ", word: word.shown, meta: writers?.value ? units(rows.length) : "" };
     if (filter === "labelled") return { pre: "Labelled here", word: null, meta: units(rows.length) };
-    const totals = pop && nLayers ? `${(nLayers * pop.nNeurons).toLocaleString()} neurons and ${(nLayers * pop.nHeads).toLocaleString()} heads` : "";
+    const totals = pop && nLayers ? `${(nLayers * (kind === "neuron" ? pop.nNeurons : pop.nHeads)).toLocaleString()} ${kind === "neuron" ? "neurons" : "heads"}` : "";
     return { pre: "Most active here", word: null, meta: totals };
   });
 
@@ -202,10 +202,10 @@
     }
     const source = word && q.mode !== "id"
       ? writerRows.map(r => ({ unit: r.id, layer: r.layer, index: parseUnit(r.id)?.index ?? 0, peak: r.value ?? 0 }))
-      : (data?.top ?? []).filter(t => t.kind === "neuron" && (filter !== "labelled" || labelOf(t.unit, (t as { label?: UnitLabelJSON | null }).label)));
+      : (data?.top ?? []).filter(t => t.kind === "neuron" && (filter !== "labelled" || labelOf(t.unit, t.label)));
     return strongestColumns(source, nLayers, 40);
   });
-  const rowsPerColumn = $derived(kind === "head" ? Math.max(1, pop?.nHeads ?? 1) : 40);
+  const rowsPerColumn = $derived(kind === "head" ? Math.max(1, pop?.nHeads ?? 1) : every ? 40 : Math.max(8, ...columns.map(col => col.length)));
   const lit = $derived.by((): Set<string> | null => {
     if (q.mode === "id") return q.ref ? new Set([q.ref.id]) : new Set();
     if (q.mode === "word" && kind === "head") return new Set();
@@ -305,13 +305,13 @@
     <div class="dw-empty"><span class="head">Units</span><p>This runtime does not read neurons and heads.</p></div>
   {:else}
     <div class="tools">
-      <Segmented label="Units" value={kind} onchange={(v) => (kind = v)} options={[{ value: "neuron", label: "Neurons" }, { value: "head", label: "Heads" }]} />
+      <Segmented label="Units" value={kind} onchange={(v) => { kind = v; if (v === "head" && filter === "writes") filter = "active"; }} options={[{ value: "neuron", label: "Neurons" }, { value: "head", label: "Heads" }]} />
       <span class="seg-wrap" class:off={kind === "head"} inert={kind === "head"}>
         <Segmented label="Which neurons" value={every ? "all" : "strongest"} onchange={(v) => (every = v === "all")}
           options={[{ value: "strongest", label: "Strongest" }, { value: "all", label: "All" }]} />
       </span>
       <Segmented label="Units shown" value={filter} onchange={(v) => (filter = v)}
-        options={[{ value: "active", label: "Active here" }, { value: "writes", label: "Writes a word" }, ...(bound ? [{ value: "labelled" as const, label: "Labelled" }] : [])]} />
+        options={[{ value: "active", label: "Active here" }, ...(kind === "neuron" ? [{ value: "writes" as const, label: "Writes a word" }] : []), ...(bound ? [{ value: "labelled" as const, label: "Labelled" }] : [])]} />
       <div class="search">
         <Icon name="search" size={18} />
         <label class="sr-only" for="unit-q">Search units</label>
@@ -330,7 +330,7 @@
     <section class="atlas-sec" aria-label="Atlas">
       <div class="dw-sec-head">
         <span class="ah">
-          {#if focusToken}<span class="head">At {@render ws(focusToken.token)}</span>{:else}<span class="head">This conversation</span>{/if}
+          {#if focusToken && (kind === "head" || every || !word)}<span class="head">At {@render ws(focusToken.token)}</span>{:else if word}<span class="head">Writes {@render ws(word.shown)}</span>{/if}
           <span class="meta">{subset}</span>
         </span>
         <span class="meta"><MorphText text={layerFact} /></span>

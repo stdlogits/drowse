@@ -254,7 +254,7 @@ try {
   assert.match(html, />R · out</);
   assert.match(html, />R · mid</);
   assert.match(html, /On this conversation/);
-  assert.match(html, /fires on 3 of 5 tokens/);
+  assert.match(html, /fires on 2 of 5 tokens/, "the shown side fires");
   assert.match(html, /Push \+/);
   assert.match(html, /Silence/);
   assert.doesNotMatch(html, /no S lens at mid/, "an absent faded half stays out");
@@ -273,9 +273,9 @@ try {
   await settle();
   html = render(UnitsRoom, {}).body;
   assert.match(html, /Most active here/);
-  assert.match(html, /32 neurons and 8 heads/);
+  assert.match(html, /32 neurons/);
   assert.match(html, />L3 n3</);
-  assert.match(html, />L2 h1</);
+  assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");
   assert.match(html, /−2\.2/);
   assert.match(html, />Labelled</, "a bound catalog offers the labelled units");
   assert.match(html, new RegExp(CREDIT));

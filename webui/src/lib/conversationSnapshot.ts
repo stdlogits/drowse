@@ -151,6 +151,15 @@ export function validateConversationSnapshot(
       if (row.mode === "sae" && !/^sae\/(?:0|[1-9]\d*)$/u.test(name)) invalid(`SAE row ${name}`);
       continue;
     }
+    if (row.mode === "unit") {
+      // A unit term: a neuron pushed (signed α) or a neuron or head ablated; a head has no push.
+      finite(row.alpha, `steering row ${name} alpha`);
+      if (typeof row.ablate !== "boolean") invalid(`steering row ${name} ablation`);
+      const neuron = /^neuron\/L(?:0|[1-9]\d*)n(?:0|[1-9]\d*)$/u.test(name);
+      const head = /^head\/L(?:0|[1-9]\d*)h(?:0|[1-9]\d*)$/u.test(name);
+      if (!(neuron || (head && row.ablate === true))) invalid(`unit row ${name}`);
+      continue;
+    }
     if (row.mode !== "subspace" && row.mode !== "manifold") invalid(`steering row ${name} mode`);
     if (row.mode === "subspace" && row.ablate !== undefined && typeof row.ablate !== "boolean") {
       invalid(`steering row ${name} ablation`);
@@ -227,7 +236,7 @@ export function buildConversationImportPlan(
   for (const { name, ...entry } of snapshot.steerRack) {
     const cloned = structuredClone(entry) as SteerEntry;
     cloned.trigger = STORED_TRIGGER_ALIASES[cloned.trigger] ?? cloned.trigger;
-    if (cloned.mode === "subspace" || cloned.mode === "jlens" || cloned.mode === "sae") {
+    if (cloned.mode === "subspace" || cloned.mode === "jlens" || cloned.mode === "sae" || cloned.mode === "unit") {
       cloned.ablate = cloned.ablate === true;
     }
     steerEntries.set(name, cloned);

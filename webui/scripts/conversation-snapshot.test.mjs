@@ -174,6 +174,21 @@ try {
   unknownTrigger.steerRack[0].trigger = "SOMETIMES";
   assert.equal(isConversationSnapshot(unknownTrigger, Object.keys(samplingState)), false);
 
+  // Unit terms: a neuron pushed either pole or ablated, a head only ablated; the reference exact.
+  const unitRows = structuredClone(snapshot);
+  unitRows.steerRack.push(
+    { name: "neuron/L31n4410", mode: "unit", ablate: false, alpha: -0.2, trigger: "BOTH", enabled: true },
+    { name: "head/L28h12", mode: "unit", ablate: true, alpha: 1, trigger: "RESPONSE", enabled: true },
+  );
+  assert.equal(isConversationSnapshot(unitRows, Object.keys(samplingState)), true);
+  const unitPlan = buildConversationImportPlan(unitRows);
+  assert.match(unitPlan.steeringExpression, /- 0\.2 neuron\/L31n4410 \+ !head\/L28h12@response/);
+  for (const [name, ablate] of [["head/L28h12", false], ["neuron/L31h4", true], ["neuron/L031n4", false], ["unit/L1n2", true]]) {
+    const bad = structuredClone(snapshot);
+    bad.steerRack.push({ name, mode: "unit", ablate, alpha: 0.2, trigger: "BOTH", enabled: true });
+    assert.equal(isConversationSnapshot(bad, Object.keys(samplingState)), false, name);
+  }
+
   const oldVersion = structuredClone(snapshot);
   oldVersion.version = 6;
   assert.equal(isConversationSnapshot(oldVersion, Object.keys(samplingState)), false);

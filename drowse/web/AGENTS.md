@@ -207,8 +207,8 @@ opportunistically and never blocks the current store. `lib/theme.ts` (the stored
 ```
 main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
 panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread
-panels/inspector/     Inspector (by selection), Instruments, TermView
-panels/rooms/         RoomSections (Manifolds, Model), LensRoom, UnitsRoom
+panels/inspector/     Inspector (by selection), Instruments, TermView, UnitView (+ UnitTrace)
+panels/rooms/         RoomSections (Manifolds, Model), LensRoom, UnitsRoom (+ UnitAtlas)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
@@ -220,6 +220,7 @@ lib/expression.ts     rack → steering expression (serialize only)
 lib/highlight.ts      the one per-token highlight; tokens.ts is its store-free ramp math
 lib/templates.ts      client mirror of the template validator
 lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
+lib/units.ts          unit IDs, reads, activity and atlas arithmetic (store-free); stores/units
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
 lib/style/            drowse.css (the shell's Ledger classes), global.css, bridge.css (temporary)
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
@@ -301,7 +302,16 @@ drowse.ai too.
   unresolved. Subspace terms share one `subspaceAlong` because the composer merges them
   into one affine subspace that slides once. J-lens and SAE atoms carry their own α
   (`ATOM_DEFAULT_ALPHA = 0.3`): a single token or feature direction runs hotter than a
-  concept vector, and α ≥ 0.5 over-steers into repetition.
+  concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
+  keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed
+  (signed α, 0.2 by default; below zero its − pole) or a neuron or head ablated (`!…`,
+  written bare at α 1). A head has no push.
+- **Units.** The unit view (selection `{ kind: "unit", id }`) and the Units room read
+  through `lib/stores/units.svelte.ts`: plain getters inside `$derived`, the matching
+  `request*` from an `$effect`, nothing asked while a generation runs. Both hide where
+  `unitReadsAvailable(runtimeClient)` is false (`shownRooms()` drops the room). Unit probes
+  are the `units` family: they list in the probe rack (`UnitProbeCard`) and their readings
+  merge with the other families' (`mergedReadings`).
 - **Templates.** `validateTemplateDraft` mirrors `drowse/store/templates.py`
   (`_validate_body`, `_validate_context`, `_slug_value`, `_LABEL_REGEX`) rule for rule.
   Change both together.

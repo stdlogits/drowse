@@ -2,11 +2,12 @@
   // A unit's activation on each token of a reply (the Unit canvas's "On this conversation"): one bar
   // per token, up in the unit's depth colour for a firing, down in faint ink below zero. The peak,
   // or the bar under the pointer, is named with its token and value. A firing under a quarter of
-  // the pole's typical high firing stays faint.
+  // the pole's typical high firing stays faint. ``sign`` −1 reads a neuron's − pole: its firing
+  // (below zero) draws up.
   import { tokenParts } from "@stdlogits/ledger";
   import { FIRES_AT, peakIndex } from "../../lib/units";
 
-  let { values, tokens, label }: { values: readonly (number | null)[]; tokens: readonly string[]; label: string } = $props();
+  let { values, tokens, label, sign = 1 }: { values: readonly (number | null)[]; tokens: readonly string[]; label: string; sign?: 1 | -1 } = $props();
 
   let hot = $state(-1);
   const peak = $derived(peakIndex(values));
@@ -25,7 +26,8 @@
 <div class="trace">
   <div class="plot" style:--n={values.length} role="img" aria-label={label} onpointerleave={() => (hot = -1)}>
     {#each values as v, i (i)}
-      {@const value = typeof v === "number" && Number.isFinite(v) ? v : 0}
+      {@const raw = typeof v === "number" && Number.isFinite(v) ? v : 0}
+      {@const value = raw * sign}
       {@const share = Math.abs(value) / top}
       <span class="c" role="presentation" onpointerenter={() => (hot = i)}>
         {#if value >= 0}
@@ -37,7 +39,7 @@
           {@const parts = tokenParts(tokens[i])}
           <span class="lab" class:start={i < values.length * 0.15} class:end={i > values.length * 0.85}
             style:bottom="{20 + (value >= 0 ? Math.max(2, share * UP) : 2) + 4}px">
-            {#if parts.lead}<span class="dw-ws">·</span>{/if}{parts.empty ? "∅" : parts.text} <b>{text(value)}</b>
+            {#if parts.lead}<span class="dw-ws">·</span>{/if}{parts.empty ? "∅" : parts.text} <b>{text(raw)}</b>
           </span>
         {/if}
       </span>
