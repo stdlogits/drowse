@@ -86,5 +86,33 @@ try {
   assert.equal((help.match(/class="forms/g) ?? []).length, 7);
   assert.doesNotMatch(help, /<pre/);
 
-  console.log("Form primitives (button, tag, select, slider, number, reset) and the Model room's health and help render as drawn");
+  // API access: the key's status line is a live region from the start, but takes no line (it is
+  // visually hidden) until a key is applied or cleared.
+  const { default: Access } = await server.ssrLoadModule("/src/drawers/SessionAdminDrawer.svelte");
+  const access = render(Access, { props: { params: { embedded: true } } }).body;
+  assert.match(access, /<p class="meta[^"]*\bsr-only\b[^"]*"[^>]*role="status"/);
+
+  // Sampling settings: the folded fields are labelled like every other field, not as section heads.
+  const { default: Sampling } = await server.ssrLoadModule("/src/drawers/AdvancedSamplingDrawer.svelte");
+  const sampling = render(Sampling).body;
+  for (const field of ["Temperature", "Stop sequences", "Logit bias"]) {
+    assert.match(sampling, new RegExp(`<span class="label[^"]*"[^>]*>${field}</span>`));
+    assert.doesNotMatch(sampling, new RegExp(`<span class="head[^"]*"[^>]*>${field}</span>`));
+  }
+
+  // The contact form: the email field's "optional" says it all, so the line under it appears only
+  // with an error, and only then does the field point at it.
+  const { default: ContactForm } = await server.ssrLoadModule("/src/lib/ui/ContactForm.svelte");
+  const { contactDrafts } = await server.ssrLoadModule("/src/lib/stores/contact.svelte.ts");
+  const contact = render(ContactForm, { props: { source: "feedback" } }).body;
+  assert.match(contact, />optional</);
+  assert.doesNotMatch(contact, /if you'd like a reply/);
+  assert.doesNotMatch(contact, /email-(?:hint|error)/);
+  contactDrafts.feedback.errors.email = "Enter a valid email address.";
+  const invalid = render(ContactForm, { props: { source: "feedback" } }).body;
+  assert.match(invalid, /aria-describedby="[^"]*-email-error"/);
+  assert.match(invalid, /class="error[^"]*">Enter a valid email address\.</);
+  delete contactDrafts.feedback.errors.email;
+
+  console.log("Form primitives (button, tag, select, slider, number, reset), the contact form, and the Model room's health, help, API access and sampling settings render as drawn");
 } finally { await server.close(); }

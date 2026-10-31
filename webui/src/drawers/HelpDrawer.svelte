@@ -179,7 +179,6 @@
   code { font: inherit; }
   .expr { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
   .forms { display: grid; gap: 2px; min-width: 0; color: var(--ink2); font: var(--type-small); overflow-wrap: anywhere; }
-  .grammar .row { grid-template-columns: 96px minmax(0, 1fr); }
 
   .contact { color: var(--ink3); font: var(--type-meta); }
 
@@ -189,5 +188,10 @@
     .rows { gap: var(--s3); }
     .row { grid-template-columns: minmax(0, 1fr); }
     .grammar .row { grid-template-columns: 80px minmax(0, 1fr); }
+  }
+  /* Phones and touch screens: every target 44 px, Ledger's close and fold toggles included. */
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
+    .folds :global(.expander > .toggle) { height: 44px; }
   }
 </style>

@@ -199,8 +199,8 @@
     <Expander bind:open={technicalOpen} label="More">
       <div class="more">
 
-        <label class="dw-sec">
-          <span class="head">Stop sequences</span>
+        <label class="field">
+          <span class="label">Stop sequences</span>
           <textarea
             rows="4"
             value={samplingState.stop_sequences}
@@ -210,8 +210,8 @@
           ></textarea>
         </label>
 
-        <label class="dw-sec">
-          <span class="head">Logit bias</span>
+        <label class="field">
+          <span class="label">Logit bias</span>
           <textarea
             rows="5"
             class:invalid={!logitBiasValid}
@@ -283,5 +283,12 @@
   @media (max-width: 720px) {
     .dlg-head { padding: var(--s4) var(--s4) 0; }
     .body { padding: var(--s4); }
+  }
+  /* Phones and touch screens: every target 44 px, Ledger's close, fold toggle and format switch
+   * included (Segmented's thumb follows its option's box). */
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
+    .body :global(.expander > .toggle) { height: 44px; }
+    .dw-row :global(.seg > button) { height: 44px; }
   }
 </style>

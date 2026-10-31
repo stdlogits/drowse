@@ -92,8 +92,8 @@
     </label>
     <label class="field">
       <span class="label" id={`${uid}-email-label`}>Email <span class="optional">optional</span></span>
-      <input type="email" name="email" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" bind:value={draft.fields.email} maxlength={CONTACT_LIMITS.email} disabled={busy} aria-labelledby={`${uid}-email-label`} aria-invalid={Boolean(draft.errors.email)} aria-describedby={`${uid}-email-hint`} placeholder="you@example.com" />
-      <span id={`${uid}-email-hint`} class:error={Boolean(draft.errors.email)} class="hint">{draft.errors.email || "Add an email if you'd like a reply."}</span>
+      <input type="email" name="email" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" bind:value={draft.fields.email} maxlength={CONTACT_LIMITS.email} disabled={busy} aria-labelledby={`${uid}-email-label`} aria-invalid={Boolean(draft.errors.email)} aria-describedby={draft.errors.email ? `${uid}-email-error` : undefined} placeholder="you@example.com" />
+      {#if draft.errors.email}<span id={`${uid}-email-error`} class="error">{draft.errors.email}</span>{/if}
     </label>
     <div class="honeypot" aria-hidden="true" inert><label>Website<input name="website" bind:value={draft.fields.website} tabindex="-1" autocomplete="off" /></label></div>
     {#if draft.message}
@@ -143,9 +143,12 @@
   input::placeholder, textarea::placeholder { color: var(--ink3); }
   .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
   .count { flex: none; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
-  .hint, .privacy, .draft-note { color: var(--ink3); font: var(--type-meta); }
-  .error, .hint.error { color: var(--ink); font: var(--type-meta); }
+  .privacy, .draft-note { color: var(--ink3); font: var(--type-meta); }
+  .error { color: var(--ink); font: var(--type-meta); }
   .notice { display: grid; gap: var(--s3); padding: var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  /* On the notice's wash, its button steps up to wash2 (and to paper on hover). */
+  .notice :global(.sk-btn.ghost) { background: var(--wash2); }
+  .notice :global(.sk-btn.ghost:hover:not(:disabled)) { background: var(--paper); }
   .notice > p:first-child { color: var(--ink); font: var(--type-small); }
   .reference { min-width: 0; color: var(--ink2); overflow-wrap: anywhere; }
   .reference code { display: block; color: var(--ink); font: var(--type-small); user-select: all; }
@@ -162,5 +165,8 @@
   .success-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--wash); color: var(--ink); }
   .success h2 { color: var(--ink); font: var(--type-mark); text-wrap: balance; }
   .honeypot, .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  @media (max-width: 760px), (pointer: coarse) { input, textarea { font-size: 16px; } input { min-height: 44px; } }
+  @media (max-width: 720px), (pointer: coarse) {
+    input, textarea { font-size: 16px; }
+    input, .recovery-actions a, .reference :global(.expander > .toggle) { min-height: 44px; }
+  }
 </style>

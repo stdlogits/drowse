@@ -70,7 +70,8 @@
         <Button type="submit" variant="solid">Apply</Button>
         <Button variant="flat" onclick={() => { key = ""; void saveKey(); }}>Clear</Button>
       </form>
-      <p class="meta" role="status"><MorphText text={saved ? (key ? "Applied" : "Cleared") : ""} numbers={false} /></p>
+      <!-- The live region stays in the tree (so the word is announced) and takes no line until then. -->
+      <p class="meta" class:sr-only={!saved} role="status"><MorphText text={saved ? (key ? "Applied" : "Cleared") : ""} numbers={false} /></p>
     </section>
 
     <section class="dw-sec" aria-labelledby={`${uid}-sessions-head`}>
@@ -111,7 +112,6 @@
 
   .key-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
   .key-row input { flex: 1 1 280px; min-width: 0; font: var(--type-small); }
-  .meta:empty { display: none; }
   .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
 
   /* The sessions as rows (the Lens room's source rows): an ID, the model, its facts. */
@@ -126,8 +126,14 @@
   @media (max-width: 720px) {
     .dlg-head { padding: var(--s4) var(--s4) 0; }
     .body { padding: var(--s4); }
-    .key-row input { flex-basis: 100%; min-height: 44px; }
+    .key-row input { flex-basis: 100%; }
     .session { grid-template-columns: minmax(0, 1fr); }
     .session .meta { grid-column: 1; }
+  }
+  /* Phones and touch screens: every target 44 px. */
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
+    .key-row input { min-height: 44px; }
+    .dw-sec-head .dw-text { min-height: 44px; }
   }
 </style>

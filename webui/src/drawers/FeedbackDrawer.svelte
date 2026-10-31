@@ -25,4 +25,7 @@
     .dlg-head { padding: var(--s4) var(--s4) 0; }
     .body { padding: var(--s4); }
   }
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
+  }
 </style>

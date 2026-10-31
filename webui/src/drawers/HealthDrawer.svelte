@@ -152,7 +152,8 @@
   .figure .value { color: var(--ink); font: var(--type-lead); font-variant-numeric: tabular-nums; }
 
   .rows { display: grid; gap: 2px; }
-  .row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; min-height: 36px; padding: 0 var(--s3); border-radius: var(--r-box); }
+  /* No fill, so no inset: a row's state ends under its head's count. */
+  .row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; min-height: 36px; }
   .row .key { color: var(--ink2); font: var(--type-small); }
   .row.ok .key { color: var(--ink); }
   .mark { display: grid; place-items: center; color: var(--ink); }
@@ -167,5 +168,8 @@
     .dlg-head { padding: var(--s4) var(--s4) 0; }
     .body { padding: var(--s4); }
     .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+  }
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
   }
 </style>
