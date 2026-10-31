@@ -284,15 +284,15 @@ try {
   // geometry reading, never from the rows' axis-0 views (which would draw a coordinate against the
   // share's 0..1 scale). A token without that reading is a gap; an axis target still reads its axis.
   const { readsShare } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
-  const geometry = (fraction, perLayer) => ({ version: 1, scope: "token", provenance: "captured", instruments: {
+  const shareReading = (fraction, perLayer) => ({ version: 1, scope: "token", provenance: "captured", instruments: {
     geometry: { readings: { "default/months": { fraction, fraction_per_layer: perLayer, coords: [2.64, -1], nearest: [], residual: 0, coords_per_layer: {}, residual_per_layer: {} } } },
   } });
   chatLog.turns = [
     { role: "assistant", text: "abc", generated: true, tokens: [
       { text: "a", probes: { "default/months": 2.64 }, coordsByProbe: { "default/months": [2.64, -1] },
-        perLayerScores: { 3: { "default/months": 2.1 } }, measurements: geometry(0.39, { 3: 0.2, 7: 0.41 }) },
+        perLayerScores: { 3: { "default/months": 2.1 } }, measurements: shareReading(0.39, { 3: 0.2, 7: 0.41 }) },
       { text: "b", probes: { "default/months": 1.5 } },
-      { text: "c", probes: { "default/months": 3 }, measurements: geometry(0.5, { 3: 0.25 }) },
+      { text: "c", probes: { "default/months": 3 }, measurements: shareReading(0.5, { 3: 0.25 }) },
     ] },
   ];
   assert.deepEqual(replyTrace("default/months", { share: true }), [0.39, null, 0.5], "a curved probe's trace is its share, token by token");
