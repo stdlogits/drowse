@@ -1,12 +1,12 @@
-// The searchable tool directory's index.
+// The command palette's index (⌘K, the header's search): the rooms, the instruments, then every
+// tool in the drawer registry.
 //
-// The launcher categories are NOT declared here — they are derived from
-// the drawer registry (``drawers/index.ts``), which is the one place a
-// drawer's component, sizing, and reachability are written down.  This
-// module only flattens them and adds the direct navigation entries for the
-// instrument tabs.
+// The tool categories are NOT declared here: they are derived from the drawer registry
+// (``drawers/index.ts``), the one place a drawer's component, sizing and reachability are written
+// down. A tool a room hosts opens its room (``openDrawer`` routes it, lib/stores/rooms.svelte.ts).
 
 import { RAIL_CATEGORIES } from "../drawers";
+import { ROOMS, type Room } from "./stores/rooms.svelte";
 import type { DrawerName } from "./types";
 import type { InspectorTab } from "./stores.svelte";
 
@@ -14,9 +14,9 @@ export type { RailCategory, RailTool } from "../drawers";
 export { RAIL_CATEGORIES } from "../drawers";
 
 export type PaletteAction =
+  | { kind: "room"; room: Room }
   | { kind: "drawer"; drawer: DrawerName }
-  | { kind: "tab"; tab: InspectorTab }
-  | { kind: "controls"; section: "model" };
+  | { kind: "instrument"; tab: InspectorTab };
 
 export interface PaletteCommand {
   label: string;
@@ -25,43 +25,33 @@ export interface PaletteCommand {
   keywords?: string;
 }
 
-/** The flattened palette index: instrument-tab jumps first (the four
- *  pillars are the primary navigation), then every registry tool, then pages. */
+const ROOM_KEYWORDS: Record<Room, string> = {
+  workbench: "home conversation chat thread page inspector",
+  manifolds: "concepts scales packs build combine templates roles",
+  units: "neurons heads atlas",
+  lens: "jacobian j-lens r-lens s-lens sources fit fetch",
+  model: "health device runtime api access key",
+};
+
+/** The flattened index: the rooms first, then the instruments, then every registry tool. */
 export function paletteCommands(): PaletteCommand[] {
-  const cmds: PaletteCommand[] = [
-    {
-      label: "Concepts",
-      group: "Controls",
-      action: { kind: "tab", tab: "subspace" },
-      keywords: "pillar flat affine concept vector caa steer probe",
-    },
-    {
-      label: "Moods and scales",
-      group: "Controls",
-      action: { kind: "tab", tab: "manifold" },
-      keywords: "pillar curved emotions months steer probe",
-    },
-    {
-      label: "Model features",
-      group: "Controls",
-      action: { kind: "tab", tab: "sae" },
-      keywords: "pillar features sparse autoencoder",
-    },
-    {
-      label: "Layer predictions",
-      group: "Controls",
-      action: { kind: "tab", tab: "lens" },
-      keywords: "pillar jacobian jlens workspace readout token",
-    },
-  ];
+  const cmds: PaletteCommand[] = ROOMS.map(room => ({
+    label: room.label,
+    group: "Rooms",
+    action: { kind: "room", room: room.value },
+    keywords: ROOM_KEYWORDS[room.value],
+  }));
+  cmds.push(
+    { label: "Probes", group: "Instruments", action: { kind: "instrument", tab: "subspace" }, keywords: "concepts readings flat affine subspace curved manifold moods scales" },
+    { label: "Live lens readout", group: "Instruments", action: { kind: "instrument", tab: "lens" }, keywords: "layer predictions jacobian jlens workspace token" },
+    { label: "Features", group: "Instruments", action: { kind: "instrument", tab: "sae" }, keywords: "sparse autoencoder sae features" },
+  );
   for (const cat of RAIL_CATEGORIES) {
     for (const tool of cat.tools) {
       cmds.push({
         label: tool.label.replace(/…$/, ""),
-        group: cat.label.toLowerCase(),
-        action: tool.drawer === "local_runtime" || tool.drawer === "health"
-          ? { kind: "controls", section: "model" }
-          : { kind: "drawer", drawer: tool.drawer },
+        group: cat.label,
+        action: { kind: "drawer", drawer: tool.drawer },
         keywords: tool.keywords,
       });
     }

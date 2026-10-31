@@ -1,0 +1,1 @@
+export{q as tick}from"./index-client-B2jUARBN.js";

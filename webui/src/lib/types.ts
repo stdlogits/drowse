@@ -1060,8 +1060,8 @@ export type DrawerName =
    *  Opened from both rack "+ add" buttons. */
   | "subspace"
   /** Shared rack browser, manifold (curved) family — curved fits only
-   *  (``fit_mode`` spectral / authored), e.g. ``emotions``.  Purple
-   *  ``--pillar-manifold``.  Same layout as the subspace half, with a
+   *  (``fit_mode`` spectral / authored), e.g. ``emotions``, in the depth
+   *  tint.  Same layout as the subspace half, with a
    *  "+ build manifold" launcher.  ``RackDrawer`` with
    *  ``family: "manifold"``. */
   | "manifolds"
@@ -1089,7 +1089,6 @@ export type DrawerName =
   | "probe_inspector"
   | "advanced_sampling"
   | "health"
-  | "appearance"
   | "session_admin"
   | "local_runtime"
   | "help"

@@ -84,9 +84,9 @@ def web_client():
 
 
 @pytest.mark.parametrize("path,content_type", [
-    ("/icons/tab-home.png", "image/png"),
-    ("/icons/apple-touch-icon.png", "image/png"),
-    ("/theme-init.js", "javascript"),
+    ("/drowse-mark-light.svg", "image/svg+xml"),
+    ("/drowse-mark-dark.svg", "image/svg+xml"),
+    ("/theme-preflight.js", "javascript"),
     # Offline feature labels for local SAELens gemma-scope-2 releases.
     ("/assets/gemma-3-1b-it.json", "json"),
 ])
@@ -100,9 +100,9 @@ def test_dashboard_public_assets_are_served_as_files(
     assert not response.content.lstrip().lower().startswith(b"<!doctype html")
 
 
-def test_missing_dashboard_icon_is_not_an_html_fallback(web_client: Any) -> None:
+def test_missing_dashboard_asset_is_not_an_html_fallback(web_client: Any) -> None:
     _, client = web_client
-    assert client.get("/icons/nonexistent.png").status_code == 404
+    assert client.get("/assets/nonexistent.png").status_code == 404
 
 
 @pytest.fixture

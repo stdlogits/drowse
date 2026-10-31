@@ -1,305 +1,166 @@
-/* Shared form surface for the manifold builder's three authoring tabs.
- *
- * Every rule is scoped under ``.mb-form`` — the class the drawer puts on
- * its scrolling body — so the sibling form components inherit one visual
- * language instead of each carrying its own copy of the same field,
- * step, and node-card rules.  Nothing here is new: these are the builder
- * drawer's rules, moved out of its scoped <style> so the split forms can
- * share them verbatim. */
+/* The Manifolds room's shared parts, drawn in Ledger: the tool frame every room section uses (build,
+ * packs, combine, templates, and the system prompt when it opens as a dialog), and the builder's
+ * calm stepwise form (scoped under .mb-form, the class the builder puts on its body, so the three
+ * authoring forms read as one surface). Flat and borderless: sections are washes or plain paper,
+ * lists are rows, buttons are drowse.css's quiet pills and text buttons, and the one accent (--tint)
+ * only ever fills. */
 
-.mb-form .muted {
-  color: var(--fg-muted);
-  font-size: var(--text-sm);
-  margin: 0;
-}
-.mb-form .grid2 {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--space-3);
-}
-.mb-form .field {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.mb-form .label {
-  color: var(--fg-muted);
-  font-size: var(--text-sm);
-}
-.mb-form .input {
-  min-width: 0;
-  width: 100%;
-  min-height: var(--control-target);
-  background: var(--input-well);
-  color: var(--fg);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: var(--space-2) var(--space-3);
-  font: inherit;
-  font-family: var(--font-mono);
-}
-.mb-form .input:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.mb-form .input.mini {
-  padding: var(--space-1) var(--space-2);
-  font-size: var(--text-sm);
-}
-.mb-form textarea.input {
-  resize: vertical;
-  line-height: 1.4;
-  min-height: 4em;
-}
+/* ---------- the tool frame */
 
-.mb-form .step {
-  padding-top: var(--space-3);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-.mb-form .step-title {
-  margin: 0;
-  color: var(--accent);
-  font-size: var(--text-sm);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-weight: var(--weight-medium);
-}
+/* In a room the room draws the title, the tabs and the gutters; in a dialog the tool draws its own. */
+.mf-tool { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; color: var(--ink2); }
+.mf-tool.dialog { align-content: start; height: 100%; min-height: 0; overflow-y: auto; padding: var(--s5) var(--s6) var(--s6); }
+.mf-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); min-width: 0; }
+.mf-head .dw-title { font: var(--type-mark); letter-spacing: -0.01em; }
 
-.mb-form .domain-kind {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-2);
-}
-.mb-form .kind-btn {
-  min-height: var(--control-target);
-  background: var(--glass);
-  color: var(--fg-dim);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: var(--space-2) var(--space-4);
-  font: inherit;
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  transition:
-    background var(--dur) var(--ease-out),
-    color var(--dur) var(--ease-out);
-}
-.mb-form .kind-btn:hover {
-  color: var(--fg-strong);
-  background: var(--glass-strong);
-}
-.mb-form .kind-btn.active {
-  color: var(--accent);
-  background: var(--accent-subtle);
-}
+/* A field's value reads in ink (Ledger's base lets fields inherit the surrounding ink2). */
+.mf-tool :is(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea) { color: var(--ink); }
 
-.mb-form .axes {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-}
-.mb-form .axis-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(4.5rem, 1fr));
-  align-items: end;
-  gap: var(--space-2);
-  border-radius: var(--radius-lg);
-  background: var(--surface-sheen), var(--glass);
-  box-shadow: var(--shadow-well);
-  padding: var(--surface-padding);
-}
-.mb-form .axis-field {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-}
-.mb-form .mini-label {
-  color: var(--fg-muted);
-  font-size: var(--text-2xs);
-  text-transform: uppercase;
-}
-.mb-form .axis-check {
-  grid-column: 1 / -1;
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  color: var(--fg-strong);
-  font-size: var(--text-xs);
-  padding-bottom: var(--space-1);
-}
-.mb-form .sphere-field {
-  max-width: 18em;
-}
+/* A section: a quiet head (with a meta on its right) over its content. */
+.mf-sec { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; }
+.mf-sec-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--s1) var(--s4); min-width: 0; }
+.mf-sec-head .head { margin: 0; }
+.mf-sec-head .meta { white-space: nowrap; }
 
-.mb-form .node-role {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  padding: var(--space-2) var(--space-3) 0;
-}
-.mb-form .role-hint {
-  margin: var(--space-1) 0 0 var(--space-5);
-  color: var(--fg-dim);
-  font-size: var(--text-xs);
-  line-height: 1.4;
-}
-.mb-form .dim-note {
-  margin: 0;
-  color: var(--fg-dim);
-  font-size: var(--text-xs);
-}
-.mb-form .dim-note strong {
-  color: var(--accent);
-  font-family: var(--font-mono);
-}
+/* A wash: the one surface a section sits on when it needs one. On a wash, fields (the Select's
+ * trigger among them) and quiet buttons step up to wash2. */
+.mf-wash { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; padding: var(--s4); border-radius: var(--r-row); background: var(--wash); }
+.mf-wash :where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"]), textarea, select),
+.mf-wash .sk-select .sk-select-trigger,
+.mf-wash .dw-quiet { background: var(--wash2); }
+.mf-wash p { margin: 0; color: var(--ink2); font: var(--type-small); }
 
-.mb-form .node-list {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
+/* Rows: a list of things, each a row on paper that washes under the pointer, wash2 when chosen. */
+.mf-rows { display: grid; gap: 2px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.mf-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--s2) var(--s4); min-width: 0; min-height: 44px; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-box); background: transparent; color: var(--ink2); font: var(--type-small); text-align: left; transition: background-color var(--fast) var(--ease); }
+:is(button, label).mf-row { cursor: pointer; }
+:is(button, label).mf-row:active { scale: 0.99; }
+:is(button, label).mf-row { transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+.mf-row[aria-pressed="true"], .mf-row:has(input:checked) { background: var(--wash2); }
+@media (hover: hover) {
+  :is(button, label).mf-row:hover:not([aria-pressed="true"], :has(input:checked)) { background: var(--wash); }
 }
-.mb-form .node-card {
-  border-radius: var(--radius-lg);
-  padding: var(--surface-padding);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-2);
-  background: var(--surface-sheen), var(--bg-deep);
-}
-.mb-form .node-head {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  flex-wrap: wrap;
-}
-.mb-form .node-expand {
-  min-width: var(--control-target);
-  min-height: var(--control-target);
-  background: transparent;
-  border: 0;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--text-xs);
-  padding: 0 var(--space-1);
-}
-.mb-form .node-label {
-  flex: 1 1 8em;
-}
-.mb-form .node-coords {
-  display: flex;
-  gap: var(--space-1);
-  flex: 1 1 100%;
-  flex-wrap: wrap;
-  order: 1;
-}
-/* Wraps the themed NumberInput in the node-coords flex row. */
-.mb-form .coord-cell {
-  flex: 0 0 auto;
-  width: 4.5em;
-  display: inline-flex;
-}
-.mb-form .node-remove {
-  min-width: var(--control-target);
-  min-height: var(--control-target);
-  background: transparent;
-  border: 0;
-  color: var(--fg-muted);
-  cursor: pointer;
-  font-size: var(--text);
-  padding: 0 var(--space-2);
-}
-.mb-form .node-remove:hover {
-  color: var(--accent-red);
-}
-.mb-form .node-statements {
-  width: 100%;
-  box-sizing: border-box;
-  background: var(--input-well);
-  color: var(--fg);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: var(--space-2) var(--space-3);
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  resize: vertical;
-  line-height: 1.4;
-}
-.mb-form .node-statements:focus {
-  outline: none;
-  border-color: var(--accent);
-}
-.mb-form .add-node {
-  min-height: var(--control-target);
-  background: var(--accent-subtle);
-  color: var(--accent);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: var(--space-2) var(--space-4);
-  font: inherit;
-  font-family: var(--font-mono);
-  font-size: var(--text-sm);
-  cursor: pointer;
-  align-self: flex-start;
-}
-.mb-form .add-node:hover {
-  background: var(--accent-strong);
-}
+.mf-row:has(input.sr-only:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+.mf-id { display: grid; gap: 2px; min-width: 0; }
+/* The ID is what tells one row from the next, so it wraps rather than losing its end. */
+.mf-name { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
+.mf-id .meta { overflow-wrap: anywhere; }
+.mf-end { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s2) var(--s3); }
 
-/* Radio pair for the fit-method picker. */
-.mb-form .radio-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--space-5);
-  padding: var(--space-1) 0 var(--space-3);
-}
-/* Checkbox group at the bottom of an advanced flyout. */
-.mb-form .check-stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-3);
-}
-/* Spacing for the auto-domain checkbox row inside the custom-nodes tab. */
-.mb-form .auto-domain-toggle {
-  display: inline-flex;
-  padding: var(--space-3) 0;
-}
+/* A row's depth strip: the ramp's cells, filled where the thing is fitted. */
+.mf-depth { display: inline-flex; flex: none; gap: 2px; }
+.mf-depth > i { width: 6px; height: 4px; border-radius: 1px; background: var(--wash2); transition: background-color var(--glide) var(--ease), opacity var(--glide) var(--ease); }
+.mf-depth.is-fitted > i { background: color-mix(in oklch, var(--deep) var(--p), var(--late)); }
+.mf-depth.is-stale > i { opacity: 0.45; }
 
-.mb-form .save-btn {
-  min-height: var(--control-target);
-  background: var(--action-bg);
-  color: var(--action-ink);
-  border: 1px solid transparent;
-  border-radius: var(--radius);
-  padding: var(--space-3) var(--space-5);
-  font: inherit;
-  font-family: var(--font-mono);
-  cursor: pointer;
-  transition: background var(--dur) var(--ease-out);
-}
-.mb-form .save-btn:hover:not(:disabled) {
-  background: var(--action-hover);
-}
-.mb-form .save-btn:disabled {
-  background: var(--bg-elev);
-  color: var(--fg-muted);
-  cursor: not-allowed;
-}
+/* What went wrong, or what to check: ink on a wash, never a colour. */
+.mf-error { margin: 0; color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
+.mf-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+.mf-actions.end { justify-content: flex-end; }
 
-.mb-form .progress {
-  margin: 0;
-  color: var(--accent);
-  font-size: var(--text-xs);
-  font-style: italic;
-}
+/* A search field: a wash pill holding the glass and the input. */
+.mf-search { display: flex; align-items: center; gap: var(--s2); min-width: 0; height: 44px; padding: 0 var(--s4); border-radius: var(--r-pill); background: var(--wash); color: var(--ink3); }
+.mf-search input { flex: 1 1 auto; min-width: 0; min-height: 0; height: 100%; padding: 0; background: transparent; font: var(--type-small); }
+.mf-search input:focus-visible { outline: none; }
+.mf-search input::-webkit-search-cancel-button { display: none; }
+.mf-search .clear { display: inline-grid; flex: none; place-items: center; width: 28px; height: 28px; margin-right: calc(var(--s2) * -1); padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink3); cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease); }
+@media (hover: hover) { .mf-search .clear:hover { color: var(--ink); background: var(--wash2); } }
+.mf-search:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
 
-/* Each form is a plain vertical stack inside the shared body rhythm. */
-.mb-form .form-stack {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
+/* ---------- the builder's stepwise form */
+
+.mb-form { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; max-width: 760px; }
+.mb-form .form-stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; }
+.mb-form fieldset { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; margin: 0; padding: 0; border: 0; }
+
+/* A step: its number and quiet head, then its fields. */
+.mb-form .step { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; }
+.mb-form .step-title { display: flex; align-items: center; gap: var(--s2); margin: 0; color: var(--ink3); font: var(--type-head); }
+.mb-form .step-title .n { display: inline-grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--wash); color: var(--ink); font: var(--type-meta); }
+
+.mb-form .grid2 { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+.mb-form .field { display: grid; gap: var(--s1); min-width: 0; }
+.mb-form .label, .mb-form .mini-label { color: var(--ink3); font: var(--type-meta); }
+.mb-form .input { width: 100%; min-width: 0; }
+.mb-form textarea.input { min-height: 88px; resize: vertical; }
+.mb-form :is(input, textarea)[aria-invalid="true"] { background: color-mix(in oklab, var(--ink) 6%, var(--wash)); }
+.mb-form .field-error { margin: 0; color: var(--ink); font: var(--type-meta); overflow-wrap: anywhere; }
+
+/* A line of numbers and words under a field. */
+.mb-form .dim-note, .mb-form .muted { margin: 0; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+.mb-form .dim-note strong { color: var(--ink); font-weight: 500; }
+
+/* The axes of a box: one row each on a wash. */
+.mb-form .axes { display: grid; gap: var(--s2); }
+.mb-form .axis-card { display: grid; grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(72px, 1fr)) auto; align-items: end; gap: var(--s2) var(--s3); padding: var(--s3); border-radius: var(--r-box); background: var(--wash); }
+.mb-form .axis-card :where(input) { background: var(--wash2); }
+.mb-form .axis-field { display: grid; gap: var(--s1); min-width: 0; }
+.mb-form .axis-check { display: flex; align-items: center; }
+.mb-form .axis-error { grid-column: 1 / -1; }
+.mb-form .sphere-field { max-width: 280px; }
+
+/* The nodes: one wash row each, opening to its role and statements. */
+.mb-form .node-list { display: grid; gap: var(--s2); }
+.mb-form .node-card { display: grid; gap: var(--s2); min-width: 0; padding: var(--s2) var(--s2) var(--s2) var(--s1); border-radius: var(--r-box); background: var(--wash); }
+.mb-form .node-card :where(input, textarea) { background: var(--wash2); }
+.mb-form .node-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.mb-form .node-expand, .mb-form .node-remove { display: inline-grid; flex: none; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 50%; background: transparent; color: var(--ink3); cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease); }
+.mb-form .node-expand .chev { display: grid; transition: rotate var(--glide) var(--ease); }
+.mb-form .node-expand[aria-expanded="false"] .chev { rotate: -90deg; }
+@media (hover: hover) { .mb-form :is(.node-expand, .node-remove):hover { color: var(--ink); background: var(--wash2); } }
+.mb-form .node-label { flex: 1 1 128px; min-width: 0; }
+.mb-form .node-coords { display: flex; flex: 1 1 100%; flex-wrap: wrap; gap: var(--s1); order: 1; padding-left: 40px; }
+.mb-form .coord-cell { display: inline-flex; flex: 0 0 auto; width: 88px; }
+.mb-form .node-card > .field-error { padding-left: 40px; }
+.mb-form .node-details { display: grid; gap: var(--s2); padding: 0 0 var(--s1) 40px; }
+.mb-form .node-role { display: grid; gap: var(--s1); max-width: 280px; }
+.mb-form .node-statements { width: 100%; min-height: 96px; resize: vertical; }
+
+/* A text button that adds a row. */
+.mb-form .add-node { justify-self: start; display: inline-flex; align-items: center; gap: var(--s2); height: 36px; padding: 0; border: 0; background: transparent; color: var(--ink2); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease); }
+@media (hover: hover) { .mb-form .add-node:hover { color: var(--ink); } }
+
+/* Choices made by rows: the budgets, each a row that washes when chosen. */
+.mb-form .choice-rows { display: grid; gap: 2px; }
+.mb-form .choice { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: baseline; gap: var(--s1) var(--s4); min-height: 44px; padding: var(--s2) var(--s3); border-radius: var(--r-box); color: var(--ink2); font: var(--type-small); cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease), opacity var(--fast) var(--ease); }
+.mb-form .choice:active { scale: 0.99; }
+.mb-form .choice b { color: var(--ink); font: var(--type-control); }
+.mb-form .choice .meta { text-align: right; }
+.mb-form .choice:has(input:checked) { background: var(--wash2); }
+@media (hover: hover) { .mb-form .choice:hover:not(:has(input:checked)) { background: var(--wash); } }
+.mb-form .choice:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+/* Held while a job runs: a disabled field, number, choice, switch or segmented control dims as a
+ * disabled button does (the Select dims itself). */
+.mb-form :is(.input, .sk-number), .mb-form fieldset [role="group"] { transition: opacity var(--fast) var(--ease); }
+.mb-form .input:disabled, .mb-form .sk-number:has(input:disabled) { opacity: 0.4; }
+.mb-form fieldset:disabled :is(.choice, [role="switch"]) { cursor: default; opacity: 0.4; }
+.mb-form fieldset:disabled [role="group"] { opacity: 0.4; pointer-events: none; }
+
+.mb-form .check-stack { display: grid; justify-items: start; gap: var(--s1); }
+
+/* The last step: the action, and what it is doing. */
+.mb-form .submit { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+.mb-form .progress { margin: 0; color: var(--ink3); font: var(--type-meta); }
+.mb-form .progress:empty { display: none; }
+
+@media (max-width: 520px) {
+  .mb-form .grid2 { grid-template-columns: minmax(0, 1fr); }
+  .mb-form .axis-card { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .mb-form .axis-card .name-field { grid-column: 1 / -1; }
+  .mb-form .node-card { padding: var(--s2); }
+  .mb-form .node-coords, .mb-form .node-details, .mb-form .node-card > .field-error { padding-left: 0; }
+  /* A row that stacks: its ID over its actions. */
+  .mf-row.stack { grid-template-columns: minmax(0, 1fr); }
+  .mf-row.stack .mf-end { justify-content: flex-start; }
+}
+@media (max-width: 720px) {
+  .mf-tool.dialog { padding: var(--s4); }
+  .mf-row, .mb-form .choice { min-height: 48px; }
+  /* Phone sizes: every target 44 px. A text button keeps its size and reaches 44 px through its hit
+   * area, so its row does not grow. */
+  .mb-form :is(.node-expand, .node-remove), .mf-search .clear { width: 44px; height: 44px; }
+  .mb-form .add-node { height: 44px; }
+  .mb-form .input:not(textarea) { min-height: 44px; }
+  .mf-tool .dw-text { position: relative; }
+  .mf-tool .dw-text::after { content: ""; position: absolute; inset: -12px -6px; }
 }

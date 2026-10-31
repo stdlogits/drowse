@@ -25,7 +25,6 @@ const DRAWER_REQUIREMENTS: Record<
   probe_inspector: [],
   advanced_sampling: [],
   health: [],
-  appearance: [],
   session_admin: ["session_admin"],
   local_runtime: [],
   help: [],

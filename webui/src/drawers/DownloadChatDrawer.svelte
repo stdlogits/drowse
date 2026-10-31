@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import { closeDrawer, genStatus } from "../lib/stores.svelte";
   import { conversationLibrary, savedConversationState } from "../lib/stores/savedConversations.svelte";
   import { captureConversationSnapshot } from "../lib/conversationWorkspace";
@@ -69,52 +69,45 @@
 
 <form class="download-chat" onsubmit={download}>
   <header>
-    <h2>Download chat</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <h2 class="dw-title">Download chat</h2>
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
-  <p>All messages, Loom branches, settings, and recorded readings. Model files aren’t included.</p>
+  <p class="meta">Every message and branch, the settings and the readings; no model files.</p>
   {#if loading}
-    <p role="status">Preparing your backup…</p>
+    <p class="meta" role="status">Preparing…</p>
   {:else if blob}
-    <div class="name-field">
-      <label for="chat-download-name">File name</label>
-      <input id="chat-download-name" class="field-focus" bind:value={name} maxlength="120" required autocomplete="off" />
-    </div>
+    <label class="name-field">
+      <span class="meta">File name</span>
+      <input id="chat-download-name" bind:value={name} maxlength="120" required autocomplete="off" />
+    </label>
     <div class="file-summary">
       <span class="filename">{filename}</span>
-      <span class="size" aria-label="Backup size" data-bytes={blob.size}>{blob.size.toLocaleString()} bytes</span>
+      <span class="meta" aria-label="Backup size" data-bytes={blob.size}>{blob.size.toLocaleString()} bytes</span>
     </div>
-    <p class="note">This is a copy. Your saved chat’s name stays unchanged.</p>
   {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <footer>
-    <button type="button" onclick={closeDrawer}>Cancel</button>
+    <button type="button" class="dw-text" onclick={closeDrawer}>Cancel</button>
     {#if error && !blob}
-      <button type="button" class="primary" onclick={() => void prepare()} disabled={loading}>Try again</button>
+      <button type="button" class="dw-button" onclick={() => void prepare()} disabled={loading}>Try again</button>
     {:else}
-      <button type="submit" class="primary" disabled={!blob || !name.trim() || downloading}>Download</button>
+      <button type="submit" class="dw-button" disabled={!blob || !name.trim() || downloading}>Download</button>
     {/if}
   </footer>
 </form>
 
 <style>
-  .download-chat { display: grid; gap: var(--space-md); padding: var(--surface-padding); min-width: 0; }
-  header { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); }
-  h2 { margin: 0; font-size: var(--text-lg); }
-  p { margin: 0; color: var(--fg-dim); text-wrap: pretty; }
-  label { font-weight: var(--weight-structure); }
-  .name-field { display: grid; gap: var(--space-4); min-width: 0; }
-  input { width: 100%; min-width: 0; box-sizing: border-box; padding: var(--space-4); border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--input-well); color: var(--fg); font: inherit; }
-  .file-summary { display: grid; gap: var(--space-2); padding: var(--surface-padding); border-radius: var(--radius); background: var(--glass); }
-  .filename { overflow-wrap: anywhere; }
-  .size { color: var(--accent); font-variant-numeric: tabular-nums; }
-  .note { font-size: var(--text-sm); }
-  .error { color: var(--accent-red); }
-  footer { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: var(--space-md); }
-  button { min-height: var(--control-target); padding: var(--space-xs) var(--space-sm); border: 0; border-radius: var(--radius); background: var(--glass); color: var(--fg); font: inherit; cursor: pointer; transition: background var(--dur-fast) var(--ease-out), transform var(--dur-fast) var(--ease-out); }
-  button:hover:not(:disabled) { background: var(--accent-subtle); }
-  button:active:not(:disabled) { transform: scale(0.96); }
-  button.primary { background: var(--accent); color: var(--bg); }
-  button.primary:hover:not(:disabled) { background: color-mix(in srgb, var(--accent) 88%, var(--fg)); }
-  button:disabled { opacity: var(--disabled-opacity); cursor: default; }
+  .download-chat { display: grid; gap: var(--s4); min-width: 0; padding: var(--s5) var(--s6) var(--s6); }
+  header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
+  .name-field { display: grid; gap: var(--s1); min-width: 0; }
+  input { width: 100%; min-width: 0; height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-body); }
+  .file-summary { display: grid; gap: 2px; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .filename { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
+  .error { color: var(--ink); }
+  footer { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s4); padding-top: var(--s2); }
+  @media (max-width: 720px) {
+    .download-chat { padding: var(--s4) var(--s4) var(--s5); }
+    input { font-size: 16px; }
+  }
+  @media (pointer: coarse) { .dw-text, input { min-height: 44px; } }
 </style>

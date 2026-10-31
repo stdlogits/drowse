@@ -1,19 +1,13 @@
 <script lang="ts">
-  // Probe rack — the PROBE section of one instrument tab.  The geometry
-  // family arrives as a prop (the tab IS the group): subspace shows the
-  // is_affine entries (a 2-node concept axis or a higher-rank flat fan
-  // like personas), manifold the curved rest (e.g. a curved emotions
-  // probe).  Every row wears the same RackCard chrome; the pillar hue
-  // rides the card accent.  The sort dropdown (name / value / change)
-  // orders the rows; the footer keeps the family's + launcher.
-  //
-  // Transcript highlight / compare-two controls live in Chat.svelte —
-  // highlighting is about reading the transcript, so that is their one
-  // home.
-
+  // The geometry probes, as rows (the Instruments canvas): flat ones (a concept axis, a flat fan
+  // like personas) and curved ones (a fitted surface like emotions), sorted by name, value or
+  // change. Beneath them: + Probe (a concept or a manifold), the sort, and Live, the one switch for
+  // per-token scoring (off, readings land when the reply ends). With ``family`` it shows one kind.
+  // Lens and SAE probes have their own rows in their own sections.
+  import { Switch, expand } from "@stdlogits/ledger";
+  import { MorphText } from "@stdlogits/ledger";
   import ProbeCard from "./rack/ProbeCard.svelte";
-  import RackSectionHeader from "./rack/RackSectionHeader.svelte";
-  import type { ProbeInfo } from "../lib/types";
+  import type { ProbeInfo, ProbeSortMode } from "../lib/types";
   import {
     activeProbeNames,
     openDrawer,
@@ -24,197 +18,91 @@
     setProbeSortMode,
     sessionState,
   } from "../lib/stores.svelte";
-  import type { ProbeSortMode } from "../lib/types";
 
-  // The geometry family comes in as a prop since the four-pillar
-  // restructure — the tab IS the group, so the rack shows one family:
-  // subspace ⇔ info.is_affine, manifold ⇔ curved.  The live toggle is the
-  // ONE monitor per-token scoring switch (it spans both families; it
-  // renders in both tabs' headers driving the same state).
-  let { family }: { family: "subspace" | "manifold" } = $props();
+  let { family }: { family?: "subspace" | "manifold" } = $props();
 
-  const sortMode = $derived(probeRack.sortMode);
   const liveOn = $derived(probesLiveState.enabled);
   const outputNoun = $derived(sessionState.info?.is_base_model ? "completion" : "reply");
 
-  function onToggleLive(): void {
-    void setLiveProbes(!liveOn);
+  /** Flat (affine) geometry probes are the subspace family, curved ones the manifold family. */
+  function kindOf(info: ProbeInfo | undefined): "subspace" | "manifold" | null {
+    if (info?.family !== "geometry") return null;
+    return info.is_affine ? "subspace" : "manifold";
   }
 
-  // activeProbeNames() reads probeRack.active + entries + sortMode, all
-  // $state-tracked, so this $derived re-runs on any of those changes.
-  // ``jlens/`` token probes are excluded — they render as pinned chips in
-  // the lens tab, not as rack rows here.
+  // activeProbeNames() reads probeRack.active, entries and sortMode, so this re-runs on each.
   const probes = $derived.by(() =>
-    activeProbeNames().filter(
-      (n) =>
-        !n.startsWith("jlens/") &&
-        !n.startsWith("sae/") &&
-        _isSubspace(probeRack.entries.get(n)?.info) === (family === "subspace"),
-    ),
+    activeProbeNames().filter((n) => {
+      const kind = kindOf(probeRack.entries.get(n)?.info);
+      return kind !== null && (family === undefined || kind === family);
+    }),
   );
-  const count = $derived(probes.length);
 
-  /** Flat (affine) geometry probes are the subspace family; curved fits the
-   *  manifold family.  A non-geometry row never reaches here (the filter
-   *  above drops the readout families). */
-  function _isSubspace(info: ProbeInfo | undefined): boolean | undefined {
-    return info?.family === "geometry" ? info.is_affine : undefined;
+  const SORTS: ProbeSortMode[] = ["name", "value", "change"];
+  function cycleSort(): void {
+    setProbeSortMode(SORTS[(SORTS.indexOf(probeRack.sortMode) + 1) % SORTS.length]);
   }
 
-  const SORT_OPTIONS: { value: ProbeSortMode; label: string }[] = [
-    { value: "name", label: "name" },
-    { value: "value", label: "value" },
-    { value: "change", label: "change" },
-  ];
-
-  function onSortChange(v: ProbeSortMode): void {
-    setProbeSortMode(v);
+  let adding = $state(false);
+  function add(kind: "subspace" | "manifolds"): void {
+    adding = false;
+    openDrawer(kind);
   }
-
-  function onAddSubspaceProbe(): void {
-    // The shared rack drawer hosts the probe attach UI alongside the
-    // steer UI — every row carries both +steer and +probe, so the steer
-    // rack and probe rack open the exact same drawer (no mode split).
-    openDrawer("subspace");
-  }
-
-  function onAddManifoldProbe(): void {
-    openDrawer("manifolds");
+  function onAdd(): void {
+    if (family === "subspace") add("subspace");
+    else if (family === "manifold") add("manifolds");
+    else adding = !adding;
   }
 </script>
 
-<section class="rack" aria-label="Probe rack">
-  <RackSectionHeader
-    title="Probes"
-    count={`${count} probe${count === 1 ? "" : "s"}`}
-    live={liveOn}
-    liveBusy={probesLiveState.busy}
-    liveTitle={liveOn
-      ? `Stop word-by-word readings; final ${outputNoun} readings stay available`
-      : "Measure every generated word while the model writes"}
-    liveLabel={`word-by-word ${outputNoun} readings`}
-    liveHelp={`Live measures every generated word. When it is off, saved readings update after the ${outputNoun}.`}
-    onLiveToggle={onToggleLive}
-    sortValue={sortMode}
-    sortOptions={SORT_OPTIONS}
-    sortAriaLabel="Sort probes by"
-    onSortChange={onSortChange}
-  />
-
-  <div class="strips" class:is-empty={count === 0} role="list">
-    {#if count === 0}
-      <div class="empty-copy" role="listitem">No readings added. Readings observe the {outputNoun} without changing it.</div>
-    {/if}
-    {#each probes as name (name)}
+<div class="rack" aria-label="Probes">
+  {#if probes.length > 0}
+    <div class="rows" role="list">
+      {#each probes as name (name)}
         {@const entry = probeEntryForDisplay(name)}
         {#if entry}
-          <div role="listitem">
-            <ProbeCard {name} {entry} />
-          </div>
+          <div role="listitem"><ProbeCard {name} {entry} /></div>
         {/if}
-    {/each}
-  </div>
+      {/each}
+    </div>
+  {/if}
 
-  <div class="actions">
-      {#if family === "subspace"}
-        <button
-          type="button"
-          class="add add-subspace"
-          onclick={onAddSubspaceProbe}
-        >
-          Add subspace probe
-        </button>
-      {:else}
-        <button
-          type="button"
-          class="add add-manifold"
-          onclick={onAddManifoldProbe}
-        >
-          Add manifold probe
+  <div class="foot">
+    <button type="button" class="dw-add" aria-expanded={family === undefined ? adding : undefined} onclick={onAdd}>
+      + {family === "manifold" ? "Manifold probe" : family === "subspace" ? "Concept probe" : "Probe"}
+    </button>
+    <span class="end">
+      {#if probes.length > 1}
+        <button type="button" class="dw-text sort" onclick={cycleSort} aria-label={`Sorted by ${probeRack.sortMode}. Sort by ${SORTS[(SORTS.indexOf(probeRack.sortMode) + 1) % SORTS.length]}`}>
+          by <MorphText text={probeRack.sortMode} />
         </button>
       {/if}
+      <span class="live" inert={probesLiveState.busy}>
+        <Switch checked={liveOn} onchange={() => void setLiveProbes(!liveOn)} label="Live"
+          hint={liveOn ? `Reading every word as it is written. Off, readings land when the ${outputNoun} ends.` : `Read every word as it is written`} />
+      </span>
+    </span>
   </div>
-</section>
+
+  {#if adding}
+    <div class="dw-row" transition:expand>
+      <button type="button" class="dw-quiet" onclick={() => add("subspace")}>A concept</button>
+      <button type="button" class="dw-quiet" onclick={() => add("manifolds")}>A manifold</button>
+    </div>
+  {/if}
+</div>
 
 <style>
-  /* A flat section of the inspector panel — no border box, no own
-   * background; it reads as the lower half of one flat panel, divided
-   * from the steering section above by typography + padding alone
-   * (borderless — see SteeringRack). Fixed chrome + one scrollable
-   * middle, matching SteeringRack. */
-  .rack {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--surface-padding);
-    background: transparent;
-    height: 100%;
-    max-height: 100%;
-    min-height: 0;
-    overflow-y: auto;
-  }
+  .rack { display: grid; gap: var(--s2); min-width: 0; }
+  .rows { display: grid; gap: 2px; }
+  .foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+  .end { display: flex; align-items: center; gap: var(--s4); margin-left: auto; }
+  .sort { font: var(--type-meta); }
+  .live[inert] { opacity: 0.4; }
 
-  /* Strips own the scroll inside the rack — with many auto-loaded probes
-   * the list overflows the rack viewport, but the actions row stays
-   * anchored at the bottom. */
-  .strips {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    flex: 1 1 0;
-    min-height: 2.4rem;
-    max-height: 100%;
-    overflow-y: auto;
-    scrollbar-gutter: stable both-edges;
-  }
-  .strips.is-empty {
-    flex: 0 0 auto;
-    min-height: 0;
-  }
-  .empty-copy {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    line-height: 1.45;
-    text-wrap: pretty;
-  }
-
-  /* Anchored at the bottom — same padding as SteeringRack so the two
-   * racks read as visual siblings.  Shown in both empty and populated
-   * states. */
-  .actions {
-    flex: 0 0 auto;
-    display: flex;
-    gap: var(--space-2);
-    padding-top: var(--space-3);
-  }
-  .add {
-    min-height: var(--control-target);
-    flex: 1 1 0;
-    border: 1px solid transparent;
-    padding: var(--space-xs) var(--space-5);
-    border-radius: var(--radius);
-    font-size: var(--text-sm);
-    line-height: normal;
-    cursor: pointer;
-    transition: background var(--dur) var(--ease-out);
-  }
-  /* Subspace launcher — white accent (the base family colour). */
-  .add-subspace {
-    background: var(--accent-subtle);
-    color: var(--accent);
-  }
-  .add-subspace:hover {
-    background: var(--accent-strong);
-  }
-  /* Manifold launcher — purple-tinted to echo the manifold card's accent
-   * so the probe-family colour stays consistent across the surfaces. */
-  .add-manifold {
-    background: color-mix(in srgb, var(--pillar-manifold) 10%, transparent);
-    color: var(--pillar-manifold);
-  }
-  .add-manifold:hover {
-    background: color-mix(in srgb, var(--pillar-manifold) 18%, transparent);
+  /* Phone sizes: every target 44 px (the sort, the switch). */
+  @media (max-width: 720px), (pointer: coarse) {
+    .sort { min-height: 44px; padding: 0 var(--s1); }
+    .live :global(.switch) { height: 44px; }
   }
 </style>

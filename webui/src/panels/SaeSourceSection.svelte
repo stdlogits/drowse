@@ -1,12 +1,10 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import { onMount } from "svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { onMount, untrack } from "svelte";
   import Bar from "../lib/charts/Bar.svelte";
   import Select from "../lib/Select.svelte";
   import Button from "../lib/ui/Button.svelte";
-  import { apiInstruments } from "../lib/runtime/services";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
-  import { userFacingError } from "../lib/runtime/userFacingError";
   import {
     instrumentFamily,
     loadSae,
@@ -45,12 +43,7 @@
   let trainTokens = $state(1_000_000);
   let trainLayer = $state("");
   let trainConfirm = $state(false);
-  let releases = $state<{
-    release: string;
-    layers: number[];
-    source?: "local" | "saelens";
-  }[]>([]);
-  let discoverError = $state<string | null>(null);
+  const releases = $derived(saeSourceState.releases);
   const providerOptions = $derived((allowPackFetch ? releases : []).map((row) => ({
     value: `saelens:${row.release}`,
     label: row.release,
@@ -120,19 +113,10 @@
     if (selectedSource !== "local") trainConfirm = false;
   });
 
+  // Releases arrive with the sources (refreshSaeSources, on mount); this only picks the first.
   $effect(() => {
-    if (releases.length > 0) return;
-    void apiInstruments.sources("sae").then((result) => {
-      releases = (result.releases ?? []).filter((row) => row.source !== "local");
-      if (!selectedSource && releases.length > 0) {
-        selectedSource = `saelens:${releases[0].release}`;
-      }
-    }).catch((error) => {
-      discoverError = userFacingError(
-        error,
-        "Unable to check available feature packs. Check your connection and try again.",
-      );
-    });
+    const first = releases[0];
+    if (first && untrack(() => !selectedSource)) selectedSource = `saelens:${first.release}`;
   });
 
   function requestTrain(): void {
@@ -239,7 +223,7 @@
         max={Math.max(saeTrain.state.total, 1)}
         width={160}
         height={8}
-        color="var(--pillar-sae)"
+        color="var(--tint)"
       />
       <Button
         size="sm"
@@ -266,9 +250,6 @@
     {#if saeTrain.state.error}
       <p class="hint load-error" role="alert">local train: {saeTrain.state.error}</p>
     {/if}
-    {#if discoverError}
-      <p class="hint" role="alert">registry: {discoverError}</p>
-    {/if}
   {/snippet}
 </InstrumentSourceSection>
 
@@ -276,7 +257,7 @@
   .train-line,
   .train-progress {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--s2);
   }
   .train-progress {
     flex-direction: column;
@@ -288,24 +269,21 @@
     align-items: center;
     justify-content: space-between;
   }
-  .work-status,
-  .train-count {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
   .work-status {
     overflow: hidden;
     margin: 0;
-    color: var(--fg-dim);
+    color: var(--ink2);
+    font: var(--type-small);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .train-count {
     flex: 0 0 auto;
-    color: var(--fg-muted);
+    color: var(--ink3);
+    font: var(--type-meta);
     font-variant-numeric: tabular-nums;
   }
-  .hint { margin: 0; color: var(--fg-muted); font-size: var(--text-sm); }
-  .train-warning { color: var(--accent-yellow); }
-  .load-error { color: var(--accent-red); }
+  .hint { margin: 0; color: var(--ink3); font: var(--type-small); }
+  .train-warning { color: var(--ink); }
+  .load-error { color: var(--ink); }
 </style>

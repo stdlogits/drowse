@@ -1,11 +1,12 @@
 <script lang="ts">
   // Advanced-options collapsible — the builder-drawer wrapper around
-  // ``Disclosure`` with a fixed "Advanced options" summary and a body
+  // the Ledger ``Expander`` with a fixed "Advanced options" summary and a body
   // layout that matches the extract / manifold forms.  Used in both
   // drawers so the secondary-fields surface reads identically.
 
   import type { Snippet } from "svelte";
-  import Disclosure from "../Disclosure.svelte";
+  import { untrack } from "svelte";
+  import { Expander } from "@stdlogits/ledger";
 
   interface Props {
     expanded?: boolean;
@@ -19,25 +20,20 @@
     summary = "Advanced options",
     children,
   }: Props = $props();
+
+  let openings = $state(0);
+  $effect(() => { if (expanded) untrack(() => (openings += 1)); });
 </script>
 
-<div class="sk-advanced">
-  <Disclosure bind:expanded {summary} flush>
+<Expander bind:open={expanded} label={summary}>
+  <!-- Remounted on each opening: a gliding thumb inside measures itself only once it is visible. -->
+  {#key openings}
     <div class="sk-advanced-body">
       {@render children()}
     </div>
-  </Disclosure>
-</div>
+  {/key}
+</Expander>
 
 <style>
-  .sk-advanced {
-    /* Match the extract/manifold "field" rhythm — a small bottom margin
-     * keeps the section anchored above the submit button. */
-    margin: var(--space-3) 0;
-  }
-  .sk-advanced-body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
+  .sk-advanced-body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
 </style>

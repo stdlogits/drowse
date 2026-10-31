@@ -1,6 +1,7 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  // The Model room's Health section (and, opened anywhere else, a dialog): what the session holds
+  // now as a row of figures, the checks and warnings as rows, and the full settings reset last.
+  import { Icon, IconButton, MorphText } from "@stdlogits/ledger";
   import ResetSettings from "../lib/ui/ResetSettings.svelte";
   import {
     closeDrawer,
@@ -19,6 +20,7 @@
   const embedded = $derived(
     (params as { embedded?: boolean } | null)?.embedded === true,
   );
+  const uid = $props.id();
 
   const busy = $derived(healthState.busy);
   const lastAudit = $derived(healthState.lastAudit ? new Date(healthState.lastAudit).toLocaleTimeString() : null);
@@ -27,233 +29,147 @@
   const ppl = $derived(geometricMeanPpl(genStatus));
   const warnings = $derived(healthWarnings());
 
+  const figures = $derived([
+    {
+      key: "Generation",
+      value: genStatus.active ? "active" : genStatus.finishReason ?? "idle",
+      meta: `${genStatus.tokensSoFar}/${genStatus.maxTokens || "–"} tokens · ${genStatus.tokPerSec.toFixed(1)} tok/s`,
+    },
+    { key: "Perplexity", value: ppl === null ? "–" : ppl.toFixed(2), meta: `${genStatus.ppl.count} steps` },
+    {
+      key: "Loom",
+      value: loomTree.nodes.size ? String(loomTree.nodes.size) : "–",
+      meta: `rev ${loomTree.loaded ? loomTree.rev : "–"} · depth ${loomTree.activePath.length || "–"}`,
+    },
+    {
+      key: "Manifolds",
+      value: String(steerRack.catalog.length),
+      meta: `${steerRack.entries.size} racked · ${vectorsState.names.length} resident`,
+    },
+    {
+      key: "Probes",
+      value: String(probeRack.active.length),
+      meta: `${probeRack.entries.size} rows · ${steerRack.correlation ? "correlation cached" : "no correlation"}`,
+    },
+  ]);
+
+  const checks = $derived([
+    { key: "Session", ok: !!sessionState.info, state: sessionState.info ? "loaded" : "unavailable" },
+    { key: "Loom", ok: loomTree.loaded && !loomTree.error, state: loomTree.loaded && !loomTree.error ? "loaded" : "unavailable" },
+    { key: "Manifolds", ok: steerRack.catalog.length > 0, state: steerRack.catalog.length > 0 ? "available" : "none installed" },
+    { key: "Probes", ok: probeRack.active.length > 0, state: probeRack.active.length > 0 ? "active" : "none active" },
+    { key: "Correlation", ok: steerRack.correlation !== null, state: steerRack.correlation !== null ? "measured" : "not measured" },
+  ]);
+  const passing = $derived(checks.filter(check => check.ok).length);
+
   async function audit(): Promise<void> {
     if (!healthState.busy) await refreshHealth();
   }
 </script>
 
 <section
-  class="drawer-shell"
+  class="health"
   class:embedded
   role={embedded ? "region" : undefined}
-  aria-label={embedded ? "Model controls" : "Health drawer"}
+  aria-label={embedded ? "Model health" : "Health drawer"}
 >
   {#if !embedded}
-    <header class="drawer-header">
-      <div class="title">
-        <h2 class="eyebrow">Model health</h2>
-      </div>
-      <DrawerCloseButton onclick={closeDrawer} />
+    <header class="dlg-head">
+      <h2>Model health</h2>
+      <IconButton icon="close" label="Close" onclick={closeDrawer} />
     </header>
   {/if}
 
   <div class="body" aria-busy={busy}>
-    <section class="hero">
-      <div>
-        <h2>{sessionState.info?.model_id ?? "no model"}</h2>
-        <p>{sessionState.info ? `${sessionState.info.device}/${sessionState.info.dtype}` : "session offline"}</p>
+    {#if !embedded}
+      <div class="ident">
+        <span class="name">{sessionState.info?.model_id ?? "No model"}</span>
+        <span class="meta">{sessionState.info ? `${sessionState.info.device}/${sessionState.info.dtype}` : "offline"}</span>
       </div>
-      <Button variant="solid" {busy} disabled={busy} onclick={audit}>
-        <MorphText text={busy ? "checking…" : "refresh"} />
-      </Button>
-    </section>
-
-    {#if errorMsg}
-      <div class="error" role="alert">Health check failed: {errorMsg}</div>
     {/if}
 
-    <section class="panel"><ResetSettings full /></section>
+    <div class="dw-row">
+      <Button {busy} disabled={busy} onclick={audit}><MorphText text={busy ? "Checking…" : "Check again"} numbers={false} /></Button>
+      {#if lastAudit}<span class="meta">Checked {lastAudit}</span>{/if}
+    </div>
+    {#if errorMsg}<p class="error" role="alert">Health check failed: {errorMsg}</p>{/if}
 
-    <section class="grid">
-      <div class="tile">
-        <span>generation</span>
-        <strong>{genStatus.active ? "active" : genStatus.finishReason ?? "idle"}</strong>
-        <p><MorphText text={`${genStatus.tokensSoFar}/${genStatus.maxTokens || "-"} tokens`} /> · <MorphText text={genStatus.tokPerSec.toFixed(1)} /> tok/s</p>
-      </div>
-      <div class="tile">
-        <span>Perplexity</span>
-        <strong><MorphText text={ppl === null ? "-" : ppl.toFixed(2)} /></strong>
-        <p>{genStatus.ppl.count} steps</p>
-      </div>
-      <div class="tile">
-        <span>loom tree</span>
-        <strong>{loomTree.nodes.size || "-"}</strong>
-        <p>rev {loomTree.loaded ? loomTree.rev : "-"} · depth {loomTree.activePath.length || "-"}</p>
-      </div>
-      <div class="tile">
-        <span>artifacts</span>
-        <strong><MorphText text={steerRack.catalog.length} /></strong>
-        <p>{steerRack.entries.size} racked · {vectorsState.names.length} resident</p>
-      </div>
-      <div class="tile">
-        <span>probes</span>
-        <strong><MorphText text={probeRack.active.length} /></strong>
-        <p>{probeRack.entries.size} rows · {steerRack.correlation ? "matrix cached" : "no matrix"}</p>
-      </div>
+    <section class="dw-sec" aria-labelledby={`${uid}-now`}>
+      <span class="head" id={`${uid}-now`}>Now</span>
+      <dl class="figures">
+        {#each figures as figure (figure.key)}
+          <div class="figure">
+            <dt class="meta">{figure.key}</dt>
+            <dd class="value"><MorphText text={figure.value} /></dd>
+            <dd class="meta">{figure.meta}</dd>
+          </div>
+        {/each}
+      </dl>
     </section>
 
-    <section class="panel">
-      <h3>checks</h3>
-      <div class="checks">
-        <div class:ok={!!sessionState.info}>Session details: {sessionState.info ? "loaded" : "unavailable"}</div>
-        <div class:ok={loomTree.loaded && !loomTree.error}>Loom: {loomTree.loaded && !loomTree.error ? "loaded" : "unavailable"}</div>
-        <div class:ok={steerRack.catalog.length > 0}>Response controls: {steerRack.catalog.length > 0 ? "available" : "none installed"}</div>
-        <div class:ok={probeRack.active.length > 0}>Probes: {probeRack.active.length > 0 ? "active" : "none active"}</div>
-        <div class:ok={steerRack.correlation !== null}>Correlation: {steerRack.correlation !== null ? "available" : "not measured"}</div>
-      </div>
+    <section class="dw-sec narrow" aria-labelledby={`${uid}-checks`}>
+      <div class="dw-sec-head"><span class="head" id={`${uid}-checks`}>Checks</span><span class="meta"><MorphText text={`${passing} of ${checks.length}`} /></span></div>
+      <ul class="rows">
+        {#each checks as check (check.key)}
+          <li class="row" class:ok={check.ok}>
+            <span class="mark" aria-hidden="true">{#if check.ok}<Icon name="check" />{:else}<i></i>{/if}</span>
+            <span class="key">{check.key}</span>
+            <span class="meta">{check.state}</span>
+          </li>
+        {/each}
+      </ul>
     </section>
 
-    <section class="panel">
-      <h3>warnings · <MorphText text={warnings.length} /></h3>
-      {#if warnings.length === 0}
-        <p class="good">clear</p>
-      {:else}
-        <ul>
+    <section class="dw-sec narrow" aria-labelledby={`${uid}-warnings`}>
+      <div class="dw-sec-head"><span class="head" id={`${uid}-warnings`}>Warnings</span><span class="meta"><MorphText text={warnings.length ? String(warnings.length) : "None"} /></span></div>
+      {#if warnings.length}
+        <ul class="warnings">
           {#each warnings as warning (warning)}
             <li>{warning}</li>
           {/each}
         </ul>
       {/if}
-      {#if lastAudit}
-        <p class="dim">updated {lastAudit}</p>
-      {/if}
     </section>
+
+    <section class="dw-sec"><ResetSettings full /></section>
   </div>
 </section>
 
 <style>
-  /* v2 sheet interior — the host paints the sheet surface (glass hairline,
-   * radius, --bg-alt fill), so the root is transparent; chrome speaks sans
-   * and every value/identifier/number sits in mono. */
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
+  .health { display: flex; flex-direction: column; min-height: 0; color: var(--ink2); }
+  .dlg-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--s4); padding: var(--s5) var(--s5) 0; }
+  .dlg-head h2 { margin: 0; color: var(--ink); font: var(--type-mark); }
+  .body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); align-content: start; max-width: 760px; padding: var(--s5); overflow: auto; }
+  .embedded .body { padding: 0; overflow: visible; }
+  .ident { display: grid; gap: 2px; }
+  .ident .name { color: var(--ink); font: 600 16px/24px var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
+
+  /* What the session holds now: figures on paper, no boxes. */
+  .figures { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--s5); margin: 0; }
+  .figure { display: grid; gap: 2px; align-content: start; min-width: 0; }
+  .figure dd { margin: 0; overflow-wrap: anywhere; }
+  .figure .value { color: var(--ink); font: var(--type-lead); font-variant-numeric: tabular-nums; }
+
+  .rows { display: grid; gap: 2px; }
+  /* No fill, so no inset: a row's state ends under its head's count. */
+  .row { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: var(--s3); align-items: center; min-height: 36px; }
+  .row .key { color: var(--ink2); font: var(--type-small); }
+  .row.ok .key { color: var(--ink); }
+  .mark { display: grid; place-items: center; color: var(--ink); }
+  .mark i { width: 6px; height: 6px; border-radius: 50%; background: var(--ink3); opacity: 0.4; }
+  /* Rows read across a short measure, not the room's width. */
+  .narrow { max-width: 520px; }
+
+  .warnings { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .warnings li { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
+
+  @media (max-width: 720px) {
+    .dlg-head { padding: var(--s4) var(--s4) 0; }
+    .body { padding: var(--s4); }
+    .figures { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
   }
-  .drawer-shell.embedded { height: 100%; }
-  .drawer-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .eyebrow {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .hero p, .tile p, .dim {
-    margin: var(--space-1) 0 0;
-    color: var(--fg-muted);
-    line-height: 1.5;
-  }
-  .body {
-    display: grid;
-    gap: var(--drawer-section-gap);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    overflow: auto;
-  }
-  /* Data wells — recessed stat/summary containers. */
-  .hero, .tile, .panel {
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--bg);
-    padding: var(--panel-padding);
-  }
-  .hero {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-6);
-  }
-  h2, h3 { margin: 0; color: var(--fg); }
-  .hero > div { min-width: 0; overflow-wrap: anywhere; }
-  h2 {
-    font-family: var(--font-mono);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-  h3 {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: var(--space-5);
-  }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-5);
-  }
-  .tile span {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .tile strong {
-    display: block;
-    margin-top: var(--space-2);
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: var(--text-md);
-    font-variant-numeric: tabular-nums;
-  }
-  .checks {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: var(--space-3);
-  }
-  .checks div {
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--surface-padding);
-    color: var(--fg-muted);
-    background: var(--surface-sheen), var(--bg-elev);
-    font-size: var(--text-sm);
-    line-height: 1.5;
-    overflow-wrap: anywhere;
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out);
-  }
-  .checks div.ok {
-    color: var(--accent-green);
-    border-color: color-mix(in srgb, var(--accent-green) 35%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent-green) 8%, var(--bg-elev));
-  }
-  ul {
-    margin: 0;
-    padding-inline-start: var(--space-6);
-    color: var(--accent-yellow);
-    line-height: 1.5;
-  }
-  li + li { margin-top: var(--space-2); }
-  .good { color: var(--accent-green); margin: 0; line-height: 1.5; }
-  .error {
-    color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
-    border-radius: var(--radius);
-    padding: var(--surface-padding);
-    line-height: 1.5;
-  }
-  @media (max-width: 600px) {
-    .grid, .checks { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
   }
 </style>

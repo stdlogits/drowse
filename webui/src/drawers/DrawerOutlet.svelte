@@ -44,16 +44,13 @@
 {#if Drawer}
   <Drawer {...props} />
 {:else if failed?.name === name}
-  <p class="drawer-loading" role="alert">This tool could not load: {failed.error instanceof Error ? failed.error.message : String(failed.error)}</p>
+  <p class="drawer-failed" role="alert">This tool could not load: {failed.error instanceof Error ? failed.error.message : String(failed.error)}</p>
 {:else}
-  <p class="drawer-loading" role="status">Loading…</p>
+  <div class="drawer-loading dw-blocks" role="status" aria-label="Loading"><i></i><i></i><i></i></div>
 {/if}
 
 <style>
-  .drawer-loading {
-    margin: 0;
-    padding: var(--space-4);
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-  }
+  /* Loading is wash blocks, never a spinner or a word. */
+  .drawer-loading { padding: var(--s5); }
+  .drawer-failed { margin: 0; padding: var(--s5); color: var(--ink2); font: var(--type-small); overflow-wrap: anywhere; }
 </style>

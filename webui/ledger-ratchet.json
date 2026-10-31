@@ -1,0 +1,49 @@
+{
+  "about": "Ledger ratchet: per-file counts that may only go down (scripts/check-ledger.mjs). The 6.0 cut needs every count at zero and src/lib/style/bridge.css deleted.",
+  "categories": {
+    "bridge": "uses of a bridge token (an old name mapped onto Ledger)",
+    "border": "borders other than 0 or none",
+    "outline": "outlines other than a focus ring (outside :focus and :focus-visible rules)",
+    "shadow": "shadows other than a marked token's 2px same-colour spread (the tip's --float is Ledger's own)",
+    "mono": "monospace",
+    "uppercase": "text-transform: uppercase or small capitals",
+    "tracking": "letter-spaced text (positive letter-spacing)",
+    "easing": "easing other than Ledger's one curve",
+    "loop": "animations that loop (infinite)",
+    "colour": "colours written outside the tokens",
+    "mix": "colour mixes outside oklch and oklab (the accent mixes in oklch; a grey mixes in oklab, since Chrome gives a near-grey's powerless oklch hue a red cast)",
+    "tintText": "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)"
+  },
+  "totals": {
+    "bridge": 131,
+    "border": 3,
+    "outline": 0,
+    "shadow": 2,
+    "mono": 3,
+    "uppercase": 0,
+    "tracking": 0,
+    "easing": 0,
+    "loop": 0,
+    "colour": 0,
+    "mix": 0,
+    "tintText": 0
+  },
+  "files": {
+    "src/panels/rack/AtomSteerCard.svelte": {
+      "bridge": 53,
+      "border": 1,
+      "shadow": 1,
+      "mono": 1
+    },
+    "src/panels/rack/LayerStrip.svelte": {
+      "bridge": 14,
+      "mono": 1
+    },
+    "src/panels/rack/SteerCard.svelte": {
+      "bridge": 64,
+      "border": 2,
+      "shadow": 1,
+      "mono": 1
+    }
+  }
+}

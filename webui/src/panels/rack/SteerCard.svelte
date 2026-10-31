@@ -1,7 +1,7 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import { slidingSelection } from "../../lib/slidingSelection";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
+  import { glide } from "@stdlogits/ledger";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Unified steer card — one row for every steering term.  Every term is a
   // position on a fitted geometry; the card branches on ``entry.mode``:
@@ -13,7 +13,7 @@
   //                        the magnitude is the rack-level "subspace along"
   //                        master shared by every subspace term)
   //   manifold → a curved fit (e.g. emotions).  Manifold accent (◆/◇,
-  //              --pillar-manifold).
+  //              --tint).
   //              statline: glyph · name · unfitted/stale warn · trigger · ✕
   //              body:     snap-to-node Select · XYPad · along · onto
   //
@@ -55,7 +55,7 @@
   // ---------- family chrome (accent + enable glyph) ----------
 
   const subspace = $derived(entry.mode === "subspace");
-  const accent = $derived(subspace ? "--accent" : "--pillar-manifold");
+  const accent = $derived(subspace ? "--accent" : "--tint");
 
   /** Display name — bare name with the namespace prefix stripped
    *  (``default/personas`` → ``personas``).  Full name stays in the accessible description. */
@@ -156,7 +156,7 @@
       onclick={removeTerm}
       aria-label="remove {name}"
     >
-      <FluentIcon name="dismiss" />
+      <Icon name="close" />
     </button>
   {/snippet}
 
@@ -170,7 +170,7 @@
     </div>
     {#if info}
       {#if s && rankOne}
-        <div class="operation" role="group" aria-label="steering operation for {name}" use:slidingSelection>
+        <div class="operation" role="group" aria-label="steering operation for {name}" use:glide>
           <button
             type="button"
             class:active={!s.ablate}
@@ -263,7 +263,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     padding: 0;
-    color: var(--card-accent);
+    color: var(--ink);
     flex: 0 0 24px;
     cursor: pointer;
   }
@@ -319,7 +319,7 @@
     background: transparent;
     border: 0;
     color: var(--fg-muted);
-    font-size: var(--text);
+    font-size: var(--text-base);
     line-height: 1;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius);

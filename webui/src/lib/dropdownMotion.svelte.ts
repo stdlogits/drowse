@@ -1,4 +1,4 @@
-import { motionDuration } from "./motion";
+import { reducedMotion } from "@stdlogits/ledger";
 
 export function dropdownMotion() {
   let mounted = $state(false);
@@ -34,7 +34,7 @@ export function dropdownMotion() {
         node.classList.remove("is-closing");
         mounted = false;
       };
-      const duration = motionDuration(milliseconds);
+      const duration = reducedMotion() ? 0 : milliseconds;
       if (duration === 0) finish();
       else closeTimer = setTimeout(finish, duration);
     },

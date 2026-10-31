@@ -38,13 +38,12 @@
     beginTokenHover,
     endTokenHover,
   } from "../lib/stores.svelte";
-  import Button from "../lib/ui/Button.svelte";
   import BaseModelTag from "../lib/ui/BaseModelTag.svelte";
   import { sessionState } from "../lib/stores/session.svelte";
   import { apiTree } from "../lib/runtime/services";
   import { completionAnchor } from "../lib/completionSelection";
   import { userFacingError } from "../lib/runtime/userFacingError";
-  import SegmentedTabs from "../lib/ui/SegmentedTabs.svelte";
+  import { Segmented } from "@stdlogits/ledger";
   import Select from "../lib/Select.svelte";
   import TokenLogitsPopover from "../lib/ui/TokenLogitsPopover.svelte";
   import { completionTokenViews, projectEditedTokens, type RawTokenView } from "../lib/rawTokenInspection";
@@ -461,6 +460,7 @@
   });
 
   function changeMode(next: Mode): void {
+    if (modeItems.find(item => item.value === next)?.disabled) return;
     tokenPopup = null;
     if (next === "inspect" && !hasClickableTokens) {
       inspectionSource = tokenViews.some(view => view.tok) && dirty ? "recorded" : earlierGenerations[0]?.id ?? "current";
@@ -593,25 +593,20 @@
 
 <div class="raw-buffer" aria-label="Completion buffer">
   <div class="raw-head">
-    <span class="head-label"><label for="completion-buffer">Text completion</label> {#if sessionState.info?.is_base_model}<BaseModelTag />{/if}</span>
-    <SegmentedTabs value={mode} onchange={changeMode} items={modeItems} ariaLabel="Buffer mode" />
+    <span class="head-label"><label for="completion-buffer">Text completion</label>{#if sessionState.info?.is_base_model}<BaseModelTag />{/if}{#if dirty}<span class="draft-state" role="status">unsaved edit</span>{/if}</span>
+    <Segmented label="Buffer mode" value={mode} onchange={changeMode} options={modeItems.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
   </div>
-  <p class="completion-hint" id="completion-hint">{mode === "inspect"
-    ? "Click a recorded token to see its probabilities. Arrow keys move between tokens; editing stays in Edit text."
-    : "Continue at the end, cursor, or selection. Originals stay saved in Loom."}{#if colorNotice}<span class="color-notice" role="status">{colorNotice}</span>{/if}</p>
-
-  <div class="token-legend" aria-label="Text origin legend">
-    <span class="origin-user">User text</span>
-    <span class="origin-model">Model tokens</span>
-    <span class="origin-draft" class:inactive={!dirty} role="status">Unsaved edit</span>
-  </div>
+  <p class="sr-only" id="completion-hint">{mode === "inspect"
+    ? "Select a recorded token to see its probabilities. Arrow keys move between tokens."
+    : "Continue at the end, cursor, or selection. Originals stay saved in the loom."}</p>
+  {#if colorNotice}<p class="color-notice meta" role="status">{colorNotice}</p>{/if}
   {#if mode === "inspect" && inspectionSources.length > 1}
-    <div class="inspection-source">
-      <span>Inspect</span>
+    <div class="inspection-source" data-tip={inspectionSource !== "current" ? "As recorded; your text is unchanged" : undefined}>
       <Select value={inspectionSource} options={inspectionSources} ariaLabel="Text to inspect"
+        ariaDescribedby={inspectionSource !== "current" ? "inspection-source-note" : undefined}
         onchange={(value) => { tokenPopup = null; inspectionSource = value; }} />
+      <span class="sr-only" id="inspection-source-note">As recorded; your text is unchanged</span>
     </div>
-    {#if inspectionSource !== "current"}<p class="completion-hint">Original recorded text. Your current text and unsaved edits are unchanged.</p>{/if}
   {/if}
 
   <div class="surface" class:inspecting={mode === "inspect"} class:generation-active={genStatus.active} bind:this={logRef} onscroll={mode === "inspect" ? onScroll : undefined}>
@@ -679,7 +674,7 @@
       ></textarea>
     {/if}
     {#if scrolledUp && !dirty && mode === "edit"}
-      <div class="latest-action"><Button onclick={() => { followLatest(); textareaRef?.focus({ preventScroll: true }); }}>Jump to latest text</Button></div>
+      <div class="latest-action"><button type="button" class="dw-quiet" onclick={() => { followLatest(); textareaRef?.focus({ preventScroll: true }); }}>Latest</button></div>
     {/if}
   </div>
 
@@ -695,197 +690,136 @@
     {/key}
   {/if}
 
-  {#if editError}<p class="completion-error" id="completion-error" role="alert">{editError} Your text is still here.</p>{/if}
+  {#if editError}<p class="completion-error meta" id="completion-error" role="alert">{editError} Your text is still here.</p>{/if}
   <StatusFooter savedEdit={!genStatus.active && genStatus.finishReason === "stop" && genStatus.tokensSoFar === 0 && chatLog.turns.at(-1)?.generated === false} />
   <PendingBubbles />
 
-  <div class="actions">
-    <div class="edit-actions">
-      <Button
-        onclick={() => void appendEdit()}
-        disabled={!dirty || genStatus.active || committing || preparingSelection}
-        title="Save this edit without generating"
-      >
-        Save edit
-      </Button>
-      <Button onclick={revertEdit} disabled={!dirty || genStatus.active || committing || preparingSelection}>
-        Discard edit
-      </Button>
-      <span class="keyboard-hint" aria-hidden="true">⌘ / Ctrl + Enter</span>
+  <div class="actions" role="group" aria-label="Completion actions">
+    <div class="edit-actions" class:shown={dirty}>
+      <button type="button" class="dw-text" onclick={() => void appendEdit()}
+        disabled={!dirty || genStatus.active || committing || preparingSelection} data-tip="Save this edit without generating">Save edit</button>
+      <button type="button" class="dw-text" onclick={revertEdit} disabled={!dirty || genStatus.active || committing || preparingSelection}>Discard</button>
     </div>
-    <div class="generation-actions" role="group" aria-label="Completion actions" aria-describedby="selection-hint">
-      <Button onclick={() => completeFromSelection()}
+    <div class="generation-actions">
+      <button type="button" class="dw-text" onclick={() => completeFromSelection()}
+        data-tip="Save edits first; the original stays saved"
         disabled={mode !== "edit" || !selectionCurrent || !selection || !draft.length || dirty || genStatus.active || committing || preparingSelection || pendingActions.queue.length > 0}>
         {selection && selection.start !== selection.end ? "Continue after selection" : "Continue from cursor"}
-      </Button>
-      <Button
-        variant="solid"
-        onclick={submitBuffer}
-        disabled={genStatus.active || committing || preparingSelection}
-        busy={committing && !genStatus.active}
-        title="Continue text (Cmd/Ctrl+Enter)"
-      >Continue text</Button>
-      <Button onclick={() => completeFromSelection(true)}
+      </button>
+      <button type="button" class="dw-text" onclick={() => completeFromSelection(true)}
+        data-tip="Replaces the selection; the original stays saved"
         disabled={mode !== "edit" || !selectionCurrent || !selection || selection.start === selection.end || dirty || genStatus.active || committing || preparingSelection || pendingActions.queue.length > 0}>
-        Re-complete from selection
-      </Button>
-      <Button
-        variant="danger"
-        onclick={sendStop}
-        disabled={!genStatus.active}
-        title="Esc"
-      >Stop</Button>
+        Re-complete selection
+      </button>
+      {#if genStatus.active}
+        <button type="button" class="dw-quiet" onclick={sendStop} data-tip="Esc">Stop</button>
+      {:else}
+        <button type="button" class="dw-button" onclick={submitBuffer} disabled={committing || preparingSelection}
+          aria-busy={committing || undefined} data-tip="⌘ or Ctrl + Enter">Continue text</button>
+      {/if}
     </div>
-    <p id="selection-hint" class="completion-hint">Save edits first. Re-complete replaces the selection; the original stays saved.</p>
   </div>
 </div>
 
 <style>
-  .inactive { visibility: hidden; }
-  .completion-hint, .completion-error, .color-notice { margin: 0; color: var(--fg-muted); font-family: var(--font-ui); font-size: var(--text-sm); line-height: 1.5; text-wrap: pretty; }
-  .color-notice { display: block; }
-  .token-legend { display: flex; flex-wrap: wrap; gap: var(--space-md); color: var(--fg-dim); font-family: var(--font-ui); font-size: var(--text-xs); }
-  .origin-user { color: var(--fg-dim); }
-  .origin-model { text-decoration: underline solid var(--fg-dim); text-underline-offset: 3px; }
-  .origin-draft { background: var(--accent-subtle); text-decoration: underline dashed var(--accent); text-underline-offset: 3px; }
-  .inspection-source { display: flex; align-items: center; gap: var(--space-sm); min-width: 0; color: var(--fg-dim); font-family: var(--font-ui); font-size: var(--text-sm); }
+  .head-label { display: inline-flex; align-items: baseline; gap: var(--s3); min-width: 0; color: var(--ink3); font: var(--type-meta); }
+  .draft-state { color: var(--ink2); }
+  .color-notice { overflow-wrap: anywhere; }
+  .completion-error { color: var(--ink2); }
+  .inspection-source { display: flex; align-self: flex-start; align-items: center; min-width: 0; max-width: 100%; }
   .inspection-source :global(.sk-select) { min-width: 0; max-width: min(30rem, 100%); }
-  .completion-error { color: var(--accent-red); }
   .raw-buffer {
     display: flex;
     flex: 1 0 auto;
     flex-direction: column;
     min-height: 0;
-    gap: var(--composer-space, var(--space-6));
-    font-family: var(--font-mono);
-    font-size: var(--text);
-    color: var(--fg);
+    gap: var(--s4);
+    color: var(--ink);
+    font: var(--type-body);
   }
+  .raw-head { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); }
+  /* The completion as one reading surface: a wash, no line, the text in the body face at the
+   * reading column's line height (room for the tint's spread). */
   .surface {
-    flex: 1 0 calc(2lh + var(--surface-padding) * 2);
+    flex: 1 0 calc(2lh + var(--s4) * 2);
     position: relative;
     overflow: clip;
-    min-height: calc(2lh + var(--surface-padding) * 2);
-    /* Recessed input well — this is the editable completion surface. */
-    background: var(--workspace-buffer-bg, var(--input-well));
-    border: 0;
-    border-radius: var(--radius);
+    min-height: calc(2lh + var(--s4) * 2);
+    border-radius: var(--r-box);
+    background: var(--wash);
+    line-height: 32px;
   }
   .surface.inspecting { overflow-y: auto; }
-  .latest-action { position: absolute; inset-inline-end: var(--space-3); bottom: var(--space-3); z-index: 2; }
+  .latest-action { position: absolute; inset-inline-end: var(--s3); bottom: var(--s3); z-index: 2; }
+  .latest-action .dw-quiet { background: var(--wash2); }
   .buffer-text,
   .color-mirror,
   .inspect {
     margin: 0;
-    padding: var(--surface-padding);
-    font-family: var(--font-mono);
-    font-size: var(--text);
-    line-height: 1.5;
+    padding: var(--s4);
+    font: var(--type-body);
+    line-height: 32px;
     white-space: pre-wrap;
     word-break: break-word;
     box-sizing: border-box;
   }
   .buffer-text, .color-mirror { scrollbar-gutter: stable; }
-  .color-mirror {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    color: transparent;
-    pointer-events: none;
-  }
-  /* Inspect mode shares the editor's wrapping and exposes generated tokens. */
-  .inspect {
-    min-height: 100%;
-    color: var(--fg-strong);
-  }
-  .inspect .plain {
-    /* Prompt text (user / system turns) — present but not interactive. */
-    color: var(--fg-dim);
-  }
+  .color-mirror { position: absolute; inset: 0; overflow: hidden; color: transparent; pointer-events: none; }
+  .inspect { min-height: 100%; color: var(--ink); }
+  /* Prompt and authored text: present, quieter. */
+  .inspect .plain, .inspect .tok.origin-user { color: var(--ink2); }
   .inspect .tok {
     display: inline;
     min-width: 0;
     min-height: 0;
     padding: 0;
     border: 0;
+    border-radius: 4px;
     background: transparent;
-    box-shadow: none;
     font: inherit;
     color: inherit;
     white-space: inherit;
     text-align: inherit;
     vertical-align: baseline;
-    border-radius: var(--radius);
+    transition: background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease), color var(--fast) var(--ease);
   }
-  .inspect .tok.origin-user { color: var(--fg-dim); }
-  .inspect .context-changed { text-decoration-style: dashed; }
-  .inspect .clickable {
-    cursor: crosshair;
-  }
-  .inspect .clickable:hover {
-    outline: 1px solid var(--fg-muted);
-    outline-offset: -1px;
-    border-radius: var(--radius);
-  }
-  .inspect .clickable:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
-  /* Tokens that captured top-K alternatives get a faint underline so the
-   * forkable ones are discoverable at a glance. */
-  .inspect .has-alts {
-    text-decoration: underline dotted var(--fg-dim);
-    text-underline-offset: 2px;
-  }
-
-  /* Header: label + edit/inspect toggle. */
-  .raw-head {
-    display: flex;
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-2);
-  }
-  .head-label {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    text-transform: none;
-    letter-spacing: 0;
-  }
+  .inspect .context-changed { text-decoration: underline dashed var(--ink3); text-underline-offset: 4px; }
+  .inspect .clickable { cursor: pointer; }
+  @media (hover: hover) { .inspect .clickable:hover { background: var(--wash2); box-shadow: 0 0 0 2px var(--wash2); } }
+  .inspect .clickable[aria-expanded="true"] { background: var(--ink); color: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
+  .origin-draft { text-decoration: underline dashed var(--ink3); text-underline-offset: 4px; }
+  /* Tokens that recorded their alternatives carry a faint underline, so the forkable ones show. */
+  .inspect .has-alts { text-decoration: underline dotted var(--ink3); text-underline-offset: 4px; }
   .buffer-text {
     display: block;
     position: relative;
     width: 100%;
     height: 100%;
     min-height: 100%;
-    background: transparent;
-    color: var(--fg-strong);
     border: 0;
+    background: transparent;
+    color: var(--ink);
     resize: none;
   }
-  .buffer-text:focus {
-    outline: none;
-  }
-  .surface:focus-within { box-shadow: var(--shadow-field-focus); }
-  .buffer-text:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -3px; }
+  .buffer-text:focus { outline: none; }
+  .buffer-text:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; border-radius: var(--r-box); }
+  .buffer-text::placeholder { color: var(--ink3); }
 
-  .actions, .edit-actions, .generation-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--composer-space, var(--space-6));
-  }
-  .actions { flex: 0 0 auto; flex-direction: column; align-items: stretch; }
-  .generation-actions {
-    display: grid;
-    align-items: stretch;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr) auto;
-  }
-  .keyboard-hint { margin-inline-start: auto; color: var(--fg-muted); font-size: var(--text-xs); }
-  @media (max-width: 40rem) {
-    .keyboard-hint { display: none; }
-    .generation-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
-    .surface, .buffer-text, .color-mirror, .inspect { font-size: max(16px, var(--text)); }
+  .actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); }
+  .edit-actions, .generation-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+  /* Save and Discard take space only while there is an edit, so no empty row holds their place (on
+   * a narrow page they wrap onto a line of their own). They fade in when the edit starts. */
+  .edit-actions:not(.shown) { display: none; }
+  .edit-actions.shown { transition: opacity var(--fast) var(--ease); }
+  @starting-style { .edit-actions.shown { opacity: 0; } }
+  .generation-actions { margin-left: auto; }
+  @media (max-width: 720px) {
+    /* The phone's 16 px gutter, as the conversation's log and dock keep it. */
+    .raw-buffer { padding: var(--s4) var(--s4) var(--s2); }
+    .surface, .buffer-text, .color-mirror, .inspect { font-size: 16px; }
+    .actions .dw-text { min-height: 44px; }
+    /* Phone sizes (the Phone canvas): the mode switch's options reach 44 px. */
+    .raw-head :global(.seg > button) { position: relative; height: 36px; }
+    .raw-head :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }
   }
 </style>

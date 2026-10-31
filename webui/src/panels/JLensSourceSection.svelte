@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { onMount } from "svelte";
   import Bar from "../lib/charts/Bar.svelte";
   import Button from "../lib/ui/Button.svelte";
@@ -157,7 +157,7 @@
             max={Math.max(lensFit.state.total, 1)}
             width={160}
             height={8}
-            color="var(--pillar-lens)"
+            color="var(--tint)"
           />
         </div>
         <p class="hint">
@@ -199,49 +199,42 @@
   .work-status,
   .hint {
     margin: 0;
-    color: var(--fg);
-    font-size: var(--text-sm);
+    color: var(--ink2);
+    font: var(--type-small);
   }
-  .work-status,
-  .fit-msg {
-    font-family: var(--font-mono);
-  }
-  .fit-error { color: var(--accent-red); }
-  .fit-warning { color: var(--accent-yellow); }
+  .fit-error { color: var(--ink); }
+  .fit-warning { color: var(--ink); }
   .fit-progress {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--s2);
   }
   .fit-line {
     display: flex;
     align-items: baseline;
     justify-content: space-between;
-    gap: var(--space-3);
+    gap: var(--s3);
   }
   .fit-msg {
     overflow: hidden;
     min-width: 0;
-    color: var(--fg);
+    color: var(--ink);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .fit-count {
     flex: 0 0 auto;
-    color: var(--fg-muted);
+    color: var(--ink3);
+    font: var(--type-meta);
     font-variant-numeric: tabular-nums;
   }
   .fit-bar :global(.bar) {
     display: block;
     width: 100%;
-    height: var(--data-bar-height);
+    height: 4px;
   }
   .relp-toggle {
     cursor: pointer;
     text-align: start;
-  }
-  .relp-on {
-    color: var(--pillar-lens);
-    border-color: var(--pillar-lens);
   }
 </style>

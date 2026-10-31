@@ -1,7 +1,7 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import { slidingSelection } from "../../lib/slidingSelection";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
+  import { glide } from "@stdlogits/ledger";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Atom steer card — one racked single-direction term, wearing the same
   // RackCard chrome as the concept steer cards.  Both atom families share
@@ -27,8 +27,8 @@
     AtomMode,
     { accent: string; marker: RackMarkerShape; noun: string }
   > = {
-    jlens: { accent: "--pillar-lens", marker: "square", noun: "j-lens token atom" },
-    sae: { accent: "--pillar-sae", marker: "triangle", noun: "SAE decoder-row atom" },
+    jlens: { accent: "--tint", marker: "square", noun: "j-lens token atom" },
+    sae: { accent: "--tint", marker: "triangle", noun: "SAE decoder-row atom" },
   };
 
   interface Props {
@@ -70,7 +70,7 @@
       onclick={() => removeSteerEntry(name)}
       aria-label="remove {name}"
     >
-      <FluentIcon name="dismiss" />
+      <Icon name="close" />
     </button>
   {/snippet}
 
@@ -85,7 +85,7 @@
         aria-label="trigger for {name}: {entry.trigger}"
       ><MorphText text={TRIGGER_WORD[entry.trigger]} numbers={false} /></button>
     </div>
-    <div class="operation" role="group" aria-label="steering operation for {name}" use:slidingSelection>
+    <div class="operation" role="group" aria-label="steering operation for {name}" use:glide>
       <button
         type="button"
         class:active={!entry.ablate}
@@ -126,7 +126,7 @@
     border: 0;
     border-radius: var(--radius-sm);
     padding: 0;
-    color: var(--card-accent);
+    color: var(--ink);
     flex: 0 0 24px;
     cursor: pointer;
   }
@@ -179,7 +179,7 @@
     background: transparent;
     border: 0;
     color: var(--fg-muted);
-    font-size: var(--text);
+    font-size: var(--text-base);
     line-height: 1;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius);

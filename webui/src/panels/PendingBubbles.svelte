@@ -1,6 +1,6 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
   // Pending-queue strip — ghosted bubbles between the streaming
   // assistant turn and the composer.  Each bubble shows the item's
   // label tag + truncated text + an X button that cancels just that
@@ -33,9 +33,9 @@
     {#each items as item, idx (item.id)}
       <div class="bubble" class:editing={idx === editingSlot} role="listitem">
         {#if idx === editingSlot}
-          <span class="edit-marker" aria-label="editing">✎</span>
+          <span class="meta" aria-label="editing">editing</span>
         {/if}
-        <span class="tag"><MorphText text={item.label} numbers={false} /></span>
+        <span class="meta tag"><MorphText text={item.label} numbers={false} /></span>
         {#if item.text !== null}
           <span class="text" {...{ "aria-description": (item.text) }}><MorphText text={truncate(item.text, 80)} numbers={false} /></span>
         {/if}
@@ -45,78 +45,21 @@
           onclick={() => cancelPendingAction(item.id)}
           aria-label="Cancel pending {item.label}"
           {...{ "aria-description": "cancel" }}
-        ><FluentIcon name="dismiss" /></button>
+        ><Icon name="close" /></button>
       </div>
     {/each}
   </div>
 {/if}
 
 <style>
-  /* Stacks vertically directly above the input row.  Hidden when empty
-   * — Svelte's conditional render takes care of that, no class needed.
-   * Borderless — the dashed border belongs to each ghost bubble (its
-   * "not yet real" identity), not to the strip's own container. */
-  .pending-strip {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    padding: var(--space-1) 0;
-  }
-  .bubble {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-1) var(--space-3);
-    background: var(--glass);
-    border: 1px dashed var(--glass-line);
-    border-radius: var(--radius-pill);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    color: var(--fg-dim);
-    min-width: 0;
-  }
-  /* Editing state — the bubble whose text the user has pulled into the
-   * input.  White-accent (solid ring + brighter fill/foreground) so it
-   * stands out from the dim, dashed "just queued" rows. */
-  .bubble.editing {
-    background: var(--glass-strong);
-    border-style: solid;
-    border-color: var(--accent-strong);
-    color: var(--fg);
-  }
-  .edit-marker {
-    color: var(--fg);
-    flex-shrink: 0;
-  }
-  .tag {
-    color: var(--fg-muted);
-    text-transform: lowercase;
-    flex-shrink: 0;
-  }
-  .text {
-    flex: 1 1 auto;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .cancel {
-    background: transparent;
-    border: 0;
-    color: var(--fg-muted);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text);
-    line-height: 1;
-    min-width: var(--control-target);
-    min-height: var(--control-target);
-    padding: 0;
-    cursor: pointer;
-    flex-shrink: 0;
-    border-radius: var(--radius);
-  }
-  .cancel:hover {
-    color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
-  }
+  /* Queued turns, waiting above the composer: a quiet wash row each, the one pulled into the field
+   * for editing a step deeper. */
+  .pending-strip { display: grid; gap: 2px; }
+  .bubble { display: flex; align-items: center; gap: var(--s2); min-width: 0; min-height: 36px; padding: 0 var(--s1) 0 var(--s4); border-radius: var(--r-pill); background: var(--wash); color: var(--ink2); font: var(--type-small); transition: background-color var(--fast) var(--ease); }
+  .bubble.editing { background: var(--wash2); color: var(--ink); }
+  .tag { flex-shrink: 0; }
+  .text { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .cancel { display: grid; place-items: center; flex-shrink: 0; width: 28px; height: 28px; margin-left: auto; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .cancel:hover { background: var(--paper); color: var(--ink); }
+  @media (pointer: coarse) { .cancel { width: 44px; height: 44px; } .bubble { min-height: 44px; } }
 </style>

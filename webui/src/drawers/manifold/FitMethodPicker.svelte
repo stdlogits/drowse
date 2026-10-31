@@ -4,7 +4,7 @@
   // form. The owner supplies the mutation callback so this child never
   // writes through an unbound state prop.
 
-  import Radio from "../../lib/Radio.svelte";
+  import { Segmented } from "@stdlogits/ledger";
   import type { DiscoverFitMode, DiscoverTuning } from "./shared";
 
   let {
@@ -13,11 +13,14 @@
      *  constraint (the generated tab) from where they aren't. */
     spectralNote = "curved",
     linearOnly = false,
+    step,
     onchange,
   }: {
     tuning: DiscoverTuning;
     spectralNote?: string;
     linearOnly?: boolean;
+    /** Its number when it is a step of the form (the template and authored paths). */
+    step?: number;
     onchange: (value: DiscoverFitMode) => void;
   } = $props();
 
@@ -26,24 +29,27 @@
   });
 </script>
 
-<section class="step">
-  <h2 class="step-title">fit method</h2>
+<section class="step" aria-label="Fit method">
+  <h3 class="step-title">{#if step}<span class="n">{step}</span>{/if}Fit</h3>
   {#if linearOnly}
-    <p class="dim-note">linear PCA · automatic curved-shape detection is not included in the hosted release</p>
+    <p class="dim-note">Linear (PCA) · curved layouts are not in the hosted release</p>
   {:else}
-    <div class="radio-row" role="radiogroup" aria-label="Fit method">
-      <Radio group={tuning.fitMode} value="auto" label="auto" {onchange} />
-      <Radio group={tuning.fitMode} value="pca" label="pca" {onchange} />
-      <Radio group={tuning.fitMode} value="spectral" label="spectral" {onchange} />
+    <div class="row">
+      <Segmented
+        label="Fit method"
+        value={tuning.fitMode}
+        {onchange}
+        options={[
+          { value: "auto", label: "Auto", hint: "Suggest a flat or periodic layout per model. This does not recover Klein-bottle or RP² coordinates." },
+          { value: "pca", label: "PCA", hint: "Flat" },
+          { value: "spectral", label: "Spectral", hint: spectralNote },
+        ]}
+      />
+      <span class="dim-note">{tuning.fitMode === "auto" ? "flat or periodic" : tuning.fitMode === "pca" ? "flat" : spectralNote}</span>
     </div>
   {/if}
-  <p class="dim-note">
-    {#if tuning.fitMode === "auto"}
-      Suggest a flat or periodic layout per model. This does not recover Klein-bottle or RP² coordinates.
-    {:else if tuning.fitMode === "pca"}
-      flat
-    {:else}
-      {spectralNote}
-    {/if}
-  </p>
 </section>
+
+<style>
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+</style>

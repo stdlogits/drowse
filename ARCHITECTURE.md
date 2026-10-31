@@ -672,10 +672,14 @@ concerns. Details: `drowse/server/AGENTS.md`.
 
 The Svelte 5 dashboard lives in `webui/` and builds into the committed
 `drowse/web/dist/`, which is exactly what wheel users run; source and bundle
-change together and CI fails on drift. Its work areas are the loom thread view,
-chat (dynamic author/model seats, raw mode, token highlights, the token-detail
-drawer) and the instruments (sampling plus subspace, manifold, SAE and lens
-tabs). REST response types are generated from the server's TypedDicts
+change together and CI fails on drift. It is drawn in Ledger (the
+`@stdlogits/ledger` package). Its home is the workbench: the thread (the loom as
+the path you are on, its map and weave one step away), the page (the
+conversation, with the steering recipe as chips over the composer) and the
+inspector (whatever is selected: a token's drilldown, a probe, a steering term;
+with nothing selected, the instruments: probes, live lens readout, SAE features,
+sampling). Manifolds, Units, Lens and Model are rooms beside it, as routes. REST
+response types are generated from the server's TypedDicts
 (`scripts/generate_webui_types.py` → `webui/src/lib/types.gen.ts`); request
 bodies and WS/SSE frames are hand-written in `webui/src/lib/types.ts`.
 

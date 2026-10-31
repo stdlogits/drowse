@@ -27,6 +27,7 @@ import type {
   LensReadoutBlockJSON,
   MeasurementsEnvelopeJSON,
   SaeFeatureJSON,
+  SaeReleaseJSON,
   TokenScore,
 } from "../types";
 import { resolveReadoutTopK } from "../readouts";
@@ -424,18 +425,24 @@ export function saeReadoutForDisplay(): SaeFeatureJSON[] {
   return tokenHoverState.active ? (tokenHoverState.saeReadout ?? []) : saeState.readout;
 }
 
+/** The prepared SAE sources and the SAELens releases this model could fetch. Both come from the
+ *  one ``sources("sae")`` call, so the source picker discovers releases without a request of its
+ *  own (a picker that fetched again whenever its list came back empty looped without end). */
 export const saeSourceState: {
   sources: InstrumentSourceJSON[];
+  releases: SaeReleaseJSON[];
   loading: boolean;
   busy: boolean;
   error: string | null;
-} = $state({ sources: [], loading: false, busy: false, error: null });
+} = $state({ sources: [], releases: [], loading: false, busy: false, error: null });
 
 export async function refreshSaeSources(): Promise<void> {
   if (saeSourceState.loading) return;
   saeSourceState.loading = true;
   try {
-    saeSourceState.sources = (await apiInstruments.sources("sae")).sources;
+    const result = await apiInstruments.sources("sae");
+    saeSourceState.sources = result.sources;
+    saeSourceState.releases = (result.releases ?? []).filter((row) => row.source !== "local");
     saeSourceState.error = null;
   } catch (e) {
     saeSourceState.error = userFacingError(e, "Learned-feature sources could not be refreshed.");

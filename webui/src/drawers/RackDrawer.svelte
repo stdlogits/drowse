@@ -1,9 +1,8 @@
 <script lang="ts">
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
-  import { animatedDetails } from "../lib/animatedDetails";
-  import { slide } from "svelte/transition";
-  import { collapseIn, collapseOut } from "../lib/motion";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { Icon } from "@stdlogits/ledger";
+  import { Expander } from "@stdlogits/ledger";
+  import { expand } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   import Button from "../lib/ui/Button.svelte";
   // Shared rack drawer — one component, two reskins split by geometry
   // family.  Subsumes the former VectorsDrawer + ManifoldDrawer: same
@@ -13,7 +12,7 @@
   //   * subspace (white ``--accent``) — every flat affine fit
   //     (``fit_mode`` ``pca`` or ``baked``): 2-node concept axes AND
   //     higher-rank flats like ``personas``.
-  //   * manifold (purple ``--pillar-manifold``) — curved fits only
+  //   * manifold (the depth tint) — curved fits only
   //     (``fit_mode`` ``spectral`` or ``authored``), e.g. ``emotions``.
   //
   // Within the family filter the existing fitted / unfitted split
@@ -98,19 +97,12 @@
     return "subspace";
   });
 
-  // Family-derived chrome.  ``familyAccent`` is wired to a CSS custom
-  // property on the shell so every accented rule (header title, row
-  // accents, stripes, hovers) reads one variable — white for subspace,
-  // purple for manifold.
-  const familyAccent = $derived(
-    family === "manifold" ? "var(--pillar-manifold)" : "var(--accent)",
-  );
-  const title = $derived(returnToToken ? "Add a probe" : family === "manifold" ? "manifold" : "subspace");
+  const title = $derived(returnToToken ? "Add a probe" : family === "manifold" ? "Manifolds" : "Concepts");
   // Authoring always routes to the manifold builder — a flat (2-node /
   // personas) fit is just a pca manifold, so there is no separate vector
   // extraction form.  Both families' launcher opens the same builder.
-  const launcherLabel = $derived(returnToToken ? "Create a concept" : "build manifold");
-  const launcherHint = $derived(returnToToken ? "Train a concept for this model" : "author a domain and node corpus");
+  const launcherLabel = $derived(returnToToken ? "Create a concept" : "Build a manifold");
+  const launcherHint = $derived(returnToToken ? "train one for this model" : "a domain and its nodes");
   const authoringAvailable = drawerAvailability("manifold_builder").available;
   const fittingAvailability = runtimeOperationAvailability("fitting");
   const browserMode = runtimeClient.mode !== "http";
@@ -600,13 +592,12 @@
 <section
   class="drawer-shell"
   class:fam-manifold={family === "manifold"}
-  style:--family-accent={familyAccent}
   aria-label={family === "manifold" ? "Manifolds" : "Subspaces"}
 >
   <header class="header">
     <h2 class="title">{title}</h2>
     {#if returnToToken}<Button onclick={() => finishProbeSetup(returnToToken)}>Back to token</Button>{/if}
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
@@ -623,13 +614,13 @@
             onclick={() => toggleNodes(key)}
             {...{ "aria-description": (nodesOpen(key) ? "collapse" : "expand") }}
           >
-            <span class="caret" aria-hidden="true">{nodesOpen(key) ? "▾" : "▸"}</span>
+            <span class="caret" class:open={nodesOpen(key)} aria-hidden="true"><Icon name="down" /></span>
             <span class="nodes-label">nodes</span>
             <span class="nodes-count"
               >{nodes.length}{#if nodes.length !== total}/{total}{/if}</span>
           </button>
           {#if nodesOpen(key)}
-            <ul class="node-chips" role="list" in:slide={collapseIn()} out:slide={collapseOut()}>
+            <ul class="node-chips" role="list" transition:expand>
               {#each nodes as label (label)}
                 {@const role = nodeRoleFor(m, label)}
                 <li>
@@ -669,9 +660,9 @@
             <span class="row-name">{key}</span>
             <span class="row-sub">
               {m.domain_label} · {m.node_count} nodes
-              {#if badge}<span class="fit-badge fit-{badge}">{badge}</span>{/if}
-              {#if isRoleAugmented(m)}<span class="fit-badge fit-persona" {...{ "aria-description": "role-paired manifold" }}>persona</span>{/if}
-              {#if m.stale}<span class="stale">stale</span>{/if}
+              {#if badge} · <span class="fit-badge fit-{badge}">{badge}</span>{/if}
+              {#if isRoleAugmented(m)} · <span class="fit-badge fit-persona" {...{ "aria-description": "role-paired manifold" }}>persona</span>{/if}
+              {#if m.stale} · <span class="stale">stale</span>{/if}
             </span>
           </div>
           <div class="actions">
@@ -682,7 +673,7 @@
               aria-label={`${inspecting ? "Hide" : "Show"} details for ${key}`}
               onclick={() => void toggleInspect(m)}
               {...{ "aria-description": (inspecting ? "hide" : "inspect") }}
-            ><FluentIcon name={inspecting ? "down" : "info"} /></button>
+            ><Icon name={inspecting ? "down" : "right"} /></button>
             <button
               type="button"
               class="act steer"
@@ -691,7 +682,7 @@
               {...{ "aria-description": (unavailable ?? (isRacked(m)
                 ? `${key} already racked`
                 : `steer with ${choice?.selector ?? key}`)) }}
-            >+steer</button>
+            >Steer</button>
             <button
                 type="button"
                 class="act probe"
@@ -700,7 +691,7 @@
                 {...{ "aria-description": (unavailable ?? (isProbed(m)
                   ? `${key} already attached`
                   : `probe with ${choice?.selector ?? key}`)) }}
-            >+probe</button>
+            >Probe</button>
             <button
               type="button"
               class="act fit"
@@ -709,7 +700,7 @@
               {...{ "aria-description": (fittingAvailability.available
                 ? `re-fit ${key}`
                 : fittingAvailability.reason ?? "Fitting unavailable") }}
-            >{busy ? "…" : "re-fit"}</button>
+            >{busy ? "…" : "Re-fit"}</button>
             <button
               type="button"
               class="act del"
@@ -717,7 +708,7 @@
               disabled={busy}
               onclick={() => onDeleteClick(m)}
               {...{ "aria-description": (deleteGuard ?? (confirming ? "click again to confirm" : `delete ${key}`)) }}
-            >{confirming ? "confirm?" : "delete"}</button>
+            >{confirming ? "Confirm?" : "Delete"}</button>
           </div>
         </div>
         {#if options.length > 0 && choice}
@@ -734,12 +725,12 @@
               title={choice.unavailableReason ?? `Use ${choice.selector}`}
               onchange={(selector) => chooseSelector(m, selector)}
             />
-            <code>{choice.selector}</code>
+            <span class="sel">{choice.selector}</span>
           </div>
           {#if unavailable}<p class="selector-unavailable" role="status">{unavailable}</p>{/if}
         {/if}
         {#if inspecting}
-          <div class="inspect-body" in:slide={collapseIn()} out:slide={collapseOut()}>
+          <div class="inspect-body" transition:expand>
             {#if detailLoading.has(key)}
               <p class="muted loading-pulse loading-placeholder" role="status">Loading details…</p>
             {:else if detailErrors.has(key)}
@@ -770,7 +761,7 @@
             <span class="row-name">{key}</span>
             <span class="row-sub">
               {m.domain_label} · {m.node_count} nodes
-              {#if badge}<span class="fit-badge fit-{badge}">{badge}</span>{/if}
+              {#if badge} · <span class="fit-badge fit-{badge}">{badge}</span>{/if}
             </span>
           </div>
           <div class="actions">
@@ -782,7 +773,7 @@
               {...{ "aria-description": (fittingAvailability.available
                 ? `fit ${key}`
                 : fittingAvailability.reason ?? "Fitting unavailable") }}
-            >{busy ? "…" : "fit"}</button>
+            >{busy ? "…" : "Fit"}</button>
             <button
               type="button"
               class="act del"
@@ -790,7 +781,7 @@
               disabled={busy}
               onclick={() => onDeleteClick(m)}
               {...{ "aria-description": (deleteGuard ?? (confirming ? "click again to confirm" : `delete ${key}`)) }}
-            >{confirming ? "confirm?" : "delete"}</button>
+            >{confirming ? "Confirm?" : "Delete"}</button>
           </div>
         </div>
         {@render nodeSection(m, false)}
@@ -801,8 +792,7 @@
       <p class="error" role="alert">{errorMsg}</p>
     {/if}
 
-    <details use:animatedDetails class="custom-attach">
-      <summary>attach selector</summary>
+    <div class="custom-attach"><Expander label="Attach a selector">
       <form class="attach-form" onsubmit={onCustomAttachSubmit}>
         <label class="row-label">
           <span>selector</span>
@@ -827,7 +817,7 @@
           />
         </label>
         <label class="row-label">
-          <span>top_n</span>
+          <span>nearest nodes</span>
           <input
             type="number"
             class="text-input small"
@@ -843,14 +833,13 @@
           type="submit"
           class="act probe"
           disabled={customAttaching || !customSelector.trim()}
-        >+ attach</button>
+        >Attach</button>
       </form>
-    </details>
+    </Expander></div>
 
     {#if !returnToToken || authoringAvailable}
     <button type="button" class="build-btn" onclick={gotoLauncher}>
-      <span class="plus" aria-hidden="true"><FluentIcon name="add" /></span>
-      <span class="build-label">{launcherLabel}</span>
+      <span class="build-label">+ {launcherLabel}</span>
       <span class="build-hint">{launcherHint}</span>
     </button>
     {/if}
@@ -878,7 +867,7 @@
           disabled={steerRack.loading}
           {...{ "aria-description": "refresh" }}
           aria-label="Refresh"
-        ><FluentIcon name="refresh" spin={steerRack.loading} /></button>
+        >Refresh</button>
       </div>
     {/if}
 
@@ -892,7 +881,7 @@
       <p class="muted">{returnToToken ? "No saved concepts in this category yet." : "none"}</p>
     {:else}
       {#if ftSections.length > 0}
-        <h2 class="section-title">Fitted</h2>
+        <h3 class="section-title head">Fitted</h3>
         <div class="catalog">
           {#each ftSections as { cat, items } (cat)}
             {@const ckey = `ft:${cat}`}
@@ -906,12 +895,12 @@
                 onclick={() => toggleCat(ckey)}
                 disabled={searching}
               >
-                <span class="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
+                <span class="caret" class:open aria-hidden="true"><Icon name="down" /></span>
                 <span class="cat-name">{CATEGORY_LABELS[cat]}</span>
                 <span class="cat-count">{items.length}</span>
               </button>
               {#if open}
-                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} in:slide={collapseIn()} out:slide={collapseOut()}>
+                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} transition:expand>
                   {#each items as m (rowKey(m))}
                     {@render fittedRow(m)}
                   {/each}
@@ -923,9 +912,7 @@
       {/if}
 
       {#if unSections.length > 0}
-        <h2 class="section-title">
-          Unfitted
-        </h2>
+        <h3 class="section-title head">Unfitted</h3>
         <div class="catalog">
           {#each unSections as { cat, items } (cat)}
             {@const ckey = `un:${cat}`}
@@ -939,12 +926,12 @@
                 onclick={() => toggleCat(ckey)}
                 disabled={searching}
               >
-                <span class="caret" aria-hidden="true">{open ? "▾" : "▸"}</span>
+                <span class="caret" class:open aria-hidden="true"><Icon name="down" /></span>
                 <span class="cat-name">{CATEGORY_LABELS[cat]}</span>
                 <span class="cat-count">{items.length}</span>
               </button>
               {#if open}
-                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} in:slide={collapseIn()} out:slide={collapseOut()}>
+                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} transition:expand>
                   {#each items as m (rowKey(m))}
                     {@render unfittedRow(m)}
                   {/each}
@@ -963,113 +950,80 @@
 </section>
 
 <style>
+  /* The catalogue of concepts or manifolds, in a dialog: rows on washes, quiet text actions. */
   .drawer-shell {
     display: flex;
     flex-direction: column;
     height: 100%;
     min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
+    color: var(--ink2);
+    font: var(--type-small);
   }
   .header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
+    gap: var(--s3);
+    padding: var(--s5) var(--s5) var(--s3);
   }
-  /* Family accent drives the header title colour (and every accented rule
-   * below via ``--family-accent``) — white subspace vs purple manifold. */
   .title {
-    color: var(--family-accent);
-    letter-spacing: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
+    flex: 1 1 auto;
+    margin: 0;
+    color: var(--ink);
+    font: var(--type-lead);
   }
   .body {
     flex: 1 1 auto;
     overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
+    padding: var(--s3) var(--s5) var(--s5);
     display: flex;
     flex-direction: column;
-    gap: var(--space-4);
+    gap: var(--s4);
     min-height: 0;
   }
   .error {
-    color: var(--accent-red);
-    font-size: var(--text-sm);
     margin: 0;
-    word-break: break-word;
+    color: var(--ink);
+    font: var(--type-small);
+    overflow-wrap: anywhere;
   }
   .muted {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
     margin: 0;
-    line-height: 1.4;
+    color: var(--ink3);
+    font: var(--type-small);
   }
 
-  /* ---- authoring launcher ---- */
+  /* ---- the authoring launcher: a quiet wide button on a wash ---- */
   .build-btn {
-    min-height: var(--control-target);
     display: flex;
     align-items: baseline;
-    gap: var(--space-3);
+    gap: var(--s3);
     width: 100%;
+    min-height: 44px;
+    padding: var(--s3) var(--s4);
+    border: 0;
+    border-radius: var(--r-box);
+    background: var(--wash);
+    color: var(--ink);
+    font: var(--type-control);
     text-align: start;
-    background: var(--bg-alt);
-    color: var(--fg-strong);
-    border: 1px dashed var(--glass-line);
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-    font: inherit;
-    font-family: var(--font-mono);
     cursor: pointer;
-    transition:
-      background var(--dur) var(--ease-out),
-      border-color var(--dur) var(--ease-out),
-      color var(--dur) var(--ease-out),
-      scale var(--dur-fast) var(--ease-out);
+    transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
-  .build-btn:hover {
-    background: var(--bg-elev);
-    border-color: var(--family-accent);
-    color: var(--family-accent);
-  }
-  .build-btn:active:not(:disabled) { scale: var(--press-scale); }
-  .plus {
-    color: var(--family-accent);
-    font-weight: var(--weight-medium);
-  }
-  .build-label {
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
+  .build-btn:hover { background: var(--wash2); }
+  .build-btn:active:not(:disabled) { scale: 0.97; }
   .build-hint {
     flex: 1 1 auto;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
+    color: var(--ink3);
+    font: var(--type-meta);
     text-align: end;
   }
 
-  /* ---- section headings ---- */
-  .section-title {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    margin: var(--space-3) 0 0;
-    color: var(--family-accent);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  /* ---- category grouping ---- */
+  /* ---- section heads and the category groups ---- */
+  .section-title { margin: var(--s3) 0 0; }
   .catalog {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--s1);
   }
   .category {
     display: flex;
@@ -1078,390 +1032,242 @@
   .cat-header {
     display: flex;
     align-items: center;
-    gap: var(--space-3);
+    gap: var(--s2);
     width: 100%;
-    text-align: start;
-    background: transparent;
+    min-height: 36px;
+    padding: 0 var(--s2);
     border: 0;
-    padding: var(--space-3) var(--space-1) var(--space-2);
-    color: var(--fg-muted);
+    border-radius: var(--r-col);
+    background: transparent;
+    color: var(--ink2);
+    font: var(--type-control);
+    text-align: start;
     cursor: pointer;
-    transition: color var(--dur) var(--ease-out);
+    transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease);
   }
-  .cat-header:hover:not(:disabled) {
-    color: var(--fg-strong);
-  }
-  .cat-header:disabled {
-    cursor: default;
-  }
-  .cat-name {
-    flex: 1 1 auto;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
-  .cat-header.open .cat-name {
-    color: var(--family-accent);
-  }
+  .cat-header:hover:not(:disabled) { color: var(--ink); background: var(--wash); }
+  .cat-header:disabled { cursor: default; }
+  .cat-name { flex: 1 1 auto; }
+  .cat-header.open .cat-name { color: var(--ink); }
   .cat-count {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
+    color: var(--ink3);
+    font: var(--type-meta);
     font-variant-numeric: tabular-nums;
   }
+  .caret {
+    display: grid;
+    color: var(--ink3);
+    rotate: -90deg;
+    transition: rotate var(--glide) var(--ease);
+  }
+  .caret.open { rotate: 0deg; }
 
   /* ---- rows ---- */
   .rows {
     list-style: none;
     margin: 0;
-    padding: var(--space-2) 0;
+    padding: var(--s2) 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--s2);
   }
   .row {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
-    background: var(--surface-sheen), var(--bg-deep);
-    border: 1px solid transparent;
-    border-radius: var(--radius-lg);
-    padding: var(--surface-padding);
-    transition: background var(--dur) var(--ease-out);
-  }
-  .row:hover {
-    background: var(--surface-sheen), color-mix(in srgb, var(--family-accent) 8%, var(--bg-deep));
+    gap: var(--s2);
+    padding: var(--s3) var(--s4);
+    border-radius: var(--r-box);
+    background: var(--wash);
+    transition: background-color var(--fast) var(--ease);
   }
   .row-line {
     display: grid;
-    grid-template-columns: 1fr auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    gap: var(--space-3);
-  }
-  .fit-badge {
-    display: inline-block;
-    margin-inline-start: var(--space-2);
-    padding: 0 var(--space-2);
-    border-radius: var(--radius);
-    text-transform: uppercase;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.04em;
-    border: 1px solid transparent;
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 16%, transparent);
-  }
-  .inspect-body {
-    padding-top: var(--space-2);
-  }
-  .inspect-body .error {
-    color: var(--accent-red);
-    font-size: var(--text-xs);
-    margin: 0;
-  }
-  .act.inspect {
-    color: var(--fg-dim);
-    min-width: 2.2em;
-  }
-  .act.inspect:hover:not(:disabled) {
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 12%, var(--glass));
+    gap: var(--s3);
   }
   .meta {
     display: flex;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: 2px;
     min-width: 0;
   }
   .row-name {
-    color: var(--fg-strong);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
     overflow: hidden;
-    text-overflow: ellipsis;
+    color: var(--ink);
+    font: 600 14px/20px var(--display);
+    letter-spacing: -0.01em;
     white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .row-sub {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
+    color: var(--ink3);
+    font: var(--type-meta);
+    font-variant-numeric: tabular-nums;
   }
+  .fit-badge,
+  .stale { color: var(--ink2); }
+  .inspect-body { padding-top: var(--s2); }
+
+  .actions {
+    display: inline-flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    align-items: center;
+    gap: var(--s1) var(--s3);
+  }
+  .act {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink3);
+    font: var(--type-control);
+    cursor: pointer;
+    transition: color var(--fast) var(--ease), scale var(--fast) var(--ease);
+  }
+  .act:hover:not(:disabled) { color: var(--ink); }
+  .act:active:not(:disabled) { scale: 0.97; }
+  .act:disabled { opacity: 0.4; cursor: default; }
+  .act.steer, .act.probe { color: var(--ink2); }
+  .act.del.confirm { color: var(--ink); }
+  .act.inspect { min-width: 28px; }
+
+  /* ---- the fit a row reads through ---- */
   .selector-row {
     display: grid;
-    grid-template-columns: auto minmax(8rem, 0.7fr) minmax(0, 1fr);
+    grid-template-columns: auto minmax(128px, 0.7fr) minmax(0, 1fr);
     align-items: center;
-    gap: var(--space-3);
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
+    gap: var(--s3);
+    color: var(--ink3);
+    font: var(--type-meta);
   }
-  .selector-row > span {
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .selector-row code {
-    min-width: 0;
+  .sel {
     overflow: hidden;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    text-overflow: ellipsis;
+    color: var(--ink2);
     white-space: nowrap;
+    text-overflow: ellipsis;
   }
   .selector-unavailable {
     margin: 0;
-    color: var(--accent-yellow);
-    font-size: var(--text-xs);
-    line-height: 1.4;
-  }
-  .stale {
-    color: var(--accent-yellow);
-    margin-inline-start: var(--space-2);
-  }
-  .actions {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .act {
-    min-height: var(--control-target);
-    background: var(--glass);
-    color: var(--fg-dim);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition:
-      background var(--dur) var(--ease-out),
-      color var(--dur) var(--ease-out);
-  }
-  .act:hover:not(:disabled) {
-    color: var(--fg-strong);
-    background: var(--glass-strong);
-  }
-  .act:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-  /* Steer + probe both ride the family accent so the white/purple split
-   * reads through every action.  Removal happens from the rack / probe
-   * strip's own ✕, not here — these are pure-add and disable once the
-   * artifact is already racked / attached. */
-  .act.steer,
-  .act.probe {
-    color: var(--family-accent);
-  }
-  .act.steer:hover:not(:disabled),
-  .act.probe:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--family-accent) 12%, var(--glass));
-  }
-  .act.fit {
-    color: var(--family-accent);
-  }
-  .act.fit:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--family-accent) 12%, var(--glass));
-  }
-  .act.del:hover:not(:disabled) {
-    color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 12%, var(--glass));
-  }
-  .act.del.confirm {
-    color: var(--accent-red);
-    border-color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
+    color: var(--ink3);
+    font: var(--type-meta);
   }
 
-  /* Custom-attach disclosure — collapsed by default so it doesn't compete
-   * with the catalog rows. */
-  .custom-attach {
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--bg-deep);
-  }
-  .custom-attach > summary {
-    min-height: var(--control-target);
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    cursor: pointer;
-    padding: var(--surface-padding);
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    list-style: none;
-  }
-  .custom-attach > summary::-webkit-details-marker { display: none; }
-  .custom-attach > summary::before {
-    content: "▸ ";
-    color: var(--fg-muted);
-  }
-  .custom-attach[open] > summary::before { content: "▾ "; }
+  /* ---- attach a selector by hand ---- */
+  .custom-attach { display: grid; }
   .attach-form {
     display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: 0 var(--surface-padding) var(--surface-padding);
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: var(--s2) var(--s3);
   }
   .attach-form .row-label {
     display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    font-size: var(--text-sm);
-    color: var(--fg-muted);
+    flex-direction: column;
+    gap: var(--s1);
+    flex: 1 1 128px;
+    min-width: 0;
   }
   .attach-form .row-label > span {
-    flex: 0 0 5.5em;
+    color: var(--ink3);
+    font: var(--type-meta);
   }
-  .text-input {
-    min-height: var(--control-field);
-    flex: 1 1 0;
+  .text-input,
+  .search {
+    box-sizing: border-box;
+    width: 100%;
     min-width: 0;
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
+    height: 36px;
+    padding: 0 var(--s3);
+    border: 0;
+    border-radius: var(--r-col);
+    background: var(--wash);
+    color: var(--ink);
+    font: var(--type-small);
+    transition: background-color var(--fast) var(--ease);
   }
-  .text-input.small {
-    flex: 0 0 5em;
-  }
-  .text-input:focus-visible {
-    outline: 1px solid var(--family-accent);
-    outline-offset: -1px;
-  }
-  .text-input:disabled {
-    opacity: var(--disabled-opacity);
-  }
-  .attach-form .act.probe {
-    align-self: flex-end;
-    margin-top: var(--space-2);
-  }
+  .text-input::placeholder,
+  .search::placeholder { color: var(--ink3); }
+  .text-input:hover,
+  .search:hover { background: var(--wash2); }
+  .text-input.small { max-width: 96px; }
+  .attach-form .act.probe { height: 36px; color: var(--ink); }
 
-  /* ---- search row ---- */
+  /* ---- search ---- */
   .search-row {
     display: flex;
-    gap: var(--space-3);
-    align-items: stretch;
+    align-items: center;
+    gap: var(--s3);
   }
-  .search {
-    flex: 1 1 auto;
-    min-width: 0;
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-    font-family: var(--font-mono);
-    font-size: var(--text);
-    transition: border-color var(--dur) var(--ease-out);
-  }
-  .search:focus {
-    outline: none;
-    border-color: var(--family-accent);
-  }
+  .search { flex: 1 1 auto; border-radius: var(--r-pill); padding: 0 var(--s4); }
   .refresh {
-    flex: 0 0 auto;
-    background: var(--glass);
-    border: 1px solid transparent;
-    color: var(--fg-dim);
-    padding: 0 var(--space-4);
-    border-radius: var(--radius);
-    font-family: var(--font-mono);
-    font-size: var(--text);
-    cursor: pointer;
-    transition:
-      color var(--dur) var(--ease-out),
-      background var(--dur) var(--ease-out);
-  }
-  .refresh:hover:not(:disabled) {
-    background: var(--glass-strong);
-    color: var(--fg);
-  }
-  .refresh:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-
-  /* ---- per-row node list ---- */
-  .nodes-block {
-    padding-top: var(--space-2);
-  }
-  .nodes-toggle {
-    min-height: var(--control-target);
-    display: inline-flex;
-    align-items: baseline;
-    gap: var(--space-2);
-    background: transparent;
+    flex: none;
+    padding: 0;
     border: 0;
-    padding: 0;
-    color: var(--fg-dim);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    background: transparent;
+    color: var(--ink3);
+    font: var(--type-control);
     cursor: pointer;
-    transition: color var(--dur) var(--ease-out);
+    transition: color var(--fast) var(--ease);
   }
-  .nodes-toggle:hover {
-    color: var(--family-accent);
-  }
-  .caret {
-    font-size: var(--text-xs);
-    color: var(--fg-muted);
-  }
-  .nodes-label {
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-  }
-  .nodes-count {
-    color: var(--fg-muted);
-  }
-  .node-chips {
-    list-style: none;
-    margin: var(--space-2) 0 0;
-    padding: 0;
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-  }
-  .node-chip {
-    min-height: var(--control-target);
+  .refresh:hover:not(:disabled) { color: var(--ink); }
+  .refresh:disabled { opacity: 0.4; cursor: default; }
+
+  /* ---- a row's nodes: chips that steer to one ---- */
+  .nodes-block { display: flex; flex-direction: column; gap: var(--s2); }
+  .nodes-toggle {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-2);
-    background: var(--glass);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-1) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
+    gap: var(--s2);
+    align-self: flex-start;
+    min-height: 28px;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    color: var(--ink3);
+    font: var(--type-meta);
     cursor: pointer;
-    transition:
-      background var(--dur) var(--ease-out),
-      color var(--dur) var(--ease-out);
+    transition: color var(--fast) var(--ease);
   }
-  .node-chip:hover:not(:disabled) {
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 16%, var(--glass));
+  .nodes-toggle:hover { color: var(--ink); }
+  .nodes-count { font-variant-numeric: tabular-nums; }
+  .node-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--s1);
+    margin: 0;
+    padding: 0;
+    list-style: none;
   }
-  .node-chip:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
+  .node-chip {
+    display: inline-flex;
+    align-items: baseline;
+    gap: var(--s1);
+    padding: 2px var(--s2);
+    border: 0;
+    border-radius: var(--r-chip);
+    background: var(--wash2);
+    color: var(--ink);
+    font: var(--type-small);
+    cursor: pointer;
+    transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
-  .node-name {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    max-width: 16em;
-  }
-  .node-role {
-    padding: 0 var(--space-2);
-    border-radius: var(--radius);
-    font-size: var(--text-2xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--family-accent);
-    background: color-mix(in srgb, var(--family-accent) 12%, transparent);
+  .node-chip:hover:not(:disabled) { background: color-mix(in oklch, var(--tint) 14%, var(--wash2)); }
+  .node-chip:active:not(:disabled) { scale: 0.97; }
+  .node-chip:disabled { color: var(--ink3); cursor: default; }
+  .node-role { color: var(--ink3); font: var(--type-meta); }
+
+  @media (max-width: 720px) {
+    /* A narrow row keeps its name whole: the actions go under it, starting at its edge. */
+    .row-line { grid-template-columns: minmax(0, 1fr); gap: var(--s1); }
+    .actions { justify-content: flex-start; }
+    .act, .nodes-toggle, .cat-header, .refresh { min-height: 44px; }
+    .text-input, .search { height: 44px; font: var(--type-body); }
+    .selector-row { grid-template-columns: auto minmax(0, 1fr); }
+    .selector-row .sel { grid-column: 1 / -1; }
   }
 </style>

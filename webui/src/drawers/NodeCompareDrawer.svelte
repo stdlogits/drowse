@@ -4,8 +4,7 @@
   import { nodeCompareViewSchema } from "../lib/interfaceSchemas";
   import { ToolError } from "../lib/webmcp/types";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton, MorphText, Segmented } from "@stdlogits/ledger";
   // Cross-branch diff drawer — phase 5.  Renders a side-by-side
   // word-level diff between two (or more) generated nodes, plus the
   // sorted readings-delta table and the per-token alignment for the
@@ -21,14 +20,13 @@
   import { apiTree, ApiError } from "../lib/runtime/services";
   import type { RuntimeTreeReplayCapabilities } from "../lib/runtime/contracts";
   import { userFacingError } from "../lib/runtime/userFacingError";
+  import { diffSideTokens } from "../panels/loom/loomDiff";
   import {
     clearNodeSelection,
     closeDrawer,
     drawerState,
     loomTree,
   } from "../lib/stores.svelte";
-  import Select from "../lib/Select.svelte";
-  import Button from "../lib/ui/Button.svelte";
   import type {
     DiffReadingDeltaJSON,
     DiffTextSpanJSON,
@@ -249,14 +247,13 @@
   // the whitespace-split renderer so the diff stays visible — alignment
   // tooltips just won't fire on the fallback path.
 
-  /** Anchor-side tokens (a_index >= 0) for one diff's per-token array.
-   *  Returns ``[]`` when the diff carries no per-token data. */
+  /** Anchor-side tokens, each once, for one diff's per-token array (``[]`` when it carries none). */
   function panelTokensA(spans: DiffTokenSpanJSON[]): DiffTokenSpanJSON[] {
-    return spans.filter((sp) => sp.a_index >= 0);
+    return diffSideTokens(spans, "a");
   }
-  /** Other-side tokens (b_index >= 0). */
+  /** Other-side tokens, each once. */
   function panelTokensB(spans: DiffTokenSpanJSON[]): DiffTokenSpanJSON[] {
-    return spans.filter((sp) => sp.b_index >= 0);
+    return diffSideTokens(spans, "b");
   }
 
   function formatReadingDelta(r: DiffReadingDeltaJSON): string {
@@ -264,16 +261,11 @@
     return `${sign}${r.delta.toFixed(3)}`;
   }
 
-  function deltaColor(delta: number): string {
-    if (delta === 0) return "var(--fg-muted)";
-    return delta >= 0 ? "var(--accent-green)" : "var(--accent-red)";
-  }
-
   function spanColor(state: DiffTextSpanJSON["state"]): string {
     if (state === "insert")
-      return "color-mix(in srgb, var(--accent-green) 18%, transparent)";
+      return "color-mix(in oklch, var(--tint) 18%, transparent)";
     if (state === "delete")
-      return "color-mix(in srgb, var(--accent-red) 18%, transparent)";
+      return "color-mix(in oklab, var(--ink3) 18%, transparent)";
     return "transparent";
   }
 
@@ -440,112 +432,83 @@
 <section class="drawer-shell" aria-label="Cross-branch diff drawer">
   <header class="header">
     <div class="title">
-      <h2 class="eyebrow">Compare conversation branches</h2>
-      <div class="name-row">
-        <span class="meta">
-          {#if ids.length >= 2}
-            <MorphText text={ids.length} /> branch{ids.length === 1 ? "" : "es"} selected
-          {:else}
-            Select branches
-          {/if}
-        </span>
+      <h2 class="dw-title">Compare branches</h2>
+      <div class="dw-facts">
+        {#if ids.length >= 2}
+          <span><b><MorphText text={ids.length} /></b> branches</span>
+        {:else}
+          <span>Select two or more replies</span>
+        {/if}
       </div>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="toolbar">
-    <label class="header-ctl">
-      <span>layout</span>
-      <Select
-        bind:value={layout}
-        options={[
-          { value: "side-by-side", label: "side-by-side" },
-          { value: "unified", label: "unified" },
-        ]}
-        ariaLabel="Layout"
-      />
-    </label>
-    <label class="header-ctl">
-      <span>sort by</span>
-      <Select
-        bind:value={sortBy}
-        options={[
-          { value: "magnitude", label: "|Δ| desc" },
-          { value: "name", label: "name" },
-        ]}
-        ariaLabel="Sort readings by"
-      />
-    </label>
+    <Segmented label="Layout" value={layout} onchange={(value) => (layout = value)}
+      options={[{ value: "side-by-side", label: "Side by side" }, { value: "unified", label: "Unified" }]} />
+    <Segmented label="Sort readings by" value={sortBy} onchange={(value) => (sortBy = value)}
+      options={[{ value: "magnitude", label: "Largest change" }, { value: "name", label: "Name" }]} />
   </div>
 
   <div class="body">
     {#if ids.length < 2}
-      <p class="empty">select ≥2 generated nodes in Threads</p>
+      <p class="empty">Select two or more generated replies on the loom</p>
     {:else if loading && diffs.length === 0}
-      <p class="empty loading-pulse loading-placeholder" role="status">Comparing replies…</p>
+      <div class="dw-blocks" role="status" aria-label="Comparing replies"><i></i><i></i><i></i></div>
     {:else}
-      <!-- Column headers: anchor + each diff target. -->
+      <!-- Column heads: the anchor and each reply compared with it. -->
       <div class="columns" class:unified={layout === "unified"}>
         <div class="col anchor-col">
           <header class="col-header">
-            <code class="col-id">{anchorId?.slice(0, 12) ?? ""}</code>
-            <span class="col-tag">A · anchor</span>
+            <span class="col-tag">A</span>
+            <span class="meta">{anchorId?.slice(0, 12) ?? ""}</span>
           </header>
           <p class="col-preview">{nodePreview(anchorId ?? "")}</p>
         </div>
         {#each ids.slice(1) as otherId, otherIdx (otherId)}
           <div class="col">
             <header class="col-header">
-              <code class="col-id">{otherId.slice(0, 12)}</code>
               <span class="col-tag">B{ids.length > 2 ? otherIdx + 1 : ""}</span>
+              <span class="meta">{otherId.slice(0, 12)}</span>
             </header>
             <p class="col-preview">{nodePreview(otherId)}</p>
           </div>
         {/each}
       </div>
 
-      <!-- Logit-pass Phase 6: per-sibling rollup summary.  Renders for
-           both N=2 and N>2 modes — the table is more useful at N>2, but
-           it is still a clean
-           at-a-glance read for a single pair.  KL / rank-1 columns
-           populate lazily as the joint-logprobs fetches complete. -->
+      <!-- Per-sibling rollup: KL and rank-1 columns fill in as the joint-logprob fetches land. -->
       {#if siblingSummary.length > 0}
         <section class="siblings-summary">
-          <header class="ss-header">
-            <span class="ss-label">siblings</span>
-            <span class="ss-foot">vs {siblingSummary[0]?.label ?? "A"}</span>
-          </header>
-          <table class="ss-table">
+          <div class="dw-sec-head">
+            <span class="head">Siblings</span>
+            <span class="meta">against {siblingSummary[0]?.label ?? "A"}</span>
+          </div>
+          <div class="table-wide">
+          <table class="table">
             <thead>
               <tr>
-                <th class="ss-tag">tag</th>
-                <th class="ss-preview">preview</th>
-                <th class="ss-num" {...{ "aria-description": "mean logprob" }}>
-                  mean lp
-                </th>
-                <th class="ss-num" {...{ "aria-description": "rank-1 agreement" }}>
-                  rk1 unchanged
-                </th>
-                <th class="ss-num" {...{ "aria-description": "approximate KL" }}>
-                  mean ≈KL
-                </th>
+                <th></th>
+                <th>Reply</th>
+                <th class="num" {...{ "aria-description": "mean logprob" }}>Mean log p</th>
+                <th class="num" {...{ "aria-description": "rank-1 agreement" }}>Top token kept</th>
+                <th class="num" {...{ "aria-description": "approximate KL" }}>Mean ≈KL</th>
               </tr>
             </thead>
             <tbody>
               {#each siblingSummary as row (row.nodeId)}
                 <tr class:anchor={row.isAnchor}>
-                  <td class="ss-tag">{row.label}</td>
-                  <td class="ss-preview">{row.preview}</td>
-                  <td class="ss-num">{fmtLp(row.meanLogprob)}</td>
-                  <td class="ss-num">
+                  <td class="tag">{row.label}</td>
+                  <td class="preview">{row.preview}</td>
+                  <td class="num">{fmtLp(row.meanLogprob)}</td>
+                  <td class="num">
                     <MorphText text={row.isAnchor
                       ? "-"
                       : row.jointReady
                         ? fmtPct(row.rank1Unchanged)
                         : "…"} />
                   </td>
-                  <td class="ss-num">
+                  <td class="num">
                     <MorphText text={row.isAnchor
                       ? "-"
                       : row.jointReady
@@ -556,6 +519,7 @@
               {/each}
             </tbody>
           </table>
+          </div>
         </section>
       {/if}
 
@@ -570,17 +534,13 @@
 
           <section class="diff-block">
             <header class="diff-header">
-              <span class="diff-title">
-                {ids.length === 2 ? "A vs B" : `A vs B${diffIdx + 1}`}
-              </span>
+              <span class="diff-title">{ids.length === 2 ? "A and B" : `A and B${diffIdx + 1}`}</span>
               {#if d.parent_applied_steering !== null || d.steering_delta}
-                <code class="recipe-delta" {...{ "aria-description": "steering delta A → B" }}>
-                  Δ recipe: {d.steering_delta || "none"}
-                </code>
+                <span class="meta" {...{ "aria-description": "steering delta A → B" }}>steering {d.steering_delta || "unchanged"}</span>
               {/if}
             </header>
 
-            <!-- Text diff: side-by-side or unified. -->
+            <!-- The text: side by side, or one unified run. -->
             {#if layout === "side-by-side"}
               {@const tokensA = panelTokensA(d.per_token)}
               {@const tokensB = panelTokensB(d.per_token)}
@@ -648,600 +608,159 @@
               </div>
             {/if}
 
-            <!-- Logit-pass Phase 5: per-aligned-token cross-evaluation
-                 table.  Lazy fetch in parallel with the diff; loading /
-                 error states surface inline.  ``joint`` is declared at
-                 the top of the {:else} block (Svelte requires @const at
+            <!-- Each aligned token, evaluated under both branches; fetched beside the diff.
+                 ``joint`` is declared at the top of the {:else} block (Svelte requires @const at
                  the start of a parent block). -->
             {#if joint}
               {#if joint.kind === "loading"}
-                <p class="dim small loading-pulse loading-placeholder" role="status">Computing token probabilities…</p>
+                <p class="meta" role="status">Computing token probabilities…</p>
               {:else if joint.kind === "err"}
-                <p class="error small" role="alert">
-                  logprobs: {joint.message}
-                </p>
+                <p class="error" role="alert">Log probabilities: {joint.message}</p>
               {:else if joint.kind === "unavailable"}
-                <p class="dim small replay-unavailable">
-                  {joint.message} Branch text and saved measurements remain available.
-                </p>
+                <p class="meta replay-unavailable">{joint.message} The text and saved readings still compare.</p>
               {:else}
                 {@const aligned = alignedRows(joint.data.rows)}
                 {#if aligned.length > 0}
                   <div class="joint-table">
-                    <header class="joint-header">
-                      <span class="joint-label">logprobs</span>
-                      <span class="joint-summary">
-                        <strong>{joint.data.n_rank1_changed}</strong> / {aligned.length} rank-1 changes
-                      </span>
-                    </header>
-                    <table class="lp-table">
-                      <thead>
-                        <tr>
-                          <th class="lp-pos">pos</th>
-                          <th class="lp-tok">token</th>
-                          <th class="lp-num">lp(A)</th>
-                          <th class="lp-num">lp(B)</th>
-                          <th class="lp-num" {...{ "aria-description": "log pB(A token) − log pA(A token)" }}>
-                            Δ lp(A)
-                          </th>
-                          <th class="lp-num" {...{ "aria-description": "approx KL(A ∥ B) · top-K" }}>
-                            ≈KL
-                          </th>
-                          <th class="lp-flag" {...{ "aria-description": "argmax differs" }}>rk1Δ</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {#each aligned as row (`${row.a_index}-${row.b_index}`)}
-                          <tr class:rank-flip={row.rank_changed}>
-                            <td class="lp-pos">{row.a_index}</td>
-                            <td class="lp-tok">
-                              <code>{JSON.stringify(row.a_text)}</code>
-                            </td>
-                            <td class="lp-num">{fmtLp(row.lp_a_in_a)}</td>
-                            <td class="lp-num">{fmtLp(row.lp_b_in_b)}</td>
-                            <td class="lp-num">
-                              {fmtDeltaLp(row.lp_a_in_b, row.lp_a_in_a)}
-                            </td>
-                            <td class="lp-num">{fmtKl(row.approx_kl)}</td>
-                            <td class="lp-flag">{row.rank_changed ? "●" : ""}</td>
+                    <div class="dw-sec-head">
+                      <span class="head">Log probabilities</span>
+                      <span class="meta"><b>{joint.data.n_rank1_changed}</b> of {aligned.length} top tokens change</span>
+                    </div>
+                    <div class="table-scroll">
+                      <table class="table">
+                        <thead>
+                          <tr>
+                            <th class="num">Pos</th>
+                            <th>Token</th>
+                            <th class="num">A</th>
+                            <th class="num">B</th>
+                            <th class="num" {...{ "aria-description": "log pB(A token) − log pA(A token)" }}>Δ A token</th>
+                            <th class="num" {...{ "aria-description": "approx KL(A ∥ B) · top-K" }}>≈KL</th>
+                            <th class="flag" {...{ "aria-description": "argmax differs" }}><span class="sr-only">Top token changed</span></th>
                           </tr>
-                        {/each}
-                      </tbody>
-                    </table>
+                        </thead>
+                        <tbody>
+                          {#each aligned as row (`${row.a_index}-${row.b_index}`)}
+                            <tr class:rank-flip={row.rank_changed}>
+                              <td class="num pos">{row.a_index}</td>
+                              <td class="token">{JSON.stringify(row.a_text)}</td>
+                              <td class="num">{fmtLp(row.lp_a_in_a)}</td>
+                              <td class="num">{fmtLp(row.lp_b_in_b)}</td>
+                              <td class="num">{fmtDeltaLp(row.lp_a_in_b, row.lp_a_in_a)}</td>
+                              <td class="num">{fmtKl(row.approx_kl)}</td>
+                              <td class="flag">{#if row.rank_changed}<i aria-label="top token changed"></i>{/if}</td>
+                            </tr>
+                          {/each}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 {:else}
-                  <p class="dim small">no aligned tokens</p>
+                  <p class="meta">No aligned tokens</p>
                 {/if}
               {/if}
             {/if}
 
-            <!-- Readings delta table. -->
+            <!-- How each reading moved from A to B. -->
             {#if sortedRs.length > 0}
               <div class="readings-table">
-                <span class="readings-label">Δ readings</span>
+                <span class="head">Readings</span>
                 <div class="readings-grid">
                   {#each sortedRs as r (r.name)}
                     {@const top = topDeltas.has(r.name)}
                     <div class="reading-row" class:top-delta={top}>
                       <span class="r-name">{r.name}</span>
                       <span class="r-vals">
-                        <span class="r-side"><MorphText text={r.a_value.toFixed(3)} /></span>
-                        <span class="r-arrow">→</span>
-                        <span class="r-side"><MorphText text={r.b_value.toFixed(3)} /></span>
+                        <MorphText text={r.a_value.toFixed(3)} />
+                        <span aria-hidden="true">→</span>
+                        <MorphText text={r.b_value.toFixed(3)} />
                       </span>
-                      <div class="r-bar-track">
-                        <div
-                          class="r-bar-fill"
-                          style={`width: ${Math.min(100, Math.abs(r.delta) * 100)}%; background: ${deltaColor(r.delta)}`}
-                        ></div>
-                      </div>
-                      <span class="r-delta" style={`color: ${deltaColor(r.delta)}`}>
-                        <MorphText text={formatReadingDelta(r)} />
+                      <span class="r-bar-track">
+                        <i class:neg={r.delta < 0} style={`width: ${Math.min(100, Math.abs(r.delta) * 100)}%`}></i>
                       </span>
+                      <span class="r-delta"><MorphText text={formatReadingDelta(r)} /></span>
                     </div>
                   {/each}
                 </div>
               </div>
             {:else}
-              <p class="dim small">no readings</p>
+              <p class="meta">No readings</p>
             {/if}
           </section>
         {/if}
       {/each}
     {/if}
   </div>
-
-  <footer class="footer">
-    <Button variant="ghost" size="sm" onclick={closeDrawer}>close</Button>
-  </footer>
 </section>
 
 <style>
-  /* v2 sheet interior — the host paints the sheet surface, so the root
-   * stays transparent and chrome speaks sans (identifiers/values/
-   * expressions stay mono, applied locally below). */
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
-  }
-  .header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .eyebrow {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .name-row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-  .meta {
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    white-space: nowrap;
-  }
+  /* Branches compared: the replies as washes side by side, then the numbers as rows. */
+  .drawer-shell { display: flex; flex-direction: column; gap: var(--s4); height: 100%; min-height: 0; padding: var(--s5) var(--s6) 0; color: var(--ink2); font: var(--type-small); }
+  .header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s5); }
+  .title { display: grid; gap: var(--s1); min-width: 0; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+  .body { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s6); min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s6); }
+  .empty { color: var(--ink3); }
+  .error { color: var(--ink); }
+  .meta b { color: var(--ink); font-weight: 500; }
 
-  /* Toolbar — the layout / sort-by controls, in their own row (same
-   * pattern as the token-drilldown toolbar). */
-  .toolbar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-5);
-    padding: var(--space-5) var(--drawer-gutter-inline);
-  }
-  .header-ctl {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-  }
-  /* Themed Select owns its own chrome. */
-  .header-ctl :global(.sk-select) {
-    min-width: 9em;
-  }
+  .columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s3); }
+  .columns.unified { grid-template-columns: minmax(0, 1fr); }
+  .col { display: grid; gap: var(--s1); align-content: start; min-width: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .col.anchor-col { background: var(--wash2); }
+  .col-header { display: flex; align-items: baseline; gap: var(--s2); }
+  .col-tag, .pane-label, .tag { color: var(--ink); font: var(--type-control); }
+  .col-preview { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink2); overflow-wrap: anywhere; }
 
-  @media (max-width: 760px) {
-    .toolbar {
-      flex-direction: column;
-      align-items: stretch;
-      gap: var(--space-3);
-    }
-    .header-ctl {
-      display: grid;
-      grid-template-columns: 5em minmax(0, 1fr);
-    }
-    .header-ctl :global(.sk-select) {
-      min-width: 0;
-    }
-  }
+  .siblings-summary, .joint-table, .readings-table { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); min-width: 0; }
+  .table-scroll { max-height: 360px; overflow: auto; }
+  /* A table wider than the column scrolls on its own; the drawer body never pans sideways. */
+  .table-wide { overflow-x: auto; overscroll-behavior-inline: contain; }
+  .table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  .table th { position: sticky; top: 0; padding: var(--s1) var(--s2); background: var(--paper); color: var(--ink3); font: var(--type-head); text-align: start; white-space: nowrap; }
+  .table td { padding: var(--s1) var(--s2); color: var(--ink2); vertical-align: top; }
+  .table tbody tr { transition: background-color var(--fast) var(--ease); }
+  .table tbody tr:hover { background: var(--wash); }
+  .table tbody tr.anchor { background: var(--wash); }
+  .table td:first-child, .table th:first-child { border-radius: var(--r-col) 0 0 var(--r-col); }
+  .table td:last-child, .table th:last-child { border-radius: 0 var(--r-col) var(--r-col) 0; }
+  .table .num { text-align: end; white-space: nowrap; }
+  /* max-width 0 lets the reply column take what the numbers leave, down to an ellipsis. */
+  .table .preview { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .table .token { color: var(--ink); white-space: pre; }
+  .table .pos { color: var(--ink3); }
+  .table .flag { width: 24px; text-align: center; }
+  .table .flag i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--tint); }
+  .table tr.rank-flip td { color: var(--ink); }
 
-  .body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-height: 0;
-  }
-  .empty {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    line-height: 1.5;
-    max-width: 62ch;
-    margin: 0;
-  }
-  .error {
-    color: var(--accent-red);
-    font-size: var(--text-sm);
-    margin: 0;
-  }
+  .diff-block { display: grid; gap: var(--s4); min-width: 0; }
+  .diff-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); }
+  .diff-title { color: var(--ink); font: var(--type-lead); }
+  .text-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3); }
+  .text-pane { display: grid; gap: var(--s2); align-content: start; min-width: 0; padding: var(--s3) var(--s4) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .text-body, .unified-body { color: var(--ink); font: var(--type-body); line-height: 28px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .unified-body { padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .tok { border-radius: 4px; transition: background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease); }
+  .tok.highlight-anchor, .tok.highlight-target { --hl: color-mix(in oklch, var(--tint) 22%, transparent); background: var(--hl); box-shadow: 0 0 0 2px var(--hl); }
+  .tok-span { border-radius: 4px; }
+  .span-delete { color: var(--ink3); text-decoration: line-through; text-decoration-color: var(--ink3); }
+  .span-sign { margin-right: 2px; color: var(--ink3); font: var(--type-meta); }
 
-  .columns {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-    gap: var(--space-4);
-  }
-  .col {
-    background: var(--surface-sheen), var(--bg);
-    border-radius: var(--radius);
-    padding: var(--surface-padding);
-  }
-  .col-header {
-    display: flex;
-    justify-content: space-between;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    margin-bottom: var(--space-2);
-  }
-  .col-id {
-    font-family: var(--font-mono);
-    color: var(--fg-dim);
-  }
-  .col-tag {
-    color: var(--accent);
-  }
-  .col-preview {
-    margin: 0;
-    color: var(--fg);
-    font-size: var(--text-sm);
-    line-height: 1.4;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    display: -webkit-box;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    -webkit-box-orient: vertical;
-  }
+  .readings-grid { display: grid; gap: 2px; }
+  .reading-row { display: grid; grid-template-columns: minmax(0, 1.4fr) auto 64px 64px; gap: var(--s3); align-items: center; min-height: 32px; padding: 0 var(--s2); border-radius: var(--r-col); transition: background-color var(--fast) var(--ease); }
+  .reading-row:hover { background: var(--wash); }
+  .r-name { overflow: hidden; color: var(--ink2); text-overflow: ellipsis; white-space: nowrap; }
+  .top-delta .r-name { color: var(--ink); font-weight: 500; }
+  .r-vals { display: inline-flex; gap: var(--s1); color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .r-bar-track { position: relative; height: 4px; overflow: hidden; border-radius: 2px; background: var(--wash2); }
+  .r-bar-track > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--tint); }
+  .r-bar-track > i.neg { background: var(--ink3); opacity: 0.6; }
+  .r-delta { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: end; }
 
-  /* Nested section card — aggregates the text diff + cross-eval table +
-   * readings table for one A-vs-B pair. */
-  .diff-block {
-    background: var(--surface-sheen), var(--glass);
-    box-shadow: var(--shadow-well);
-    border-radius: var(--radius-lg);
-    padding: var(--surface-padding);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .diff-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    flex-wrap: wrap;
-  }
-  .diff-title {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .recipe-delta {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    background: var(--glass-strong);
-    padding: var(--space-1) var(--space-3);
-    border-radius: var(--radius-sm);
-  }
-
-  .text-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-3);
-  }
-  .columns.unified,
-  .columns.unified > .col {
-    grid-template-columns: 1fr;
-  }
-  /* Data well — the per-branch text pane. */
-  .text-pane {
-    background: var(--surface-sheen), var(--bg);
-    border-radius: var(--radius);
-    padding: var(--surface-padding);
-    min-height: 5em;
-    max-height: 30em;
-    overflow-y: auto;
-  }
-  .pane-label {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    display: block;
-    margin-bottom: var(--space-1);
-  }
-  .text-body {
-    color: var(--fg);
-    line-height: 1.5;
-    white-space: pre-wrap;
-    word-break: break-word;
-    font-size: var(--text-sm);
-  }
-  .tok {
-    cursor: default;
-    transition: background-color var(--dur-fast) var(--ease-out);
-  }
-  /* Cross-pane hover alignment: no space to signal here (this is text
-   * correspondence, not a pillar), so anchor vs target read via fill
-   * weight and outline rather than hue. */
-  .tok:hover {
-    background: color-mix(in srgb, var(--fg) 8%, transparent);
-  }
-  .tok.highlight-anchor {
-    background: color-mix(in srgb, var(--fg) 16%, transparent);
-  }
-  .tok.highlight-target {
-    background: transparent;
-    outline: 1px solid var(--fg-muted);
-    outline-offset: -1px;
-  }
-
-  /* Data well — the unified diff pane. */
-  .unified-body {
-    background: var(--surface-sheen), var(--bg);
-    border-radius: var(--radius);
-    padding: var(--surface-padding);
-    line-height: 1.5;
-    font-size: var(--text-sm);
-    word-break: break-word;
-    white-space: normal;
-  }
-  .tok-span {
-    padding: 0;
-  }
-  .span-sign {
-    margin-inline-end: var(--space-1);
-    font-weight: var(--weight-medium);
-  }
-  .span-insert .span-sign {
-    color: var(--accent-green);
-  }
-  .span-delete .span-sign {
-    color: var(--accent-red);
-  }
-  .span-equal {
-    color: var(--fg-strong);
-  }
-
-  /* Logit-pass Phase 6: per-sibling distributional rollup. */
-  .siblings-summary {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    background: var(--glass);
-    box-shadow: var(--shadow-well);
-    border-radius: var(--radius-lg);
-    padding: var(--surface-padding);
-    margin: 0;
-  }
-  .ss-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-4);
-  }
-  .ss-label {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .ss-foot {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .ss-table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-  }
-  .ss-table th,
-  .ss-table td {
-    padding: var(--space-2) var(--space-3);
-    text-align: start;
-  }
-  .ss-table thead th {
-    color: var(--fg-muted);
-    font-family: var(--font-ui);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    font-weight: var(--weight-medium);
-  }
-  .ss-table td.ss-num,
-  .ss-table th.ss-num {
-    text-align: end;
-    white-space: nowrap;
-    width: 6em;
-  }
-  .ss-table td.ss-tag,
-  .ss-table th.ss-tag {
-    width: 3em;
-    color: var(--fg-dim);
-  }
-  .ss-table td.ss-preview {
-    color: var(--fg);
-    font-family: var(--font-ui);
-    max-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  /* Anchor row reads as a plain neutral wash — text-diff hover/cross-
-   * highlight is achromatic (no pillar owns "which node is the anchor"),
-   * so this stays consistent with .tok.highlight-anchor above rather
-   * than borrowing a hue. */
-  .ss-table tr.anchor td {
-    background: color-mix(in srgb, var(--fg) 6%, transparent);
-  }
-  .ss-table tr.anchor td.ss-tag {
-    color: var(--fg-strong);
-    font-weight: var(--weight-medium);
-  }
-
-  /* Logit-pass Phase 5: cross-evaluation table.  Vocabulary-distribution
-   * quantities (logprobs, KL, rank flips) are logit-space — the lens
-   * pillar hue marks this block as that same family. */
-  .joint-table {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    margin: var(--space-2) 0 var(--space-3) 0;
-  }
-  .joint-header {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--space-4);
-  }
-  .joint-label {
-    color: var(--pillar-lens);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .joint-summary {
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-  }
-  .joint-summary strong {
-    color: var(--fg-strong);
-  }
-  .lp-table {
-    width: 100%;
-    border-collapse: separate;
-    border-spacing: 0;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    font-size: var(--text-xs);
-    background: var(--bg);
-    border-radius: var(--radius);
-  }
-  .lp-table th,
-  .lp-table td {
-    padding: var(--space-1) var(--space-3);
-    text-align: start;
-  }
-  .lp-table thead th {
-    color: var(--fg-muted);
-    font-family: var(--font-ui);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
-    background: var(--bg);
-  }
-  .lp-table td.lp-num,
-  .lp-table th.lp-num {
-    text-align: end;
-    width: 4.5em;
-  }
-  .lp-table td.lp-pos,
-  .lp-table th.lp-pos {
-    text-align: end;
-    width: 2.5em;
-    color: var(--fg-dim);
-  }
-  .lp-table td.lp-flag,
-  .lp-table th.lp-flag {
-    text-align: center;
-    width: 2em;
-  }
-  .lp-table td.lp-tok code {
-    color: var(--fg-strong);
-    background: transparent;
-    word-break: break-all;
-  }
-  /* Rank-1 flips are the highest-signal rows in this logit-space table —
-   * tint them in the lens family rather than the old amber. */
-  .lp-table tr.rank-flip td {
-    background: color-mix(in srgb, var(--pillar-lens) 10%, transparent);
-  }
-  .lp-table tr.rank-flip .lp-flag {
-    color: var(--pillar-lens);
-  }
-  .readings-table {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .readings-label {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .readings-grid {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-  }
-  .reading-row {
-    display: grid;
-    grid-template-columns: minmax(8em, 12em) minmax(6em, 9em) 1fr 4em;
-    align-items: center;
-    gap: var(--space-2);
-    font-size: var(--text-sm);
-    font-family: var(--font-mono);
-  }
-  /* Top-5-by-magnitude marker: an emphasis wash, not a hue — the sign
-   * itself already reads green(+)/red(−) via .r-delta / .r-bar-fill. */
-  .reading-row.top-delta .r-name {
-    color: var(--fg-strong);
-    font-weight: var(--weight-medium);
-  }
-  .r-name {
-    color: var(--fg-strong);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .r-vals {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    display: inline-flex;
-    gap: var(--space-2);
-    align-items: center;
-  }
-  .r-arrow {
-    color: var(--fg-subtle);
-  }
-  .r-bar-track {
-    background: var(--bg-elev);
-    height: 6px;
-    border-radius: var(--radius);
-    position: relative;
-    overflow: hidden;
-  }
-  .r-bar-fill {
-    height: 100%;
-  }
-  .r-delta {
-    text-align: end;
-    font-variant-numeric: tabular-nums;
-  }
-  .dim {
-    color: var(--fg-muted);
-  }
-  .small {
-    font-size: var(--text-sm);
-  }
-
-  .footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--drawer-gutter-block);
-    padding: 0 var(--drawer-gutter-inline) var(--drawer-gutter-block);
+  @media (max-width: 720px) {
+    .drawer-shell { padding: var(--s4) var(--s4) 0; }
+    .text-grid { grid-template-columns: minmax(0, 1fr); }
+    .reading-row { grid-template-columns: minmax(0, 1fr) 48px 56px; }
+    .r-vals { display: none; }
   }
 </style>

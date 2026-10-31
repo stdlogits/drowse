@@ -4,8 +4,8 @@
   import { profileCompareViewSchema } from "../lib/interfaceSchemas";
   import { ToolError } from "../lib/webmcp/types";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // Pairwise compare drawer — cross-layer cosine matrix between two
   // named steering profiles / probes. Two dropdowns pick from registered
   // profiles and active probes; the body renders an L_A × L_B heatmap akin to
@@ -152,24 +152,23 @@
 <aside class="drawer" aria-label="Pairwise compare">
   <header class="drawer-header">
     <div class="title">
-      <h2 class="eyebrow">Compare controls by layer</h2>
-      <div class="name-row">
+      <h2 class="dw-title">Compare by layer</h2>
+      <div class="dw-facts">
         {#if data}
-          <code class="name">{conceptA} × {conceptB}</code>
-          <span class="meta">{layersA.length} × {layersB.length} layers · model {data.model ?? "-"}</span>
-        {:else if names.length < 2}
-          <span class="meta">Choose at least two controls</span>
+          <span><b>{conceptA}</b> × <b>{conceptB}</b></span>
+          <span><b>{layersA.length}</b> × <b>{layersB.length}</b> layers</span>
+          <span>{data.model ?? "-"}</span>
         {:else}
-          <span class="meta">Choose two controls</span>
+          <span>{names.length < 2 ? "Needs two controls" : "Choose two controls"}</span>
         {/if}
       </div>
     </div>
-    <DrawerCloseButton onclick={onClose} />
+    <IconButton icon="close" label="Close" onclick={onClose} />
   </header>
 
   <div class="picker-row">
     <label class="picker">
-      <span class="picker-label">a</span>
+      <span class="meta">Rows</span>
       <Select
         bind:value={conceptA}
         options={nameOptions}
@@ -178,7 +177,7 @@
       />
     </label>
     <label class="picker">
-      <span class="picker-label">b</span>
+      <span class="meta">Columns</span>
       <Select
         bind:value={conceptB}
         options={nameOptions}
@@ -190,11 +189,11 @@
 
   <div class="body" aria-busy={loading}>
     {#if error}
-      <div class="empty err" role="alert">Comparison failed: {error}</div>
+      <p class="empty" role="alert">Comparison failed: {error}</p>
     {:else if loading && !matrix}
-      <div class="empty loading-pulse loading-placeholder" role="status">Loading layer comparison…</div>
+      <div class="dw-blocks" role="status" aria-label="Loading layer comparison"><i></i><i></i></div>
     {:else if !matrix || layersA.length === 0 || layersB.length === 0}
-      <div class="empty">Choose two available profiles or probes to compare their layers.</div>
+      <p class="empty">Nothing to compare yet</p>
     {:else}
       <p class="focused-cell" role="status"><MorphText text={focusedCell} numbers={false} /></p>
       <div class="grid-scroll">
@@ -202,9 +201,7 @@
           <thead>
             <tr>
               <th class="corner" scope="col">
-                <span class="axis-a">{conceptA}</span>
-                <span class="axis-sep">/</span>
-                <span class="axis-b">{conceptB}</span>
+                <span class="sr-only">{conceptA} by {conceptB}</span>
               </th>
               {#each layersB as lb (lb)}
                 <th class="col-label" scope="col" {...{ "aria-description": (conceptB) + " L" + (lb) }}>
@@ -240,173 +237,26 @@
 </aside>
 
 <style>
+  /* Two controls compared layer by layer: rows are the first, columns the second. */
+  .drawer { display: flex; flex-direction: column; gap: var(--s4); height: 100%; min-height: 0; padding: var(--s5) var(--s6) 0; color: var(--ink2); }
+  .drawer-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--s5); }
+  .title { display: grid; gap: var(--s1); min-width: 0; }
+  .picker-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
+  .picker { display: grid; gap: var(--s1); min-width: 0; }
+  .body { flex: 1 1 auto; min-height: 0; overflow: auto; padding-bottom: var(--s6); }
+  .empty { color: var(--ink3); font: var(--type-small); }
+  .focused-cell { min-height: 20px; margin: 0 0 var(--s3); color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
   .matrix-pick { display: grid; place-items: center; min-width: 44px; min-height: 44px; padding: 0; border: 0; background: transparent; cursor: crosshair; }
-  .focused-cell { min-height: 2em; font: var(--text-sm)/1.5 var(--font-mono); overflow-wrap: anywhere; }
-  /* v2 sheet interior — the host paints the sheet surface, so the root
-   * stays transparent and chrome speaks sans (data stays mono). */
-  .drawer {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
+  .grid-scroll { max-height: 100%; overflow: auto; }
+  .grid { border-collapse: separate; border-spacing: 1px; font-variant-numeric: tabular-nums; }
+  .grid th, .grid td { margin: 0; padding: 0; background: var(--paper); }
+  .grid thead th { position: sticky; top: 0; z-index: 2; }
+  .grid .row-label { position: sticky; inset-inline-start: 0; z-index: 1; padding: 0 var(--s3) 0 var(--s2); color: var(--ink3); font: var(--type-meta); text-align: end; white-space: nowrap; }
+  .grid .corner { position: sticky; top: 0; inset-inline-start: 0; z-index: 3; }
+  .grid .col-label { width: var(--cell); min-width: var(--cell); max-width: var(--cell); padding: 0 0 var(--s2); color: var(--ink3); font: var(--type-meta); text-align: center; vertical-align: bottom; }
+  .grid .cell-td { line-height: 0; }
+  @media (max-width: 720px) {
+    .drawer { padding: var(--s4) var(--s4) 0; }
+    .picker-row { grid-template-columns: minmax(0, 1fr); }
   }
-
-  .drawer-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .eyebrow {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .name-row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-  .name {
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .meta {
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    white-space: nowrap;
-  }
-
-  .picker-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-5);
-    padding: var(--space-6) var(--drawer-gutter-inline);
-  }
-  .picker {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    flex: 1 1 0;
-    min-width: 0;
-  }
-  .picker-label {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-  }
-  /* The themed Select owns its own chrome — the picker label provides
-   * the only host styling. */
-
-  .body {
-    flex: 1 1 auto;
-    overflow: auto;
-    min-height: 0;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .empty {
-    color: var(--fg-muted);
-    padding: var(--space-6) 0;
-    line-height: 1.5;
-    max-width: 62ch;
-  }
-  .empty.err {
-    color: var(--accent-red);
-  }
-
-  /* Data well — sticky label cells stay OPAQUE (they occlude scrolled
-   * cells), so they paint --bg rather than glass. */
-  .grid-scroll {
-    overflow: auto;
-    max-height: 100%;
-    border-radius: var(--radius);
-    background: var(--bg);
-  }
-  .grid {
-    border-collapse: separate;
-    border-spacing: 1px;
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-  .grid th,
-  .grid td {
-    padding: 0;
-    margin: 0;
-    background: var(--bg);
-  }
-  .grid thead th {
-    position: sticky;
-    top: 0;
-    z-index: 2;
-    box-shadow: var(--shadow-sticky);
-  }
-  .grid .row-label {
-    position: sticky;
-    inset-inline-start: 0;
-    z-index: 1;
-    text-align: end;
-    padding: 0 var(--space-3) 0 var(--space-2);
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    box-shadow: var(--shadow-sticky-inline);
-    white-space: nowrap;
-  }
-  .grid .corner {
-    position: sticky;
-    top: 0;
-    inset-inline-start: 0;
-    z-index: 3;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    text-align: start;
-    padding: var(--space-1) var(--space-3);
-    box-shadow: var(--shadow-sticky), var(--shadow-sticky-inline);
-    white-space: nowrap;
-  }
-  .corner .axis-a,
-  .corner .axis-b {
-    color: var(--fg-strong);
-  }
-  .corner .axis-sep {
-    color: var(--fg-dim);
-    padding: 0 var(--space-1);
-  }
-  .grid .col-label {
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    padding: 0;
-    height: 3em;
-    vertical-align: bottom;
-    width: var(--cell);
-    min-width: var(--cell);
-    max-width: var(--cell);
-    text-align: center;
-  }
-  .grid .col-label > span {
-    display: inline-block;
-    padding-bottom: var(--space-2);
-  }
-  .grid .cell-td {
-    line-height: 0;
-  }
-
 </style>

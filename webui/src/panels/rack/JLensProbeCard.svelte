@@ -1,215 +1,98 @@
 <script lang="ts">
-  import TraceDetail from "../../lib/charts/TraceDetail.svelte";
-  import { chartValue } from "../../lib/charts/chartValues";
-  import RollingNumber from "../../lib/ui/RollingNumber.svelte";
-  // J-lens probe card — one workspace token, pinned (a ``jlens/<word>``
-  // token probe: persistent, gate-able) or unpinned (a live discovery row
-  // from the per-step aggregate).  Both card kinds are the same shape —
-  // pinning just makes the card persistent — so one component renders
-  // both, exactly like the SAE pillar's feature cards.
-  //
-  // A lens probe is a READOUT-channel probe (not a linear probe): the
-  // reading is the token's standing in ``softmax(W_U · norm(J_l h))``
-  // over all fitted layers.
-  //
-  //   statline : ■ (pinned, click to unpin) / □ (unpinned, click to pin) ·
-  //              token · @com ±spread · strength-history sparkline
-  //   body     : the strength bar (mean fitted-layer probability, 0→1
-  //              absolute — the ``@when:jlens/<word>`` gate channel, the
-  //              ONE readout channel), then the per-layer strength strip
-  //              (``p_l`` per layer, cell colour normalized to the card's
-  //              own max because absolute p spans orders of magnitude; an
-  //              empty cell means the token sat below that layer's top-k
-  //              cutoff, and the full ranking lives in the token
-  //              drilldown's j-lens tab).
-
-  import Bar from "../../lib/charts/Bar.svelte";
-  import Sparkline from "../../lib/charts/Sparkline.svelte";
-  import { detachProbe, highlightState } from "../../lib/stores.svelte";
+  // A word the lens reads, as one row: the word, its probability at each fitted layer (a bar per
+  // layer in that layer's colour; an empty slot is a layer where it fell below the top-k), and its
+  // strength, the mean fitted-layer probability (the one channel a ``@when:jlens/<word>`` gate
+  // reads). Pinned (a persistent ``jlens/<word>`` probe), the row can be chosen: the reply is
+  // tinted by it and the Inspector shows its trace. Unpinned (a word the live readout found), its
+  // marker pins it.
+  import { tokenParts } from "@stdlogits/ledger";
+  import { depthTint, layerDepth, readingText } from "../../lib/charts/depth";
+  import Trace from "../../lib/charts/Trace.svelte";
+  import { detachProbe, highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
   import { userFacingError } from "../../lib/runtime/userFacingError";
-  import RackCard from "./RackCard.svelte";
+  import InstrumentRow from "./InstrumentRow.svelte";
   import ProbePinButton from "./ProbePinButton.svelte";
-  import ProbeHighlightButton from "./ProbeHighlightButton.svelte";
-  import LayerStrip from "./LayerStrip.svelte";
-  import ProbeReadingRow from "./ProbeReadingRow.svelte";
 
   interface Props {
-    /** Raw vocabulary token text (untrimmed on a discovery row; a pinned
-     *  probe's word is already bare). */
+    /** Raw vocabulary token text (untrimmed on a discovery row; a pinned probe's word is bare). */
     token: string;
-    /** Mean fitted-layer probability, 0..1. */
+    /** Mean fitted-layer probability, 0..1; null when not measured. */
     strength: number | null;
     probeName?: string;
-    /** Probability-mass-weighted depth centre of mass, 0..1; null hides
-     *  the chip. */
+    /** Probability-mass-weighted depth centre of mass, 0..1. */
     com: number | null;
-    /** Depth spread around the CoM; null omits the ± part. */
+    /** Depth spread around the centre of mass. */
     spread: number | null;
-    /** Missing top-k observations leave gaps, not zero-valued readings. */
-    series: (number | null)[];
-    /** Per-layer strength cells in layer order; ``p === null`` means the
-     *  token sat below that layer's top-k cutoff. */
+    /** Per-layer probabilities in layer order; ``p === null`` = below that layer's top-k. */
     cells: { layer: number; p: number | null }[];
     pinned: boolean;
-    /** Pin in flight — disables the action. */
+    /** Pin in flight: disables the action. */
     busy?: boolean;
-    /** Unpinned cards only — the panel owns validation + attach. */
+    /** Unpinned rows only: the panel owns validation and attach. */
     onpin?: (word: string) => void;
   }
 
-  let {
-    token, strength, com, spread, series, cells, pinned, probeName, busy = false, onpin,
-  }: Props = $props();
+  let { token, strength, com, spread, cells, pinned, probeName, busy = false, onpin }: Props = $props();
 
-  const display = $derived(token.trim() || JSON.stringify(token));
+  const parts = $derived(tokenParts(token));
+  const wordStart = $derived(parts.lead);
+  const display = $derived(parts.empty ? JSON.stringify(token) : parts.text);
   const pinnable = $derived(token.length > 0 && token === token.trim());
   const name = $derived(probeName ?? `jlens/${display}`);
   const isHighlight = $derived(highlightState.target === name);
 
-  /** Colour scale — the card's own max p (absolute p spans orders of
-   *  magnitude, so a fixed 0→1 scale would render near-black strips). */
+  /** Bars read against the row's own largest layer: absolute p spans orders of magnitude. */
   const cellScale = $derived(Math.max(...cells.map((c) => c.p ?? 0), 1e-12));
-
-  const layerCells = $derived(
-    cells.map((cell) => ({
-      layer: cell.layer,
-      value: cell.p,
-      title: cell.p === null
-        ? `L${cell.layer} · below top-k`
-        : `L${cell.layer} · ${chartValue(cell.p, true)} · p ${cell.p.toPrecision(3)}`,
-    })),
-  );
+  const deepest = $derived(Math.max(0, ...cells.map((c) => c.layer)));
+  const colors = $derived(cells.map((c) => depthTint(layerDepth(c.layer, deepest))));
+  const depthText = $derived(com === null ? "" : ` · depth ${com.toFixed(2)}${spread === null ? "" : ` ± ${spread.toFixed(2)}`}`);
 
   let unpinBusy = $state(false);
 
   async function onUnpin(): Promise<void> {
     if (unpinBusy) return;
     unpinBusy = true;
-    // Unpinning destroys this keyed card. Capture its reactive identity before
-    // the request so the completion path never reads a derived owned by the
-    // now-destroyed component effect (Svelte's `derived_inert` warning).
-    const probeName = name;
+    // Unpinning destroys this keyed row: capture its identity before the request so the
+    // completion path never reads a derived owned by the destroyed component.
+    const probe = name;
     try {
-      await detachProbe(probeName);
-      pushToast(`unpinned ${probeName}`, { kind: "info" });
+      await detachProbe(probe);
+      pushToast(`unpinned ${probe}`, { kind: "info" });
     } catch (e) {
-      pushToast(userFacingError(e, `Unable to unpin ${probeName}. Try again.`), {
-        kind: "error",
-        ttlMs: null,
-      });
+      pushToast(userFacingError(e, `Unable to unpin ${probe}. Try again.`), { kind: "error", ttlMs: null });
     } finally {
       unpinBusy = false;
     }
   }
+
+  function choose(): void {
+    setHighlightTarget(name);
+    openDrawer("probe_inspector", { name });
+  }
 </script>
 
-<RackCard accent="--pillar-lens" disabled={false} active={pinned && isHighlight}>
-  {#snippet statline()}
+<InstrumentRow pressed={pinned && isHighlight} onselect={pinned ? choose : undefined} tint={depthTint(com)}
+  title={`${pinned ? name : `"${token}", averaged across fitted layers`}${depthText}`}>
+  {#snippet lead()}
+    <span class="n">{#if wordStart}<span class="ws">·</span>{/if}{display}</span>
+  {/snippet}
+  {#snippet mark()}
+    {#if cells.length > 0}
+      <Trace values={cells.map((c) => c.p)} limit={0} scale={cellScale} {colors} label={`${display} by layer`} />
+    {/if}
+  {/snippet}
+  {#snippet value()}
+    {#if strength === null}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>{:else}{readingText(strength, { percent: true })}{/if}
+  {/snippet}
+  {#snippet action()}
     <ProbePinButton
       shape="square"
       {pinned}
       disabled={pinned ? unpinBusy : busy || !pinnable}
       onclick={() => pinned ? void onUnpin() : onpin?.(token)}
-      title={pinned ? "unpin" : pinnable ? "pin" : "This token includes whitespace. Use Watch word to add a separate word probe."}
+      title={pinned ? "unpin" : pinnable ? "pin" : "This token includes whitespace. Watch the bare word to follow it."}
       ariaLabel={`${pinned ? "Unpin" : "Pin"} probe ${name}`}
     />
-
-    <span
-      class="name"
-      {...{ "aria-description": (pinned ? `probe ${name}` : `"${token}": averaged across fitted layers`) }}
-    >
-      {display}
-    </span>
-
-    {#if com !== null}
-      <span
-        class="com"
-        {...{ "aria-description": "depth ± spread" }}
-      >@<RollingNumber value={com} digits={2} />{#if spread !== null} ±<RollingNumber value={spread} digits={2} />{/if}</span>
-    {/if}
-
-    <span class="spacer"></span>
-
-    {#if pinned}
-      <ProbeHighlightButton {name} />
-    {/if}
-
-    <Sparkline percentage points={series} width={56} height={14} color="var(--card-accent)" />
   {/snippet}
-
-  {#snippet body()}
-    <!-- Strength: mean fitted-layer probability, absolute 0→1. -->
-    {#if strength === null}
-      <span class="row-label">Not measured</span>
-    {:else}
-    <ProbeReadingRow ariaLabel={strength === null ? "Not measured" : `Strength ${strength.toPrecision(3)}`}>
-      {#snippet left()}
-        <span
-          class="row-label"
-          {...{ "aria-description": "mean layer probability" }}
-        >strength</span>
-      {/snippet}
-      {#snippet bar()}
-        {#if strength !== null}
-          <Bar percentage value={strength} max={1} width={160} height={8} color="var(--card-accent)" />
-        {/if}
-      {/snippet}
-      {#snippet middle()}<span aria-hidden="true"></span>{/snippet}
-      {#snippet right()}<span class="value"><RollingNumber value={strength} format={{ useGrouping: false, minimumSignificantDigits: 3, maximumSignificantDigits: 3, notation: strength !== 0 && (Math.abs(strength) < 1e-6 || Math.abs(strength) >= 1e3) ? "scientific" : "standard" }} /></span>{/snippet}
-    </ProbeReadingRow>
-    {/if}
-
-    <!-- Per-layer strength strip with L endcaps. -->
-    <LayerStrip
-      cells={layerCells}
-      scale={cellScale}
-      ariaLabel={`Per-layer strength for ${display}`}
-      emptyMessage={pinned ? undefined : "no layer data"}
-      positiveColor="var(--layer-cell-lens)"
-    />
-    <TraceDetail points={series} />
-  {/snippet}
-</RackCard>
-
-<style>
-  /* ----- statline (mirrors SaeProbeCard) ----- */
-  .name {
-    color: var(--fg-strong);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .com {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-    flex: 0 0 auto;
-  }
-  .spacer {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  /* ----- body: reading-row content; ProbeReadingRow owns geometry. ----- */
-  .row-label {
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    text-align: end;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-    min-width: 0;
-  }
-  .value {
-    color: var(--fg-muted);
-    font-variant-numeric: tabular-nums;
-    min-width: 3.5em;
-    text-align: end;
-    flex: 0 0 auto;
-  }
-</style>
+</InstrumentRow>
