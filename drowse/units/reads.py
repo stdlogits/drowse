@@ -54,13 +54,28 @@ K^{out}_{L−1} ẽ_v`` (``ẽ_v`` itself at L0) and writes at ``mid`` of ``L``.
   is about to say ``v``), as a z over the token mask.  neuron-lens reads the
   QK circuit from attention statistics instead (``qk_S``); this read needs
   none.
+- **head norms** — a block with per-head norms (Qwen3's and Gemma's q/k
+  norms, Gemma 4's weightless value norm) reads each projection through its
+  norm's true derivative averaged over the residuals entering the block, as
+  neuron-lens applies them (``norm_derivative``: ``diag(g)·E[w(r I − r³ x
+  xᵀ/hd)]``, each position weighted by the input norm's scale ``1/ρ``): ``B``
+  through the value norm's, each input through its own.  The residuals are
+  the neutral ones at ``L − 1``'s output (the whitener's rows; at L0 the
+  kept tokens' embeddings).
+
+Every product takes the small factors first (``J^{mid}_L W_O^h``,
+``K^{out⊤}_{L−1} W_V^{h⊤}``: ``[d, hd]``) and streams the vocabulary rows
+through them in chunks, so a head read holds ``[V, hd]`` at most and never a
+``[V, d]`` tensor (one is 2.5 GB on Qwen3-8B); the OV z takes two streamed
+passes (``A``'s mean and scatter merged chunk by chunk, then each token's z).
 
 Where drowse differs from neuron-lens: the token mask is the tokenizer's
 (:func:`~drowse.lens.footprint.token_mask`; neuron-lens keeps tokens seen five
 times in its corpora); S raw reads report footprint z (same order as its raw
-score); the R head reads hold the final norm's scale constant (as it does) and
-skip Gemma 4's value norm (the LN rule; neuron-lens uses its mean true
-derivative); fp32 throughout where it used fp16.
+score); the R head reads hold the final norm's scale constant (as it does);
+the head norms' derivative averages over drowse's neutral residuals (one
+pooled position per neutral statement) where neuron-lens averages over every
+position of its activation corpora; fp32 throughout where it used fp16.
 
 Every read runs inside the model-exclusive section under ``inference_mode``,
 moves each result off the device once, and is fp32.
@@ -71,7 +86,7 @@ from __future__ import annotations
 import json
 import math
 import threading
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -80,17 +95,18 @@ import torch
 
 from drowse.base.atomic import artifact_lock, write_bytes_atomic
 from drowse.base.paths import ensure_within, model_dir
-from drowse.errors import RequestError
+from drowse.errors import RequestError, WhitenerError
 from drowse.lens.depth import kind_weights, layer_depth
 from drowse.lens.jlens import LensNotFittedError
 from drowse.lens.read import FamilyRead, TokenScore
-from drowse.model.blocks import BlockSpec
+from drowse.model.blocks import BlockSpec, NormSpec
 from drowse.model.units import head_read_rows, head_write_matrix, neuron_read_rows, neuron_writes
 from drowse.naming import HeadRef, NeuronRef, UnitRef, parse_unit_ref
 from drowse.units.catalog import LABEL_CREDIT
 from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
 
 if TYPE_CHECKING:
+    from drowse.geometry.whitener import LayerWhitener
     from drowse.lens.footprint import TokenEmbeddings
     from drowse.lens.instrument import LensInstrument
     from drowse.units.catalog import CatalogBinding
@@ -101,6 +117,9 @@ Family = Literal["R", "S"]
 HalfUnit = Literal["probability", "footprint_z", "layer_z", "own_token_z", "energy_z"]
 #: What a top query ranks by: a pole's write or its read direction.
 TopBy = Literal["writes", "fires"]
+#: The vocabulary rows a head read streams: centred embeddings or gained
+#: unembeddings.
+RowKind = Literal["embed", "unembed"]
 
 #: The format of a contrast cache shard; a mismatch recomputes (derived cache).
 CONTRAST_FORMAT = 1
@@ -108,6 +127,9 @@ CONTRAST_FORMAT = 1
 ROW_CHUNK = 512
 #: Vocabulary rows per chunk when a pass runs over the embedding or unembedding.
 VOCAB_CHUNK = 8192
+#: The most elements one chunk's product holds in a head read's streamed
+#: passes (fewer rows per chunk for a wide factor: a whole layer's heads).
+_CHUNK_ELEMENTS = 1 << 24
 #: neuron-lens's floors: the R logit std (``clamp_min(1e-8).sqrt()``), the S
 #: score std (``clamp_min(1e-12).sqrt()``) and the across-heads std.
 _R_STD_FLOOR = 1e-4
@@ -400,8 +422,13 @@ def own_token_z(A: torch.Tensor, B: torch.Tensor) -> torch.Tensor:
 def copy_score(A: torch.Tensor, B: torch.Tensor) -> float:
     """Elhage et al.'s copying score ``Σλ / Σ|λ|`` of ``A Bᵀ`` from the
     eigenvalues of ``Bᵀ A`` (its nonzero ones): +1 copies, −1 suppresses."""
+    return _copy_score_of(B.T @ A)
+
+
+def _copy_score_of(bta: torch.Tensor) -> float:
+    """:func:`copy_score` from ``Bᵀ A`` ``[k, k]`` itself."""
     # To the host first: MPS has no float64.
-    lam = torch.linalg.eigvals((B.T @ A).detach().cpu().double())
+    lam = torch.linalg.eigvals(bta.detach().cpu().double())
     denom = float(lam.abs().sum())
     return float(lam.real.sum()) / denom if denom > 0 else 0.0
 
@@ -578,7 +605,9 @@ class UnitReader:
     their read primitive and the token embeddings); ``runtime`` the units
     runtime (block descriptions, neutral unit statistics); ``catalog`` the
     model's neuron-lens catalog binding; ``weights`` the loaded weights'
-    fingerprint (it keys the contrast cache).
+    fingerprint (it keys the contrast cache); ``whitener`` the neutral
+    baseline's whitener getter, whose neutral residuals a head's norms are
+    averaged over (``None``: a block with head norms refuses head reads).
     """
 
     def __init__(
@@ -591,6 +620,7 @@ class UnitReader:
         exclusive: Callable[..., Any],
         catalog: "CatalogBinding",
         weights: Callable[[], str],
+        whitener: "Callable[[], LayerWhitener | None] | None" = None,
     ) -> None:
         self.runtime = runtime
         self.lens = lens
@@ -599,9 +629,13 @@ class UnitReader:
         self._exclusive = exclusive
         self.catalog = catalog
         self._weights_id = weights
+        self._whitener = whitener
         self.contrast = ContrastCache(model_id)
         self._null: torch.Tensor | None = None
         self._kept_ids: torch.Tensor | None = None
+        #: Per block, the head norms' mean derivatives and what they were
+        #: averaged over (the whitener or the token embeddings).
+        self._norm_cache: dict[int, tuple[object, dict[str, torch.Tensor | None]]] = {}
 
     # ------------------------------------------------------------ plumbing
 
@@ -1072,100 +1106,285 @@ class UnitReader:
         }
 
     # ------------------------------------------------------------------ heads
+    #
+    # A head's reads are products of [V, d] vocabulary rows with a few
+    # [d, d] lens matrices and its [d, hd] slices.  Every product here takes
+    # the small factors first (``J W_O^h``, ``K^ᵀ W_V^{h⊤}``: [d, hd]) and
+    # streams the vocabulary rows through them in chunks, so a read holds
+    # [V, hd] at most, never [V, d] (2.5 GB per tensor on Qwen3-8B).
 
-    def _token_rows(self, kept: torch.Tensor) -> torch.Tensor:
-        """Centred embeddings ``ẽ`` of the kept tokens ``[V_kept, d_emb]``."""
-        emb = self._embeddings()
-        return emb.centred(kept)
+    def _head_kept(self) -> torch.Tensor:
+        """The kept token ids a head read ranks (the mask's, inside the
+        unembedding the R side reads), on the device."""
+        kept = self._kept()
+        return kept[kept < int(self._unembed().shape[0])]
 
-    def _footprints(self, lenses: _Lenses, layer: int) -> torch.Tensor | None:
-        """``X = ẽ K^{out⊤}_{layer}`` for the kept tokens ``[V_kept, d]``
-        (``ẽ`` itself for ``layer < 0``, the embedding), or ``None``."""
-        rows = self._token_rows(self._kept())
-        if layer < 0:
+    def _chunks(self, ids: torch.Tensor, width: int) -> Iterator[torch.Tensor]:
+        """``ids`` in chunks of :data:`VOCAB_CHUNK`, fewer when a chunk's
+        ``[rows, width]`` product would pass :data:`_CHUNK_ELEMENTS`."""
+        step = max(1, min(VOCAB_CHUNK, _CHUNK_ELEMENTS // max(int(width), 1)))
+        for start in range(0, int(ids.shape[0]), step):
+            yield ids[start:start + step]
+
+    def _vocab_rows(self, kind: RowKind, ids: torch.Tensor, gain: torch.Tensor | None = None) -> torch.Tensor:
+        """``[n, d]`` fp32 rows of the vocabulary ``ids``: the centred
+        embeddings ``ẽ_v`` (``embed``) or ``γ_f ⊙ W_U[v]`` (``unembed``, with
+        ``gain = γ_f``)."""
+        if kind == "embed":
+            return self._embeddings().centred(ids)
+        assert gain is not None
+        return self._unembed().index_select(0, ids).detach().float() * gain
+
+    # ------------------------------------------------------------ head norms
+
+    def _block_inputs(self, layer: int) -> tuple[object, Callable[[], Iterator[torch.Tensor]]]:
+        """``(identity, chunks)``: the residuals entering block ``layer`` that
+        its head norms' derivative is averaged over.  The neutral residuals
+        at ``layer − 1``'s output (the whitener's rows: every neutral
+        statement at its pooled position); at L0, where a block reads the
+        token embedding, every kept token's embedding.  Raises
+        :class:`~drowse.errors.WhitenerError` without the neutral rows."""
+        if layer == 0:
+            emb = self._embeddings()
+            ids = self._head_kept()
+
+            def embedded() -> Iterator[torch.Tensor]:
+                for chunk in self._chunks(ids, emb.d_emb):
+                    yield emb.weight.index_select(0, chunk).detach().float() * emb.scale
+
+            return emb, embedded
+        whitener = None if self._whitener is None else self._whitener()
+        if whitener is None or (layer - 1) not in whitener:
+            raise WhitenerError(
+                f"a head of block {layer} reads through its head norms, whose derivative "
+                f"is averaged over the neutral residuals at L{layer - 1}; the neutral "
+                f"baseline does not cover that layer"
+            )
+        centred, _small, _ridge = whitener.woodbury_factors(layer - 1, device=self.device, dtype=torch.float32)
+        rows = centred + whitener.layer_means[layer - 1].to(device=self.device, dtype=torch.float32)
+        return whitener, lambda: iter((rows,))
+
+    def _head_norms(self, block: BlockSpec) -> dict[str, torch.Tensor | None]:
+        """Per projection (``query``, ``key``, ``value``) its head norm's true
+        derivative averaged over the residuals entering the block, ``[heads,
+        hd, hd]`` (query heads for ``query``, KV heads otherwise), or ``None``
+        where the block has no such norm.
+
+        As neuron-lens's ``heads.norm_derivative``: with ``x`` the projection's
+        output before its norm and ``r = rsqrt(mean(x²) + ε)``, ``diag(g)·E[w(r I
+        − r³ x xᵀ / hd)]``, each position weighted by the input norm's scale
+        ``w = 1/ρ`` (what a footprint direction is multiplied by before the
+        projection).  Kept per block until the neutral baseline changes."""
+        attn = block.attn
+        norms: dict[str, NormSpec | None] = {"query": attn.q_norm, "key": attn.k_norm, "value": attn.v_norm}
+        if all(norm is None for norm in norms.values()):
+            return dict.fromkeys(_HEAD_ROLES)
+        identity, inputs = self._block_inputs(block.layer)
+        hit = self._norm_cache.get(block.layer)
+        if hit is not None and hit[0] is identity:
+            return hit[1]
+        hd = attn.head_dim
+        in_norm = block.attn_in_norm
+        gain_in = in_norm.gain(device=self.device)
+        sources = {"query": attn.q, "key": attn.k, "value": attn.k if attn.v is None else attn.v}
+        weights = {
+            role: (
+                sources[role].weight.detach().to(device=self.device, dtype=torch.float32) * gain_in,
+                None if sources[role].bias is None
+                else sources[role].bias.detach().to(device=self.device, dtype=torch.float32),
+            )
+            for role, norm in norms.items() if norm is not None
+        }
+        first: dict[str, torch.Tensor] = {}
+        third: dict[str, torch.Tensor] = {}
+        count = 0
+        for rows in inputs():
+            inv_rho = torch.rsqrt(rows.pow(2).mean(-1) + in_norm.eps)            # [n]
+            normed = rows * inv_rho[:, None]
+            for role, (weight, bias) in weights.items():
+                x = normed @ weight.T
+                if bias is not None:
+                    x = x + bias
+                x = x.view(int(rows.shape[0]), -1, hd)
+                norm = norms[role]
+                assert norm is not None
+                r = torch.rsqrt(x.pow(2).mean(-1) + norm.eps)                     # [n, heads]
+                w = r * inv_rho[:, None]
+                s1 = w.sum(0)
+                s3 = torch.einsum("nh,nhi,nhj->hij", w * r.pow(2), x, x)
+                first[role] = s1 if role not in first else first[role] + s1
+                third[role] = s3 if role not in third else third[role] + s3
+            count += int(rows.shape[0])
+        eye = torch.eye(hd, device=self.device)
+        out: dict[str, torch.Tensor | None] = {}
+        for role, norm in norms.items():
+            if norm is None:
+                out[role] = None
+                continue
+            gain = norm.gain(device=self.device)
+            out[role] = gain[None, :, None] * (first[role][:, None, None] * eye - third[role] / hd) / count
+        self._norm_cache[block.layer] = (identity, out)
+        return out
+
+    def _norms_digest(self, norms: Mapping[str, torch.Tensor | None]) -> str:
+        """What a head population depends on through the head norms."""
+        import hashlib
+
+        if all(value is None for value in norms.values()):
+            return "none"
+        digest = hashlib.sha256()
+        for role in _HEAD_ROLES:
+            value = norms.get(role)
+            if value is not None:
+                digest.update(role.encode())
+                digest.update(value.detach().float().cpu().contiguous().numpy().tobytes())
+        return digest.hexdigest()[:16]
+
+    def _projection(
+        self, block: BlockSpec, head: int, role: str, norms: Mapping[str, torch.Tensor | None],
+    ) -> torch.Tensor:
+        """Head ``head``'s ``role`` rows times ``γ_attn`` through its head
+        norm's mean derivative, ``[hd, d]`` on the device."""
+        rows = getattr(head_read_rows(block, head), role).to(self.device)
+        derivative = norms[role]
+        if derivative is None:
             return rows
-        matrix = self._matrix(lenses.s, layer, "out")
-        if matrix is None:
-            return None
-        return rows @ matrix.T
+        index = head if role == "query" else block.attn.kv_head(head)
+        return derivative[index] @ rows
 
-    def _r_inputs(self, lenses: _Lenses, layer: int) -> torch.Tensor | None:
-        """``J^{out⊤}_{layer}(γ_f ⊙ W_U[v])`` for the kept tokens ``[V_kept, d]``,
-        or ``None`` (no R matrix there, or the embedding)."""
+    # --------------------------------------------------------------- OV map
+
+    def _footprint_map(self, lenses: _Lenses, layer: int) -> tuple[torch.Tensor | None, bool]:
+        """``(T, present)``: a token's footprint at ``layer``'s output is
+        ``ẽ_v T``, ``T = K^{out⊤}_{layer}`` ``[d_emb, d]``; at the embedding
+        (``layer < 0``) the footprint is ``ẽ_v`` itself (``T = None``)."""
         if layer < 0:
-            return None
-        matrix = self._matrix(lenses.r, layer, "out")
-        if matrix is None:
-            return None
-        kept = self._kept()
-        unembed = self._unembed()
-        rows = unembed.index_select(0, kept[kept < unembed.shape[0]]).detach().float() * self._final_gain()
-        return rows @ matrix
+            return None, True
+        matrix = self._matrix(lenses.s, layer, "out")
+        return (None, False) if matrix is None else (matrix.T, True)
 
-    def _ov_sides(
-        self, lenses: _Lenses, layer: int,
-    ) -> tuple[torch.Tensor | None, dict[Family, torch.Tensor | None], str | None, dict[Family, str | None]]:
-        """``(X, {R: A-factor, S: A-factor}, why X is absent, labels)``: the
-        footprints the head reads and, per family, the ``[V_kept, d]`` rows
-        whose product with ``W_O^h`` gives ``A``."""
-        X = self._footprints(lenses, layer - 1)
-        absent = None if X is not None else (
-            f"a head's input side reads through the S lens at L{layer - 1} out, "
-            f"and {'no S-family lens is selected' if lenses.s is None else 'it holds no such matrix'}"
-        )
-        kept = self._kept()
-        sides: dict[Family, torch.Tensor | None] = {"R": None, "S": None}
-        labels: dict[Family, str | None] = {"R": None, "S": None}
-        j_mid = self._matrix(lenses.r, layer, "mid")
-        if j_mid is not None:
-            unembed = self._unembed()
-            rows = unembed.index_select(0, kept[kept < unembed.shape[0]]).detach().float() * self._final_gain()
-            sides["R"] = rows @ j_mid
-            labels["R"] = lenses.r.site_key("mid").label
-        s_lens: Any = lenses.s
-        k_mid = self._matrix(s_lens, layer, "mid")
-        if k_mid is not None:
-            sides["S"] = self._token_rows(kept) @ k_mid.T
-            labels["S"] = s_lens.site_key("mid").label
-        return X, sides, absent, labels
+    def _b_factor(
+        self, lenses: _Lenses, block: BlockSpec, heads: Sequence[int],
+        norms: Mapping[str, torch.Tensor | None],
+    ) -> torch.Tensor | None:
+        """``[d_emb, H'·hd]``, so that ``B = ẽ ·`` it: per head
+        ``K^{out⊤}_{L−1} W_V^{h⊤} D_v^{h⊤}`` (the footprint through the value
+        rows and the value norm's mean derivative), or ``None`` without the S
+        matrix at ``L − 1``."""
+        through, present = self._footprint_map(lenses, block.layer - 1)
+        if not present:
+            return None
+        factor = torch.cat([self._projection(block, h, "value", norms).T for h in heads], dim=1)
+        return factor if through is None else through @ factor
 
-    def _head_ab(
-        self, X: torch.Tensor, side: torch.Tensor, block: BlockSpec, head: int,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
-        """``(A, B)`` of one head's OV map, ``[V_kept, head_dim]`` each."""
-        value = head_read_rows(block, head).value.to(self.device)
-        write = head_write_matrix(block, head).to(self.device)
-        return side @ write, X @ value.T
+    def _a_factor(
+        self, lenses: _Lenses, block: BlockSpec, heads: Sequence[int], family: Family,
+    ) -> tuple[RowKind, torch.Tensor, str] | None:
+        """``(rows, factor, label)``: ``A = rows · factor`` reads each output
+        token in the heads' writes at ``mid`` (R: ``γ_f ⊙ W_U[u]`` times
+        ``J^{mid}_L W_O^h``; S: ``ẽ_u`` times ``K^{mid⊤}_L W_O^h``), or
+        ``None`` without that lens's ``mid`` matrix."""
+        write = torch.cat([head_write_matrix(block, h) for h in heads], dim=1).to(self.device)
+        if family == "R":
+            j_mid = self._matrix(lenses.r, block.layer, "mid")
+            if j_mid is None:
+                return None
+            return "unembed", j_mid @ write, lenses.r.site_key("mid").label
+        k_mid = self._matrix(lenses.s, block.layer, "mid")
+        if k_mid is None:
+            return None
+        return "embed", k_mid.T @ write, lenses.s.site_key("mid").label
+
+    def _ov_maps(
+        self,
+        sides: Mapping[Family, tuple[RowKind, torch.Tensor, str]],
+        b_factor: torch.Tensor,
+        ids: torch.Tensor,
+        hd: int,
+    ) -> dict[Family, tuple[torch.Tensor, torch.Tensor]]:
+        """Per family each head's own-token z ``[H', V]`` and ``Bᵀ A``
+        ``[H', hd, hd]`` of its OV map ``M[u, v] = A_u · B_v``.
+
+        :func:`own_token_z` and :func:`copy_score` over the vocabulary in two
+        streamed passes: the first merges ``A``'s mean and scatter chunk by
+        chunk (Chan et al.'s pairwise update) and sums ``Bᵀ A``, the second
+        takes each token's z from them.  ``A`` and ``B`` exist one chunk at a
+        time."""
+        n_heads = int(b_factor.shape[1]) // hd
+        width = int(b_factor.shape[1]) * (1 + len(sides))
+        gain = self._final_gain() if any(kind == "unembed" for kind, _f, _l in sides.values()) else None
+
+        def products(chunk: torch.Tensor) -> tuple[torch.Tensor, dict[Family, torch.Tensor]]:
+            embedded = self._vocab_rows("embed", chunk)
+            unembedded: torch.Tensor | None = None
+            B = (embedded @ b_factor).view(-1, n_heads, hd)
+            out: dict[Family, torch.Tensor] = {}
+            for family, (kind, factor, _label) in sides.items():
+                if kind == "unembed":
+                    if unembedded is None:
+                        unembedded = self._vocab_rows("unembed", chunk, gain)
+                    rows = unembedded
+                else:
+                    rows = embedded
+                out[family] = (rows @ factor).view(-1, n_heads, hd)
+            return B, out
+
+        zeros = torch.zeros(n_heads, hd, dtype=torch.float32, device=self.device)
+        count = 0
+        mean = dict.fromkeys(sides, zeros)
+        scatter = dict.fromkeys(sides, zeros[:, :, None] * zeros[:, None, :])
+        bta = dict(scatter)
+        for chunk in self._chunks(ids, width):
+            B, As = products(chunk)
+            n = int(B.shape[0])
+            total = count + n
+            for family, A in As.items():
+                chunk_mean = A.mean(0)
+                centred = A - chunk_mean
+                delta = chunk_mean - mean[family]
+                mean[family] = mean[family] + delta * (n / total)
+                scatter[family] = (
+                    scatter[family] + torch.einsum("vhi,vhj->hij", centred, centred)
+                    + delta[:, :, None] * delta[:, None, :] * (count * n / total)
+                )
+                bta[family] = bta[family] + torch.einsum("vhi,vhj->hij", B, A)
+            count = total
+        cov = {family: scatter[family] / count for family in sides}
+        zs: dict[Family, list[torch.Tensor]] = {family: [] for family in sides}
+        for chunk in self._chunks(ids, width):
+            B, As = products(chunk)
+            for family, A in As.items():
+                own = (A * B).sum(-1) - (B * mean[family]).sum(-1)
+                var = torch.einsum("vhi,hij,vhj->vh", B, cov[family], B)
+                zs[family].append(own / var.clamp_min(1e-30).sqrt())
+        return {family: (torch.cat(zs[family]).T.contiguous(), bta[family]) for family in sides}
 
     def _head_contrast(
-        self, lenses: _Lenses, layer: int, family: Family, what: str,
-        compute: Callable[[int], torch.Tensor],
+        self, lenses: _Lenses, block: BlockSpec, family: Family,
+        norms: Mapping[str, torch.Tensor | None],
     ) -> ContrastStats:
-        """Mean and (unbiased) std across the layer's heads of a per-head,
-        per-token z (``what``: ``ov`` or ``in-<role>``), as neuron-lens's
-        head ``_z`` lists."""
-        block = self.runtime.block(layer)
+        """Mean and (unbiased) std across the layer's heads of each token's
+        OV own-token z, as neuron-lens's head ``_z`` lists (one streamed
+        pass over every head of the layer)."""
+        layer = block.layer
         identity = lenses.r_identity if family == "R" else lenses.s_identity
 
         def build() -> dict[str, torch.Tensor]:
-            per_head = torch.stack([compute(h) for h in range(block.n_heads)])
+            heads = range(block.n_heads)
+            side = self._a_factor(lenses, block, heads, family)
+            b_factor = self._b_factor(lenses, block, heads, norms)
+            assert side is not None and b_factor is not None
+            per_head = self._ov_maps({family: side}, b_factor, self._head_kept(), block.attn.head_dim)[family][0]
             _drain(self.device)
             return {
-                f"{what}.mean": per_head.mean(0),
-                f"{what}.std": per_head.std(0).clamp_min(_HEAD_STD_FLOOR),
+                "ov.mean": per_head.mean(0),
+                "ov.std": per_head.std(0).clamp_min(_HEAD_STD_FLOOR),
             }
 
         return self.contrast.get(
-            f"{family}-{identity}-S-{lenses.s_identity}-heads-{what}", layer,
-            self._meta(family=family, what=what), self.device, build,
+            f"{family}-{identity}-S-{lenses.s_identity}-heads-ov", layer,
+            self._meta(family=family, what="ov", norms=self._norms_digest(norms)), self.device, build,
         )
-
-    def _input_energy(self, rows: torch.Tensor, projection: torch.Tensor) -> torch.Tensor:
-        """Vocabulary z of ``‖P x̂_v‖`` for rows ``x_v`` ``[V_kept, d]`` and a
-        projection ``[hd, d]``."""
-        norms = rows.norm(dim=-1).clamp_min(1e-12)
-        energy = (rows @ projection.T).norm(dim=-1) / norms
-        return (energy - energy.mean()) / energy.std(correction=0).clamp_min(1e-12)
 
     def head(self, ref: HeadRef, *, k: int = 8, hide_hubs: bool = False) -> HeadRead:
         """Read one head from its weights: OV copies and suppressions at
@@ -1178,41 +1397,53 @@ class UnitReader:
         with self._section("unit read"), torch.inference_mode():
             lenses = self._lenses()
             block = self.runtime.block(layer)
-            kept = self._kept()
+            ids = self._head_kept()
+            ids_host = ids.cpu().tolist()
+            norms = self._head_norms(block)
             w_s, w_r = self._weights(layer)
-            X, sides, x_absent, labels = self._ov_sides(lenses, layer)
+            b_factor = self._b_factor(lenses, block, (head,), norms)
+            b_absent = None if b_factor is not None else (
+                f"a head's input side reads through the S lens at L{layer - 1} out, "
+                f"and {'no S-family lens is selected' if lenses.s is None else 'it holds no such matrix'}"
+            )
+            sides: dict[Family, tuple[RowKind, torch.Tensor, str]] = {}
+            for family in ("R", "S"):
+                side = self._a_factor(lenses, block, (head,), family)
+                if side is not None:
+                    sides[family] = side
+            maps = {} if b_factor is None or not sides else self._ov_maps(
+                sides, b_factor, ids, block.attn.head_dim,
+            )
             copies: dict[Family, UnitHalf] = {}
             suppresses: dict[Family, UnitHalf] = {}
             scores: dict[str, float | None] = {"R": None, "S": None}
             families: tuple[tuple[Family, float], ...] = (("R", w_r), ("S", w_s))
             for family, weight in families:
-                side = sides[family]
-                if X is None or side is None:
-                    why = x_absent if X is None else self._no_lens(lenses, family, layer, "mid")
+                label = sides[family][2] if family in sides else None
+                if family not in maps:
+                    why = b_absent if b_factor is None else self._no_lens(lenses, family, layer, "mid")
                     copies[family] = suppresses[family] = UnitHalf(
-                        family, weight, "own_token_z", labels[family], absent=why,
+                        family, weight, "own_token_z", label, absent=why,
                     )
                     continue
-                A, B = self._head_ab(X, side, block, head)
-                z = own_token_z(A, B)
-                scores[family] = copy_score(A, B)
+                per_head, bta = maps[family]
+                z = per_head[0]
+                scores[family] = _copy_score_of(bta[0])
                 unit: HalfUnit = "own_token_z"
                 if hide_hubs:
-                    def per_head(h: int, x: torch.Tensor = X, s: torch.Tensor = side) -> torch.Tensor:
-                        return own_token_z(*self._head_ab(x, s, block, h))
-
-                    mean, std = self._head_contrast(lenses, layer, family, "ov", per_head).mean_std("ov")
+                    mean, std = self._head_contrast(lenses, block, family, norms).mean_std("ov")
                     z = (z - mean) / std
                     unit = "layer_z"
                 lists = self._top_tokens(torch.stack([z, -z]), k)
-                copies[family] = UnitHalf(family, weight, unit, labels[family], self._remap(lists[0], kept))
+                copies[family] = UnitHalf(family, weight, unit, label, self._remap(lists[0], ids_host))
                 suppresses[family] = UnitHalf(
-                    family, weight, unit, labels[family],
-                    tuple(TokenScore(t.token_id, t.token, -t.value) for t in self._remap(lists[1], kept)),
+                    family, weight, unit, label,
+                    tuple(TokenScore(t.token_id, t.token, -t.value) for t in self._remap(lists[1], ids_host)),
                 )
             copies_place = PlaceRead(layer, "mid", depth, copies["S"], copies["R"], hubs)
             suppress_place = PlaceRead(layer, "mid", depth, suppresses["S"], suppresses["R"], hubs)
-            inputs = self._head_inputs(lenses, block, head, k=k, footprints=X)
+            inputs = self._head_inputs(lenses, block, head, norms, k=k, ids=ids, ids_host=ids_host)
+            _drain(self.device)
         return HeadRead(
             ref=ref,
             depth=depth,
@@ -1226,11 +1457,10 @@ class UnitReader:
             catalog=self._catalog_block(ref),
         )
 
-    def _remap(self, tokens: Iterable[TokenScore], kept: torch.Tensor) -> tuple[TokenScore, ...]:
-        """Kept-row indices back to vocabulary ids (one transfer of ``kept``)."""
-        ids = kept.cpu().tolist()
+    def _remap(self, tokens: Iterable[TokenScore], ids_host: Sequence[int]) -> tuple[TokenScore, ...]:
+        """Kept-row indices back to vocabulary ids."""
         return tuple(
-            TokenScore(int(ids[t.token_id]), self._decode(int(ids[t.token_id])), t.value)
+            TokenScore(int(ids_host[t.token_id]), self._decode(int(ids_host[t.token_id])), t.value)
             for t in tokens
         )
 
@@ -1240,13 +1470,38 @@ class UnitReader:
             return f"no {family}-family lens is selected for {self.model_id}"
         return f"the {lens.kind} lens holds no {site} matrix at L{layer}"
 
+    # --------------------------------------------------------------- inputs
+
+    def _input_energies(
+        self, kind: RowKind, through: torch.Tensor | None, projections: torch.Tensor,
+        ids: torch.Tensor, hd: int,
+    ) -> torch.Tensor:
+        """``[m, V]``: per projection (``projections`` ``[d, m·hd]``, side by
+        side) the vocabulary z of ``‖P x̂_v‖``, ``x_v = rows_v · through``
+        (``through`` ``[d_in, d]``; ``None``: the rows themselves), streamed
+        over vocabulary chunks."""
+        gain = self._final_gain() if kind == "unembed" else None
+        factor = projections if through is None else through @ projections
+        m = int(factor.shape[1]) // hd
+        width = int(factor.shape[1]) + (0 if through is None else int(through.shape[1]))
+        parts: list[torch.Tensor] = []
+        for chunk in self._chunks(ids, width):
+            rows = self._vocab_rows(kind, chunk, gain)
+            norm = (rows if through is None else rows @ through).norm(dim=-1).clamp_min(1e-12)
+            parts.append((rows @ factor).view(-1, m, hd).norm(dim=-1) / norm[:, None])
+        energy = torch.cat(parts).T
+        centred = energy - energy.mean(-1, keepdim=True)
+        return centred / energy.std(-1, correction=0, keepdim=True).clamp_min(1e-12)
+
     def _head_inputs(
-        self, lenses: _Lenses, block: BlockSpec, head: int, *, k: int,
-        footprints: torch.Tensor | None = None,
+        self, lenses: _Lenses, block: BlockSpec, head: int,
+        norms: Mapping[str, torch.Tensor | None], *, k: int,
+        ids: torch.Tensor, ids_host: Sequence[int],
     ) -> dict[str, PlaceRead]:
         """What each projection picks up at ``L − 1``'s output (the token
         embedding at L0): the S half over footprints, the R half over the
-        directions that say each token.
+        directions that say each token, each projection through its head
+        norm's mean derivative where the block has one.
 
         Always the vocabulary z (hubs shown): a layer contrast across heads
         saturates here, since the heads of one KV group share their key and
@@ -1257,11 +1512,18 @@ class UnitReader:
         site_layer = max(at, 0)
         w_s, w_r = self._weights(site_layer)
         depth = layer_depth(site_layer, self.n_layers)
-        kept = self._kept()
-        rows: dict[Family, torch.Tensor | None] = {
-            "S": footprints if footprints is not None else self._footprints(lenses, at),
-            "R": self._r_inputs(lenses, at),
-        }
+        hd = block.attn.head_dim
+        projections = torch.cat(
+            [self._projection(block, head, role, norms).T for role in _HEAD_ROLES], dim=1,
+        )
+        energies: dict[Family, torch.Tensor] = {}
+        through, s_present = self._footprint_map(lenses, at)
+        if s_present:
+            energies["S"] = self._input_energies("embed", through, projections, ids, hd)
+        j_out = None if at < 0 else self._matrix(lenses.r, at, "out")
+        if j_out is not None:
+            # x_v = J^{out⊤}_{L−1}(γ_f ⊙ W_U[v]): as a row, (γ_f ⊙ W_U[v]) J.
+            energies["R"] = self._input_energies("unembed", j_out, projections, ids, hd)
         labels: dict[Family, str | None] = {
             "S": "embedding" if at < 0 else (
                 None if lenses.s is None else lenses.s.site_key("out").label
@@ -1270,19 +1532,18 @@ class UnitReader:
         }
         families: tuple[tuple[Family, float], ...] = (("S", w_s), ("R", w_r))
         out: dict[str, PlaceRead] = {}
-        for role in _HEAD_ROLES:
+        for index, role in enumerate(_HEAD_ROLES):
             halves: dict[Family, UnitHalf] = {}
             for family, weight in families:
-                x = rows[family]
-                if x is None:
+                if family not in energies:
                     why = (
                         "the embedding has no R read (a head at L0 reads the token embeddings)"
                         if family == "R" and at < 0 else self._no_lens(lenses, family, at, "out")
                     )
                     halves[family] = UnitHalf(family, weight, "energy_z", labels[family], absent=why)
                     continue
-                z = self._input_energy(x, getattr(head_read_rows(block, head), role).to(self.device))
-                tokens = self._remap(self._top_tokens(z[None], k)[0], kept)
+                z = energies[family][index]
+                tokens = self._remap(self._top_tokens(z[None], k)[0], ids_host)
                 halves[family] = UnitHalf(family, weight, "energy_z", labels[family], tokens)
             out[role] = PlaceRead(site_layer, "out", depth, halves["S"], halves["R"])
         return out

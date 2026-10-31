@@ -7,6 +7,8 @@ a fitted one does), so every half is a known matrix product.
 
 from __future__ import annotations
 
+import math
+from pathlib import Path
 from typing import Any, cast
 
 import pytest
@@ -296,7 +298,14 @@ def test_head_ov_copies_and_copy_score_by_hand(lensed: Any) -> None:
     lam = torch.linalg.eigvals((B.T @ A).double())
     assert read.copy_score["R"] == pytest.approx(float(lam.real.sum() / lam.abs().sum()), rel=1e-4)
     assert own_token_z(A, B) == pytest.approx(z_r, rel=1e-3, abs=1e-4)
-    assert copy_score(A, B) == pytest.approx(read.copy_score["R"], rel=1e-6)
+    # The read sums Bᵀ A chunk by chunk: the same score up to fp32 order.
+    assert copy_score(A, B) == pytest.approx(read.copy_score["R"], rel=1e-4)
+
+
+def _energy_z(rows: torch.Tensor, P: torch.Tensor) -> torch.Tensor:
+    """Vocabulary z of the share ``‖P x̂_v‖`` of each row's direction ``P`` keeps."""
+    energy = (rows @ P.T).norm(dim=-1) / rows.norm(dim=-1)
+    return (energy - energy.mean()) / energy.std(correction=0)
 
 
 def test_head_inputs_by_hand(lensed: Any) -> None:
@@ -308,18 +317,80 @@ def test_head_inputs_by_hand(lensed: Any) -> None:
     keep = _keep(session)
     kept = keep.nonzero().squeeze(1)
     X = _centred(session)[kept] @ s.matrix(L - 1, "out").T
+    # The R input of token v: the direction that says v at L − 1's output,
+    # J^{out⊤}_{L−1}(γ_f ⊙ W_U[v]), as a row (γ_f ⊙ W_U[v]) J.
+    J = r.matrix(L - 1, "out")
+    unembed = session.model.get_output_embeddings().weight.detach().float()[kept] * spec.final_norm.gain()
+    Y = unembed @ J
     for role in ("query", "key", "value"):
         place = read.inputs[role]
         assert (place.layer, place.site) == (L - 1, "out")
         P = getattr(head_read_rows(block, h), role)
-        energy = (X @ P.T).norm(dim=-1) / X.norm(dim=-1)
-        z = (energy - energy.mean()) / energy.std(correction=0)
-        assert _ids(place.s) == [kept[i].item() for i in z.topk(4).indices]
-        assert place.s.unit == "energy_z" and place.s.lens == "S:out"
-        assert place.r.present and place.r.lens == "R:out"
+        for half, rows, lens in ((place.s, X, "S:out"), (place.r, Y, "R:out")):
+            z = _energy_z(rows, P)
+            assert half.unit == "energy_z" and half.lens == lens
+            assert _ids(half) == [kept[i].item() for i in z.topk(4).indices]
+            assert [t.value for t in half.tokens] == pytest.approx(z.topk(4).values.tolist(), rel=1e-4)
+        # J's orientation matters: the transposed read ranks other values.
+        transposed = _energy_z(unembed @ J.T, P).topk(4).values
+        assert not torch.allclose(transposed, _energy_z(Y, P).topk(4).values, rtol=1e-3)
     # A head at L0 reads the embedding: S over ẽ, no R read.
     first = cast(HeadRead, session.units.read("head/L0h0", k=2))
     assert first.inputs["key"].s.lens == "embedding" and not first.inputs["key"].r.present
+    z = _energy_z(_centred(session)[kept], head_read_rows(spec.blocks[0], 0).key)
+    assert _ids(first.inputs["key"].s) == [kept[i].item() for i in z.topk(2).indices]
+
+
+def test_a_head_read_streams_the_vocabulary_through_small_factors(
+    lensed: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: one head read held several ``[V, d]`` fp32 tensors at once
+    (the footprints, both OV A sides, the R inputs; about 15 GB on Qwen3-8B).
+    Every product now takes the ``[d, hd]`` factors first and streams the
+    vocabulary through them in chunks: no tensor the read makes, its
+    hidden-hub population included, spans the vocabulary at residual width."""
+    import shutil
+
+    from torch.overrides import TorchFunctionMode
+
+    import drowse.units.reads as reads_module
+    from drowse.units.reads import contrast_dir
+
+    session, _r, _s = lensed
+    expected = cast(HeadRead, session.units.read("head/L2h1", k=4, hide_hubs=True)).to_dict()
+    session.units.reads.contrast.clear()
+    shutil.rmtree(contrast_dir(session.model_id))
+    monkeypatch.setattr(reads_module, "VOCAB_CHUNK", 16)
+    n_vocab = int(_keep(session).sum())
+    width = int(model_spec(session.model).d_model)
+    shapes: list[tuple[int, ...]] = []
+
+    class Shapes(TorchFunctionMode):
+        def __torch_function__(
+            self, func: Any, types: Any, args: Any = (), kwargs: Any = None,
+        ) -> Any:
+            out = func(*args, **(kwargs or {}))
+            if isinstance(out, torch.Tensor):
+                shapes.append(tuple(out.shape))
+            return out
+
+    with Shapes():
+        got = cast(HeadRead, session.units.read("head/L2h1", k=4, hide_hubs=True)).to_dict()
+    wide = [
+        shape for shape in shapes
+        if shape and max(shape) >= n_vocab and math.prod(shape) >= n_vocab * width // 2
+    ]
+    assert shapes and not wide
+    # Chunked or not, the same read (fp32 summation order aside).
+    for place in ("copies", "suppresses"):
+        for family in ("s", "r"):
+            assert [t["token_id"] for t in got[place][family]["tokens"]] == [
+                t["token_id"] for t in expected[place][family]["tokens"]
+            ]
+            assert [t["value"] for t in got[place][family]["tokens"]] == pytest.approx(
+                [t["value"] for t in expected[place][family]["tokens"]], rel=1e-4, abs=1e-5,
+            )
+    assert got["copy_score"] == pytest.approx(expected["copy_score"], rel=1e-4)
 
 
 def test_head_hidden_hubs_contrast_across_heads(lensed: Any) -> None:
@@ -447,3 +518,130 @@ def test_copy_score_takes_device_factors_on_mps() -> None:
     gen = torch.Generator().manual_seed(0)
     A, B = torch.randn(50, 4, generator=gen), torch.randn(50, 4, generator=gen)
     assert copy_score(A.to("mps"), B.to("mps")) == pytest.approx(copy_score(A, B), rel=1e-5)
+
+
+# -- Gemma 4: head norms ---------------------------------------------------------
+
+
+def _mean_norm_derivative(block: Any, role: str, rows: torch.Tensor) -> torch.Tensor:
+    """``[heads, hd, hd]``: by autograd through the model's own head norm, its
+    Jacobian at each residual's projection, weighted by the input norm's
+    scale ``1/ρ`` and averaged over ``rows`` (neuron-lens's mean true
+    derivative)."""
+    attn = block.attn
+    norm = {"query": attn.q_norm, "key": attn.k_norm, "value": attn.v_norm}[role]
+    proj = {"query": attn.q, "key": attn.k, "value": attn.k if attn.v is None else attn.v}[role]
+    hd = attn.head_dim
+    gain_in = block.attn_in_norm.gain()
+    total: torch.Tensor | None = None
+    for row in rows:
+        inv_rho = torch.rsqrt(row.pow(2).mean() + block.attn_in_norm.eps)
+        x = proj(row * inv_rho * gain_in).detach().view(-1, hd)
+        jac = torch.stack([
+            torch.autograd.functional.jacobian(lambda y: norm.module(y[None])[0].float(), x[g])
+            for g in range(x.shape[0])
+        ])
+        total = inv_rho * jac if total is None else total + inv_rho * jac
+    assert total is not None
+    return total / rows.shape[0]
+
+
+def test_gemma4_head_reads_go_through_the_head_norms(tmp_path: Path) -> None:
+    """Gemma 4's value norm is a true derivative averaged over the neutral
+    residuals entering the block (as neuron-lens's OV reads apply it), so
+    the copies, suppressions and copy score line up with the catalog's
+    ``ov_R``/``ov_S``; the query and key inputs pass their q/k norms the
+    same way."""
+    from tests.support.sessions import TinyCheckpoint, TinySessionFactory
+    from tests.support.tiny_models import write_tiny_checkpoint
+    from tests.support.units import GEMMA4_MIXED_HEADS
+
+    checkpoint = TinyCheckpoint(
+        write_tiny_checkpoint(tmp_path / "tiny-g4", GEMMA4_MIXED_HEADS), GEMMA4_MIXED_HEADS,
+    )
+    factory = TinySessionFactory(checkpoint, tmp_path / "seed")
+    try:
+        session = factory()
+        r: JacobianLens = _install_lens(session, "R", seed=1, last_out=False)
+        s: JacobianLens = _install_lens(session, "S", seed=2, last_out=True)
+        session.lens.select_source("local:r")
+        session.lens.select_source("local:s")
+        spec = model_spec(session.model)
+        L, h = 1, 2
+        block = spec.blocks[L]
+        attn = block.attn
+        assert attn.v_norm is not None and not attn.v_norm.weighted and attn.q_norm is not None
+        read = cast(HeadRead, session.units.read(f"head/L{L}h{h}", k=4))
+
+        whitener = session.whitener
+        centred, _small, _ridge = whitener.woodbury_factors(L - 1, device=torch.device("cpu"), dtype=torch.float32)
+        rows = centred + whitener.layer_means[L - 1]
+        D_v = _mean_norm_derivative(block, "value", rows)[attn.kv_head(h)]
+        D_q = _mean_norm_derivative(block, "query", rows)[h]
+        # The derivative is not a multiple of the identity: it turns B.
+        assert float((D_v - D_v.diagonal().mean() * torch.eye(D_v.shape[0])).abs().max()) > 1e-3
+
+        emb = session.lens.token_embeddings()
+        kept = emb.keep.nonzero().squeeze(1)
+        E = emb.centred(kept)
+        X = E @ s.matrix(L - 1, "out").T
+        value = head_read_rows(block, h).value
+        B = X @ value.T @ D_v.T
+        write = head_write_matrix(block, h)
+        unembed = session.model.get_output_embeddings().weight.detach().float()[kept] * spec.final_norm.gain()
+        for half, A in (
+            (read.copies.r, unembed @ r.matrix(L, "mid") @ write),
+            (read.copies.s, E @ s.matrix(L, "mid").T @ write),
+        ):
+            z = own_token_z(A, B)
+            assert _ids(half) == [kept[i].item() for i in z.topk(4).indices]
+            assert [t.value for t in half.tokens] == pytest.approx(z.topk(4).values.tolist(), rel=1e-3)
+        A_r = unembed @ r.matrix(L, "mid") @ write
+        assert read.copy_score["R"] == pytest.approx(copy_score(A_r, B), rel=1e-4)
+        # Without the value norm's derivative the score would differ.
+        assert copy_score(A_r, X @ value.T) != pytest.approx(read.copy_score["R"], rel=1e-3)
+        # Inputs: each projection through its head norm.
+        for role, P in (("value", D_v @ value), ("query", D_q @ head_read_rows(block, h).query)):
+            z = _energy_z(X, P)
+            assert _ids(read.inputs[role].s) == [kept[i].item() for i in z.topk(4).indices]
+
+        # At L0 the norms average over the kept tokens' embeddings.
+        first = cast(HeadRead, session.units.read("head/L0h1", k=3))
+        block0 = spec.blocks[0]
+        embedded = session.model.get_input_embeddings().weight.detach().float()[kept] * emb.scale
+        D0 = _mean_norm_derivative(block0, "value", embedded)[block0.attn.kv_head(1)]
+        z = _energy_z(E, D0 @ head_read_rows(block0, 1).value)
+        assert _ids(first.inputs["value"].s) == [kept[i].item() for i in z.topk(3).indices]
+    finally:
+        factory.close()
+
+
+def test_head_norms_need_the_neutral_residuals(tmp_path: Path) -> None:
+    """A block with head norms (Qwen3's q/k norms) reads its heads through
+    the neutral residuals entering it; a reader without them refuses rather
+    than read the projections unnormed."""
+    from collections.abc import Iterator
+    from contextlib import contextmanager
+
+    from drowse.errors import WhitenerError
+    from drowse.units.reads import UnitReader
+    from tests.support.sessions import TinyCheckpoint, TinySessionFactory
+
+    factory = TinySessionFactory(TinyCheckpoint.write(tmp_path, "qwen3"), tmp_path / "seed")
+    try:
+        session = factory()
+        reads = session.units.reads
+
+        @contextmanager
+        def exclusive(_message: str, **_kwargs: Any) -> Iterator[None]:
+            yield
+
+        bare = UnitReader(
+            reads.runtime, reads.lens, model_id=session.model_id, n_layers=len(session.layers),
+            exclusive=exclusive, catalog=reads.catalog, weights=lambda: "weights",
+        )
+        with pytest.raises(WhitenerError, match="neutral residuals at L0"):
+            bare.read("head/L1h0")
+        assert session.units.read("head/L1h0").to_dict()["kind"] == "head"
+    finally:
+        factory.close()

@@ -183,7 +183,17 @@ the neutral mean). `session.units.read(unit, k=8, hide_hubs=False)`:
   ranks, per projection (query, key, value), tokens by the share of their unit
   direction the projection keeps, `‖W^h x̂_v‖` (S: the footprint; R: the
   direction that says `v`), as a z over the mask (`energy_z`). Without an S
-  lens the OV read is absent (its input side reads through it).
+  lens the OV read is absent (its input side reads through it). A block with
+  head norms (q/k norms; Gemma 4's weightless value norm) reads each
+  projection through its norm's true derivative averaged over the residuals
+  entering the block, as neuron-lens does (`norm_derivative`, each position
+  weighted by the input norm's `1/ρ`): `B` through the value norm's, each
+  input through its own. The residuals are the neutral ones at `L − 1` out
+  (the whitener's rows, one pooled position per neutral statement; at L0
+  the kept tokens' embeddings); without them the read is a `WhitenerError`.
+  Every product takes the `[d, hd]` factors first and streams the vocabulary
+  through them in chunks (two passes for the OV z: `A`'s mean and scatter,
+  then each token's z), so a read never holds a `[V, d]` tensor.
 - **hidden hubs** (`hide_hubs=True`, the UI's "Hide hub tokens"): each half
   ranks by neuron-lens's layer-contrastive `_z`, the token's score z-scored
   across the layer's population. Neurons: R over the lens logits of the `+`
@@ -219,8 +229,8 @@ firing block alone.
 `act_top`, the mean, the document count; a head's write `act_top` and mean
 `‖z_h‖`). The neutral cache has no firing rate, so "fires on X% of tokens"
 (`rate`: the catalog's share of tokens with `|act| > act_top / 4` over its
-13M-token corpora) comes from a bound catalog, else is absent with the
-reason.
+activation corpora, 15.4M positions) comes from a bound catalog, else is
+absent with the reason.
 
 ## The catalog (`catalog.py`)
 
@@ -252,10 +262,14 @@ unit fetch` beside a running server) reaches the session at once, a cached
 `tests/units/test_unit_reads.py` (every read against a hand computation on a
 tiny session with hand-built R and S lenses at both sites: writes and fires
 on, the scalars, the last layer's logit read, hidden hubs, the contrast cache
-following the lens, heads' OV, copy score and inputs, top, find, refusals),
-`test_unit_catalog.py` (fetch, projection, provenance, rows, links, the 404,
-pyarrow missing, the session's views over a monkeypatched Hub with tiny
-parquets), `test_unit_routes.py` (the HTTP routes and the fetch preparation),
+following the lens, heads' OV, copy score and both halves of the inputs,
+Gemma 4's head norms against autograd through its own norms on a tiny Gemma
+4 session (`tests/support/units.py::GEMMA4_MIXED_HEADS`), the refusal without
+neutral residuals, a head read that never makes a `[V, d]` tensor, top,
+find, refusals), `test_unit_catalog.py` (fetch over a fake Hub sibling
+listing, so the real path filter runs, projection, provenance, rows, links,
+the 404, pyarrow missing, the session's views, a binding made or removed by
+another process), `test_unit_routes.py` (the HTTP routes and the fetch preparation),
 `test_unit_stats.py` (the accumulator against a hand
 computation on llama and Gemma 3, the cache, the unavailable path, v4
 recompute), `test_unit_probes.py` (the tap by hand on llama, Gemma 3 and

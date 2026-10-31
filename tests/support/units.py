@@ -15,12 +15,42 @@ import torch
 from drowse.units.instrument import UnitsInstrument
 from drowse.units.runtime import UnitsRuntime
 from drowse.units.stats import LayerUnitStats, UnitStats
+from tests.support.tiny_models import ChatFamily
 
 __all__ = [
+    "GEMMA4_MIXED_HEADS",
     "inert_units_instrument",
     "patched_forward_logits",
     "random_unit_stats",
 ]
+
+
+#: A Gemma 4 chat family whose sliding layers (0, 2) have 8-wide heads and
+#: global layers (1, 3) 16-wide ones.
+GEMMA4_MIXED_HEADS = ChatFamily(
+    name="gemma4_text",
+    model_type="gemma4_text",
+    chat_template=(
+        "{{ bos_token }}"
+        "{% for m in messages %}"
+        "{% set role = 'model' if m['role'] == 'assistant' else m['role'] %}"
+        "<|turn>{{ role }}\n{{ m['content'] }}<turn|>\n"
+        "{% endfor %}"
+        "{% if add_generation_prompt %}<|turn>model\n{% endif %}"
+    ),
+    pad="<pad>",
+    bos="<bos>",
+    eos="<turn|>",
+    header_open="<|turn>",
+    header_close="\n",
+    config_overrides={
+        "sliding_window": 4096, "hidden_size_per_layer_input": 0,
+        "global_head_dim": 16, "num_global_key_value_heads": 1,
+        "layer_types": [
+            "sliding_attention", "full_attention", "sliding_attention", "full_attention",
+        ],
+    },
+)
 
 
 def _refuse() -> UnitStats:

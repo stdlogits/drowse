@@ -470,6 +470,7 @@ class DrowseSession:
             exclusive=self._model_exclusive,
             catalog=CatalogBinding(self.model_id),
             weights=lambda: loaded_model_fingerprint(self._model, self.model_id),
+            whitener=self._neutral.whitener,
         )
         self._units_instrument = UnitsInstrument(
             self._units_runtime,
