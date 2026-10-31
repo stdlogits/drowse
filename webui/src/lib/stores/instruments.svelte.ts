@@ -24,6 +24,8 @@ import { userFacingError } from "../runtime/userFacingError";
 import type {
   AnyReadingJSON,
   InstrumentSourceJSON,
+  LensBandJSON,
+  LensProviderJSON,
   LensReadoutBlockJSON,
   MeasurementsEnvelopeJSON,
   SaeFeatureJSON,
@@ -85,18 +87,28 @@ export const lensState: LensState = $state({
   busy: false,
 });
 
+/** The lens sources and what the Lens room draws them with. ``providers``, ``band`` and
+ *  ``fitDocuments`` are the server's; a runtime that sends none leaves them empty, and the room
+ *  hides what they draw. */
 export const lensSourceState: {
   sources: InstrumentSourceJSON[];
+  providers: LensProviderJSON[];
+  band: LensBandJSON | null;
+  fitDocuments: number | null;
   loading: boolean;
   busy: boolean;
   error: string | null;
-} = $state({ sources: [], loading: false, busy: false, error: null });
+} = $state({ sources: [], providers: [], band: null, fitDocuments: null, loading: false, busy: false, error: null });
 
 export async function refreshLensSources(): Promise<void> {
   if (lensSourceState.loading) return;
   lensSourceState.loading = true;
   try {
-    lensSourceState.sources = (await apiInstruments.sources("lens")).sources;
+    const out = await apiInstruments.sources("lens");
+    lensSourceState.sources = out.sources;
+    lensSourceState.providers = out.providers ?? [];
+    lensSourceState.band = out.band ?? null;
+    lensSourceState.fitDocuments = out.fit_documents ?? null;
     lensSourceState.error = null;
   } catch (e) {
     lensSourceState.error = userFacingError(e, "Word-likelihood sources could not be refreshed.");

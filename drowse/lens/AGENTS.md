@@ -241,7 +241,10 @@ provider name, and carries one or both sites.
   for the R family, `select_s_lens` for the S family, which skips sources
   without `out`) use it. `list_lens_sources` rows carry `lens` (kind),
   `family` (`R` or `S`; `output`/`input` is the internal slot name, never
-  shown) and `sites`. Selecting an S-family source over the server checks that
+  shown), `sites`, each site's `layers`, `n_prompts` and, where the fit
+  recorded one, `split_half` (`{site: {layer: difference}}`; imports lack
+  it). `lens_providers()` lists every fetchable provider by family, in
+  picker order. Selecting an S-family source over the server checks that
   it loads for these weights (409 otherwise), as the R family's live enable
   does.
 - A fit, a promotion or a fetch replaces its family's selection (a fit or

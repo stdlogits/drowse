@@ -7,7 +7,6 @@
   // a token is hovered, everything here reads that token.
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Switch, Token, ease, reducedMotion } from "@stdlogits/ledger";
-  import RuntimeJLensSourceSection from "@runtime-jlens-source";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
   import { mergeInstrumentProbeRows } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
@@ -31,9 +30,6 @@
   import { pushToast } from "../lib/stores/toasts.svelte";
   import type { ProbeRackEntry, ScalarReadingJSON } from "../lib/types";
   import type { LensWorkspaceSortMode } from "../lib/stores.svelte";
-
-  /** The source picker lives in the Lens room; the Inspector shows this panel without it. */
-  let { sources = true }: { sources?: boolean } = $props();
 
   const fitted = $derived(sessionState.info?.jlens_fitted === true);
   const liveOn = $derived(lensState.layers !== null);
@@ -192,8 +188,6 @@
 </script>
 
 <div class="jlens" aria-label="Lens">
-  {#if sources}<RuntimeJLensSourceSection />{/if}
-
   {#if fitted}
     <div class="dw-row">
       <span class="live" inert={lensState.busy}>
@@ -251,7 +245,7 @@
           aria-label={`Sorted by ${lensState.workspaceSortMode}. Sort by ${nextSort}`}>by <MorphText text={lensState.workspaceSortMode} /></button>
       {/if}
     </form>
-  {:else if !sources}
+  {:else}
     <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose a lens</button></div>
   {/if}
 </div>

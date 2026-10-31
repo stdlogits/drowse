@@ -57,7 +57,7 @@ export interface PreparationSlice {
 }
 
 export interface PreparationSliceOptions {
-  /** Human name leading every toast — "J-lens fit", "SAE train", … */
+  /** Human name leading every toast — "Lens fit", "SAE train", … */
   label: string;
   /** Poll interval in ms. */
   intervalMs: number;

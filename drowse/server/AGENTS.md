@@ -248,6 +248,10 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   | sae | yes | `fetch`, `train` | yes | 409: loading weights is the `fetch` preparation |
   | units | 404 | 404 | yes | 404 |
 
+  The lens `sources` answer also carries what the dashboard's Lens room
+  draws: the fetchable `providers`, the session's crossover `band` (`lo`,
+  `hi`, `[w_S, w_R]` per layer) and `fit_documents`, the fit's default
+  documents. A lens fit's status names its target (`source`, `local:<kind>`).
   `POST live` forwards extras to `instrument.set_live`, whose `TypeError` is
   the one rejection rule (400); `top_k` is refused for every family because
   readout width is the generation's `return_top_k`. `PUT source` (lens) is
