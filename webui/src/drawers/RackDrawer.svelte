@@ -1,9 +1,8 @@
 <script lang="ts">
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
-  import { animatedDetails } from "../lib/animatedDetails";
-  import { slide } from "svelte/transition";
-  import { collapseIn, collapseOut } from "../lib/motion";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { Icon } from "@stdlogits/ledger";
+  import { Expander } from "@stdlogits/ledger";
+  import { expand } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   import Button from "../lib/ui/Button.svelte";
   // Shared rack drawer — one component, two reskins split by geometry
   // family.  Subsumes the former VectorsDrawer + ManifoldDrawer: same
@@ -13,7 +12,7 @@
   //   * subspace (white ``--accent``) — every flat affine fit
   //     (``fit_mode`` ``pca`` or ``baked``): 2-node concept axes AND
   //     higher-rank flats like ``personas``.
-  //   * manifold (purple ``--pillar-manifold``) — curved fits only
+  //   * manifold (the depth tint) — curved fits only
   //     (``fit_mode`` ``spectral`` or ``authored``), e.g. ``emotions``.
   //
   // Within the family filter the existing fitted / unfitted split
@@ -103,7 +102,7 @@
   // accents, stripes, hovers) reads one variable — white for subspace,
   // purple for manifold.
   const familyAccent = $derived(
-    family === "manifold" ? "var(--pillar-manifold)" : "var(--accent)",
+    family === "manifold" ? "var(--tint)" : "var(--accent)",
   );
   const title = $derived(returnToToken ? "Add a probe" : family === "manifold" ? "manifold" : "subspace");
   // Authoring always routes to the manifold builder — a flat (2-node /
@@ -606,7 +605,7 @@
   <header class="header">
     <h2 class="title">{title}</h2>
     {#if returnToToken}<Button onclick={() => finishProbeSetup(returnToToken)}>Back to token</Button>{/if}
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
@@ -629,7 +628,7 @@
               >{nodes.length}{#if nodes.length !== total}/{total}{/if}</span>
           </button>
           {#if nodesOpen(key)}
-            <ul class="node-chips" role="list" in:slide={collapseIn()} out:slide={collapseOut()}>
+            <ul class="node-chips" role="list" transition:expand>
               {#each nodes as label (label)}
                 {@const role = nodeRoleFor(m, label)}
                 <li>
@@ -682,7 +681,7 @@
               aria-label={`${inspecting ? "Hide" : "Show"} details for ${key}`}
               onclick={() => void toggleInspect(m)}
               {...{ "aria-description": (inspecting ? "hide" : "inspect") }}
-            ><FluentIcon name={inspecting ? "down" : "info"} /></button>
+            ><Icon name={inspecting ? "down" : "right"} /></button>
             <button
               type="button"
               class="act steer"
@@ -739,7 +738,7 @@
           {#if unavailable}<p class="selector-unavailable" role="status">{unavailable}</p>{/if}
         {/if}
         {#if inspecting}
-          <div class="inspect-body" in:slide={collapseIn()} out:slide={collapseOut()}>
+          <div class="inspect-body" transition:expand>
             {#if detailLoading.has(key)}
               <p class="muted loading-pulse loading-placeholder" role="status">Loading details…</p>
             {:else if detailErrors.has(key)}
@@ -801,8 +800,7 @@
       <p class="error" role="alert">{errorMsg}</p>
     {/if}
 
-    <details use:animatedDetails class="custom-attach">
-      <summary>attach selector</summary>
+    <div class="custom-attach"><Expander label="Attach a selector">
       <form class="attach-form" onsubmit={onCustomAttachSubmit}>
         <label class="row-label">
           <span>selector</span>
@@ -845,11 +843,11 @@
           disabled={customAttaching || !customSelector.trim()}
         >+ attach</button>
       </form>
-    </details>
+    </Expander></div>
 
     {#if !returnToToken || authoringAvailable}
     <button type="button" class="build-btn" onclick={gotoLauncher}>
-      <span class="plus" aria-hidden="true"><FluentIcon name="add" /></span>
+      <span class="plus" aria-hidden="true">+</span>
       <span class="build-label">{launcherLabel}</span>
       <span class="build-hint">{launcherHint}</span>
     </button>
@@ -878,7 +876,7 @@
           disabled={steerRack.loading}
           {...{ "aria-description": "refresh" }}
           aria-label="Refresh"
-        ><FluentIcon name="refresh" spin={steerRack.loading} /></button>
+        >Refresh</button>
       </div>
     {/if}
 
@@ -911,7 +909,7 @@
                 <span class="cat-count">{items.length}</span>
               </button>
               {#if open}
-                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} in:slide={collapseIn()} out:slide={collapseOut()}>
+                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} transition:expand>
                   {#each items as m (rowKey(m))}
                     {@render fittedRow(m)}
                   {/each}
@@ -944,7 +942,7 @@
                 <span class="cat-count">{items.length}</span>
               </button>
               {#if open}
-                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} in:slide={collapseIn()} out:slide={collapseOut()}>
+                <ul class="rows" role="list" aria-label={CATEGORY_LABELS[cat]} transition:expand>
                   {#each items as m (rowKey(m))}
                     {@render unfittedRow(m)}
                   {/each}
@@ -970,7 +968,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;
@@ -1273,26 +1271,10 @@
   /* Custom-attach disclosure — collapsed by default so it doesn't compete
    * with the catalog rows. */
   .custom-attach {
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--bg-deep);
+    padding: 0 var(--s4);
+    border-radius: var(--r-box);
+    background: var(--wash);
   }
-  .custom-attach > summary {
-    min-height: var(--control-target);
-    display: flex;
-    align-items: center;
-    gap: var(--space-xs);
-    cursor: pointer;
-    padding: var(--surface-padding);
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    list-style: none;
-  }
-  .custom-attach > summary::-webkit-details-marker { display: none; }
-  .custom-attach > summary::before {
-    content: "▸ ";
-    color: var(--fg-muted);
-  }
-  .custom-attach[open] > summary::before { content: "▾ "; }
   .attach-form {
     display: flex;
     flex-direction: column;
@@ -1352,7 +1334,7 @@
     border-radius: var(--radius);
     padding: var(--space-3) var(--space-4);
     font-family: var(--font-mono);
-    font-size: var(--text);
+    font-size: var(--text-base);
     transition: border-color var(--dur) var(--ease-out);
   }
   .search:focus {
@@ -1367,7 +1349,7 @@
     padding: 0 var(--space-4);
     border-radius: var(--radius);
     font-family: var(--font-mono);
-    font-size: var(--text);
+    font-size: var(--text-base);
     cursor: pointer;
     transition:
       color var(--dur) var(--ease-out),

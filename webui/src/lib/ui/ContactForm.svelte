@@ -1,11 +1,10 @@
 <script lang="ts">
-  import MorphText from "./MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { tick } from "svelte";
-  import { fly } from "svelte/transition";
   import Select from "../Select.svelte";
   import Button from "./Button.svelte";
-  import FluentIcon from "./FluentIcon.svelte";
-  import { contentIn, contentOut } from "../motion";
+  import { Icon } from "@stdlogits/ledger";
+  import { fadeIn, fadeOut, rise } from "@stdlogits/ledger";
   import { CONTACT_ADDRESS, CONTACT_LIMITS, CONTACT_REASONS, contactTopics, type ContactSource } from "../contact";
   import { contactDrafts, resetContact, submitContact } from "../stores/contact.svelte";
 
@@ -51,8 +50,8 @@
 <svelte:window onbeforeunload={beforeLeave} />
 
 {#if draft.status === "sent"}
-  <section class="success" bind:this={result} tabindex="-1" aria-labelledby={`${uid}-success`} in:fly={contentIn(6)} out:fly={contentOut()}>
-    <div class="success-icon"><FluentIcon name="check" size={24} /></div>
+  <section class="success" bind:this={result} tabindex="-1" aria-labelledby={`${uid}-success`} in:rise out:fadeOut>
+    <div class="success-icon"><Icon name="check" size={24} /></div>
     <div role="status">
       <h2 id={`${uid}-success`}>Message sent</h2>
       <p>Your message is on its way to <a href={`mailto:${CONTACT_ADDRESS}`}>{CONTACT_ADDRESS}</a>.</p>
@@ -100,7 +99,7 @@
     </label>
     <div class="honeypot" aria-hidden="true" inert><label>Website<input name="website" bind:value={draft.fields.website} tabindex="-1" autocomplete="off" /></label></div>
     {#if draft.message}
-      <div class="notice" bind:this={result} tabindex="-1" in:fly={contentIn()} out:fly={contentOut()}>
+      <div class="notice" bind:this={result} tabindex="-1" in:rise out:fadeOut>
         <p role="alert">{draft.message}</p>
         {#if draft.requestId}<details class="reference"><summary>Message reference</summary><code>{draft.requestId}</code></details>{/if}
         <div class="recovery-actions"><Button onclick={copyDraft}><MorphText text={copied ? "Draft copied" : "Copy draft"} /></Button><a href={`mailto:${CONTACT_ADDRESS}`}>Email us directly</a></div>
@@ -111,7 +110,7 @@
       <p class="privacy">Only the form fields are sent. Chats and model data aren't attached.</p>
       <div class="actions form-actions">
         <div class="secondary-action">{#if hasDraft}<Button variant="flat" disabled={busy} onclick={() => { if (clearArmed) { resetContact(source); clearArmed = false; } else clearArmed = true; }}>{clearArmed ? "Confirm clear draft" : "Clear draft"}</Button>{/if}</div>
-        <Button type="submit" variant="solid" disabled={busy} {busy}><FluentIcon name="send" /><MorphText text={busy ? "Sending…" : draft.uncertain ? "Check delivery" : "Send message"} /></Button>
+        <Button type="submit" variant="solid" disabled={busy} {busy}><MorphText text={busy ? "Sending…" : draft.uncertain ? "Check delivery" : "Send message"} /></Button>
       </div>
       {#if hasDraft || busy}<p class="draft-note" role="status"><MorphText text={busy ? "Sending your message…" : "Your draft is saved in this tab until you send it."} /></p>{/if}
     </div>
@@ -122,13 +121,13 @@
   .contact-form, .success { display: flex; flex-direction: column; gap: var(--space-md); min-width: 0; }
   p, h2 { margin: 0; }
   .intro, .privacy, .hint, .draft-note, .required-note, .success p { color: var(--fg-dim); line-height: 1.5; text-wrap: pretty; }
-  .intro { font-size: var(--text); }
+  .intro { font-size: var(--text-base); }
   .field { display: flex; flex-direction: column; gap: var(--control-label-gap); min-width: 0; }
   .categories { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-sm); }
   .label { font-family: var(--font-structure); font-weight: var(--weight-structure); font-size: var(--text-sm); }
   .field.is-disabled .label { color: var(--fg-muted); }
   .optional { color: var(--fg-dim); font-weight: normal; }
-  input, textarea { width: 100%; min-width: 0; min-height: var(--control-field); padding: var(--space-xs) var(--space-sm); border: 1px solid transparent; border-radius: var(--radius); background: var(--input-well); box-shadow: var(--shadow-well); color: var(--fg); font-family: var(--font-reading); font-size: var(--text); font-weight: var(--weight-reading); line-height: 1.5; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
+  input, textarea { width: 100%; min-width: 0; min-height: var(--control-field); padding: var(--space-xs) var(--space-sm); border: 1px solid transparent; border-radius: var(--radius); background: var(--input-well); box-shadow: var(--shadow-well); color: var(--fg); font-family: var(--font-reading); font-size: var(--text-base); font-weight: var(--weight-reading); line-height: 1.5; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
   textarea { resize: vertical; min-height: 10rem; max-height: 24rem; }
   input:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--accent-red); }

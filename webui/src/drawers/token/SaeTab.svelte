@@ -1,7 +1,6 @@
 <script lang="ts">
-  import { fade } from "svelte/transition";
-  import { motionDuration } from "../../lib/motion";
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { fadeIn } from "@stdlogits/ledger";
+  import { MorphText } from "@stdlogits/ledger";
   import Select from "../../lib/Select.svelte";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Feature descriptions and reference maxima belong to the readout's SAE.
@@ -195,7 +194,7 @@
     steering={readout.data.steering}
     bind:steered
     {showToggle}
-    accent="var(--pillar-sae)"
+    accent="var(--tint)"
   />
   <div class="description-context">
     <p>Feature descriptions are published interpretations, not definitive meanings. Activations are not probabilities.</p>
@@ -216,7 +215,7 @@
     {#if descriptionsError}<p class="metadata-error" role="alert">{descriptionsError}</p>{/if}
   </div>
   {#if readout.origin === "captured" && pinned && Object.keys(pinned).length > 0}
-    <PinnedReadings readings={pinned} accent="--pillar-sae" shape="triangle" />
+    <PinnedReadings readings={pinned} accent="--tint" shape="triangle" />
   {/if}
   {#if readout.data.features.length === 0}
     <EmptyState title="no features fired at this position" />
@@ -228,7 +227,7 @@
     <DetailSection
       title="SAE activations"
       count={`${visibleFeatures.length} of ${readout.data.features.length} recorded`}
-      accent="var(--pillar-sae)"
+      accent="var(--tint)"
     >
       <div class="sae-list" role="list" aria-label="Top SAE features">
         {#each visibleFeatures as feature (feature.id)}
@@ -237,7 +236,7 @@
           {@const published = descriptions[feature.id]}
           {@const label = feature.label?.trim() || published?.label}
           <div role="listitem" aria-label={`SAE feature ${feature.id}, layer ${readout.data.layer}`}>
-            <RackCard accent="--pillar-sae" disabled={false}>
+            <RackCard accent="--tint" disabled={false}>
               {#snippet statline()}
                 <DetailCardHeader
                   primary={`sae/${feature.id}`}
@@ -249,7 +248,7 @@
               {/snippet}
               {#snippet body()}
                 {#if label}
-                  {#key label}<p class="feature-description" in:fade={{duration: motionDuration(160)}}>{label}</p>{/key}
+                  {#key label}<p class="feature-description" in:fadeIn>{label}</p>{/key}
                 {:else}
                 <p class="feature-description missing">
                   <MorphText text={(published ? "No description published for this feature" : descriptionSource ? descriptionsLoading ? "Loading description…" : "Description could not be loaded" : saeSourceState.loading ? "Loading description source…" : saeSourceState.error ? "Description source could not be loaded" : "No description included in this pack")} numbers={false} />
@@ -268,13 +267,13 @@
                       <Bar
                         value={Math.max(strength, 0)}
                         max={1}
-                        color="var(--pillar-sae)"
+                        color="var(--tint)"
                       />
                     {:else}
                       <Bar
                         value={Math.max(feature.activation, 0)}
                         max={rawScale}
-                        color="color-mix(in srgb, var(--pillar-sae) 55%, transparent)"
+                        color="color-mix(in srgb, var(--tint) 55%, transparent)"
                       />
                     {/if}
                   </div>
@@ -321,7 +320,7 @@
   .description-context p { margin: var(--space-2) 0; max-width: 76ch; color: var(--fg-muted); font-size: var(--text-xs); line-height: 1.6; }
   .description-context .metadata-privacy { color: var(--fg-subtle); font-size: var(--text-2xs); }
   .description-context .metadata-error { color: var(--accent-red); }
-  .description-action, .no-matches button { min-height: var(--control-target); padding-inline: var(--space-4); border: 0; border-radius: var(--radius-sm); background: var(--glass); color: var(--pillar-sae); cursor: pointer; }
+  .description-action, .no-matches button { min-height: var(--control-target); padding-inline: var(--space-4); border: 0; border-radius: var(--radius-sm); background: var(--glass); color: var(--tint); cursor: pointer; }
   .description-action:disabled { opacity: var(--disabled-opacity); cursor: wait; }
   .feature-tools { display: flex; gap: var(--space-4); flex-wrap: wrap; margin-block: var(--space-5); }
   .feature-tools label { display: grid; gap: var(--space-2); color: var(--fg-muted); font-size: var(--text-xs); }
@@ -344,7 +343,7 @@
     font-weight: var(--weight-medium);
   }
   .progress-heading code {
-    color: var(--pillar-sae);
+    color: var(--tint);
     font-family: var(--font-mono);
     font-weight: var(--weight-medium);
     font-variant-numeric: tabular-nums;
@@ -362,7 +361,7 @@
     height: 100%;
     min-width: 2px;
     border-radius: inherit;
-    background: var(--pillar-sae);
+    background: var(--tint);
     transition: width var(--dur) linear;
   }
   .progress-track.indeterminate span {
@@ -422,7 +421,7 @@
     line-height: 1.5;
   }
   .sae-value {
-    color: var(--pillar-sae);
+    color: var(--tint);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;

@@ -1,7 +1,8 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import { slidingSelection } from "../lib/slidingSelection";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { Switch } from "@stdlogits/ledger";
+  import { MorphText } from "@stdlogits/ledger";
+  import { glide } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // Transcript export / import drawer — phase 5.  Two tabs:
   //
   //   * export — render the path ending at the chosen node as
@@ -20,7 +21,6 @@
     refreshLoomTree,
   } from "../lib/stores.svelte";
   import Radio from "../lib/Radio.svelte";
-  import Checkbox from "../lib/Checkbox.svelte";
 
   type Tab = "export" | "import";
   let tab: Tab = $state("export");
@@ -186,7 +186,7 @@
     <h2 class="title">Conversation transcript</h2>
     <div
       class="tabs"
-      use:slidingSelection
+      use:glide
       role="tablist"
       aria-label="Transcript action"
     >
@@ -215,7 +215,7 @@
         onkeydown={onTabKeydown}
       >import</button>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
@@ -291,7 +291,7 @@
       </div>
 
       <span class="mode-opt">
-        <Checkbox bind:checked={importStrict} label="Require matching reading settings" />
+        <Switch checked={importStrict} onchange={(on) => (importStrict = on)} label="Require matching reading settings" />
       </span>
 
       <label class="field">
@@ -360,7 +360,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;

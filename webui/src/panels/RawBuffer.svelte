@@ -44,7 +44,7 @@
   import { apiTree } from "../lib/runtime/services";
   import { completionAnchor } from "../lib/completionSelection";
   import { userFacingError } from "../lib/runtime/userFacingError";
-  import SegmentedTabs from "../lib/ui/SegmentedTabs.svelte";
+  import { Segmented } from "@stdlogits/ledger";
   import Select from "../lib/Select.svelte";
   import TokenLogitsPopover from "../lib/ui/TokenLogitsPopover.svelte";
   import { completionTokenViews, projectEditedTokens, type RawTokenView } from "../lib/rawTokenInspection";
@@ -461,6 +461,7 @@
   });
 
   function changeMode(next: Mode): void {
+    if (modeItems.find(item => item.value === next)?.disabled) return;
     tokenPopup = null;
     if (next === "inspect" && !hasClickableTokens) {
       inspectionSource = tokenViews.some(view => view.tok) && dirty ? "recorded" : earlierGenerations[0]?.id ?? "current";
@@ -594,7 +595,7 @@
 <div class="raw-buffer" aria-label="Completion buffer">
   <div class="raw-head">
     <span class="head-label"><label for="completion-buffer">Text completion</label> {#if sessionState.info?.is_base_model}<BaseModelTag />{/if}</span>
-    <SegmentedTabs value={mode} onchange={changeMode} items={modeItems} ariaLabel="Buffer mode" />
+    <Segmented label="Buffer mode" value={mode} onchange={changeMode} options={modeItems.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
   </div>
   <p class="completion-hint" id="completion-hint">{mode === "inspect"
     ? "Click a recorded token to see its probabilities. Arrow keys move between tokens; editing stays in Edit text."
@@ -758,7 +759,7 @@
     min-height: 0;
     gap: var(--composer-space, var(--space-6));
     font-family: var(--font-mono);
-    font-size: var(--text);
+    font-size: var(--text-base);
     color: var(--fg);
   }
   .surface {
@@ -779,7 +780,7 @@
     margin: 0;
     padding: var(--surface-padding);
     font-family: var(--font-mono);
-    font-size: var(--text);
+    font-size: var(--text-base);
     line-height: 1.5;
     white-space: pre-wrap;
     word-break: break-word;
@@ -886,6 +887,6 @@
   @media (max-width: 40rem) {
     .keyboard-hint { display: none; }
     .generation-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
-    .surface, .buffer-text, .color-mirror, .inspect { font-size: max(16px, var(--text)); }
+    .surface, .buffer-text, .color-mirror, .inspect { font-size: max(16px, var(--text-base)); }
   }
 </style>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import FluentIcon from "./ui/FluentIcon.svelte";
+  import { Icon } from "@stdlogits/ledger";
   // Toast host — renders ``toasts.entries`` in the bottom-right corner.
   // Each toast auto-dismisses after its ``ttlMs`` fires; clicking the
   // ✕ dismisses early.  Toasts with ``ttlMs === null`` are sticky —
@@ -7,10 +7,8 @@
   // single chip from kickoff to completion via ``updateToast``.
 
   import { onDestroy } from "svelte";
-  import { cubicIn, cubicOut } from "svelte/easing";
-  import { fly } from "svelte/transition";
+  import { fadeOut, rise } from "@stdlogits/ledger";
   import { dismissToast, toasts } from "./stores.svelte";
-  import { motionDuration } from "./motion";
 
   // Track which toast ids have an active timer so we don't re-schedule
   // dismissal every time the entries array reshuffles.  Sticky entries
@@ -94,8 +92,8 @@
         role={t.kind === "error" ? "alert" : "status"}
         aria-live={t.kind === "error" ? "assertive" : "polite"}
         aria-atomic="true"
-        in:fly={{ y: -8, duration: motionDuration(220), easing: cubicOut }}
-        out:fly={{ y: -4, duration: motionDuration(140), easing: cubicIn }}
+        in:rise={{ y: -6 }}
+        out:fadeOut
         onpointerenter={() => pause(t.id)}
         onpointerleave={() => resume(t.id)}
         onfocusin={() => pause(t.id)}
@@ -116,7 +114,7 @@
           class="dismiss"
           aria-label={`Dismiss notification: ${t.message}`}
           onclick={() => finish(t.id)}
-        ><FluentIcon name="dismiss" /></button>
+        ><Icon name="close" /></button>
       </div>
     {/each}
   </div>
@@ -142,7 +140,7 @@
     border-radius: var(--popup-radius);
     padding: var(--surface-padding);
     font-family: var(--font-reading);
-    font-size: var(--text);
+    font-size: var(--text-base);
     box-shadow: var(--popup-shadow);
     display: flex;
     align-items: flex-start;

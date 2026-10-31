@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
-  import MorphText from "./ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Shared range slider — one consistent thumb / track across the whole
   // webui (sampling strip, steering strips, the steering picker).
   //

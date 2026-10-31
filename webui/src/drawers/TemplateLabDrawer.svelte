@@ -5,10 +5,10 @@
   import { ToolError } from "../lib/webmcp/types";
 
   import TemplatePreview from "../lib/ui/TemplatePreview.svelte";
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
   import Select from "../lib/Select.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   // TemplateLabDrawer — the standalone templated-completion artifact.
   //
   // Two tabs:
@@ -32,7 +32,7 @@
   import { onArtifactUpdate } from "../lib/artifactUpdates";
   import { closeDrawer } from "../lib/stores.svelte";
   import { pushToast } from "../lib/stores/toasts.svelte";
-  import SegmentedTabs from "../lib/ui/SegmentedTabs.svelte";
+  import { Segmented } from "@stdlogits/ledger";
   import Button from "../lib/ui/Button.svelte";
   import type {
     ChoiceScores,
@@ -310,11 +310,11 @@
     <div class="title">
       <h2 class="eyebrow">Prompt template lab</h2>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="toolbar">
-    <SegmentedTabs items={TAB_ITEMS} bind:value={tab} ariaLabel="Template lab view" />
+    <Segmented label="Template lab view" value={tab} onchange={(next) => (tab = next)} options={TAB_ITEMS.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
   </div>
 
   <div class="body">
@@ -445,7 +445,7 @@
                       class="mini"
                       aria-label={`Remove turn ${ti + 1} from context ${ci + 1}`}
                       onclick={() => removeTurn(ci, ti)}
-                    ><FluentIcon name="dismiss" /></button>
+                    ><Icon name="close" /></button>
                   {/if}
                 </div>
               {/each}
@@ -533,7 +533,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;

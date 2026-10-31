@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { registerSystemPromptController } from "../lib/workspaceController";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   // System-prompt drawer — edit the session's default system prompt.
   // Saves via PATCH /sessions/{id} (``patchSessionDefaults``); cancel
   // closes without writing.
@@ -48,7 +48,7 @@
 <section class="drawer-shell" aria-label="System prompt drawer">
   <header class="header">
     <h2 class="title">System prompt</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
@@ -102,7 +102,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;

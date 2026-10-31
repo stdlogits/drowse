@@ -1,11 +1,11 @@
 <script lang="ts">
   // Advanced-options collapsible — the builder-drawer wrapper around
-  // ``Disclosure`` with a fixed "Advanced options" summary and a body
+  // the Ledger ``Expander`` with a fixed "Advanced options" summary and a body
   // layout that matches the extract / manifold forms.  Used in both
   // drawers so the secondary-fields surface reads identically.
 
   import type { Snippet } from "svelte";
-  import Disclosure from "../Disclosure.svelte";
+  import { Expander } from "@stdlogits/ledger";
 
   interface Props {
     expanded?: boolean;
@@ -22,11 +22,11 @@
 </script>
 
 <div class="sk-advanced">
-  <Disclosure bind:expanded {summary} flush>
+  <Expander bind:open={expanded} label={summary}>
     <div class="sk-advanced-body">
       {@render children()}
     </div>
-  </Disclosure>
+  </Expander>
 </div>
 
 <style>

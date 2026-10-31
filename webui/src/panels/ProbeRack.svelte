@@ -86,7 +86,7 @@
 
 <section class="rack" aria-label="Probe rack">
   <RackSectionHeader
-    title="Probes"
+    title={family === "subspace" ? "Concepts" : "Manifolds"}
     count={`${count} probe${count === 1 ? "" : "s"}`}
     live={liveOn}
     liveBusy={probesLiveState.busy}
@@ -123,7 +123,7 @@
           class="add add-subspace"
           onclick={onAddSubspaceProbe}
         >
-          Add subspace probe
+          + Concept probe
         </button>
       {:else}
         <button
@@ -131,7 +131,7 @@
           class="add add-manifold"
           onclick={onAddManifoldProbe}
         >
-          Add manifold probe
+          + Manifold probe
         </button>
       {/if}
   </div>
@@ -189,32 +189,6 @@
     gap: var(--space-2);
     padding-top: var(--space-3);
   }
-  .add {
-    min-height: var(--control-target);
-    flex: 1 1 0;
-    border: 1px solid transparent;
-    padding: var(--space-xs) var(--space-5);
-    border-radius: var(--radius);
-    font-size: var(--text-sm);
-    line-height: normal;
-    cursor: pointer;
-    transition: background var(--dur) var(--ease-out);
-  }
-  /* Subspace launcher — white accent (the base family colour). */
-  .add-subspace {
-    background: var(--accent-subtle);
-    color: var(--accent);
-  }
-  .add-subspace:hover {
-    background: var(--accent-strong);
-  }
-  /* Manifold launcher — purple-tinted to echo the manifold card's accent
-   * so the probe-family colour stays consistent across the surfaces. */
-  .add-manifold {
-    background: color-mix(in srgb, var(--pillar-manifold) 10%, transparent);
-    color: var(--pillar-manifold);
-  }
-  .add-manifold:hover {
-    background: color-mix(in srgb, var(--pillar-manifold) 18%, transparent);
-  }
+  .add { height: 36px; padding: 0 var(--s3); border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease); }
+  .add:hover { color: var(--ink); background: var(--wash); }
 </style>

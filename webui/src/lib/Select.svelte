@@ -1,6 +1,6 @@
 <script lang="ts" generics="T extends string | number">
-  import MorphText from "./ui/MorphText.svelte";
-  import FluentIcon from "./ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
   // Themed single-select dropdown — replacement for native `<select>`
   // across the webui.  Built to match the flat-dark aesthetic in
   // ``tokens.css``: same border / radius / focus ring as `.input`,
@@ -322,7 +322,7 @@
     <span id={`${uid}-value`} class="sk-select-label" class:is-placeholder={currentIndex < 0}>
       <MorphText text={currentLabel || placeholder} numbers={false} />
     </span>
-    <span class="sk-select-caret" aria-hidden="true"><FluentIcon name="down" /></span>
+    <span class="sk-select-caret" aria-hidden="true"><Icon name="down" /></span>
   </button>
 
   {#if presence.mounted}

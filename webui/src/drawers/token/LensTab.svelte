@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { chartValue } from "../../lib/charts/chartValues";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // J-lens tab — pinned ``jlens/<word>`` probe readings (when captured
@@ -74,7 +74,7 @@
   function cellStyle(logprob: number): string {
     const p = Math.min(1, Math.exp(logprob));
     const pct = Math.round(p * 30);
-    return `background: color-mix(in srgb, var(--pillar-lens) ${pct}%, var(--bg));`;
+    return `background: color-mix(in srgb, var(--tint) ${pct}%, var(--bg));`;
   }
 
   function cellTitle(layer: number, t: { token: string; logprob: number }): string {
@@ -184,16 +184,16 @@
     steering={readout.data.steering}
     bind:steered
     {showToggle}
-    accent="var(--pillar-lens)"
+    accent="var(--tint)"
   />
   {#if readout.origin === "captured" && pinned && Object.keys(pinned).length > 0}
-    <PinnedReadings readings={pinned} accent="--pillar-lens" shape="square" />
+    <PinnedReadings readings={pinned} accent="--tint" shape="square" />
   {/if}
   {#if (readout.data.aggregate ?? []).length > 0}
     <DetailSection
       title="AGGREGATE WORKSPACE"
       count={`${readout.data.aggregate?.length ?? 0} tokens`}
-      accent="var(--pillar-lens)"
+      accent="var(--tint)"
     >
       <div class="aggregate-grid" role="list" aria-label="Aggregate lens tokens">
         {#each readout.data.aggregate ?? [] as chip, i (i)}
@@ -201,7 +201,7 @@
           {@const hitCount = cells.filter((cell) => cell.value != null).length}
           <div role="listitem">
             <RackCard
-              accent="--pillar-lens"
+              accent="--tint"
               disabled={false}
               active={chip.token === readout.data.token_text}
             >
@@ -219,7 +219,7 @@
                 <ProbeReadingRow ariaLabel={`Strength ${chip.strength.toFixed(3)}`}>
                   {#snippet left()}<span class="row-label">strength</span>{/snippet}
                   {#snippet bar()}
-                    <Bar percentage value={chip.strength} max={1} color="var(--pillar-lens)" />
+                    <Bar percentage value={chip.strength} max={1} color="var(--tint)" />
                   {/snippet}
                   {#snippet middle()}<span class="row-context">{hitCount}/{layerCount} layers</span>{/snippet}
                   {#snippet right()}<span class="row-value"><MorphText text={chip.strength.toFixed(3)} /></span>{/snippet}
@@ -240,7 +240,7 @@
   <DetailSection
     title="LAYER × VOCABULARY"
     count={`${readout.data.layers.length} layers × ${columnCount} ranks`}
-    accent="var(--pillar-lens)"
+    accent="var(--tint)"
   >
     <p class="focused-readout"><MorphText text={focusedCell} numbers={false} /></p>
     <div class="grid-scroll" role="slider" aria-label="Vocabulary matrix cell" aria-valuemin={0} aria-valuemax={Math.max(0, readout.data.layers.reduce((sum, row) => sum + row.tokens.length, 0) - 1)} aria-valuenow={focusedPosition} aria-valuetext={focusedCell} tabindex="0" onkeydown={inspectCell} onwheel={handVerticalWheelToDrawer}
@@ -306,7 +306,7 @@
     font-weight: var(--weight-medium);
   }
   .progress-heading code {
-    color: var(--pillar-lens);
+    color: var(--tint);
     font-family: var(--font-mono);
     font-weight: var(--weight-medium);
     font-variant-numeric: tabular-nums;
@@ -324,7 +324,7 @@
     height: 100%;
     min-width: 2px;
     border-radius: inherit;
-    background: var(--pillar-lens);
+    background: var(--tint);
     transition: width var(--dur) linear;
   }
   .progress-track.indeterminate span {
@@ -370,7 +370,7 @@
     text-align: end;
   }
   .row-value {
-    color: var(--pillar-lens);
+    color: var(--tint);
   }
 
   .grid-scroll {
@@ -447,7 +447,7 @@
     font-size: var(--text-2xs);
   }
   .lens-cell.hit {
-    box-shadow: inset 0 0 0 2px var(--pillar-lens);
+    box-shadow: inset 0 0 0 2px var(--tint);
   }
   @media (forced-colors: active) {
     .lens-cell.hit {

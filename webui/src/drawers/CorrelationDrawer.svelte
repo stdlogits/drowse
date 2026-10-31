@@ -1,6 +1,6 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // Correlation overlay — N×N magnitude-weighted cosine matrix across the
   // profiles the runtime can represent as one residual direction. Readout,
   // curved, and multidimensional probes are named explicitly as omissions.
@@ -99,7 +99,7 @@
         disabled={loading}
         title="refresh"
       >{loading ? "…" : "refresh"}</Button>
-      <DrawerCloseButton onclick={onClose} />
+      <IconButton icon="close" label="Close" onclick={onClose} />
     </div>
   </header>
 
@@ -175,7 +175,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
 
   .drawer-header {

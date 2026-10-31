@@ -1,5 +1,5 @@
 <script lang="ts">
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import { closeDrawer } from "../lib/stores.svelte";
 </script>
 
@@ -9,7 +9,7 @@
       <h2>This tool is not available here</h2>
       <p>Close this panel and choose an available action from All tools.</p>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 </section>
 

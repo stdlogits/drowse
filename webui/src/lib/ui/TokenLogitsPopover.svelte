@@ -1,7 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { fade } from "svelte/transition";
-  import { contentIn, contentOut } from "../motion";
+  import { fadeIn, fadeOut, rise } from "@stdlogits/ledger";
   import type { TokenScore } from "../types";
   import { tokenProbabilityRows, visibleTokenText } from "../tokenProbabilities";
   import Button from "./Button.svelte";
@@ -97,8 +96,8 @@
 </script>
 
 <div bind:this={panel} class="token-logits-popover" popover="manual" role="dialog" tabindex="-1" aria-labelledby={`${uid}-title`}
-  in:fade|global={contentIn()}
-  out:fade|global={contentOut()}
+  in:fadeIn|global
+  out:fadeOut|global
   onintrostart={() => {
     if (!isCurrent(trigger)) return;
     closing = false;

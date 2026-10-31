@@ -1,6 +1,6 @@
 <script lang="ts">
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
-  import Disclosure from "../lib/Disclosure.svelte";
+  import { IconButton } from "@stdlogits/ledger";
+  import { Expander } from "@stdlogits/ledger";
   import { closeDrawer } from "../lib/stores.svelte";
   import { getRuntimeManifoldFitMaxIntrinsicDim } from "../lib/runtime/registry";
   import { CONTACT_ADDRESS } from "../lib/contact";
@@ -24,7 +24,7 @@
     <div>
       <h2 class="title">Help</h2>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <!-- svelte-ignore a11y_no_noninteractive_tabindex (keyboard access for overflow content) -->
@@ -72,7 +72,7 @@
       </dl>
     </section>
 
-    <Disclosure bind:expanded={shortcutsOpen} summary="Keyboard shortcuts">
+    <Expander bind:open={shortcutsOpen} label="Keyboard shortcuts">
       <div class="shortcut-help">
         <section>
           <h3>Conversation</h3>
@@ -106,9 +106,9 @@
           </table>
         </section>
       </div>
-    </Disclosure>
+    </Expander>
 
-    <Disclosure bind:expanded={syntaxOpen} summary="Steering expression reference">
+    <Expander bind:open={syntaxOpen} label="Steering expression reference">
       <div class="syntax-help">
         <p>Steering expressions are the text form of response controls. They describe directions and when those directions apply. The controls create them automatically; this section is only a technical reference.</p>
         <h3>Examples</h3>
@@ -131,7 +131,7 @@ variant   := raw | sae | sae-<release>
              | role-<name> | from-<source>
 `}</pre>
       </div>
-    </Disclosure>
+    </Expander>
   </div>
 </section>
 
@@ -143,7 +143,7 @@ variant   := raw | sae | sae-<release>
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;
@@ -193,7 +193,7 @@ variant   := raw | sae | sae-<release>
     margin: 0 0 var(--space-2);
     color: var(--fg);
     font-family: var(--font-structure);
-    font-size: var(--text);
+    font-size: var(--text-base);
     font-weight: var(--weight-structure);
   }
   .area-grid p, .syntax-help p, .section-copy {

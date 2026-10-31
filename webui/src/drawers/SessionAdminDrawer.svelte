@@ -1,5 +1,5 @@
 <script lang="ts">
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import { getApiKey, setApiKey } from "../lib/runtime/http-auth";
   import { apiSessions } from "../lib/runtime/services";
   import { userFacingError } from "../lib/runtime/userFacingError";
@@ -39,7 +39,7 @@
     <div>
       <h2 class="title">API access</h2>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">

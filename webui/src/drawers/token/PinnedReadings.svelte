@@ -27,7 +27,7 @@
     shape,
   }: {
     readings: Record<string, ScalarReadingJSON>;
-    /** Family CSS custom-property name, e.g. --pillar-lens. */
+    /** Family CSS custom-property name, e.g. --tint. */
     accent: string;
     shape: RackMarkerShape;
   } = $props();

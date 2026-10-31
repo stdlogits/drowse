@@ -1,5 +1,6 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { showLoom } from "../../lib/stores/workbench.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Logits tab — the ranked top-K alternatives captured at this
   // position, each with a probability bar (absolute unit: a flat bar row
   // means genuine uncertainty), and the logit fork that regenerates the
@@ -124,7 +125,7 @@
       await sendFork(nodeId, token.rawIndex, row.id);
       closeDrawer();
       loomUiState.view = "map";
-      window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: "branches" }));
+      showLoom();
     } catch (e) {
       branchError = userFacingError(
         e,
@@ -142,13 +143,13 @@
   steering={null}
   steered={true}
   showToggle={false}
-  accent="var(--pillar-lens)"
+  accent="var(--tint)"
 />
 
 <DetailSection
   title="RANKED ALTERNATIVES"
   count={rankRows.length > 0 ? `${rankRows.length} retained` : "capture unavailable"}
-  accent="var(--pillar-lens)"
+  accent="var(--tint)"
 >
   {#if rankRows.length > 0}
     {#if nearCertainChosenToken}
@@ -159,7 +160,7 @@
     {/if}
     <div class="logit-grid" aria-label="Ranked token alternatives">
       {#each rankRows as row (row.id)}
-        <RackCard accent="--pillar-lens" disabled={false} active={row.chosen}>
+        <RackCard accent="--tint" disabled={false} active={row.chosen}>
           {#snippet statline()}
             <DetailCardHeader
               primary={JSON.stringify(row.text)}
@@ -173,7 +174,7 @@
             <ProbeReadingRow ariaLabel={`Probability ${fmtProb(row.p)}`}>
               {#snippet left()}<span class="row-label">probability</span>{/snippet}
               {#snippet bar()}
-                <Bar percentage value={row.p} max={1} color="var(--pillar-lens)" />
+                <Bar percentage value={row.p} max={1} color="var(--tint)" />
               {/snippet}
               {#snippet middle()}
                 <span class="row-context">logp <MorphText text={fmtLogprob(row.logprob)} /></span>
@@ -267,7 +268,7 @@
     text-align: end;
   }
   .row-value {
-    color: var(--pillar-lens);
+    color: var(--tint);
   }
   .row-meta {
     display: flex;

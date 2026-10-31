@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import Select from "../../lib/Select.svelte";
   // Small SVG mini-map for a 2D box-domain manifold probe.  Lays out the
   // probe's node coords inside the domain bounds, draws labels at their

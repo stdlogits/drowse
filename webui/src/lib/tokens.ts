@@ -103,8 +103,8 @@ export type TintHue = "signed" | "surprise" | "sae";
  * green, which wobbled legibility with the score). */
 const TINT_POS = "var(--accent-green)";
 const TINT_NEG = "var(--accent-red)";
-const TINT_SURPRISE = "var(--pillar-lens)";
-const TINT_SAE = "var(--pillar-sae)";
+const TINT_SURPRISE = "var(--tint)";
+const TINT_SAE = "var(--tint)";
 const TINT_MAX_ALPHA = 0.62;
 
 /** Map a probe score to a CSS color background (stronger score =

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { onMount } from "svelte";
   import Bar from "../lib/charts/Bar.svelte";
   import Button from "../lib/ui/Button.svelte";
@@ -157,7 +157,7 @@
             max={Math.max(lensFit.state.total, 1)}
             width={160}
             height={8}
-            color="var(--pillar-lens)"
+            color="var(--tint)"
           />
         </div>
         <p class="hint">
@@ -241,7 +241,7 @@
     text-align: start;
   }
   .relp-on {
-    color: var(--pillar-lens);
-    border-color: var(--pillar-lens);
+    color: var(--tint);
+    border-color: var(--tint);
   }
 </style>

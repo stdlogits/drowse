@@ -4,8 +4,8 @@
   import { nodeCompareViewSchema } from "../lib/interfaceSchemas";
   import { ToolError } from "../lib/webmcp/types";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // Cross-branch diff drawer — phase 5.  Renders a side-by-side
   // word-level diff between two (or more) generated nodes, plus the
   // sorted readings-delta table and the per-token alignment for the
@@ -451,7 +451,7 @@
         </span>
       </div>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="toolbar">
@@ -768,7 +768,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;
@@ -1105,7 +1105,7 @@
     gap: var(--space-4);
   }
   .joint-label {
-    color: var(--pillar-lens);
+    color: var(--tint);
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);
     text-transform: uppercase;
@@ -1165,10 +1165,10 @@
   /* Rank-1 flips are the highest-signal rows in this logit-space table —
    * tint them in the lens family rather than the old amber. */
   .lp-table tr.rank-flip td {
-    background: color-mix(in srgb, var(--pillar-lens) 10%, transparent);
+    background: color-mix(in srgb, var(--tint) 10%, transparent);
   }
   .lp-table tr.rank-flip .lp-flag {
-    color: var(--pillar-lens);
+    color: var(--tint);
   }
   .readings-table {
     display: flex;

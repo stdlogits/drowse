@@ -16,7 +16,7 @@
 
   interface Props {
     /** CSS custom-property *name* for the family accent — e.g. ``"--accent"``
-     *  for a subspace (flat) card, ``"--pillar-manifold"`` for a manifold
+     *  for a subspace (flat) card, ``"--tint"`` for a manifold
      *  (curved) card.  Exposed to the slotted content as ``--card-accent``. */
     accent?: string;
     /** Dim + de-emphasise the card (a disabled steer term).  Probe cards

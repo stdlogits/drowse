@@ -1,6 +1,6 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   import ResetSettings from "../lib/ui/ResetSettings.svelte";
   import {
     closeDrawer,
@@ -43,7 +43,7 @@
       <div class="title">
         <h2 class="eyebrow">Model health</h2>
       </div>
-      <DrawerCloseButton onclick={closeDrawer} />
+      <IconButton icon="close" label="Close" onclick={closeDrawer} />
     </header>
   {/if}
 
@@ -132,7 +132,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .drawer-shell.embedded { height: 100%; }
   .drawer-header {

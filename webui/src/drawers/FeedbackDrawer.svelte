@@ -1,14 +1,14 @@
 <script lang="ts">
   import ContactForm from "../lib/ui/ContactForm.svelte";
   import { CONTACT_ADDRESS } from "../lib/contact";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import { closeDrawer } from "../lib/stores/drawers.svelte";
   import { runtimeClient } from "../lib/runtime/client";
   let { params: _params }: { params: unknown } = $props();
 </script>
 
 <section class="feedback-drawer" aria-label="Submit Feedback">
-  <header><h2>Share feedback</h2><DrawerCloseButton onclick={closeDrawer} label="Close feedback" /></header>
+  <header><h2>Share feedback</h2><IconButton icon="close" label="Close feedback" onclick={closeDrawer} /></header>
   <div class="body"><ContactForm source="feedback" ondone={closeDrawer} /><p class="contact-link">Need help? <a href={runtimeClient.mode === "http" ? "https://drowse.ai/contact" : "/contact"} target="_blank" rel="noreferrer">Contact us<span class="sr-only"> (opens a new tab)</span></a> or email <a href={`mailto:${CONTACT_ADDRESS}`}>{CONTACT_ADDRESS}</a>.</p></div>
 </section>
 

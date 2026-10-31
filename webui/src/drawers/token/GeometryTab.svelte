@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Geometry tab — the full whitened Monitor reading for every attached
   // geometry probe at the forward that produced this token: all
@@ -192,7 +192,7 @@
     steering={readout.data.steering}
     bind:steered
     {showToggle}
-    accent="var(--pillar-subspace)"
+    accent="var(--ink2)"
   />
   <DetailSection
     title="PROBE READINGS"
@@ -218,7 +218,7 @@
         {@const rank = reading.coords.length}
         {@const cells = stripCells(name, reading)}
         {@const affine = affineOf(name)}
-        {@const cardAccent = affine === false ? "--pillar-manifold" : "--pillar-subspace"}
+        {@const cardAccent = affine === false ? "--tint" : "--ink2"}
         {@const evidence = geometryEvidence(reading, affine)}
         <RackCard accent={cardAccent} disabled={false}>
           {#snippet statline()}
@@ -286,7 +286,7 @@
               <LayerStrip
                 {cells}
                 scale={stripScale(name, reading)}
-                positiveColor={affine === false ? "var(--pillar-manifold)" : undefined}
+                positiveColor={affine === false ? "var(--tint)" : undefined}
                 ariaLabel={`${name} per-layer readings`}
               />
             {/if}
@@ -340,7 +340,7 @@
     font-weight: var(--weight-medium);
   }
   .progress-heading code {
-    color: var(--pillar-subspace);
+    color: var(--ink2);
     font-family: var(--font-mono);
     font-weight: var(--weight-medium);
     font-variant-numeric: tabular-nums;
@@ -358,7 +358,7 @@
     height: 100%;
     min-width: 2px;
     border-radius: inherit;
-    background: var(--pillar-subspace);
+    background: var(--ink2);
     transition: width var(--dur) linear;
   }
   .progress-track.indeterminate span {

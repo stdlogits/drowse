@@ -4,10 +4,9 @@
   import { ToolError } from "../lib/webmcp/types";
   import { onMount as onInterfaceMount } from "svelte";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
-  import { animatedDetails } from "../lib/animatedDetails";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Expander } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // Per-probe inspector — subsumes the layer-norms view for probes and adds a
   // rank-aware geometry plot in the whitened (Mahalanobis) frame:
   //
@@ -28,7 +27,8 @@
   // is_affine split the racks use) accents the header dot, the active layer
   // row, the share bars, and the plot's node centroids via ``--geom-node``.
 
-  import { closeDrawer, drawerState, probeRack } from "../lib/stores.svelte";
+  import { probeRack } from "../lib/stores.svelte";
+  import { clearSelection } from "../lib/stores/selection.svelte";
   import { apiProbes } from "../lib/runtime/services";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
   import { userFacingError } from "../lib/runtime/userFacingError";
@@ -48,7 +48,9 @@
   } from "../lib/pointerGesture";
   import type { ProbeGeometryResponse, ProbeLayerGeometry } from "../lib/types";
 
-  const params = $derived(drawerState.params as { name?: string } | null);
+  // Shown in the Inspector when a probe is selected (``openDrawer("probe_inspector", { name })``).
+  let { params: input, onclose }: { params?: unknown; onclose?: () => void } = $props();
+  const params = $derived(input as { name?: string } | null);
   const probeName = $derived(params?.name ?? "");
   const displayName = $derived(probeName.split("/").pop() ?? probeName);
   const entry = $derived(probeRack.entries.get(probeName) ?? null);
@@ -71,8 +73,8 @@
   /** Family hue — the rack's flat/curved split (hue = which space). */
   const familyHue = $derived(
     geom?.is_affine === false
-      ? "var(--pillar-manifold)"
-      : "var(--pillar-subspace)",
+      ? "var(--tint)"
+      : "var(--ink2)",
   );
 
   // --- load geometry on probe change ---
@@ -334,13 +336,7 @@
   }
 
   function onClose(): void {
-    closeDrawer();
-  }
-  function onKeydown(ev: KeyboardEvent): void {
-    if (ev.key === "Escape") {
-      ev.preventDefault();
-      onClose();
-    }
+    if (onclose) onclose(); else clearSelection();
   }
 
   const rankLabel = $derived.by(() => {
@@ -370,7 +366,6 @@
   }));
 </script>
 
-<svelte:window onkeydown={onKeydown} />
 
 <aside class="drawer" style:--family={familyHue} aria-label="Probe inspector">
   <header class="drawer-header">
@@ -393,7 +388,7 @@
         {/if}
       </div>
     </div>
-    <DrawerCloseButton onclick={onClose} />
+    <IconButton icon="close" label="Close" onclick={onClose} />
   </header>
 
   {#if !probeName}
@@ -457,8 +452,8 @@
               <button type="button" aria-label="Rotate geometry right" onclick={() => rotateBy(18, 0)}>right</button>
               <button type="button" aria-label="Rotate geometry up" onclick={() => rotateBy(0, -18)}>up</button>
               <button type="button" aria-label="Rotate geometry down" onclick={() => rotateBy(0, 18)}>down</button>
-              <button type="button" aria-label="Zoom geometry out" onclick={() => zoomBy(0.8)}><FluentIcon name="subtract" /></button>
-              <button type="button" aria-label="Zoom geometry in" onclick={() => zoomBy(1.25)}><FluentIcon name="add" /></button>
+              <button type="button" aria-label="Zoom geometry out" onclick={() => zoomBy(0.8)}>−</button>
+              <button type="button" aria-label="Zoom geometry in" onclick={() => zoomBy(1.25)}>+</button>
               <button type="button" onclick={resetView}>reset</button>
             </div>
           {/if}
@@ -476,8 +471,7 @@
           Neutral [{formatPoint(activeGeom.neutral_white)}]; live point [<MorphText text={formatPoint(livePoint)} identity={selectedLayer} />];
           {activeGeom.node_white.length} node {activeGeom.node_white.length === 1 ? "centroid" : "centroids"}.
         </p>
-        <details use:animatedDetails class="geometry-summary">
-          <summary>Geometry coordinates</summary>
+        <div class="geometry-summary"><Expander label="Geometry coordinates">
           <p>
             Layer {selectedLayer}; rank {activeGeom.rank}; neutral [{formatPoint(activeGeom.neutral_white)}];
             live point [<MorphText text={formatPoint(livePoint)} identity={selectedLayer} />]. Coordinates show the first three whitened dimensions.
@@ -487,7 +481,7 @@
               <li>{geom.node_labels[index] ?? `node ${index + 1}`}: [{formatPoint(point)}]</li>
             {/each}
           </ul>
-        </details>
+        </Expander></div>
         {#if !liveTrailAvailability.available}
           <p class="capability-note" role="note">
             {liveTrailAvailability.reason}. The fitted geometry remains available.
@@ -511,7 +505,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .drawer-header {
     display: flex;
@@ -607,13 +601,6 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     line-height: 1.45;
-  }
-  .geometry-summary summary {
-    cursor: pointer;
-    color: var(--fg);
-    min-height: 44px;
-    display: flex;
-    align-items: center;
   }
   .geometry-summary p,
   .geometry-summary ul {

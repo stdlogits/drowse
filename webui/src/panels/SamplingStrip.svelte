@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Switch } from "@stdlogits/ledger";
   import RollingNumber from "../lib/ui/RollingNumber.svelte";
   import ResetSettings from "../lib/ui/ResetSettings.svelte";
   import { settingsResetState } from "../lib/stores/settingsReset.svelte";
@@ -24,8 +25,6 @@
   } from "../lib/stores.svelte";
   import Slider from "../lib/Slider.svelte";
   import NumberInput from "../lib/NumberInput.svelte";
-  import Checkbox from "../lib/Checkbox.svelte";
-  import InfoTip from "../lib/ui/InfoTip.svelte";
   import { getRuntimeCapabilities, getHostedController } from "../lib/runtime/registry";
   import { outputTokenLimitForSignals } from "../lib/runtime/outputTokenPolicy";
   import { SAMPLING_HELP } from "../lib/parameterHelp";
@@ -179,8 +178,7 @@
   <div class="row sliders">
     <div class="control" use:describedBy={"sampling-temperature-help"}>
       <span class="control-label">
-        <span class="label">Temperature</span>
-        <InfoTip text={HELP.temperature} label="About Temperature" />
+        <span class="label" data-tip={HELP.temperature}>Temperature</span>
       </span>
       <span class="slider-cell">
         <Slider
@@ -199,8 +197,7 @@
 
     <div class="control" use:describedBy={"sampling-top-p-help"}>
       <span class="control-label">
-        <span class="label">Top P</span>
-        <InfoTip text={HELP.topP} label="About Top P" />
+        <span class="label" data-tip={HELP.topP}>Top P</span>
       </span>
       <span class="slider-cell">
         <Slider
@@ -220,8 +217,7 @@
   <div class="row details">
     <div class="control" use:describedBy={"sampling-max-tokens-help"}>
       <span class="control-label">
-        <span class="label">Max tokens</span>
-        <InfoTip text={HELP.maxTokens} label="About Max tokens" />
+        <span class="label" data-tip={HELP.maxTokens}>Max tokens</span>
       </span>
       <span class="num-cell">
         <NumberInput
@@ -242,21 +238,16 @@
       class:forced={thinkingForced}
       use:describedBy={"sampling-thinking-help"}
     >
-      <span class="control-label">
-        <span class="label think-label">Thinking{thinkingForced ? " (always on)" : ""}</span>
-        <InfoTip
-          text={!thinkingOptional
+      <span inert={!ready || thinkingForced}>
+        <Switch
+          checked={thinkingForced ? true : thinkingView}
+          onchange={onThinking}
+          label={`Thinking${thinkingForced ? " (always on)" : ""}`}
+          hint={!thinkingOptional
             ? "This model always uses its reasoning phase, so this setting cannot be changed."
             : HELP.thinking}
-          label="About Thinking"
         />
       </span>
-      <Checkbox
-        checked={thinkingForced ? true : thinkingView}
-        disabled={!ready || thinkingForced}
-        onchange={onThinking}
-        ariaLabel="Thinking"
-      />
       <span id="sampling-thinking-help" class="sr-only">
         {!thinkingOptional
           ? "This model always uses its reasoning phase, so this setting cannot be changed."
@@ -366,19 +357,6 @@
     text-align: end;
   }
 
-  /* Forced-thinking toggle: locked-on visual.  The checkbox is disabled
-     so the browser already dims it; we keep the label dim too so the
-     "(forced)" suffix reads as informational rather than interactive. */
-  .control.toggle.forced .label {
-    color: var(--fg-dim);
-    font-style: italic;
-  }
-  /* The think label hugs its checkbox rather than reserving the numeric
-   * gutter — it sits in the action row, not a field column. */
-  .think-label {
-    min-width: 0;
-    text-align: start;
-  }
 
   .sr-only {
     position: absolute;

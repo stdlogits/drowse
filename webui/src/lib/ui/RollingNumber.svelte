@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "./MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
 
   let { value, digits = 0, format, signed = false }: {
     value: number;

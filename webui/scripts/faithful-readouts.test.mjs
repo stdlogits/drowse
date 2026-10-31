@@ -135,7 +135,7 @@ try {
   assert.equal(highlightScale("feature alias"), 5, "reading units override newly cached feature metadata");
   const { highlightStyleFor } = await server.ssrLoadModule("/src/lib/highlight.ts");
   highlightState.target = "word alias";
-  assert.match(highlightStyleFor({ text: "x", probes: { "word alias": 0.5 } }).backgroundColor, /pillar-lens/);
+  assert.match(highlightStyleFor({ text: "x", probes: { "word alias": 0.5 } }).backgroundColor, /var\(--tint\)/, "a lens word tints at the depth tint");
   tokenHoverState.active = true;
   tokenHoverState.lensAggregate = [[" word", 0.9, 0.5, 0.1]];
   assert.equal(probeEntryForDisplay("word alias").reading, null, "hover cannot borrow a whitespace variant's probability");

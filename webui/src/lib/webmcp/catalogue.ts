@@ -27,7 +27,6 @@ export const INTERFACE_CATALOGUE = {
   probe_inspector: exposed("drowse_probe_geometry", "drowse_read_workspace"),
   advanced_sampling: exposed("drowse_set_sampling", "drowse_explain_control"),
   health: exposed("drowse_health", "drowse_get_state"),
-  appearance: exposed("drowse_set_appearance"),
   session_admin: interaction("Session inventory is read-only; bearer-key entry stays in the existing memory-only credential UI. The dashboard targets the default session.", "drowse_list_sessions", "drowse_get_state", "drowse_navigate"),
   local_runtime: interaction("Python companion installation or credential entry uses the existing setup UI; hosted model lifecycle has structured tools.", "drowse_get_state", "drowse_navigate"),
   help: exposed("drowse_explain_control", "drowse_list_actions", "drowse_navigate"),

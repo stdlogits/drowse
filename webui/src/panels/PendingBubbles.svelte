@@ -1,6 +1,6 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
   // Pending-queue strip — ghosted bubbles between the streaming
   // assistant turn and the composer.  Each bubble shows the item's
   // label tag + truncated text + an X button that cancels just that
@@ -45,7 +45,7 @@
           onclick={() => cancelPendingAction(item.id)}
           aria-label="Cancel pending {item.label}"
           {...{ "aria-description": "cancel" }}
-        ><FluentIcon name="dismiss" /></button>
+        ><Icon name="close" /></button>
       </div>
     {/each}
   </div>
@@ -106,7 +106,7 @@
     color: var(--fg-muted);
     font: inherit;
     font-family: var(--font-mono);
-    font-size: var(--text);
+    font-size: var(--text-base);
     line-height: 1;
     min-width: var(--control-target);
     min-height: var(--control-target);

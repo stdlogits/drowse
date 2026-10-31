@@ -30,5 +30,5 @@ export const tokenInspectorSchema = objectSchema({
   cursor: objectSchema({ turnIdx: int(0), seg: choices("thinking", "response"), tokenIdx: int(0) }, ["turnIdx", "seg", "tokenIdx"]),
   branch: choices("primary", "shadow"), tab: choices("logits", "geometry", "sae", "lens"),
   apply_recipe: objectSchema({ geometry: flag, sae: flag, lens: flag }),
-  move: choices("next", "previous", "next_turn", "previous_turn", "segment_start", "segment_end", "anchor", "other_segment"), presentation: choices("dock", "drawer", "hide"),
+  move: choices("next", "previous", "next_turn", "previous_turn", "segment_start", "segment_end", "anchor", "other_segment"), presentation: choices("hide"),
 });

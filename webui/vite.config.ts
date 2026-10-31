@@ -1,10 +1,32 @@
 import { defineConfig, type Plugin } from "vite";
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import { readdir, readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { relative, resolve } from "node:path";
 import { shipsInDashboard } from "./scripts/dashboard-assets.mjs";
 
 const publicDir = resolve(__dirname, "public");
+const PREFLIGHT = "theme-preflight.js";
+
+/** Ledger's pre-paint theme script, served at /theme-preflight.js and written into the build from
+ *  the package itself. The CSP's ``script-src 'self'`` allows no inline script, so it is a file on
+ *  the dashboard's own origin, and index.html loads it with the theme key. */
+function ledgerThemePreflight(): Plugin {
+  const source = () => readFileSync(createRequire(import.meta.url).resolve(`@stdlogits/ledger/${PREFLIGHT}`));
+  return {
+    name: "drowse-ledger-theme-preflight",
+    configureServer(server) {
+      server.middlewares.use(`/${PREFLIGHT}`, (_request, response) => {
+        response.setHeader("Content-Type", "text/javascript");
+        response.end(source());
+      });
+    },
+    generateBundle() {
+      this.emitFile({ type: "asset", fileName: PREFLIGHT, source: source() });
+    },
+  };
+}
 
 /** Copy only the public files the dashboard uses (see
  *  scripts/dashboard-assets.mjs); the dev server still serves the whole dir. */
@@ -32,8 +54,11 @@ function dashboardPublicAssets(): Plugin {
 // stale assets between builds — the directory's only consumer is
 // FastAPI's StaticFiles mount, never user-authored files.
 export default defineConfig(({ command }) => ({
-  plugins: [svelte(), dashboardPublicAssets()],
+  plugins: [svelte(), dashboardPublicAssets(), ledgerThemePreflight()],
   publicDir: command === "build" ? false : publicDir,
+  // Ledger ships TypeScript and .svelte sources for the product to compile; the dependency
+  // optimizer can't strip the types out of its .svelte.ts modules, so it goes through the plugins.
+  optimizeDeps: { exclude: ["@stdlogits/ledger"] },
   resolve: {
     alias: {
       "@runtime-local-drawer": resolve(

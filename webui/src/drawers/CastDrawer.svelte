@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onDestroy, onMount } from "svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   // Cast manager (phase 3 of the cast model) — the tree's roster of
   // named labels, each with a standing steering recipe.  A member's
   // recipe is the *weakest* tier at generation: it fills only fields
@@ -23,7 +23,6 @@
     sessionState,
   } from "../lib/stores.svelte";
   import { closeDrawer } from "../lib/stores/drawers.svelte";
-  import InfoTip from "../lib/ui/InfoTip.svelte";
   import { IDENTITY_HELP, SAMPLING_HELP } from "../lib/parameterHelp";
   import { registerCastController } from "../lib/workspaceController";
   import { SAMPLING_SEED_MAX, samplingSeedMinimum } from "../lib/runtime/samplingCapabilities";
@@ -251,7 +250,7 @@
     <div>
       <h2 class="title">Role settings</h2>
     </div>
-    <DrawerCloseButton onclick={() => void closeWithSave()} />
+    <IconButton icon="close" label="Close" onclick={() => void closeWithSave()} />
   </header>
 
   <div class="body">
@@ -297,11 +296,7 @@
         </div>
         <div class="field">
           <span class="field-heading">
-            <span class="label">Steering expression</span>
-            <InfoTip
-              label="About role guidance"
-              text={IDENTITY_HELP.cast}
-            />
+            <span class="label" data-tip={IDENTITY_HELP.cast}>Steering expression</span>
           </span>
           <input
             class="input mono"
@@ -314,7 +309,7 @@
           />
         </div>
         <div class="field">
-          <span class="field-heading"><span class="label">Thinking default</span><InfoTip text={SAMPLING_HELP.thinking} label="About role thinking" /></span>
+          <span class="field-heading"><span class="label" data-tip={SAMPLING_HELP.thinking}>Thinking default</span></span>
           <Select
             value={thinking}
             options={[{ value: "inherit", label: "Use reply setting" }, { value: "true", label: "On" }, { value: "false", label: "Off" }]}
@@ -324,7 +319,7 @@
           />
         </div>
         <div class="field">
-          <span class="field-heading"><span class="label">Seed default</span><InfoTip text={SAMPLING_HELP.seed} label="About role seed" /></span>
+          <span class="field-heading"><span class="label" data-tip={SAMPLING_HELP.seed}>Seed default</span></span>
           <NumberInput value={seed} min={samplingSeedMinimum(getRuntimeClient().mode)} max={SAMPLING_SEED_MAX} step={1} allowEmpty placeholder="Use reply setting" ariaLabel={`Seed default for ${editingLabel}`} onchange={(value) => { seed = value === null ? null : Math.floor(value); scheduleSave(); }} />
         </div>
         <label class="field">
@@ -364,7 +359,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;
@@ -406,7 +401,7 @@
     margin: 0;
     color: var(--fg);
     font-family: var(--font-structure);
-    font-size: var(--text);
+    font-size: var(--text-base);
     font-weight: var(--weight-structure);
   }
   .roster {

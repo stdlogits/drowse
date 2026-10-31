@@ -1,6 +1,6 @@
 <script lang="ts">
   import Slider from "../Slider.svelte";
-  import MorphText from "../ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Render a discover-mode manifold's PCA variance bars or spectral
   // eigenvalue spectrum, with the picked-k cut highlighted.  Used by
   // ManifoldDrawer's per-row inspector; safe to drop into any other

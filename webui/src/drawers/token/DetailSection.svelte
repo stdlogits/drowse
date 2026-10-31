@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Canonical detailed-evidence section. It mirrors the main rack's compact
   // STEER / PROBE section headers.
 

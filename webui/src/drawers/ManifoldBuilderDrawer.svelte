@@ -31,9 +31,9 @@
   // scoped under the ``.mb-form`` class on the body below, so the three
   // forms read as one surface without each carrying a copy.
 
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import { untrack } from "svelte";
-  import ModeTabs from "../lib/builder/ModeTabs.svelte";
+  import { Segmented } from "@stdlogits/ledger";
   import { closeDrawer, openDrawer, steerRack, drawerState } from "../lib/stores.svelte";
   import { manifoldJobs } from "../lib/stores/manifoldJobs.svelte";
   import { steeringDrawerFor } from "../lib/manifolds/fitKind";
@@ -87,20 +87,20 @@
 <section class="drawer-shell" aria-label="Build manifold">
   <header class="header">
     <h2 class="title">Create a concept or scale</h2>
-    <DrawerCloseButton onclick={cancel} />
+    <IconButton icon="close" label="Close" onclick={cancel} />
   </header>
 
   <div class="body mb-form">
-    <ModeTabs
-      bind:value={authoringMode}
-      tabs={[
+    <div class="mode" inert={busy}><Segmented
+      value={authoringMode}
+      onchange={(mode) => (authoringMode = mode)}
+      options={[
         { value: "discover", label: "Generate examples" },
         { value: "templated", label: "Use a template" },
         { value: "authored", label: "Use your examples" },
       ]}
-      ariaLabel="Authoring mode"
-      disabled={busy}
-    />
+      label="Authoring mode"
+    /></div>
 
     <p class="intro">{authoringMode === "discover" ? "Describe at least two contrasting concepts, such as pirate and assistant. Drowse generates examples and learns a direction you can measure or steer."
       : authoringMode === "templated" ? "Use a prompt template for categories such as days, months, or directions. Its possible answers become the examples."
@@ -164,7 +164,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;

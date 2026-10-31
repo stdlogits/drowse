@@ -1,6 +1,6 @@
 <script lang="ts">
-  import MorphText from "./ui/MorphText.svelte";
-  import FluentIcon from "./ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
   // Themed numeric input — strips the OS spinner buttons, exposes a
   // hover-revealed ▴/▾ pair on the right edge.  Keyboard ↑/↓ still
   // works natively because the underlying ``<input type="number">`` is
@@ -184,13 +184,13 @@
         class="sk-number-step"
         tabindex="-1"
         onclick={() => nudge(1)}
-      ><FluentIcon name="up" size={12} /></button>
+      ><Icon name="up" size={12} /></button>
       <button
         type="button"
         class="sk-number-step"
         tabindex="-1"
         onclick={() => nudge(-1)}
-      ><FluentIcon name="down" size={12} /></button>
+      ><Icon name="down" size={12} /></button>
     </span>
   {/if}
 </span>

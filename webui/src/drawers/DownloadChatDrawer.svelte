@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import { closeDrawer, genStatus } from "../lib/stores.svelte";
   import { conversationLibrary, savedConversationState } from "../lib/stores/savedConversations.svelte";
   import { captureConversationSnapshot } from "../lib/conversationWorkspace";
@@ -70,7 +70,7 @@
 <form class="download-chat" onsubmit={download}>
   <header>
     <h2>Download chat</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
   <p>All messages, Loom branches, settings, and recorded readings. Model files aren’t included.</p>
   {#if loading}

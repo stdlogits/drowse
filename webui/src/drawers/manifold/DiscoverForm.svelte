@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Switch } from "@stdlogits/ledger";
   import { onMount as onInterfaceMount } from "svelte";
   import { registerInterfaceController } from "../../lib/workspaceController";
   import { discoverDraftSchema } from "../../lib/interfaceSchemas";
   import { ToolError } from "../../lib/webmcp/types";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Auto-generated authoring: hand the model a flat concept list, the
   // K-tuple generator produces per-concept corpora against the shared
   // baseline prompts, then the fitter derives coords per-model via PCA or
@@ -28,7 +29,6 @@
   import { isFittingCancellation } from "../../lib/runtime/fittingCancellation";
   import type { FitManifoldRequest, GenerateManifoldRequest } from "../../lib/types";
   import Button from "../../lib/ui/Button.svelte";
-  import Checkbox from "../../lib/Checkbox.svelte";
   import NumberInput from "../../lib/NumberInput.svelte";
   import Radio from "../../lib/Radio.svelte";
   import Select from "../../lib/Select.svelte";
@@ -431,18 +431,19 @@
     {/if}
     <DiscoverTuningFields {tuning} {maxDimLimit} />
     <div class="check-stack">
-      <Checkbox bind:checked={alsoFit} label="Fit after generating examples" />
-      <Checkbox
-        bind:checked={rolePerNode}
+      <Switch checked={alsoFit} onchange={(on) => (alsoFit = on)} label="Fit after generating examples" />
+      <Switch
+        checked={rolePerNode}
+        onchange={(on) => (rolePerNode = on)}
         label="Use a separate role for each concept"
-        title={PER_NODE_ROLE_HELP}
+        hint={PER_NODE_ROLE_HELP}
       />
       {#if rolePerNode}
         <p class="role-hint">
           each concept becomes its assistant voice; unsupported chat templates fail before fitting
         </p>
       {/if}
-      <Checkbox bind:checked={force} label="Replace existing examples with this name" />
+      <Switch checked={force} onchange={(on) => (force = on)} label="Replace existing examples with this name" />
       <p class="budget-help">Without replacement, existing concept groups are reused. To change their example budget, use a new name or enable replacement.</p>
     </div>
   </AdvancedSection>

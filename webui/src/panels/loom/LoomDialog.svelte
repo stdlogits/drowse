@@ -5,13 +5,12 @@
   // through ``onclosed``; while a dialog is open the rest of the workspace
   // is inert.
   import { tick } from "svelte";
-  import { fade, fly } from "svelte/transition";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { Icon } from "@stdlogits/ledger";
+  import { MorphText } from "@stdlogits/ledger";
   import NumberInput from "../../lib/NumberInput.svelte";
   import Select from "../../lib/Select.svelte";
   import { containTab } from "../../lib/focusTrap";
-  import { modalIn, modalOut, scrimIn, scrimOut } from "../../lib/motion";
+  import { fadeIn, fadeOut, rise } from "@stdlogits/ledger";
   import { apiTree } from "../../lib/runtime/services";
   import { userFacingError } from "../../lib/runtime/userFacingError";
   import { flushConversationAutosave, savedConversationState } from "../../lib/stores/savedConversations.svelte";
@@ -375,8 +374,8 @@
     class="loom-modal-backdrop"
     aria-hidden="true"
     onclick={closeModal}
-    in:fade={scrimIn()}
-    out:fade={scrimOut()}
+    in:fadeIn
+    out:fadeOut
   ></div>
   <div
     class="loom-modal"
@@ -386,8 +385,8 @@
     tabindex="-1"
     bind:this={modalEl}
     onkeydown={onModalKey}
-    in:fly={modalIn(8)}
-    out:fly={modalOut(4)}
+    in:rise
+    out:fadeOut
   >
     <header class="modal-header">
       <h2 id="loom-modal-title">
@@ -403,7 +402,7 @@
         {:else if modal.kind === "regen_mode"}Generate several replies
         {/if}
       </h2>
-      <button type="button" class="icon-btn" onclick={closeModal} aria-label="Close"><FluentIcon name="dismiss" /></button>
+      <button type="button" class="icon-btn" onclick={closeModal} aria-label="Close"><Icon name="close" /></button>
     </header>
     <div class="modal-body">
       {#if modal.kind === "regenerate"}
@@ -566,7 +565,7 @@
     display: flex;
     flex-direction: column;
     font-family: var(--font-reading);
-    font-size: var(--text);
+    font-size: var(--text-base);
     color: var(--fg);
   }
   .modal-header {

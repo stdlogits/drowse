@@ -2,26 +2,22 @@
 import { mount } from "svelte";
 import { HttpRuntimeClient } from "./lib/runtime/http-client";
 import { installRuntimeClient } from "./lib/runtime/registry";
-import { initializeTheme } from "./lib/theme";
+import { startTheme } from "./lib/theme";
 import { initializeInputModality } from "./lib/inputModality";
 import { loadWebMcp } from "./lib/webmcp/loader";
-// Side-effect CSS imports — Vite extracts these into the bundled CSS.
-// Imported here (not from App.svelte) so svelte-check, which runs sans
-// Vite's CSS plugin, doesn't trip on missing module declarations.
-// The triple-slash above pulls in vite/client's ``*.css`` ambient
-// declaration so svelte-check sees it.
-import "./lib/style/fonts.css";
-import "./lib/style/tokens.css";
+// Side-effect CSS imports, extracted into the bundled CSS. Ledger first (its faces, tokens and base),
+// then the temporary bridge that maps the old token names the unrestyled components still read onto
+// Ledger values (scripts/check-ledger.mjs ratchets its uses down to zero), then the app's own globals.
+// Imported here (not from App.svelte) so svelte-check, which runs without Vite's CSS plugin, doesn't
+// trip on missing module declarations; vite/client above declares ``*.css``.
+import "@stdlogits/ledger/ledger.css";
+import "./lib/style/bridge.css";
 import "./lib/style/global.css";
 
-// Vite-bundled entry.  Mounts the dashboard onto #app via Svelte 5's
-// ``mount`` API (the legacy ``new App({target})`` form was removed in
-// Svelte 5).  Component-scoped CSS comes through automatically.
-//
 const target = document.getElementById("app");
 if (!target) throw new Error("drowse web: #app element missing in index.html");
 
-initializeTheme();
+startTheme();
 initializeInputModality();
 void loadWebMcp()?.then(webMcp => webMcp.startWebMcp(false));
 

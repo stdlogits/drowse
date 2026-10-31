@@ -1,134 +1,25 @@
-import { tick } from "svelte";
+import { createTheme, type Choice } from "@stdlogits/ledger";
 import { migrateLegacyStorageItem } from "./brandMigration";
 
-export type Theme = "light" | "dark";
-
+// The dashboard's theme: Ledger's auto → the system's opposite → the system's own look.
+// theme-preflight.js (served from the package, see vite.config.ts) applies a stored choice before
+// first paint under the same key; createTheme owns it after.
 export const THEME_STORAGE_KEY = "drowse.theme";
 
-const themeColors: Record<Theme, string> = {
-  light: "#f2f4f8",
-  dark: "#0b0e17",
-};
+export const theme = createTheme({ key: THEME_STORAGE_KEY });
 
-const listeners = new Set<(theme: Theme) => void>();
-let activeTheme: Theme = "dark";
-let initialized = false;
-let themeTransition: ViewTransition | undefined;
-let transitionRevision = 0;
-let fallbackTimer: ReturnType<typeof setTimeout> | undefined;
-
-function isTheme(value: string | null | undefined): value is Theme {
-  return value === "light" || value === "dark";
-}
-
-function storedTheme(): Theme | null {
+/** Carries a choice stored under the earlier brand names over, then follows the system. */
+export function startTheme(): () => void {
   try {
-    const value = migrateLegacyStorageItem(window.localStorage, THEME_STORAGE_KEY);
-    return isTheme(value) ? value : null;
+    migrateLegacyStorageItem(window.localStorage, THEME_STORAGE_KEY);
   } catch {
-    return null;
+    // Storage blocked: auto still follows the system.
   }
+  const stop = theme.start();
+  if (theme.choice !== "auto") document.documentElement.dataset.theme = theme.choice;
+  return stop;
 }
 
-const systemLightQuery = "(prefers-color-scheme: light)";
-
-function systemTheme(): Theme {
-  try {
-    return window.matchMedia?.(systemLightQuery).matches ? "light" : "dark";
-  } catch {
-    return "dark";
-  }
-}
-
-function preferredTheme(): Theme {
-  const fromDocument = document.documentElement.dataset.theme;
-  if (isTheme(fromDocument)) return fromDocument;
-  return storedTheme() ?? systemTheme();
-}
-
-function applyTheme(theme: Theme): void {
-  activeTheme = theme;
-  document.documentElement.dataset.theme = theme;
-  document.documentElement.style.colorScheme = theme;
-  document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]').forEach((meta) => {
-    meta.content = themeColors[theme];
-  });
-  for (const listener of listeners) listener(theme);
-}
-
-function changeTheme(theme: Theme): void {
-  if (theme === activeTheme && !themeTransition) return;
-  const revision = ++transitionRevision;
-  themeTransition?.skipTransition();
-  themeTransition = undefined;
-  clearTimeout(fallbackTimer);
-  const root = document.documentElement;
-  delete root.dataset.themeTransition;
-
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches || document.hidden) {
-    applyTheme(theme);
-    return;
-  }
-
-  const cleanup = () => {
-    if (revision !== transitionRevision) return;
-    delete root.dataset.themeTransition;
-    themeTransition = undefined;
-  };
-
-  if (typeof document.startViewTransition !== "function") {
-    root.dataset.themeTransition = "fallback";
-    const duration = Number.parseFloat(getComputedStyle(root).getPropertyValue("--dur-theme")) * 1000;
-    applyTheme(theme);
-    fallbackTimer = setTimeout(cleanup, duration);
-    return;
-  }
-
-  root.dataset.themeTransition = "snapshot";
-  themeTransition = document.startViewTransition(async () => {
-    if (revision !== transitionRevision) return;
-    applyTheme(theme);
-    await tick();
-  });
-  // Skipping an in-flight transition rejects ready, but still applies its update.
-  void themeTransition.ready.catch(() => {});
-  void themeTransition.finished.then(cleanup, cleanup);
-}
-
-export function initializeTheme(): Theme {
-  if (typeof document === "undefined") return activeTheme;
-  if (initialized) return activeTheme;
-  initialized = true;
-  applyTheme(preferredTheme());
-
-  window.addEventListener("storage", (event) => {
-    if (event.key !== THEME_STORAGE_KEY && event.key !== null) return;
-    // A cleared choice in another tab returns to the system appearance.
-    changeTheme(event.key !== null && isTheme(event.newValue) ? event.newValue : storedTheme() ?? systemTheme());
-  });
-  // Until someone picks a theme with the toggle, follow the system appearance.
-  try {
-    window.matchMedia?.(systemLightQuery).addEventListener?.("change", () => {
-      if (storedTheme() === null) changeTheme(systemTheme());
-    });
-  } catch {
-    // Older browsers without media query listeners keep the initial theme.
-  }
-  return activeTheme;
-}
-
-export function subscribeTheme(listener: (theme: Theme) => void): () => void {
-  initializeTheme();
-  listeners.add(listener);
-  listener(activeTheme);
-  return () => listeners.delete(listener);
-}
-
-export function setTheme(theme: Theme): void {
-  try {
-    window.localStorage.setItem(THEME_STORAGE_KEY, theme);
-  } catch {
-    // The appearance still changes for this page when storage is unavailable.
-  }
-  changeTheme(theme);
+export function setTheme(choice: Choice): void {
+  theme.set(choice);
 }

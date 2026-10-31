@@ -1,13 +1,13 @@
 <script lang="ts">
+  import { Switch } from "@stdlogits/ledger";
   import { onMount as onInterfaceMount } from "svelte";
   import { registerInterfaceController } from "../../lib/workspaceController";
   import { authoredDraftSchema } from "../../lib/interfaceSchemas";
   import { ToolError } from "../../lib/webmcp/types";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import { slide } from "svelte/transition";
-  import { collapseIn, collapseOut } from "../../lib/motion";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
+  import { expand } from "@stdlogits/ledger";
   // Custom-nodes authoring — the historical path.
   //
   // The user brings labelled corpora.  The ``auto-domain`` switch decides
@@ -38,7 +38,6 @@
     ManifoldDomain,
   } from "../../lib/types";
   import Select from "../../lib/Select.svelte";
-  import Checkbox from "../../lib/Checkbox.svelte";
   import NumberInput from "../../lib/NumberInput.svelte";
   import AdvancedSection from "../../lib/builder/AdvancedSection.svelte";
   import ValidationBlock from "../../lib/builder/ValidationBlock.svelte";
@@ -486,7 +485,7 @@
        per-node coord inputs; the fitter derives the layout per-model
        via pca / spectral.  When off, hand-author coords as before. -->
   <span class="auto-domain-toggle">
-    <Checkbox bind:checked={autoDomain} label="auto-domain" />
+    <Switch checked={autoDomain} onchange={(on) => (autoDomain = on)} label="auto-domain" />
   </span>
 
   {#if autoDomain}
@@ -579,7 +578,7 @@
                 </span>
               </label>
               <span class="axis-check">
-                <Checkbox
+                <Switch
                   checked={axis.periodic}
                   label="periodic"
                   onchange={(v) => {
@@ -677,7 +676,7 @@
               onclick={() => removeNode(idx)}
               aria-label="remove node {node.label}"
               {...{ "aria-description": "remove node" }}
-            ><FluentIcon name="dismiss" /></button>
+            ><Icon name="close" /></button>
           </div>
           {#if nodeLabelError(idx)}
             <p id={`authored-node-${idx}-label-error`} class="field-error">
@@ -700,7 +699,7 @@
             </p>
           {/if}
           {#if node.expanded}
-            <div id={`authored-node-${idx}-details`} class="node-details" in:slide={collapseIn()} out:slide={collapseOut()}>
+            <div id={`authored-node-${idx}-details`} class="node-details" transition:expand>
             <label class="node-role">
               <span class="label">role</span>
               <input

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Single-line generation footer:
   //   ● gen 47/512 [████░░░░░░] · 23 t/s · 2.1s · ppl 8.3
   //
@@ -8,7 +8,6 @@
 
   import { savedConversationState } from "../lib/stores/savedConversations.svelte";
   import Bar from "../lib/charts/Bar.svelte";
-  import InfoTip from "../lib/ui/InfoTip.svelte";
   import {
     genStatus,
     geometricMeanPpl,
@@ -75,7 +74,7 @@
       <span class="text token-count"><MorphText text={genStatus.tokensSoFar} />{#if genStatus.active} / {genStatus.maxTokens || "?"}{/if} tokens</span>
       {#if genStatus.active}
         <span class="bar-wrap" aria-label={preparingContinuation ? "Preparing saved context" : "progress"}>
-          <Bar value={preparingContinuation ? genStatus.replay!.completed : genStatus.tokensSoFar} max={preparingContinuation ? genStatus.replay!.total : genStatus.maxTokens || Math.max(genStatus.tokensSoFar, 1)} width={120} height={6} color="var(--accent)" />
+          <Bar value={preparingContinuation ? genStatus.replay!.completed : genStatus.tokensSoFar} max={preparingContinuation ? genStatus.replay!.total : genStatus.maxTokens || Math.max(genStatus.tokensSoFar, 1)} width={120} height={4} color="var(--tint)" />
         </span>
       {/if}
       {#if !preparingContinuation}<span class="text speed"><MorphText text={tokPerSec.toFixed(1)} /> tokens/s</span>{/if}
@@ -93,77 +92,16 @@
     {/if}
   </div>
 
-  <InfoTip
-    label="About generation status"
-    text="Tokens are pieces of text, and speed is shown in tokens per second. Lower uncertainty means the model was more sure of its wording."
-  />
 </footer>
 
 <style>
-  .autosave-status { margin-inline-start: auto; color: var(--fg-muted); font: var(--text-2xs)/1.5 var(--font-ui); min-width: 6ch; }
-  /* Embedded in the chat column, directly above the input row — a thin
-   * status line.  Horizontal padding is zero so it aligns with the log
-   * and input box; borderless — the gap above already separates it from
-   * the log. */
-  .status-footer {
-    display: flex;
-    flex: 0 0 auto;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--workspace-status-padding, var(--space-2)) 0;
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-    min-height: var(--workspace-status-height, calc(var(--control-target) + var(--space-2) * 2));
-  }
-  .status-details {
-    display: flex;
-    flex: 1 1 auto;
-    flex-wrap: wrap;
-    min-width: 0;
-    align-items: center;
-    gap: var(--space-2) var(--space-4);
-  }
-  .lifecycle { min-width: 8ch; }
-  .token-count { min-width: 13ch; }
-  .speed { min-width: 13ch; }
-  .elapsed { min-width: 6ch; }
+  /* A thin meta line over the composer: what the model is doing, how far and how fast. */
+  .status-footer { display: flex; align-items: center; min-height: 20px; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .status-details { display: flex; flex: 1 1 auto; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); min-width: 0; }
   .text { white-space: nowrap; }
-  .done-label {
-    color: var(--fg-strong);
-  }
-  .bar-wrap {
-    display: inline-flex;
-    align-items: center;
-  }
-
-  /* Pending-queue badge — status readout pushed to the right edge.
-   * Display-only; per-item cancel lives on the PendingBubbles strip
-   * above the composer. */
-  .pending-badge {
-    margin-inline-start: auto;
-    background: var(--glass-strong);
-    color: var(--fg-dim);
-    border: 1px solid transparent;
-    padding: var(--space-1) var(--space-4);
-    border-radius: var(--radius-pill);
-    font-size: var(--text-sm);
-    font-family: var(--font-ui);
-  }
-
-  .status-footer :global(.info-tip) {
-    flex: 0 0 auto;
-  }
-
-  @media (max-width: 480px) {
-    .status-details {
-      gap: var(--space-2);
-    }
-    .bar-wrap,
-    .elapsed,
-    .uncertainty {
-      display: none;
-    }
-  }
+  .done-label { color: var(--ink2); }
+  .bar-wrap { display: inline-flex; align-items: center; }
+  .autosave-status { margin-inline-start: auto; }
+  .pending-badge { margin-inline-start: auto; padding: 2px var(--s3); border-radius: var(--r-pill); background: var(--wash); color: var(--ink2); }
+  @media (max-width: 480px) { .bar-wrap, .elapsed, .uncertainty { display: none; } }
 </style>

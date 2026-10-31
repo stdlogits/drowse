@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Switch } from "@stdlogits/ledger";
   import { onMount as onInterfaceMount } from "svelte";
   import { registerInterfaceController } from "../../lib/workspaceController";
   import { templatedDraftSchema } from "../../lib/interfaceSchemas";
   import { ToolError } from "../../lib/webmcp/types";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Derive a manifold from a standalone template.
   //
   // Some categories you *reference* rather than embody — days, months,
@@ -39,7 +40,6 @@
     CreateManifoldFromTemplateRequest,
     TemplateSummary,
   } from "../../lib/types";
-  import Checkbox from "../../lib/Checkbox.svelte";
   import NumberInput from "../../lib/NumberInput.svelte";
   import Select from "../../lib/Select.svelte";
   import AdvancedSection from "../../lib/builder/AdvancedSection.svelte";
@@ -364,7 +364,7 @@
       {/if}
     </label>
     <div class="check-stack">
-      <Checkbox bind:checked={alsoFit} label="fit now" />
+      <Switch checked={alsoFit} onchange={(on) => (alsoFit = on)} label="fit now" />
     </div>
   </AdvancedSection>
 

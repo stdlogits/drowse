@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { slidingSelection } from "../lib/slidingSelection";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { glide } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   import {
     closeDrawer,
     samplingState,
@@ -11,8 +11,7 @@
     sessionState,
   } from "../lib/stores.svelte";
   import NumberInput from "../lib/NumberInput.svelte";
-  import InfoTip from "../lib/ui/InfoTip.svelte";
-  import Disclosure from "../lib/Disclosure.svelte";
+  import { Expander } from "@stdlogits/ledger";
   import { getRuntimeClient } from "../lib/runtime/registry";
   import { SAMPLING_HELP } from "../lib/parameterHelp";
   import {
@@ -94,7 +93,7 @@
     <div>
       <h2 class="title">Sampling settings</h2>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
@@ -106,7 +105,7 @@
       </div>
       <div class="setting-grid two">
         <div class="setting">
-          <span class="setting-label">Temperature <InfoTip text={HELP.temperature} label="About Temperature" /></span>
+          <span class="setting-label" data-tip={HELP.temperature}>Temperature</span>
           <NumberInput
             value={samplingState.temperature}
             min={0}
@@ -121,7 +120,7 @@
           />
         </div>
         <div class="setting">
-          <span class="setting-label">Top K <InfoTip text={HELP.topK} label="About Top K" /></span>
+          <span class="setting-label" data-tip={HELP.topK}>Top K</span>
           <NumberInput
             value={samplingState.top_k}
             min={TOP_K_MIN}
@@ -134,7 +133,7 @@
           />
         </div>
         <div class="setting">
-          <span class="setting-label">Frequency penalty <InfoTip text={HELP.frequencyPenalty} label="About Frequency penalty" /></span>
+          <span class="setting-label" data-tip={HELP.frequencyPenalty}>Frequency penalty</span>
           <NumberInput
             value={samplingState.frequency_penalty}
             min={PENALTY_MIN}
@@ -145,7 +144,7 @@
           />
         </div>
         <div class="setting">
-          <span class="setting-label">Presence penalty <InfoTip text={HELP.presencePenalty} label="About Presence penalty" /></span>
+          <span class="setting-label" data-tip={HELP.presencePenalty}>Presence penalty</span>
           <NumberInput
             value={samplingState.presence_penalty}
             min={PENALTY_MIN}
@@ -166,7 +165,7 @@
       </div>
       <div class="setting-grid two">
         <div class="setting">
-          <span class="setting-label">Return top K <InfoTip text={HELP.returnTopK} label="About Return top K" /></span>
+          <span class="setting-label" data-tip={HELP.returnTopK}>Return top K</span>
           <NumberInput
             value={samplingState.return_top_k}
             min={0}
@@ -178,7 +177,7 @@
           />
         </div>
         <div class="setting">
-          <span class="setting-label">Seed <InfoTip text={HELP.seed} label="About Seed" /></span>
+          <span class="setting-label" data-tip={HELP.seed}>Seed</span>
           <NumberInput
             value={samplingState.seed}
             min={samplingSeedMinimum(runtimeMode)}
@@ -193,11 +192,11 @@
       </div>
     </section>
 
-    <Disclosure bind:expanded={technicalOpen} summary="Additional parameters">
+    <Expander bind:open={technicalOpen} label="Additional parameters">
       <div class="technical-stack">
         <section class="technical-section">
           <h3>Conversation format</h3>
-          <div class="mode-row" role="group" aria-label="Conversation format" use:slidingSelection>
+          <div class="mode-row" role="group" aria-label="Conversation format" use:glide>
             {#each RENDER_MODES as m (m.label)}
               <button
                 type="button"
@@ -242,7 +241,7 @@
           </p>
         </label>
       </div>
-    </Disclosure>
+    </Expander>
   </div>
 </section>
 

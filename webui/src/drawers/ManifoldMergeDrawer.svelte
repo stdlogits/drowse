@@ -4,9 +4,8 @@
   import { mergeDraftSchema } from "../lib/interfaceSchemas";
   import { ToolError } from "../lib/webmcp/types";
 
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
   import Select from "../lib/Select.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   // ManifoldMergeDrawer — discover-mode node-union merge.
   //
   // Unions the *node corpora* of two or more discover-mode manifolds and
@@ -131,7 +130,7 @@
 <section class="drawer-shell" aria-label="Combine response controls">
   <header class="header">
     <h2 class="title">Combine response controls</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="body">
@@ -210,7 +209,7 @@
                 : "Combine controls") }}
           >
             {#if merging}
-              <FluentIcon name="refresh" spin /> Combining…
+              Combining…
             {:else}
               Combine {selected.size} controls
             {/if}
@@ -229,7 +228,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;
@@ -331,13 +330,13 @@
     border-radius: var(--radius);
     padding: var(--space-3) var(--space-4);
     font-family: var(--font-mono);
-    font-size: var(--text);
+    font-size: var(--text-base);
     box-sizing: border-box;
     width: 100%;
   }
   input[type="text"]:focus {
-    outline: 1px solid var(--pillar-manifold);
-    border-color: var(--pillar-manifold);
+    outline: 1px solid var(--tint);
+    border-color: var(--tint);
   }
   .warn {
     margin: 0;
@@ -355,7 +354,7 @@
     gap: var(--space-3);
   }
   .primary {
-    background: var(--pillar-manifold);
+    background: var(--tint);
     color: var(--text-on-accent);
     border: 1px solid transparent;
     padding: var(--space-2) var(--space-5);

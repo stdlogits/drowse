@@ -3,9 +3,7 @@
   // everywhere so the tabs cannot drift: capture/replay origin, source,
   // resident layer, recipe, then the steered counterfactual control.
 
-  import InfoTip from "../../lib/ui/InfoTip.svelte";
-  import { fade } from "svelte/transition";
-  import { motionDuration } from "../../lib/motion";
+  import { fadeIn } from "@stdlogits/ledger";
   import type { ReadoutOrigin } from "./readout.svelte";
 
   let {
@@ -36,13 +34,10 @@
   <span class="context-label">readout</span>
   {#if origin}
     {#key origin}
-    <span class="kv origin" in:fade={{duration: motionDuration(140)}} {...{ "aria-description": (origin === "captured"
+    <span class="kv origin" in:fadeIn data-tip={origin === "captured" ? "Recorded when this token was generated. No new model run was needed." : "Computed by running the recorded context through the model again."} {...{ "aria-description": (origin === "captured"
       ? "Recorded when this token was generated. No new model run was needed."
       : "Computed by running the recorded context through the model again.") }}>{origin}</span>
     {/key}
-    <InfoTip label="About readout provenance" text={origin === "captured"
-      ? "Recorded when this token was generated. No new model run was needed."
-      : "Computed by running the recorded context through the model again."} />
   {/if}
   {#if source}
     <span class="kv source">{source}</span>

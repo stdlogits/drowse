@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { showConversation } from "../lib/stores/workbench.svelte";
+  import { goto } from "../lib/stores/rooms.svelte";
   import { flip } from "svelte/animate";
-  import { motionDuration } from "../lib/motion";
+  import { GLIDE, ease, reducedMotion } from "@stdlogits/ledger";
   // SAE — the inspector column's sparse-autoencoder tab: two sections,
   // card-based and symmetric with the other three pillars (every row wears
   // RackCard; the SAE family accent is gold, marker ▲/△).
@@ -220,9 +222,8 @@
   }
 
   function openConversation(): void {
-    window.dispatchEvent(new CustomEvent("drowse:workspace", {
-      detail: "conversation",
-    }));
+    goto("workbench");
+    showConversation();
   }
 </script>
 
@@ -241,7 +242,7 @@
       {#if steerCards.length > 0}
         <div class="cards steer-cards" role="list">
           {#each steerCards as [name, entry] (name)}
-            <div role="listitem" animate:flip={{ duration: motionDuration(160) }}>
+            <div role="listitem" animate:flip={{ duration: reducedMotion() ? 0 : GLIDE, easing: ease }}>
               <AtomSteerCard mode="sae" {name} {entry} />
             </div>
           {/each}
@@ -299,7 +300,7 @@
         {#if probeCards.length > 0}
           <div class="cards" role="list" aria-label="SAE feature probes">
             {#each probeCards as row (row.key)}
-              <div role="listitem" animate:flip={{ duration: motionDuration(160) }}>
+              <div role="listitem" animate:flip={{ duration: reducedMotion() ? 0 : GLIDE, easing: ease }}>
                 {#if row.kind === "pinned"}
                   {@const reading = (row.entry.aggregate ?? row.entry.reading) as ScalarReadingJSON | null}
                   {@const probe = row.entry.info as SaeProbeInfo}
@@ -468,7 +469,7 @@
     font-size: var(--text-sm);
     font-weight: var(--weight-structure);
   }
-  .empty-action:hover { color: var(--pillar-sae); }
+  .empty-action:hover { color: var(--tint); }
   /* Card stack — same rhythm as the other racks' strips. */
   .cards {
     display: flex;
@@ -517,8 +518,8 @@
   .add-btn {
     min-height: var(--control-target);
     /* Family-tinted fill — the gold sibling of the racks' launchers. */
-    background: color-mix(in srgb, var(--pillar-sae) 10%, transparent);
-    color: var(--pillar-sae);
+    background: color-mix(in srgb, var(--tint) 10%, transparent);
+    color: var(--tint);
     border: 1px solid transparent;
     border-radius: var(--radius);
     font-size: var(--text-sm);
@@ -528,7 +529,7 @@
     transition: background var(--dur) var(--ease-out);
   }
   .add-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--pillar-sae) 18%, transparent);
+    background: color-mix(in srgb, var(--tint) 18%, transparent);
   }
   .add-btn:disabled {
     opacity: var(--disabled-opacity);

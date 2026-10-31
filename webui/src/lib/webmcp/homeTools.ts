@@ -6,7 +6,7 @@ import { getHomeController } from "../homeController";
 import { conversationLibrary, flushConversationAutosave, notifyConversationLibraryChanged, savedConversationState } from "../stores/savedConversations.svelte";
 import { summarizeConversation, randomAvatarSeed } from "../conversationLibrary";
 import { encodeChatBackup, importChatBackup, downloadPreparedChatBackup, chatBackupFilename } from "../chatBackup";
-import { CHAT_ACCENTS, type ChatAccent } from "../chatAccent";
+import { CONVERSATION_ACCENTS, type ConversationAccent } from "../conversationLibrary";
 import { IDENTITY_HELP } from "../parameterHelp";
 
 const metadataVersion: InputSchema = { type: "string", maxLength: 32, description: "metadataVersion from list_chats; rejects concurrent name/avatar/accent changes inside the saved library lock." };
@@ -54,7 +54,7 @@ export function createHomeTools(): AppTool[] {
     }),
     tool({
       name: "drowse_update_chat", title: "Update chat identity", description: IDENTITY_HELP.chat, annotations: { readOnlyHint: false },
-      inputSchema: objectSchema({ id, expected_metadata_version: metadataVersion, name: { type: "string", minLength: 1, maxLength: 120 }, avatar_seed: { type: "string", minLength: 1, maxLength: 256 }, regenerate_avatar: { type: "boolean" }, accent: { type: "string", enum: CHAT_ACCENTS.map(row => row.id) } }, ["id"]),
+      inputSchema: objectSchema({ id, expected_metadata_version: metadataVersion, name: { type: "string", minLength: 1, maxLength: 120 }, avatar_seed: { type: "string", minLength: 1, maxLength: 256 }, regenerate_avatar: { type: "boolean" }, accent: { type: "string", enum: [...CONVERSATION_ACCENTS] } }, ["id"]),
       execute: async (input, context) => {
         idle(context);
         if (getHomeController()?.metadataDraft?.()?.id === input.id && getHomeController()?.metadataDraft?.()?.dirty) throw new ToolError("UNSAVED_CHANGES", "Finish the open chat-name edit before changing its saved identity.");
@@ -62,7 +62,7 @@ export function createHomeTools(): AppTool[] {
         if (input.regenerate_avatar && input.avatar_seed !== undefined) throw new ToolError("INVALID_INPUT", "Choose avatar_seed or regenerate_avatar.");
         const record = await conversationLibrary.update(input.id as string, {
           ...(input.name === undefined ? {} : { name: input.name as string }),
-          ...(input.accent === undefined ? {} : { accent: input.accent as ChatAccent }),
+          ...(input.accent === undefined ? {} : { accent: input.accent as ConversationAccent }),
           ...(input.avatar_seed === undefined && !input.regenerate_avatar ? {} : { avatarSeed: input.regenerate_avatar ? randomAvatarSeed() : input.avatar_seed as string }),
         }, input.expected_metadata_version as string | undefined);
         if (savedConversationState.activeId === record.id) { savedConversationState.avatarSeed = record.avatarSeed; savedConversationState.accent = record.accent ?? "purple"; }

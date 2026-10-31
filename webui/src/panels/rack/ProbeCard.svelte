@@ -1,7 +1,7 @@
 <script lang="ts">
   import TraceDetail from "../../lib/charts/TraceDetail.svelte";
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Unified probe card — one row for every probe shape.  Replaces the
   // SubspaceProbeCard / ManifoldProbeCard split: the store already
@@ -18,7 +18,7 @@
   //                curved-only residual meta, the per-layer heatmap strip,
   //                and a 2-D box-domain mini-map.
   //
-  // Family is signalled by accent (--accent flat / --pillar-manifold curved)
+  // Family is signalled by accent (flat or curved, as a depth tint)
   // and glyph.  A dedicated action toggles the transcript highlight for
   // *every* family — the per-token score map is keyed by probe name
   // regardless of geometry, so curved probes are valid highlight targets
@@ -61,7 +61,7 @@
   /** Flat (affine) ⇒ subspace family; curved ⇒ manifold family. */
   const affine = $derived(info.is_affine);
 
-  const accent = $derived(affine ? "--accent" : "--pillar-manifold");
+  const accent = $derived(affine ? "--accent" : "--tint");
 
   /** Saturation scale for the per-layer heatmap strip + token tint — the
    *  axis-0 node extent for a flat probe ("full = as far along as the most
@@ -233,7 +233,7 @@
       aria-label="Inspect probe {name}"
       {...{ "aria-description": "inspect" }}
       onclick={onInspect}
-    ><FluentIcon name="info" /></button>
+    ><Icon name="right" /></button>
 
     <button
       type="button"
@@ -389,7 +389,7 @@
     background: transparent;
     border: 0;
     color: var(--fg-muted);
-    font-size: var(--text);
+    font-size: var(--text-base);
     line-height: 1;
     padding: var(--space-1) var(--space-2);
     border-radius: var(--radius);
@@ -403,7 +403,7 @@
     background: var(--bg-elev);
   }
   .inspect:hover:not(:disabled) {
-    color: var(--pillar-manifold);
+    color: var(--tint);
   }
   .highlight-action {
     min-height: var(--control-target);

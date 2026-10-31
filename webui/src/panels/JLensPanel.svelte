@@ -1,6 +1,8 @@
 <script lang="ts">
+  import { showConversation } from "../lib/stores/workbench.svelte";
+  import { goto } from "../lib/stores/rooms.svelte";
   import { flip } from "svelte/animate";
-  import { motionDuration } from "../lib/motion";
+  import { GLIDE, ease, reducedMotion } from "@stdlogits/ledger";
   // J-LENS — the inspector column's Jacobian-lens tab: two sections,
   // card-based and symmetric with the CAA tab (every row wears RackCard;
   // the j-lens family accent is blue, marker ■/□).
@@ -29,6 +31,9 @@
   // preparation activates the source and live readout.
 
   import RuntimeJLensSourceSection from "@runtime-jlens-source";
+
+  /** The source picker lives in the Lens room; the Inspector's instruments show this panel without it. */
+  let { sources = true }: { sources?: boolean } = $props();
   import RackSectionHeader from "./rack/RackSectionHeader.svelte";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
   import { mergeInstrumentProbeRows } from "./rack/probeRows";
@@ -251,14 +256,13 @@
   }
 
   function openConversation(): void {
-    window.dispatchEvent(new CustomEvent("drowse:workspace", {
-      detail: "conversation",
-    }));
+    goto("workbench");
+    showConversation();
   }
 </script>
 
 <div class="jlens" aria-label="Layer prediction controls">
-  <RuntimeJLensSourceSection />
+  {#if sources}<RuntimeJLensSourceSection />{/if}
 
   {#if fitted}
     <!-- STEER — token-atom cards in the shared steering expression. -->
@@ -272,7 +276,7 @@
       {#if steerCards.length > 0}
         <div class="cards steer-cards" role="list">
           {#each steerCards as [name, entry] (name)}
-            <div role="listitem" animate:flip={{ duration: motionDuration(160) }}>
+            <div role="listitem" animate:flip={{ duration: reducedMotion() ? 0 : GLIDE, easing: ease }}>
               <AtomSteerCard mode="jlens" {name} {entry} />
             </div>
           {/each}
@@ -330,7 +334,7 @@
         {#if workspaceCards.length > 0}
           <div class="cards" role="list" aria-label="J-lens probe tokens">
             {#each workspaceCards as card (card.key)}
-              <div role="listitem" animate:flip={{ duration: motionDuration(160) }}>
+              <div role="listitem" animate:flip={{ duration: reducedMotion() ? 0 : GLIDE, easing: ease }}>
                 <JLensProbeCard
                   token={card.token}
                   probeName={card.pinned ? card.key : undefined}
@@ -481,7 +485,7 @@
     font-size: var(--text-sm);
     font-weight: var(--weight-structure);
   }
-  .empty-action:hover { color: var(--pillar-lens); }
+  .empty-action:hover { color: var(--tint); }
   .drill-hint {
     font-size: var(--text-xs);
     color: var(--fg-dim);
@@ -535,8 +539,8 @@
   }
   .add-btn {
     min-height: var(--control-target);
-    background: color-mix(in srgb, var(--pillar-lens) 10%, transparent);
-    color: var(--pillar-lens);
+    background: color-mix(in srgb, var(--tint) 10%, transparent);
+    color: var(--tint);
     border: 1px solid transparent;
     border-radius: var(--radius);
     font-size: var(--text-sm);
@@ -545,7 +549,7 @@
     flex: 0 0 auto;
   }
   .add-btn:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--pillar-lens) 18%, transparent);
+    background: color-mix(in srgb, var(--tint) 18%, transparent);
   }
   .add-btn:disabled {
     opacity: var(--disabled-opacity);

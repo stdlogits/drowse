@@ -1,6 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // A completion node in the loom canvas. Generated completions expose their
   // actual model-token rows directly; authored text remains one editable
   // snippet because it has no authoritative tokenizer record.
@@ -254,7 +253,7 @@
       {#if sharedCount}<span class="current-label">{sharedCount} paths</span>{/if}
       {#if current}<span class="current-label">current</span>{/if}
       {#if !sharedCount}
-      {#if node.starred}<span class="star" {...{ "aria-description": "Saved branch" }} aria-hidden="true"><FluentIcon name="star" /></span>{/if}
+      {#if node.starred}<span class="star" {...{ "aria-description": "Saved branch" }} aria-hidden="true">★</span>{/if}
       <button
         type="button"
         class="node-actions"

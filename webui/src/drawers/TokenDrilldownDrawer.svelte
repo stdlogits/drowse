@@ -1,16 +1,14 @@
 <script lang="ts">
+  import { showLoom } from "../lib/stores/workbench.svelte";
   import { tokenInspectorSchema } from "../lib/interfaceSchemas";
   import { registerInterfaceController } from "../lib/workspaceController";
   import { ToolError } from "../lib/webmcp/types";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
-  import SidebarIcon from "../lib/ui/SidebarIcon.svelte";
-  import PopoutIcon from "../lib/ui/PopoutIcon.svelte";
-  import { dockTokenDetails, hideTokenDetails, undockTokenDetails } from "../lib/stores/drawers.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
+  import { hideTokenDetails } from "../lib/stores/drawers.svelte";
   import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { fly } from "svelte/transition";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   // Per-token drilldown drawer — opens when a chat / raw-buffer token is
   // clicked.
   //
@@ -55,7 +53,7 @@
     ScalarReadingJSON,
     TokenScore,
   } from "../lib/types";
-  import SegmentedTabs from "../lib/ui/SegmentedTabs.svelte";
+  import { Segmented, Tabs } from "@stdlogits/ledger";
   import {
     clampCursor,
     jumpTurn,
@@ -76,7 +74,7 @@
   import SaeTab from "./token/SaeTab.svelte";
   import LensTab from "./token/LensTab.svelte";
   import { resolveReadoutTopK } from "../lib/readouts";
-  import { selectionIn } from "../lib/motion";
+  import { rise } from "@stdlogits/ledger";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import {
     currentCatalogInstrumentAvailability,
@@ -103,12 +101,6 @@
     if (onclose) onclose();
     else if (docked) hideTokenDetails();
     else closeDrawer();
-  }
-
-  function toggleDock(): void {
-    const position = effCursor ? { turnIdx: effCursor.turnIdx, tokenIdx: effCursor.tokenIdx, isThinking: effCursor.seg === "thinking" } : params;
-    if (docked) undockTokenDetails(position);
-    else dockTokenDetails(position);
   }
 
   /** The position the user actually CLICKED — the drawer's anchor.  A
@@ -272,7 +264,7 @@
       await sendTextFork(loomNodeId, token.rawIndex, replacementText);
       if (!docked || mobile) closeDetails();
       loomUiState.view = "map";
-      window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: "branches" }));
+      showLoom();
     } catch (error) {
       continuationError = userFacingError(
         error,
@@ -293,7 +285,7 @@
       await sendFork(loomNodeId, token.rawIndex, token.tokenId, true);
       if (!docked || mobile) closeDetails();
       loomUiState.view = "map";
-      window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: "branches" }));
+      showLoom();
     } catch (error) {
       continuationError = userFacingError(
         error,
@@ -495,14 +487,14 @@
       value: "sae",
       label: "sae",
       meta: readoutBadge(saeReadout, capturedSaeData, saeSteered, data => data.features.length),
-      color: "var(--pillar-sae)",
+      color: "var(--tint)",
       title: "sparse features",
     },
     {
       value: "lens",
       label: "j-lens",
       meta: readoutBadge(lensReadout, capturedLensData, lensSteered, data => data.layers.length),
-      color: "var(--pillar-lens)",
+      color: "var(--tint)",
       title: "workspace readout",
     },
   ]);
@@ -845,7 +837,6 @@
         if (recipe?.sae !== undefined) saeSteered = recipe.sae;
         await tick();
         if (change.presentation === "hide") closeDetails();
-        else if ((change.presentation === "dock" && !docked) || (change.presentation === "drawer" && docked)) toggleDock();
       },
     });
   });
@@ -863,16 +854,12 @@
   tabindex="-1"
 >
   <header class="drawer-header">
+    {#if !docked}
     <div class="heading-row">
-      {#if !mobile}
-      <button type="button" class="dock-toggle" aria-pressed={docked}
-        aria-label={docked ? "Undock token details" : "Dock token details"}
-        {...{ "aria-description": (docked ? "Show token details in a window" : "Keep token details in a sidebar") }}
-        onclick={toggleDock}>{#if docked}<PopoutIcon />{:else}<SidebarIcon side="right" />{/if}</button>
-      {/if}
       <h2 class="eyebrow">Generated word details</h2>
-      <DrawerCloseButton onclick={closeDetails} />
+      <IconButton icon="close" label="Close" onclick={closeDetails} />
     </div>
+    {/if}
     <div class="title">
       {#if token && effCursor}
         <div class="name-row">
@@ -925,7 +912,7 @@
               onclick={() => step(-1)}
               aria-label="Previous token"
               {...{ "aria-description": "Inspect the previous token" }}
-            ><FluentIcon name="back" /></button>
+            ><Icon name="left" /></button>
             <span class="scrub-pos"><MorphText text={`${effCursor.tokenIdx + 1} / ${tokenList.length}`} /></span>
             <button
               type="button"
@@ -934,7 +921,7 @@
               onclick={() => step(1)}
               aria-label="Next token"
               {...{ "aria-description": "Inspect the next token" }}
-            ><FluentIcon name="next" /></button>
+            ><Icon name="right" /></button>
           </span>
           <span class="scrub">
             <button
@@ -944,7 +931,7 @@
               onclick={() => turnHop(-1)}
               aria-label="Previous turn"
               {...{ "aria-description": "Inspect the previous turn" }}
-            ><FluentIcon name="up" /></button>
+            ><Icon name="up" /></button>
             <span class="scrub-pos"><MorphText text={`turn ${effCursor.turnIdx}`} /></span>
             <button
               type="button"
@@ -953,7 +940,7 @@
               onclick={() => turnHop(1)}
               aria-label="Next turn"
               {...{ "aria-description": "Inspect the next turn" }}
-            ><FluentIcon name="down" /></button>
+            ><Icon name="down" /></button>
           </span>
           {#if !atAnchor}
             <button
@@ -962,7 +949,7 @@
               onclick={resetToAnchor}
               aria-label="Return to the token you opened"
 
-            ><FluentIcon name="return" /></button>
+            >Back</button>
           {/if}
         </div>
         <div class="generation-context">
@@ -1067,9 +1054,11 @@
        an A/B pair.  Tabs always render so users see the other views
        exist even when their capture is off. -->
   <div class="toolbar">
-    <SegmentedTabs items={tabItems} bind:value={drilldownUi.tab} ariaLabel="Token detail view" />
+    <Tabs label="Token detail view" value={drilldownUi.tab} onchange={(tab) => (drilldownUi.tab = tab)}
+      options={tabItems.map(item => ({ value: item.value, label: item.label, count: item.meta, hint: item.title }))} />
     {#if hasAbPair}
-      <SegmentedTabs items={BRANCH_ITEMS} bind:value={branch} ariaLabel="Token branch" />
+      <Segmented label="Token branch" value={branch} onchange={(next) => (branch = next)}
+        options={BRANCH_ITEMS.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
     {/if}
   </div>
 
@@ -1077,7 +1066,7 @@
     {#key bodyStateKey}
       <div
         class="tab-content"
-        in:selectionIn
+        in:rise
       >
     {#if token && effCursor && drilldownUi.tab === "geometry" && !geometryTokenReplayAvailable && (hasGeometryProbes || capturedGeometryData)}
       <p class="replay-unavailable" role="note">{geometryReplayUnavailableReason}</p>
@@ -1139,7 +1128,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .drawer:focus {
     /* This scroll container is not a control; its children show keyboard focus. */
@@ -1160,21 +1149,7 @@
   }
   .heading-row { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-width: 0; }
   .heading-row h2 { flex: 1; min-width: 0; margin: 0; }
-  .dock-toggle {
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-    width: var(--control-compact);
-    height: var(--control-compact);
-    padding: 0;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--fg-muted);
-  }
-  .dock-toggle:hover { background: var(--glass); color: var(--fg); }
-  .dock-toggle[aria-pressed="true"] { background: var(--glass-strong); color: var(--accent); }
-  .docked .eyebrow { font-size: var(--text); }
+  .docked .eyebrow { font-size: var(--text-base); }
   .mobile .drawer-header { padding-top: 0; }
   .mobile :global(.drawer-close) { min-width: 44px; min-height: 44px; }
   .docked .branch-point { grid-template-columns: minmax(0, 1fr); }

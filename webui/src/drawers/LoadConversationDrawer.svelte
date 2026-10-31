@@ -1,13 +1,12 @@
 <script lang="ts">
+  import { openSavedChat } from "../lib/savedChatOpen";
   import { onConversationLibraryChanged } from "../lib/stores/savedConversations.svelte";
   import BaseModelTag from "../lib/ui/BaseModelTag.svelte";
-  import { chatAccentStyle } from "../lib/chatAccent";
   import { flushConversationAutosave } from "../lib/stores/savedConversations.svelte";
-  import { Blobatar } from "@blobatar/svelte";
   import { onMount, tick } from "svelte";
   import { downloadChatBackup, importChatBackup } from "../lib/chatBackup";
 
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import {
     conversationLibrary,
     closeDrawer,
@@ -25,7 +24,6 @@
     type SavedConversationRecord,
     type SavedConversationSummary,
   } from "../lib/conversationLibrary";
-  import { restoreConversationSnapshot } from "../lib/conversationWorkspace";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { pushToast } from "../lib/stores/toasts.svelte";
 
@@ -113,12 +111,7 @@
     openingId = record.id;
     error = null;
     try {
-      await flushConversationAutosave();
-      const current = await conversationLibrary.get(record.id);
-      await restoreConversationSnapshot(current.snapshot);
-      savedConversationState.activeId = record.id;
-      savedConversationState.avatarSeed = current.avatarSeed;
-      savedConversationState.accent = current.accent ?? "purple";
+      await openSavedChat(record.id);
       pushToast(`Opened “${record.name}”.`, { kind: "info" });
       closeDrawer();
     } catch (cause) {
@@ -128,22 +121,6 @@
       );
     } finally {
       openingId = null;
-    }
-  }
-
-  async function regenerateAvatar(record: SavedConversationSummary): Promise<void> {
-    changingId = record.id;
-    error = null;
-    try {
-      const updated = await conversationLibrary.update(record.id, {
-        avatarSeed: randomAvatarSeed(),
-      });
-      if (savedConversationState.activeId === record.id) savedConversationState.avatarSeed = updated.avatarSeed;
-      replaceConversation(updated);
-    } catch (cause) {
-      error = userFacingError(cause, "The avatar could not be changed.");
-    } finally {
-      changingId = null;
     }
   }
 
@@ -282,9 +259,9 @@
   <header class="header">
     <div>
       <h2 class="title">Saved chats</h2>
-      <p>Named conversations stay on this device until you delete them. Click an avatar for a new one.</p>
+      <p>Named conversations stay on this device until you delete them.</p>
     </div>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
   <div class="toolbar">
@@ -349,22 +326,8 @@
             role="listitem"
             class:current={savedConversationState.activeId === record.id}
             data-saved-conversation={record.id}
-            data-chat-accent={record.accent ?? "purple"}
-            style={chatAccentStyle(record.accent)}
           >
             <div class="card-main">
-              <button
-                type="button"
-                class="avatar-button"
-                aria-busy={changingId === record.id}
-                onclick={() => void regenerateAvatar(record)}
-                disabled={changingId === record.id}
-                aria-label={`Generate another avatar for ${record.name}`}
-                {...{ "aria-description": "Generate another avatar" }}
-              >
-                <Blobatar name={record.avatarSeed} size={62} background="circle" alt="" />
-              </button>
-
               <div class="card-copy">
                 {#if editingId === record.id}
                   <label class="rename-field">
@@ -435,7 +398,6 @@
         {#each issues as issue (issue.id)}
           <article class="conversation-card unavailable" role="listitem">
             <div class="card-main">
-              <div class="unavailable-avatar" aria-hidden="true">?</div>
               <div class="card-copy">
                 <strong>{issue.name || "Unavailable saved chat"}</strong>
                 <span class="model">The saved data is still in storage.</span>
@@ -542,32 +504,10 @@
   .card-main {
     min-width: 0;
     display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
     gap: var(--space-3);
   }
-  .avatar-button, .unavailable-avatar {
-    width: 64px;
-    height: 64px;
-    display: grid;
-    place-items: center;
-    flex: 0 0 auto;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    background: var(--bg-elev);
-    box-shadow: var(--shadow-control);
-  }
-  .avatar-button {
-    cursor: pointer;
-    transition: transform 120ms ease, box-shadow 120ms ease;
-  }
-  .avatar-button :global(img) { display: block; width: 100%; height: 100%; min-width: 0; border-radius: inherit; }
-  .avatar-button:hover:not(:disabled) { box-shadow: var(--shadow-control-hover); }
-  .avatar-button:active:not(:disabled) { transform: scale(0.96); }
-  .avatar-button:disabled { opacity: 0.55; cursor: wait; }
-  .avatar-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
-  .unavailable-avatar { color: var(--fg-muted); font-family: var(--font-mono); }
   .card-copy { min-width: 0; display: grid; gap: var(--space-xs); }
   .card-copy strong {
     min-width: 0;
@@ -679,7 +619,6 @@
     .toolbar-actions { display: grid; grid-template-columns: minmax(0, 1fr) auto; }
     .storage-protection { grid-template-columns: 1fr; }
     .storage-protection .quiet-button { width: 100%; }
-    .avatar-button, .unavailable-avatar { width: 56px; height: 56px; }
     .card-actions { margin-inline-start: 0; }
     .confirm-row { grid-template-columns: 1fr auto auto; }
     .confirm-row p { grid-column: 1 / -1; }

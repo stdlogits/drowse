@@ -2,13 +2,11 @@
   import { registerInterfaceController } from "../lib/workspaceController";
   import { objectSchema, ToolError } from "../lib/webmcp/types";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import { Blobatar } from "@blobatar/svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { onMount } from "svelte";
-  import ChatAccentPicker from "../lib/ui/ChatAccentPicker.svelte";
-  import { CHAT_ACCENTS, type ChatAccent } from "../lib/chatAccent";
+  import { CONVERSATION_ACCENTS, type ConversationAccent } from "../lib/conversationLibrary";
 
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { IconButton } from "@stdlogits/ledger";
   import {
     conversationLibrary,
     closeDrawer,
@@ -36,7 +34,7 @@
   let current: SavedConversationRecord | null = $state(null);
   let name = $state("");
   let avatarSeed = $state(randomAvatarSeed());
-  let accent: ChatAccent = $state("purple");
+  let accent: ConversationAccent = $state("purple");
   const metadataDirty = $derived(draftBaseline !== "" && JSON.stringify([name, avatarSeed, accent]) !== draftBaseline);
 
   let error = $state<string | null>(null);
@@ -89,10 +87,6 @@
       draftBaseline = JSON.stringify([name, avatarSeed, accent]);
       loading = false;
     }
-  }
-
-  function regenerateAvatar(): void {
-    avatarSeed = randomAvatarSeed();
   }
 
   async function save(asNew = false): Promise<void> {
@@ -164,13 +158,13 @@
   }
 
   onMount(() => registerInterfaceController("chat_identity", {
-    schema: objectSchema({ name: { type: "string", maxLength: 120 }, avatar_seed: { type: "string", maxLength: 256 }, accent: { type: "string", enum: CHAT_ACCENTS.map(row => row.id) } }),
+    schema: objectSchema({ name: { type: "string", maxLength: 120 }, avatar_seed: { type: "string", maxLength: 256 }, accent: { type: "string", enum: [...CONVERSATION_ACCENTS] } }),
     read: () => ({ busy: loading || saving, dirty: metadataDirty, chat_id: current?.id ?? savedConversationState.activeId, values: { name, avatar_seed: avatarSeed, accent } }),
     update: change => {
       if (loading || saving) throw new ToolError("BUSY", "Wait for the saved-chat form.");
       if (change.name !== undefined) name = change.name as string;
       if (change.avatar_seed !== undefined) avatarSeed = change.avatar_seed as string;
-      if (change.accent !== undefined) accent = change.accent as ChatAccent;
+      if (change.accent !== undefined) accent = change.accent as ConversationAccent;
     },
   }));
 </script>
@@ -181,23 +175,11 @@
       <h2 class="title"><MorphText text={embedded ? "Save and name chat" : current ? "Update saved chat" : "Save chat"} /></h2>
       <p>Keep the full loom, response settings, and readings on this device.</p>
     </div>
-    {#if !embedded}<DrawerCloseButton onclick={closeDrawer} />{/if}
+    {#if !embedded}<IconButton icon="close" label="Close" onclick={closeDrawer} />{/if}
   </header>
 
   <div class="body">
     <div class="identity-card">
-      <div class="avatar-picker">
-        <button
-          type="button"
-          class="avatar-button"
-          onclick={regenerateAvatar}
-          aria-label="Generate another avatar"
-
-        >
-          <Blobatar name={avatarSeed} size={76} background="circle" alt="" />
-        </button>
-        <span>Click for a new avatar</span>
-      </div>
       <label class="name-field">
         <span>Name</span>
         <input
@@ -214,8 +196,6 @@
       <span>{modelName}</span>
       <span>{turnCount} {turnCount === 1 ? "turn" : "turns"}</span>
     </div>
-
-    <ChatAccentPicker value={accent} disabled={loading || saving} onchange={(value) => { accent = value; }} />
 
     <p class="storage-note">
       Stored in this browser. Drowse removes a saved chat only after you confirm Delete.
@@ -310,35 +290,6 @@
     background: var(--glass);
     box-shadow: var(--shadow-rack);
   }
-  .avatar-button {
-    width: 80px;
-    height: 80px;
-    display: grid;
-    place-items: center;
-    padding: 0;
-    border: 0;
-    border-radius: 50%;
-    background: var(--bg-elev);
-    box-shadow: var(--shadow-control);
-    cursor: pointer;
-    transition: transform 120ms ease, box-shadow 120ms ease;
-  }
-  .avatar-picker {
-    display: grid;
-    justify-items: center;
-    gap: var(--space-2);
-  }
-  .avatar-picker > span {
-    max-width: 10ch;
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-    line-height: 1.3;
-    text-align: center;
-  }
-  .avatar-button:hover { box-shadow: var(--shadow-control-hover); }
-  .avatar-button :global(img) { display: block; width: 100%; height: 100%; min-width: 0; border-radius: inherit; }
-  .avatar-button:active { transform: scale(0.96); }
-  .avatar-button:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 3px; }
   .name-field {
     min-width: 0;
     display: grid;

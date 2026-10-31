@@ -1,5 +1,5 @@
 <script lang="ts">
-  import FluentIcon from "./ui/FluentIcon.svelte";
+  import { Icon } from "@stdlogits/ledger";
   // Drowse editable combobox — arbitrary role labels plus a themed roster
   // picker. Unlike a native datalist, the popup stays inside the webui's
   // surface, type, focus, and keyboard system.
@@ -169,7 +169,7 @@
     type="button" class="caret" aria-label={`Choose ${ariaLabel ?? "value"}`}
     tabindex="-1" {disabled}
     onclick={() => (open ? closePopover() : void openPopover(false))}
-  ><FluentIcon name="down" /></button>
+  ><Icon name="down" /></button>
 
   {#if presence.mounted}
     <ul bind:this={listbox} id={`${uid}-listbox`} class="popover t-dropdown"

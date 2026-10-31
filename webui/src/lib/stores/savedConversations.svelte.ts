@@ -1,5 +1,5 @@
 import { ConversationLibrary } from "../conversationLibrary";
-import type { ChatAccent } from "../chatAccent";
+import type { ConversationAccent } from "../conversationLibrary";
 import { CONVERSATION_SAMPLING_KEYS } from "../conversationSnapshot";
 import { requestPersistentStorage } from "../runtime/storagePersistence";
 
@@ -10,7 +10,7 @@ export const conversationLibrary = new ConversationLibrary({
 export const savedConversationState: {
   activeId: string | null;
   avatarSeed: string | null;
-  accent: ChatAccent;
+  accent: ConversationAccent;
   status: "idle" | "pending" | "saving" | "saved" | "error";
   error: string | null;
 } = $state({

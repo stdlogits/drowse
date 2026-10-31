@@ -4,9 +4,9 @@
   import { ToolError } from "../../lib/webmcp/types";
   import { onMount as onInterfaceMount } from "svelte";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import { slidingSelection } from "../../lib/slidingSelection";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
+  import { glide } from "@stdlogits/ledger";
   
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Conversation loom. Turns advance from left to right and sibling
@@ -18,7 +18,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { createLoomLiveNode, segmentHeightEstimate, segmentWidth } from "./loomMapModel";
   import { MediaQuery, SvelteMap, SvelteSet } from "svelte/reactivity";
-  import { fade, slide } from "svelte/transition";
+  import { expand, fadeOut } from "@stdlogits/ledger";
   import {
     applyTreeFilter,
     chatLog,
@@ -79,11 +79,6 @@
     scaleFromPinch,
     type GesturePoint,
   } from "../../lib/pointerGesture";
-  import {
-    collapseIn,
-    collapseOut,
-    scrimOut,
-  } from "../../lib/motion";
 
   let { active = true, headersVisible = true }: { active?: boolean; headersVisible?: boolean } = $props();
 
@@ -1476,7 +1471,7 @@
   bind:this={asideEl}
 >
   {#if headersVisible}
-  <header class="loom-header" id="loom-tools-header" inert={!headersVisible} in:slide={collapseIn()} out:slide={collapseOut()}>
+  <header class="loom-header" id="loom-tools-header" inert={!headersVisible} transition:expand>
     <div class="loom-heading">
       <span class="title">Conversation loom</span>
       <span class="loom-subtitle">Explore, branch, and return to any point.</span>
@@ -1528,11 +1523,11 @@
       onclick={fullRefresh}
       {...{ "aria-description": "refresh" }}
       aria-label="Refresh"
-    ><FluentIcon name="refresh" /></button>
+    >Refresh</button>
   </header>
 
   {/if}
-  <nav class="loom-views" aria-label="Loom views" use:slidingSelection>
+  <nav class="loom-views" aria-label="Loom views" use:glide>
     <button
       type="button"
       class:active={loomUiState.view === "weave"}
@@ -1609,7 +1604,7 @@
 
       aria-label="How advanced filters work"
       aria-expanded={loomUiState.filterHelpOpen}
-    ><FluentIcon name="help" /></button>
+    >?</button>
     {/if}
     {#if filterState.expr}
       <button
@@ -1618,7 +1613,7 @@
         onclick={() => { clearTreeFilter(); searchInput?.focus(); }}
 
         aria-label="Clear search"
-      ><FluentIcon name="dismiss" /></button>
+      ><Icon name="close" /></button>
     {/if}
     </div>
     <div class="search-feedback">
@@ -1634,8 +1629,8 @@
             <span class="snippet-role">{nodeRole(searchResult)}</span>
             <span dir="auto">{searchExcerpt.before}<mark>{searchExcerpt.match}</mark>{searchExcerpt.after}</span>
           </button>
-          <button type="button" class="icon-btn" aria-label="Previous match" onclick={() => void showSearchMatch(-1)}><FluentIcon name="up" /></button>
-          <button type="button" class="icon-btn" aria-label="Next match" onclick={() => void showSearchMatch(1)}><FluentIcon name="down" /></button>
+          <button type="button" class="icon-btn" aria-label="Previous match" onclick={() => void showSearchMatch(-1)}><Icon name="up" /></button>
+          <button type="button" class="icon-btn" aria-label="Next match" onclick={() => void showSearchMatch(1)}><Icon name="down" /></button>
         </div>
       {/if}
     </div>
@@ -1644,7 +1639,7 @@
   {#if filterState.mode === "advanced" && loomUiState.filterHelpOpen && (loomUiState.view === "map" || loomUiState.view === "saved")}
     <!-- Inline grammar reference + worked examples.  Dismissible by
          clicking the ? again or pressing Esc on the sidebar. -->
-    <div class="filter-help" role="region" aria-label="Filter grammar help" in:slide={collapseIn()} out:slide={collapseOut()}>
+    <div class="filter-help" role="region" aria-label="Filter grammar help" transition:expand>
       <p>Combine filters with commas. A branch must match every filter.</p>
       <ul>
         <li><code>text:&lt;words&gt;</code> searches message text</li>
@@ -1741,7 +1736,7 @@
           disabled={camera.zoom <= LOOM_MIN_ZOOM}
           aria-label="Zoom out"
 
-        ><FluentIcon name="subtract" /></button>
+        >−</button>
         <output aria-label="Loom zoom"><RollingNumber value={Math.round(camera.zoom * 100)} />%</output>
         <button
           type="button"
@@ -1750,7 +1745,7 @@
           disabled={camera.zoom >= LOOM_MAX_ZOOM}
           aria-label="Zoom in"
 
-        ><FluentIcon name="add" /></button>
+        >+</button>
         <button type="button" onclick={() => fitView()} aria-label="Fit whole loom" >
           Fit
         </button>
@@ -2111,7 +2106,7 @@
     bind:this={menuEl}
     use:portal
     onkeydown={onMenuKey}
-    out:fade={scrimOut()}
+    out:fadeOut
   >
     <div class="loom-menu-context" role="presentation">
       <span>{menuRole}</span>

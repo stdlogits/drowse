@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // One identity-row grammar for every token-drilldown evidence card.
   // The fixed leading slot and centrally owned type scale keep ranks and
   // family markers on the same baseline across logits, geometry, SAE, and

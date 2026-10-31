@@ -1,7 +1,7 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import { slidingSelection } from "../lib/slidingSelection";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { glide } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // ManifoldPacksDrawer — local manifold catalog and HF search/install.
   //
   // Hosted search accepts only repositories with one immutable, provenance-
@@ -325,10 +325,10 @@
 <div class="drawer-shell">
   <header class="header">
     <h2 class="title">Downloaded response controls</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
+    <IconButton icon="close" label="Close" onclick={closeDrawer} />
   </header>
 
-  <div class="tabs" role="tablist" aria-label="Manifold pack views" use:slidingSelection>
+  <div class="tabs" role="tablist" aria-label="Manifold pack views" use:glide>
     <button
       bind:this={installedTabButton}
       id="packs-tab-installed"
@@ -536,7 +536,7 @@
     min-height: 0;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
   .header {
     display: flex;
@@ -621,7 +621,7 @@
     font-size: var(--text-sm);
   }
   .search input[type="search"]:focus-visible {
-    outline: 1px solid var(--pillar-manifold);
+    outline: 1px solid var(--tint);
     outline-offset: -1px;
   }
 
@@ -673,7 +673,7 @@
     padding: var(--space-2) var(--space-3);
     border: 1px solid transparent;
     border-radius: var(--radius);
-    color: var(--pillar-manifold);
+    color: var(--tint);
     background: var(--bg-elev);
     font: inherit;
     font-family: var(--font-mono);
@@ -682,7 +682,7 @@
   }
   .file-action:hover:not(.disabled),
   .archive-tools button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--pillar-manifold) 12%, var(--bg-elev));
+    background: color-mix(in srgb, var(--tint) 12%, var(--bg-elev));
   }
   .file-action.disabled,
   .archive-tools button:disabled {
@@ -699,7 +699,7 @@
   .file-action.disabled input { cursor: not-allowed; }
   .file-action:focus-within,
   .archive-tools button:focus-visible {
-    outline: 2px solid var(--pillar-manifold);
+    outline: 2px solid var(--tint);
     outline-offset: 2px;
   }
   .archive-list {
@@ -765,7 +765,7 @@
     padding: var(--surface-padding);
     transition: background var(--dur) var(--ease-out);
   }
-  .row:hover { background: color-mix(in srgb, var(--pillar-manifold) 8%, var(--bg-deep)); }
+  .row:hover { background: color-mix(in srgb, var(--tint) 8%, var(--bg-deep)); }
   .meta {
     display: flex;
     flex-direction: column;
@@ -793,8 +793,8 @@
     font-size: var(--text-2xs);
     letter-spacing: 0.04em;
     border: 1px solid transparent;
-    color: var(--pillar-manifold);
-    background: color-mix(in srgb, var(--pillar-manifold) 12%, transparent);
+    color: var(--tint);
+    background: color-mix(in srgb, var(--tint) 12%, transparent);
   }
   .fit-spectral {
     color: var(--accent);
@@ -834,7 +834,7 @@
   .act {
     min-height: 44px;
     background: var(--glass);
-    color: var(--pillar-manifold);
+    color: var(--tint);
     border: 1px solid transparent;
     border-radius: var(--radius);
     padding: var(--space-2) var(--space-3);
@@ -847,7 +847,7 @@
       color var(--dur) var(--ease-out);
   }
   .act:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--pillar-manifold) 12%, transparent);
+    background: color-mix(in srgb, var(--tint) 12%, transparent);
   }
   .act:disabled {
     opacity: var(--disabled-opacity);

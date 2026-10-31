@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Canonical per-layer strip for every rack card. The cells deliberately
   // have no outlines: a small physical gap separates layers, while a visible
   // neutral fill keeps zero/near-zero readings legible against the card.

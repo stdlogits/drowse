@@ -210,7 +210,7 @@
   border: 0;
   color: var(--fg-muted);
   cursor: pointer;
-  font-size: var(--text);
+  font-size: var(--text-base);
   padding: 0 var(--space-2);
 }
 .mb-form .node-remove:hover {

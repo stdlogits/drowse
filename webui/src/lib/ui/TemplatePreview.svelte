@@ -1,6 +1,6 @@
 <script lang="ts">
   import Select from "../Select.svelte";
-  import MorphText from "./MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   let { sentence, slot, values }: { sentence: string; slot: string; values: string[] } = $props();
   let chosen = $state("");
   const candidate = $derived(values.includes(chosen) ? chosen : values[0] ?? "");

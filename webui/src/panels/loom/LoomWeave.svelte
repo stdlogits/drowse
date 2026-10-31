@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { animatedDetails } from "../../lib/animatedDetails";
-  import Disclosure from "../../lib/Disclosure.svelte";
+  import { Expander } from "@stdlogits/ledger";
   import Select from "../../lib/Select.svelte";
   import { tick, untrack } from "svelte";
   import { SvelteSet } from "svelte/reactivity";
@@ -138,7 +137,7 @@
             </header>
             <div class="passage-text" dir="auto">{node.text}</div>
             {#if node.tokens?.length}
-              <Disclosure summary="Token branch points" flush bind:expanded={() => expandedTokens.has(node.id), (open) => { if (open) expandedTokens.add(node.id); else expandedTokens.delete(node.id); }}>
+              <Expander label="Token branch points" bind:open={() => expandedTokens.has(node.id), (open) => { if (open) expandedTokens.add(node.id); else expandedTokens.delete(node.id); }}>
                 <div class="tokens">
                   {#each node.tokens as token, tokenIndex}
                     <button type="button" data-cursor="inspect" disabled={busy} {...{ "aria-description": "Inspect or branch from this token" }}
@@ -146,7 +145,7 @@
                       onclick={() => oninspect(node, tokenIndex)}>{token.text || "∅"}</button>
                   {/each}
                 </div>
-              </Disclosure>
+              </Expander>
             {/if}
           </article>
         {/each}
@@ -160,10 +159,11 @@
       {#if parent}<button type="button" onclick={() => void explore(parent)}>Back one point</button>{/if}
     </header>
     {#if !empty && anchor}
-      <details use:animatedDetails class="context">
-        <summary>After {role(anchor)} · {anchor.text.slice(0, 70) || "Start of conversation"}{anchor.text.length > 70 ? "…" : ""}</summary>
-        <div class="passage-text">{anchor.text}</div>
-      </details>
+      <div class="context">
+        <Expander label={`After ${role(anchor)} · ${anchor.text.slice(0, 70) || "Start of conversation"}${anchor.text.length > 70 ? "…" : ""}`}>
+          <div class="passage-text">{anchor.text}</div>
+        </Expander>
+      </div>
     {/if}
     <form onsubmit={generate}>
       {#if empty}
@@ -238,7 +238,7 @@
   article header .quiet { margin-inline-start: auto; }
   .role, .marker { font-size: var(--text-2xs); color: var(--fg-muted); }
   .marker { color: var(--accent); }
-  .passage-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: var(--text); }
+  .passage-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: var(--text-base); }
   footer { margin-block-start: var(--space-4); }
   button, textarea { font: inherit; color: var(--fg); border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--glass); }
   button { min-height: var(--control-target); padding: var(--space-2) var(--space-3); font-size: var(--text-xs); cursor: pointer; touch-action: manipulation; }
@@ -247,12 +247,10 @@
   button.primary:hover:not(:disabled) { background: var(--accent); }
   button:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
   button.quiet { background: transparent; border-color: transparent; }
-  :is(button, textarea, summary):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  :is(button, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .generation-controls label { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-xs); }
   .prompt-label { display: block; margin-block-end: var(--space-2); }
   textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 100px; padding: var(--space-3); margin-block-end: var(--space-3); background: var(--input-well); }
-  summary { cursor: pointer; min-height: var(--control-target); align-content: center; font-size: var(--text-xs); overflow-wrap: anywhere; }
-  details { color: var(--fg-muted); }
   .context { margin-block-end: var(--space-3); }
   .tokens { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); }
   .tokens button { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { onMount } from "svelte";
   import Bar from "../lib/charts/Bar.svelte";
   import Select from "../lib/Select.svelte";
@@ -239,7 +239,7 @@
         max={Math.max(saeTrain.state.total, 1)}
         width={160}
         height={8}
-        color="var(--pillar-sae)"
+        color="var(--tint)"
       />
       <Button
         size="sm"

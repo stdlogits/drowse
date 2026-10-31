@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Context ribbon — a windowed strip of the current segment's tokens
   // around the inspected position.  Orientation + navigation in one:
   // tokens tint with the active highlight probe (through the shared

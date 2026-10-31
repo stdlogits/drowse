@@ -4,8 +4,8 @@
   import { profileCompareViewSchema } from "../lib/interfaceSchemas";
   import { ToolError } from "../lib/webmcp/types";
 
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { IconButton } from "@stdlogits/ledger";
   // Pairwise compare drawer — cross-layer cosine matrix between two
   // named steering profiles / probes. Two dropdowns pick from registered
   // profiles and active probes; the body renders an L_A × L_B heatmap akin to
@@ -164,7 +164,7 @@
         {/if}
       </div>
     </div>
-    <DrawerCloseButton onclick={onClose} />
+    <IconButton icon="close" label="Close" onclick={onClose} />
   </header>
 
   <div class="picker-row">
@@ -252,7 +252,7 @@
     background: transparent;
     color: var(--fg);
     font-family: var(--font-ui);
-    font-size: var(--text);
+    font-size: var(--text-base);
   }
 
   .drawer-header {

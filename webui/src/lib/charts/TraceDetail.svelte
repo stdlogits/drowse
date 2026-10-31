@@ -1,6 +1,6 @@
 <script lang="ts">
   import Slider from "../Slider.svelte";
-  import MorphText from "../ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import Sparkline from "./Sparkline.svelte";
   import { chartValue } from "./chartValues";
   let { points, percentage = false }: { points: (number | null)[]; percentage?: boolean } = $props();

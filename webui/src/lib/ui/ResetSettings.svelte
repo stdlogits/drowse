@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "./MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import Button from "./Button.svelte";
   import { genStatus } from "../stores/chat.svelte";
   import { modelDefaultsState } from "../stores/sampling.svelte";

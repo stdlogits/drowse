@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Compact supporting facts shared by token-drilldown cards. These are
   // evidence below the main meter, not a second headline, so the treatment
   // stays quiet and identical for geometry distances and SAE metadata.
