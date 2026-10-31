@@ -39,8 +39,11 @@ from __future__ import annotations
 
 import inspect
 import math
-from collections.abc import Mapping
-from dataclasses import dataclass
+import threading
+import weakref
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from dataclasses import dataclass, replace
 from typing import Any, Literal, cast
 
 import torch
@@ -142,6 +145,8 @@ class NormSpec:
 class AttentionSpec:
     """A block's causal softmax attention (see the module docstring)."""
 
+    #: The attention module itself (``self_attn``).
+    module: nn.Module
     q: nn.Linear
     k: nn.Linear
     #: ``None``: the value is ``k``'s raw output (before ``k_norm`` and RoPE).
@@ -259,8 +264,43 @@ class ModelSpec:
 
 # -- discovery -------------------------------------------------------------------
 
+#: One discovered spec per live model, keyed weakly so a dropped model takes
+#: its spec with it.  The value pins the model's submodules (never the model
+#: itself) with their classes: a replaced submodule or a swapped class reads
+#: as a different structure and is discovered again.
+_SPECS: weakref.WeakKeyDictionary[nn.Module, tuple[tuple[tuple[nn.Module, type], ...], ModelSpec]] = (
+    weakref.WeakKeyDictionary()
+)
+_SPECS_LOCK = threading.Lock()
+
+
+def _structure(model: nn.Module) -> tuple[tuple[nn.Module, type], ...]:
+    return tuple(
+        (module, type(module)) for name, module in model.named_modules() if name
+    )
+
+
 def model_spec(model: PreTrainedModel) -> ModelSpec:
-    """Describe ``model``'s dense decoder, or raise :class:`UnsupportedBlockError`."""
+    """Describe ``model``'s dense decoder, or raise :class:`UnsupportedBlockError`.
+
+    Discovery runs small forwards on the model's own device (each norm, MLP
+    and the embedding on a probe), so the first call for a model is model
+    work: make it inside the session's exclusive section.  The result is
+    memoized per live model; later calls return the same spec without
+    touching the device unless a submodule was replaced since.
+    """
+    structure = _structure(model)
+    with _SPECS_LOCK:
+        cached = _SPECS.get(model)
+    if cached is not None and cached[0] == structure:
+        return cached[1]
+    spec = _discover(model)
+    with _SPECS_LOCK:
+        _SPECS[model] = (structure, spec)
+    return spec
+
+
+def _discover(model: PreTrainedModel) -> ModelSpec:
     layers = get_layers(model)
     owner = _block_list_owner(model, layers)
     config = text_config(model)
@@ -607,6 +647,7 @@ def _attention_spec(
         return _norm_spec(module, head_dim, f"attention {name}", layer=index, like=q)
 
     return AttentionSpec(
+        module=attn,
         q=q, k=k, v=v, o=o,
         q_norm=head_norm("q_norm"),
         k_norm=head_norm("k_norm"),
@@ -703,6 +744,41 @@ def rotary_tables(
     return cos[0, :, None].float(), sin[0, :, None].float()
 
 
+def _visible(attn: AttentionSpec, positions: torch.Tensor) -> torch.Tensor:
+    """``[T, T]``: which key positions each query position attends to."""
+    i = positions[:, None]
+    j = positions[None, :]
+    visible = j <= i
+    if attn.sliding_window is not None:
+        visible = visible & (j > i - attn.sliding_window)
+    return visible
+
+
+def _attention_heads(
+    spec: ModelSpec, block: BlockSpec, h: torch.Tensor, positions: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """``(q, k, v)``, ``[T, n_heads, head_dim]`` in ``h``'s dtype.
+
+    After the head norms and RoPE; keys and values repeated per query head.
+    """
+    T = h.shape[0]
+    attn = block.attn
+    a = _apply_norm(block.attn_in_norm, h)
+    q = _apply_linear(attn.q, a).view(T, attn.n_heads, attn.head_dim)
+    k_raw = _apply_linear(attn.k, a).view(T, attn.n_kv_heads, attn.head_dim)
+    v = k_raw if attn.v is None else _apply_linear(attn.v, a).view(T, attn.n_kv_heads, attn.head_dim)
+    q, k, v = _apply_norm(attn.q_norm, q), _apply_norm(attn.k_norm, k_raw), _apply_norm(attn.v_norm, v)
+    cos, sin = rotary_tables(spec, block, positions)
+    cos, sin = cos.to(h.dtype), sin.to(h.dtype)
+    q = q * cos + _rotate_half(q) * sin
+    k = k * cos + _rotate_half(k) * sin
+    return (
+        q,
+        k.repeat_interleave(attn.group_size, dim=1),
+        v.repeat_interleave(attn.group_size, dim=1),
+    )
+
+
 def block_forward(
     spec: ModelSpec, block: BlockSpec, h: torch.Tensor,
     positions: torch.Tensor | None = None,
@@ -717,29 +793,15 @@ def block_forward(
     dtype = torch.promote_types(h.dtype, torch.float32)
     h = h.to(dtype)
     T = h.shape[0]
-    if positions is None:
-        positions = torch.arange(T, device=h.device)
+    positions = (
+        torch.arange(T, device=h.device) if positions is None else positions.to(h.device)
+    )
     attn = block.attn
-    a = _apply_norm(block.attn_in_norm, h)
-    q = _apply_linear(attn.q, a).view(T, attn.n_heads, attn.head_dim)
-    k_raw = _apply_linear(attn.k, a).view(T, attn.n_kv_heads, attn.head_dim)
-    v = k_raw if attn.v is None else _apply_linear(attn.v, a).view(T, attn.n_kv_heads, attn.head_dim)
-    q, k, v = _apply_norm(attn.q_norm, q), _apply_norm(attn.k_norm, k_raw), _apply_norm(attn.v_norm, v)
-    cos, sin = rotary_tables(spec, block, positions.to(h.device))
-    cos, sin = cos.to(dtype), sin.to(dtype)
-    q = q * cos + _rotate_half(q) * sin
-    k = k * cos + _rotate_half(k) * sin
-    k = k.repeat_interleave(attn.group_size, dim=1)
-    v = v.repeat_interleave(attn.group_size, dim=1)
+    q, k, v = _attention_heads(spec, block, h, positions)
     scores = torch.einsum("ihd,jhd->hij", q, k) * attn.scaling
     if attn.logit_softcap is not None:
         scores = attn.logit_softcap * torch.tanh(scores / attn.logit_softcap)
-    i = positions.to(h.device)[:, None]
-    j = positions.to(h.device)[None, :]
-    visible = j <= i
-    if attn.sliding_window is not None:
-        visible = visible & (j > i - attn.sliding_window)
-    scores = scores.masked_fill(~visible, float("-inf"))
+    scores = scores.masked_fill(~_visible(attn, positions), float("-inf"))
     o = torch.einsum("hij,jhd->ihd", scores.softmax(-1), v).reshape(T, -1)
     mid = h + _apply_norm(block.attn_out_norm, _apply_linear(attn.o, o))
     return mid, mlp_forward(block, mid)
@@ -755,10 +817,25 @@ def mlp_forward(block: BlockSpec, mid: torch.Tensor) -> torch.Tensor:
     return (mid + _apply_norm(block.mlp_out_norm, z)) * block.scale()
 
 
-#: How far a block's own forward may sit from its description, relative to
-#: the residual update being checked (bf16 compute lands near 1e-2; a missing
-#: term or a different RoPE layout lands near 1).
-_VERIFY_RTOL = 5e-2
+# -- verification ------------------------------------------------------------------
+
+#: How far a block's replay may sit from its description, relative to the
+#: residual update being checked.  The replay runs the block's own module at
+#: full fp32 on the call it received (rotary tables sharpened, TF32 off), so
+#: the model's precision drops out: a faithful description of a bf16
+#: SmolLM2, Qwen3 or Gemma 3 lands below 1e-5 on CPU and MPS; a missing
+#: term, another RoPE layout or an unapplied softcap lands near 1.
+_VERIFY_RTOL = 1e-3
+#: The softcap probe scales a block's attention scores until the largest
+#: reaches this (and at least four times a described cap): far past where
+#: any cap binds, so a cap shows whether or not the probe tokens reach it.
+_CAP_PROBE_SCORE = 256.0
+#: Attention implementations a block replays under as the model ran it.
+#: Any other (flash kernels refuse fp32) replays eager under the
+#: description's causal window; the probe is shorter than any real window.
+_REPLAYABLE = frozenset({"eager", "sdpa"})
+
+_Call = tuple[tuple[Any, ...], dict[str, Any]]
 
 
 def verify_model_spec(
@@ -766,73 +843,259 @@ def verify_model_spec(
 ) -> ModelSpec:
     """Hold every block's own forward to its description, or refuse.
 
-    Runs the model once on ``length`` probe tokens with hooks on each block
-    and checks, per block, that :func:`block_forward` reproduces the
-    attention update (``mid − h``) from the block's real input and
-    :func:`mlp_forward` the output from its real ``mid``.  A forward term
-    the structure does not show (an interleaved RoPE layout, an extra
-    multiplier) raises :class:`UnsupportedBlockError` naming the block.
+    Runs the model once on ``length`` probe tokens and records each block's
+    call (its input and the keyword arguments the model passes it: rotary
+    tables, mask).  Each block's own module is then replayed at fp32 on its
+    call, and :func:`block_forward` must reproduce the replay's attention
+    update (``mid − h``) and :func:`mlp_forward` its output from the replay's
+    ``mid``.  Replaying separates structure from precision: a bf16 model's
+    rounding (worst in channels with massive activations) is not a term the
+    description lacks.  A second replay scales the block's attention scores
+    far past any cap and holds it to the description at the same scale, so
+    a softcap the forward does not apply (Gemma 3 never passes its
+    ``attn_logit_softcapping``; SDPA ignores one) is refused, as is a cap
+    the forward applies undescribed.  A forward term the structure does not
+    show (an interleaved RoPE layout, an extra multiplier) raises
+    :class:`UnsupportedBlockError` naming the block.
 
-    It runs a forward, so the caller holds the model exclusively and
-    unsteered (steering hooks would change the outputs it compares).
-    Transport fits call it; static unit reads need only :func:`model_spec`.
+    It runs forwards and briefly rescales each attention module, so the
+    caller holds the model exclusively and unsteered (steering hooks would
+    change the outputs it compares).  Transport fits call it.
     """
     spec = model_spec(model) if spec is None else spec
     device = spec.embed.weight.device
     gen = torch.Generator().manual_seed(0)
     ids = torch.randint(3, spec.vocab, (1, int(length)), generator=gen).to(device)
-    inputs: dict[int, torch.Tensor] = {}
-    mids: dict[int, torch.Tensor] = {}
-    outs: dict[int, torch.Tensor] = {}
-
-    def first_tensor(value: Any) -> torch.Tensor:
-        return value[0] if isinstance(value, tuple) else value
+    calls: dict[int, _Call] = {}
 
     handles = []
     for block in spec.blocks:
-        index = block.layer
 
-        def take_input(_m: nn.Module, args: tuple[Any, ...], kwargs: dict[str, Any], index: int = index) -> None:
-            inputs[index] = (args[0] if args else kwargs["hidden_states"])[0].detach()
+        def take_call(
+            _m: nn.Module, args: tuple[Any, ...], kwargs: dict[str, Any],
+            index: int = block.layer,
+        ) -> None:
+            calls[index] = (_widen(args), _widen(kwargs))
 
-        def take_mid(_m: nn.Module, args: tuple[Any, ...], index: int = index) -> None:
-            mids[index] = args[0][0].detach()
-
-        def take_output(_m: nn.Module, _a: Any, output: Any, index: int = index) -> None:
-            outs[index] = first_tensor(output)[0].detach()
-
-        handles.append(block.module.register_forward_pre_hook(take_input, with_kwargs=True))
-        handles.append(block.mlp_in_norm.module.register_forward_pre_hook(take_mid))
-        handles.append(block.module.register_forward_hook(take_output))
+        handles.append(block.module.register_forward_pre_hook(take_call, with_kwargs=True))
     try:
         with torch.no_grad():
             model(ids, use_cache=False)
     finally:
         for handle in handles:
             handle.remove()
+    with _full_fp32(device):
+        tables = _exact_rotary_tables(spec, int(length), device)
+        for block in spec.blocks:
+            _verify_block(spec, block, _sharpen_rotary(calls[block.layer], tables))
+    return spec
 
-    def relative(error: torch.Tensor, scale: torch.Tensor) -> float:
-        return float(error.float().norm() / scale.float().norm().clamp_min(1e-12))
 
-    for block in spec.blocks:
-        h, mid, out = inputs[block.layer], mids[block.layer], outs[block.layer]
-        with torch.no_grad():
-            mid_ref, _ = block_forward(spec, block, h)
-            out_ref = mlp_forward(block, mid)
-        mid_err = relative(mid_ref - mid.to(mid_ref.dtype), mid.to(mid_ref.dtype) - h.to(mid_ref.dtype))
-        out_err = relative(
-            out_ref - out.to(out_ref.dtype),
-            out.to(out_ref.dtype) - mid.to(out_ref.dtype) * block.scale(),
+@contextmanager
+def _full_fp32(device: torch.device) -> Iterator[None]:
+    """Full-precision fp32 matmuls on CUDA for the replays (a compiled
+    session leaves TF32 on, whose ~1e-3 rounding the softcap probe's large
+    scores would amplify); restores the caller's setting."""
+    if device.type != "cuda":
+        yield
+        return
+    previous = torch.get_float32_matmul_precision()
+    torch.set_float32_matmul_precision("highest")
+    try:
+        yield
+    finally:
+        torch.set_float32_matmul_precision(previous)
+
+
+#: How far a recorded rotary table may sit from the fp32 table it rounds
+#: (bf16 rounds a value in [−1, 1] by at most 2⁻⁹).
+_TABLE_ATOL = 2.0 ** -7
+
+
+def _exact_rotary_tables(
+    spec: ModelSpec, length: int, device: torch.device,
+) -> list[tuple[torch.Tensor, torch.Tensor]]:
+    """The model's rotary tables for the probe positions, at fp32: one per table it keeps."""
+    probe = torch.zeros(1, length, 1, device=device)
+    positions = torch.arange(length, device=device)[None]
+    kinds: Sequence[str | None] = (
+        sorted({b.attn.rope_table for b in spec.blocks if b.attn.rope_table is not None})
+        if spec.rotary_takes_layer_type else [None]
+    )
+    tables = []
+    with torch.no_grad():
+        for kind in kinds:
+            cos, sin = (
+                spec.rotary(probe, positions) if kind is None
+                else spec.rotary(probe, positions, kind)
+            )
+            tables.append((cos.float(), sin.float()))
+    return tables
+
+
+def _sharpen_rotary(
+    call: _Call, tables: list[tuple[torch.Tensor, torch.Tensor]],
+) -> _Call:
+    """``call`` with its recorded rotary tables replaced by the fp32 tables they round.
+
+    A bf16 model hands its blocks bf16 ``(cos, sin)``; that rounding shifts
+    every score by up to ~0.4% of its size, which the softcap probe's large
+    scores would turn into noise.  The replacement is the model's own table
+    (the one the recorded table rounds, by nearest match), never the
+    description's choice, so a block the description maps to the wrong
+    table still fails.  A call without recognizable tables is unchanged.
+    """
+    args, kwargs = call
+    recorded = kwargs.get("position_embeddings")
+    if not (
+        isinstance(recorded, tuple) and len(recorded) == 2
+        and all(isinstance(t, torch.Tensor) for t in recorded)
+    ):
+        return call
+    best: tuple[float, tuple[torch.Tensor, torch.Tensor]] | None = None
+    for cos, sin in tables:
+        if cos.shape != recorded[0].shape or sin.shape != recorded[1].shape:
+            continue
+        gap = max(
+            float((cos.to(recorded[0]) - recorded[0]).abs().max()),
+            float((sin.to(recorded[1]) - recorded[1]).abs().max()),
         )
-        if max(mid_err, out_err) > _VERIFY_RTOL:
-            half = "attention" if mid_err > _VERIFY_RTOL else "MLP"
+        if gap <= _TABLE_ATOL and (best is None or gap < best[0]):
+            best = (gap, (cos.to(recorded[0]), sin.to(recorded[1])))
+    if best is None:
+        return call
+    return args, {**kwargs, "position_embeddings": best[1]}
+
+
+def _widen(value: Any) -> Any:
+    """``value`` with every floating tensor copied at fp32 (fp64 stays fp64)."""
+    if isinstance(value, torch.Tensor):
+        if not value.is_floating_point():
+            return value
+        return value.detach().to(torch.promote_types(value.dtype, torch.float32), copy=True)
+    if type(value) is tuple:
+        return tuple(_widen(item) for item in value)
+    if type(value) is list:
+        return [_widen(item) for item in value]
+    if type(value) is dict:
+        return {key: _widen(item) for key, item in value.items()}
+    return value
+
+
+def _relative(error: torch.Tensor, scale: torch.Tensor) -> float:
+    return float(error.norm() / scale.norm().clamp_min(1e-12))
+
+
+def _verify_block(spec: ModelSpec, block: BlockSpec, call: _Call) -> None:
+    args, kwargs = call
+    h = (args[0] if args else kwargs["hidden_states"])[0]
+    params = {
+        name: _widen(tensor)
+        for name, tensor in (*block.module.named_parameters(), *block.module.named_buffers())
+    }
+    mid, out = _replay(block, params, call, h)
+    _check_attention(spec, block, h, mid)
+    with torch.no_grad():
+        error = _relative(mlp_forward(block, mid) - out, out - mid * block.scale())
+    if error > _VERIFY_RTOL:
+        raise UnsupportedBlockError(
+            f"the block's MLP forward differs from its description (relative "
+            f"error {error:.2g}); it computes a term the description has no "
+            "field for",
+            layer=block.layer,
+        )
+    # Scale the scores far past any cap and replay again: a cap the probe
+    # tokens never reach still shows, applied or not.
+    attn = block.attn
+    positions = torch.arange(h.shape[0], device=h.device)
+    with torch.no_grad():
+        q, k, _v = _attention_heads(spec, block, h, positions)
+        peak = float((torch.einsum("ihd,jhd->hij", q, k) * attn.scaling).abs().max())
+    boost = max(_CAP_PROBE_SCORE, 4.0 * (attn.logit_softcap or 0.0)) / max(peak, 1e-6)
+    if boost > 1.0:
+        boosted = replace(block, attn=replace(attn, scaling=attn.scaling * boost))
+        mid, _out = _replay(block, params, call, h, boost=boost)
+        _check_attention(spec, boosted, h, mid, boost=boost)
+
+
+def _check_attention(
+    spec: ModelSpec, block: BlockSpec, h: torch.Tensor, mid: torch.Tensor,
+    *, boost: float = 1.0,
+) -> None:
+    """Refuse unless :func:`block_forward` reproduces the replay's ``mid``."""
+    with torch.no_grad():
+        error = _relative(block_forward(spec, block, h)[0] - mid, mid - h)
+        if error <= _VERIFY_RTOL:
+            return
+        cap = block.attn.logit_softcap
+        uncapped = replace(block, attn=replace(block.attn, logit_softcap=None))
+        if cap is not None and _relative(
+            block_forward(spec, uncapped, h)[0] - mid, mid - h,
+        ) <= _VERIFY_RTOL:
             raise UnsupportedBlockError(
-                f"the block's {half} forward differs from its description "
-                f"(relative error {max(mid_err, out_err):.2g}); it computes a term "
-                "the description has no field for",
+                "the block's attention applies no logit softcap, though its "
+                f"'attn_logit_softcapping' is {cap:g}",
                 layer=block.layer,
             )
-    return spec
+    where = "" if boost == 1.0 else f" with its scores scaled {boost:.3g}x"
+    raise UnsupportedBlockError(
+        f"the block's attention forward differs from its description{where} "
+        f"(relative error {error:.2g}); it computes a term the description "
+        "has no field for",
+        layer=block.layer,
+    )
+
+
+def _replay(
+    block: BlockSpec, params: dict[str, torch.Tensor], call: _Call,
+    h: torch.Tensor, *, boost: float = 1.0,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """``(mid, out)`` of the block's own module on a recorded ``call`` at fp32.
+
+    ``boost`` multiplies the attention module's ``scaling`` for the call.
+    """
+    args, kwargs = call
+    mids: list[torch.Tensor] = []
+
+    def take_mid(_m: nn.Module, inputs: tuple[Any, ...]) -> None:
+        mids.append(inputs[0][0])
+
+    handle = block.mlp_in_norm.module.register_forward_pre_hook(take_mid)
+    try:
+        with torch.no_grad(), _replay_attention(block, kwargs, h, boost) as call_kwargs:
+            output = torch.func.functional_call(block.module, params, args, call_kwargs)
+    finally:
+        handle.remove()
+    out = output[0] if isinstance(output, tuple) else output
+    return mids[-1], out[0]
+
+
+@contextmanager
+def _replay_attention(
+    block: BlockSpec, kwargs: dict[str, Any], h: torch.Tensor, boost: float,
+) -> Iterator[dict[str, Any]]:
+    """The attention module set up for a replay; yields the call's kwargs."""
+    attn = block.attn.module
+    config = getattr(attn, "config", None)
+    implementation = getattr(config, "_attn_implementation", None)
+    call_kwargs = dict(kwargs)
+    swap = isinstance(implementation, str) and implementation not in _REPLAYABLE
+    if swap:
+        visible = _visible(block.attn, torch.arange(h.shape[0], device=h.device))
+        call_kwargs["attention_mask"] = torch.zeros(
+            1, 1, *visible.shape, dtype=h.dtype, device=h.device,
+        ).masked_fill(~visible, torch.finfo(h.dtype).min)
+    scaling = getattr(attn, "scaling")
+    try:
+        if swap:
+            setattr(config, "_attn_implementation", "eager")
+        if boost != 1.0:
+            setattr(attn, "scaling", scaling * boost)
+        yield call_kwargs
+    finally:
+        setattr(attn, "scaling", scaling)
+        if swap:
+            setattr(config, "_attn_implementation", implementation)
 
 
 def _embed_scale(embed: nn.Embedding) -> float:

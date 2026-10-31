@@ -154,7 +154,7 @@ set session privates.
 | `artifacts.py` | `author_manifold` (a two-node discover folder under `local/`, fitted for `MODEL`), `write_fitted_manifold`. |
 | `decode.py` | `FakeLogitsModel`/`make_logits_model`, `scripted_model`/`scripted_logits`, `NoCacheModel`, `StopTokenizer`, `CharTokenizer`, for decode-loop, scoring, naturalness and joint-logprob tests. |
 | `jlens_toys.py` | `frozen_toy(n_layers)`: an HF-shaped frozen block stack for lens math, with its own `CharTokenizer`. |
-| `blocks.py` | `tiny_dense_model(model_type)`: a float64 tiny model of each dense family (`DENSE_FAMILIES`) with every weight, norm and scalar re-drawn and windows that bind; `spec_forward(spec, ids)`: mids, block outputs and logits from a `ModelSpec` alone, the oracle for `BlockSpec` and transport layer maps. |
+| `blocks.py` | `tiny_dense_model(model_type)`: a float64 tiny model of each dense family (`DENSE_FAMILIES`) with every weight, norm and scalar re-drawn and windows that bind; `default_init_model(model_type, seed=, dtype=)`: the same architecture at its default initialization in a low precision (bf16), the rounding a verification must not take for a term; `spec_forward(spec, ids)`: mids, block outputs and logits from a `ModelSpec` alone, the oracle for `BlockSpec` and transport layer maps. |
 | `server.py` | `mock_session`, `script_generate`, `StubSession` (below). |
 | `cli.py` | `FakeSession`, `install_fake_session` (patches `DrowseSession.from_pretrained`, the CLI's one construction seam, so the real narration, YAML defaults and close-on-exit run), `poison_session` (any model load raises). |
 | `chat_templates.py` | Per-family templates emitting each family's exact role-header bytes, and `FakeTokenizer` (Jinja render, whitespace tokens). |

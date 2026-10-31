@@ -174,7 +174,7 @@ RMSNorms before RoPE, scores `q·k · scaling` capped by
 |---|---|
 | `attn_in_norm`, `mlp_in_norm` | the pre-norms (`NormSpec`: module, `eps`, `offset` 0 for `w` or 1 for `1 + w`, `weighted`) |
 | `attn_out_norm`, `mlp_out_norm` | Gemma's sandwich norms; `None` elsewhere |
-| `attn` (`AttentionSpec`) | `q`/`k`/`v`/`o` (`nn.Linear`; `v is None` means the value is `k`'s raw output, Gemma 4's full layers), `q_norm`/`k_norm`/`v_norm`, `n_heads`, `n_kv_heads`, `head_dim`, `scaling`, `sliding_window`, `logit_softcap`, `rope_table` (the layer type a per-type rotary table takes), `qkv_bias`, `o_bias`, `kv_head(h)` |
+| `attn` (`AttentionSpec`) | `module` (the attention itself), `q`/`k`/`v`/`o` (`nn.Linear`; `v is None` means the value is `k`'s raw output, Gemma 4's full layers), `q_norm`/`k_norm`/`v_norm`, `n_heads`, `n_kv_heads`, `head_dim`, `scaling`, `sliding_window`, `logit_softcap`, `rope_table` (the layer type a per-type rotary table takes), `qkv_bias`, `o_bias`, `kv_head(h)` |
 | `mlp` (`MLPSpec`) | `gate`/`up`/`down`, `act` (`silu` or `gelu_tanh`), `d_ff`, `bias` |
 | `scalar` | Gemma 4's `layer_scalar` (`scale()` is 1.0 without one) |
 
@@ -192,6 +192,13 @@ a layer type), `n_layers`, `d_model`, `d_ff` (the widest block's) and `vocab`.
   matching its output, and each gated MLP is checked to compute exactly
   `down(act(gate(x)) * up(x))`. Specs hold live module references; weights are
   read when used.
+- **Discovery is model work.** Those probes run on the model's own device, so
+  the first `model_spec(model)` for a model happens inside the session's
+  exclusive section. It is memoized per live model (a `WeakKeyDictionary`
+  whose value pins the submodules and their classes, never the model), so
+  later calls return the same spec with no device work; a replaced submodule
+  or a swapped class is discovered again. Unit reads copy weight rows to the
+  host, which is device work too: lanes that serve them hold the guard.
 - **Refusals** raise `UnsupportedBlockError` (422, in `errors.py`) naming the
   layer (`layer` is `None` for the model-level part) and what was found: a
   mixture-of-experts MLP or block, a fused gate-up or qkv projection, a
@@ -208,12 +215,27 @@ a layer type), `n_layers`, `d_model`, `d_ff` (the widest block's) and `vocab`.
   (query scaling) are refused.
 - **Verification.** A forward term the structure does not show is invisible
   to discovery (helium is llama-shaped but rotates RoPE pairs interleaved).
-  `verify_model_spec(model)` runs the model once on probe tokens and holds
-  every block to `block_forward` (the formula above, fp32, from the spec
-  alone): the attention update `mid − h` from the block's real input and the
-  output from its real `mid`, within 5% of the update. It runs a forward, so
-  the caller holds the model exclusively and unsteered. Transport fits call
-  it; static unit reads need only `model_spec`.
+  `verify_model_spec(model)` runs the model once on probe tokens, records
+  each block's call (input, rotary tables, mask), and replays each block's
+  own module at fp32 on it (`torch.func.functional_call` with upcast weights;
+  the recorded bf16 rotary tables swapped for the model's fp32 table they
+  round; TF32 off). `block_forward` (the formula above, from the spec alone)
+  must reproduce the replay's attention update `mid − h` and `mlp_forward`
+  its output from the replay's `mid`, within 1e-3 of the update. Holding
+  the description to the model's own bf16 forward instead mistook rounding
+  for a term (SmolLM2-360M missed by 19% at layer 4, where massive
+  activations dwarf the update); the replay lands below 1e-5. A second
+  replay scales each block's scores (its `scaling`) until the largest
+  reaches 256 and at least 4× a described cap, so a softcap shows whether
+  or not the probe reaches it: `logit_softcap` is read from
+  `attn_logit_softcapping`, but Gemma 3 never passes that attribute to its
+  attention (and SDPA ignores one), so a described cap the forward does not
+  apply is refused, as is one it applies undescribed. Flash kernels cannot
+  run fp32; their blocks replay eager under the description's causal
+  window, which no probe length reaches on a real model. Verification runs
+  forwards and briefly rescales attention modules, so the caller holds the
+  model exclusively and unsteered. Transport fits call it; unit reads need
+  only `model_spec`.
 
 Unit directions (`units.py`) are fp32 CPU tensors, with neuron-lens's
 definitions. Neuron `n` is coordinate `n` of the down projection's input.

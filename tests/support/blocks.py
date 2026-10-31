@@ -6,6 +6,10 @@ weight, norm and per-layer scalar at random, so a description that drops a
 gain, an offset or a scalar changes the numbers.  Sliding windows are short
 enough to bind on an 8-token input.
 
+:func:`default_init_model` builds the same architectures at their own
+default initialization in a low precision (bf16), the case a verification
+must not mistake rounding for a term in.
+
 :func:`spec_forward` runs the embedding, every block's
 :func:`~drowse.model.blocks.block_forward` and the logits path from a
 :class:`~drowse.model.blocks.ModelSpec` alone.  Matching the model's own
@@ -22,7 +26,7 @@ import transformers
 
 from drowse.model.blocks import ModelSpec, block_forward
 
-__all__ = ["DENSE_FAMILIES", "spec_forward", "tiny_dense_model"]
+__all__ = ["DENSE_FAMILIES", "default_init_model", "spec_forward", "tiny_dense_model"]
 
 _TINY: dict[str, Any] = dict(
     vocab_size=64, hidden_size=32, intermediate_size=48, num_hidden_layers=3,
@@ -79,6 +83,29 @@ def tiny_dense_model(model_type: str, *, seed: int = 0, **overrides: Any) -> Any
             else:
                 tensor.copy_(0.3 * noise)
     return model
+
+
+def default_init_model(model_type: str, *, seed: int, dtype: torch.dtype) -> Any:
+    """A tiny ``model_type`` at its own default initialization, cast to ``dtype``.
+
+    The precision a GPU load runs at (bf16), with the small weights and
+    near-identity norms of a fresh model: its rounding, not its structure,
+    is what separates its forward from the fp32 description.  SDPA where
+    the family takes it, eager otherwise (the loader's ladder).
+    """
+    settings = {**_TINY, **DENSE_FAMILIES.get(model_type, {})}
+    config = transformers.AutoConfig.for_model(model_type, **settings)
+    with torch.random.fork_rng():
+        torch.manual_seed(seed)
+        try:
+            model = transformers.AutoModelForCausalLM.from_config(
+                config, attn_implementation="sdpa",
+            )
+        except ValueError:  # gemma2: no SDPA
+            model = transformers.AutoModelForCausalLM.from_config(
+                config, attn_implementation="eager",
+            )
+    return model.to(dtype).eval().requires_grad_(False)
 
 
 def spec_forward(

@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import copy
+import dataclasses
+import gc
 import math
-from typing import Any
+import weakref
+from typing import Any, cast
 
 import pytest
 import torch
@@ -19,7 +23,12 @@ from drowse.model.blocks import (
     model_spec,
     verify_model_spec,
 )
-from tests.support.blocks import DENSE_FAMILIES, spec_forward, tiny_dense_model
+from tests.support.blocks import (
+    DENSE_FAMILIES,
+    default_init_model,
+    spec_forward,
+    tiny_dense_model,
+)
 
 pytestmark = pytest.mark.filterwarnings("ignore::UserWarning")
 
@@ -267,6 +276,87 @@ def test_verify_refuses_a_forward_term_the_structure_hides() -> None:
     with pytest.raises(UnsupportedBlockError, match="attention forward differs") as info:
         verify_model_spec(model, spec)
     assert info.value.layer == 0
+
+
+@pytest.mark.parametrize("seed", [0, 1, 2])
+@pytest.mark.parametrize("family", sorted(DENSE_FAMILIES))
+def test_verify_accepts_default_init_bf16_models(family: str, seed: int) -> None:
+    """bf16 rounding is not a term: a fresh bf16 model of each family verifies.
+
+    Held to its bf16 forward, an fp32 description missed by 5-20% of the
+    update on these seeds (mistral, qwen2, qwen3) and on real checkpoints
+    (SmolLM2-360M, Qwen3-0.6B); the fp32 replay separates the two.
+    """
+    model = default_init_model(family, seed=seed, dtype=torch.bfloat16)
+    spec = verify_model_spec(model)
+    assert len(spec.blocks) == len(get_layers(model))
+
+
+def test_verify_still_refuses_a_hidden_term_in_bf16() -> None:
+    """The replay does not loosen the check: helium in bf16 is still refused."""
+    model = tiny_dense_model("helium").to(torch.bfloat16)
+    with pytest.raises(UnsupportedBlockError, match="attention forward differs"):
+        verify_model_spec(model)
+
+
+@pytest.mark.parametrize("cap", [50.0, 2.0, 0.5])
+def test_verify_refuses_a_softcap_the_forward_does_not_apply(cap: float) -> None:
+    """Gemma 3 keeps ``attn_logit_softcapping`` but never passes it to attention.
+
+    A cap of 50 never binds on the probe's scores; the boosted replay
+    shows it anyway.
+    """
+    model = tiny_dense_model("gemma3_text", attn_logit_softcapping=cap)
+    assert model_spec(model).blocks[0].attn.logit_softcap == cap
+    with pytest.raises(UnsupportedBlockError, match="applies no logit softcap") as info:
+        verify_model_spec(model)
+    assert info.value.layer == 0
+
+
+def test_verify_refuses_a_cap_the_description_lacks() -> None:
+    """gemma2 caps its scores at 50; a description without the cap is refused."""
+    model = tiny_dense_model("gemma2")
+    spec = model_spec(model)
+    first = spec.blocks[0]
+    uncapped = dataclasses.replace(
+        spec, blocks=(
+            dataclasses.replace(first, attn=dataclasses.replace(first.attn, logit_softcap=None)),
+            *spec.blocks[1:],
+        ),
+    )
+    with pytest.raises(UnsupportedBlockError, match="attention forward differs") as info:
+        verify_model_spec(model, uncapped)
+    assert info.value.layer == 0
+    verify_model_spec(model, spec)
+    module: Any = first.attn.module
+    assert module.scaling == first.attn.scaling  # the probe restores the module
+
+
+def test_model_spec_is_memoized_per_live_model() -> None:
+    """Discovery runs device forwards once per model, not on every read."""
+    model = tiny_dense_model("llama")
+    norm = cast(nn.Module, get_layers(model)[0].input_layernorm)
+    probes: list[int] = []
+    handle = norm.register_forward_hook(lambda *_: probes.append(1))
+    try:
+        spec = model_spec(model)
+        assert probes == [1]
+        assert model_spec(model) is spec and block_specs(model) == list(spec.blocks)
+        assert probes == [1]
+    finally:
+        handle.remove()
+
+    # A replaced submodule is a different structure: discovered again.
+    layer: Any = get_layers(model)[2]
+    layer.input_layernorm = copy.deepcopy(layer.input_layernorm)
+    fresh = model_spec(model)
+    assert fresh is not spec and fresh.blocks[2].attn_in_norm.module is layer.input_layernorm
+
+    # The memo holds the model weakly.
+    ref = weakref.ref(model)
+    del model, layer, norm, spec, fresh
+    gc.collect()
+    assert ref() is None
 
 
 def test_a_duck_typed_mlp_with_an_extra_term_is_refused() -> None:
