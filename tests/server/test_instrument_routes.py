@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import math
+import re
 import threading
 import time
+import typing
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -485,6 +488,80 @@ class TestSourceSwitch:
         assert resp.status_code == 404
 
 
+#: The dashboard's WebMCP tools, whose ``drowse_prepare_instrument`` schema
+#: advertises each preparation's fields to agents.
+_SERVICE_TOOLS = Path(__file__).resolve().parents[2] / "webui/src/lib/webmcp/serviceTools.ts"
+_OPENERS = {"(": ")", "{": "}", "[": "]"}
+_QUOTES = "\"'`"
+
+
+def _close_of(text: str, start: int) -> int:
+    """The index of the bracket closing ``text[start]``, skipping strings."""
+    stack: list[str] = []
+    i = start
+    while i < len(text):
+        char = text[i]
+        if char in _QUOTES:
+            i = text.index(char, i + 1)
+        elif char in _OPENERS:
+            stack.append(_OPENERS[char])
+        elif stack and char == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i
+        i += 1
+    raise AssertionError(f"unbalanced bracket at {start}")
+
+
+def _top_level_entries(body: str) -> dict[str, str]:
+    """``{key: value text}`` of an object literal's body (a shorthand key
+    maps to itself)."""
+    entries: dict[str, str] = {}
+    start = i = 0
+    while i <= len(body):
+        if i == len(body) or body[i] == ",":
+            entry = body[start:i].strip()
+            if entry:
+                key, sep, value = entry.partition(":")
+                entries[key.strip()] = value.strip() if sep else key.strip()
+            start = i + 1
+        elif body[i] in _QUOTES:
+            i = body.index(body[i], i + 1)
+        elif body[i] in _OPENERS:
+            i = _close_of(body, i)
+        i += 1
+    return entries
+
+
+def _choices(value: str) -> tuple[str, ...]:
+    """The string choices a schema value offers (its ``choices(...)``)."""
+    found = re.search(r"choices\(([^)]*)\)", value)
+    return () if found is None else tuple(re.findall(r'"([^"]*)"', found.group(1)))
+
+
+def _webmcp_preparation_schemas() -> dict[tuple[str, str], dict[str, str]]:
+    """Each ``(family, operation)`` schema's top-level properties, read from
+    ``preparationSchemas()`` in serviceTools.ts."""
+    text = _SERVICE_TOOLS.read_text()
+    head = text.index("function preparationSchemas()")
+    body_start = text.index("{", head)
+    body = text[body_start:_close_of(text, body_start)]
+    schemas: dict[tuple[str, str], dict[str, str]] = {}
+    for match in re.finditer(r"objectSchema\(\{", body):
+        brace = match.end() - 1
+        props = _top_level_entries(body[brace + 1:_close_of(body, brace)])
+        key = (_choices(props["family"])[0], _choices(props["operation"])[0])
+        schemas[key] = {k: v for k, v in props.items() if k not in ("family", "operation")}
+    return schemas
+
+
+def _literals(annotation: Any) -> tuple[Any, ...]:
+    """Every ``Literal`` value inside a field annotation."""
+    if typing.get_origin(annotation) is typing.Literal:
+        return typing.get_args(annotation)
+    return tuple(value for arg in typing.get_args(annotation) for value in _literals(arg))
+
+
 # ---------------------------------------------------------------------------
 # POST/GET/DELETE /instruments/{family}/preparations
 # ---------------------------------------------------------------------------
@@ -507,6 +584,31 @@ class TestPreparations:
         for stale in stale_bodies:
             with pytest.raises(ValidationError):
                 LensFitRequest(**stale)
+
+    def test_the_webmcp_preparation_schemas_match_the_request_models(self) -> None:
+        """The dashboard's ``drowse_prepare_instrument`` tool advertises each
+        operation's fields, and the request models forbid extras: a stale
+        field (``prompt_batch``) or a missing choice fails every agent call."""
+        from drowse.server.instrument_routes import (
+            LensFetchRequest, LensFitRequest, SaeFetchRequest, SaeTrainRequest,
+        )
+
+        models: dict[tuple[str, str], Any] = {
+            ("lens", "fetch"): LensFetchRequest, ("lens", "fit"): LensFitRequest,
+            ("sae", "fetch"): SaeFetchRequest, ("sae", "train"): SaeTrainRequest,
+        }
+        schemas = _webmcp_preparation_schemas()
+        assert set(schemas) == set(models)
+        for key, props in schemas.items():
+            fields = models[key].model_fields
+            assert set(props) <= set(fields), (key, sorted(set(props) - set(fields)))
+            for name, value in props.items():
+                if _literals(fields[name].annotation):
+                    assert set(_choices(value)) == set(_literals(fields[name].annotation)), (key, name)
+        lens_fit = schemas[("lens", "fit")]
+        assert {"kind", "sites"} <= set(lens_fit)
+        for kind in _choices(lens_fit["kind"]):
+            LensFitRequest(kind=kind, sites=list(_choices(lens_fit["sites"])), seq_len=None)
 
     def test_geometry_404(self, session_and_client: Any) -> None:
         _session, client = session_and_client
