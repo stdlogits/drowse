@@ -1045,7 +1045,11 @@ export interface TreeRestoreResponse {
  * ``tokens`` are the node's raw tokens, each read at its producing forward;
  * ``sink_raw_index`` names the token produced at the attention sink
  * (position 0), whose values are 0 and never peak, or is ``None``.
- * ``traces`` maps each requested unit to one value per token.
+ * ``traces`` maps each requested unit to one value per token.  ``top``
+ * ranks only values read against a real neutral scale: a firing on a pole
+ * whose neutral ``act_top`` is 0 (it never fired that way on the neutral
+ * corpus) reads over the scale floor, appears in traces and populations,
+ * and never ranks.
  */
 export interface UnitActivityJSON {
   node_id: string;

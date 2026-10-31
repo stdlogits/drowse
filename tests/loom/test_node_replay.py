@@ -371,6 +371,20 @@ def test_unit_activity_population_layers_and_refusals(tiny_session: Any) -> None
         session.unit_activity(node.id, units=["neuron/L1n3", "neuron/L1n3"])
 
 
+def test_a_pole_silent_on_the_neutral_corpus_never_ranks(tiny_session: Any) -> None:
+    """Regression (SmolLM2): the top list was 49 neuron poles whose neutral
+    act_top is 0, reading act / 1e-6 (-554688 for neuron/L31n1094).  Such a
+    value has no scale: it stays in the trace, never in the ranking."""
+    session = tiny_session
+    node = _node(session, max_tokens=4)
+    stats = session.units.runtime.stats()
+    stats.layer(1).neuron_scale[:, 3] = 0.0
+    activity = session.unit_activity(node.id, top=1024, units=["neuron/L1n3"])
+    assert all(peak["unit"] != "neuron/L1n3" for peak in activity["top"])
+    assert max(abs(v) for v in activity["traces"]["neuron/L1n3"]) > 1e3
+    assert all(abs(peak["peak"]) < 1e3 for peak in activity["top"])
+
+
 def test_unit_activity_needs_unit_statistics(tiny_session: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from drowse.units.runtime import UnitsUnavailableError
 

@@ -30,7 +30,9 @@ unit activity are those of its producing forward, exactly as its loom row's
 live readings and the families' token readouts are.  Position 0 is the
 attention sink: unit activity there is out of distribution (the unit
 statistics never count it) and is reported as 0 and excluded from the peaks,
-as the units runtime excludes it.
+as the units runtime excludes it.  A firing on a pole that never fired on
+the neutral corpus (``act_top`` 0) has no scale to read against: it reads
+over the floor in traces and populations and never ranks among the peaks.
 
 Every result leaves the device in one transfer (the lens reads, the
 contributions, the patterns and the flags are packed together).
@@ -132,7 +134,11 @@ class UnitActivityJSON(TypedDict):
     ``tokens`` are the node's raw tokens, each read at its producing forward;
     ``sink_raw_index`` names the token produced at the attention sink
     (position 0), whose values are 0 and never peak, or is ``None``.
-    ``traces`` maps each requested unit to one value per token.
+    ``traces`` maps each requested unit to one value per token.  ``top``
+    ranks only values read against a real neutral scale: a firing on a pole
+    whose neutral ``act_top`` is 0 (it never fired that way on the neutral
+    corpus) reads over the scale floor, appears in traces and populations,
+    and never ranks.
     """
 
     node_id: str
@@ -861,9 +867,10 @@ class NodeReplayer:
         across the node by peak ``|value|`` with their peak token, the
         per-token trace of each unit in ``units``, and, with ``raw_index``,
         that token's whole population at ``layers`` (default every layer),
-        packed (:data:`POPULATION_ENCODING`).  Raises
-        ``UnitsUnavailableError`` (422) when the model has no unit
-        statistics and a 400 for a malformed or out-of-range unit.
+        packed (:data:`POPULATION_ENCODING`).  A value on a pole with no
+        neutral scale (``act_top`` 0) never ranks (it reads over the floor,
+        ``1e-6``).  Raises ``UnitsUnavailableError`` (422) when the model has
+        no unit statistics and a 400 for a malformed or out-of-range unit.
         """
         if not 1 <= int(top) <= 1024:
             raise RequestError("top must be in [1, 1024]")
@@ -916,14 +923,19 @@ class NodeReplayer:
         for ref in refs:
             kind = "neuron" if isinstance(ref, NeuronRef) else "head"
             picks.setdefault((kind, ref.layer), []).append(ref.index)
-        peaks: dict[tuple[str, int], tuple[torch.Tensor, torch.Tensor]] = {}
+        peaks: dict[tuple[str, int], tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
         traces: dict[tuple[str, int], torch.Tensor] = {}
         pops: dict[tuple[str, int], torch.Tensor] = {}
 
-        def reduce(key: tuple[str, int], values: torch.Tensor) -> None:
+        def reduce(key: tuple[str, int], values: torch.Tensor, scaled: torch.Tensor) -> None:
+            """``values`` ``[N, units]``; ``scaled`` marks the values read
+            against a real neutral scale (a pole that never fired on the
+            neutral corpus has none: its value is over the floor and never
+            ranks)."""
             values = values.masked_fill(sink[:, None], 0.0)
-            at = values.abs().argmax(dim=0)
-            peaks[key] = (values.gather(0, at[None])[0], at)
+            rank = values.abs().masked_fill(~scaled | sink[:, None], -1.0)
+            best, at = rank.max(dim=0)
+            peaks[key] = (values.gather(0, at[None])[0], at, best)
             chosen = picks.get(key)
             if chosen:
                 traces[key] = values[:, torch.tensor(chosen, device=values.device)]
@@ -932,20 +944,26 @@ class NodeReplayer:
 
         def neuron_hook(block: BlockSpec) -> Any:
             layer_stats = stats.layer(block.layer)
-            plus = layer_stats.neuron_scale[0].to(device).clamp_min(SCALE_FLOOR)
-            minus = layer_stats.neuron_scale[1].to(device).clamp_min(SCALE_FLOOR)
+            plus = layer_stats.neuron_scale[0].to(device)
+            minus = layer_stats.neuron_scale[1].to(device)
             last = block.layer == n - 1
 
             def hook(_m: nn.Module, args: tuple[Any, ...], _output: Any) -> None:
                 act = args[0][0].index_select(0, positions).float()              # [N, d_ff]
-                reduce(("neuron", block.layer), act / torch.where(act >= 0, plus, minus))
+                scale = torch.where(act >= 0, plus, minus)
+                reduce(
+                    ("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR),
+                    scale > SCALE_FLOOR,
+                )
                 if last:   # the forward's last tap: nothing after it is read
                     raise _Stop()
             return hook
 
         def head_hook(block: BlockSpec) -> Any:
             attn = block.attn
-            scale = stats.layer(block.layer).head_scale.to(device).clamp_min(SCALE_FLOOR)
+            raw_scale = stats.layer(block.layer).head_scale.to(device)
+            scale = raw_scale.clamp_min(SCALE_FLOOR)
+            scaled = (raw_scale > SCALE_FLOOR)[None, :]
             grams = _grams(block, device)
             out_norm = block.attn_out_norm
 
@@ -958,7 +976,7 @@ class NodeReplayer:
                     norm = norm * torch.rsqrt(
                         o.pow(2).mean(-1, keepdim=True) + float(out_norm.eps),
                     )
-                reduce(("head", block.layer), norm / scale)
+                reduce(("head", block.layer), norm / scale, scaled.expand_as(norm))
             return hook
 
         handles: list[Any] = []
@@ -973,16 +991,21 @@ class NodeReplayer:
             flat = _FlatUnits([(kind, L, int(peaks[(kind, L)][0].numel())) for kind, L in order])
             signed = torch.cat([peaks[key][0] for key in order])
             at = torch.cat([peaks[key][1] for key in order])
-            best = signed.abs().topk(min(top, int(signed.numel()))).indices
+            rank = torch.cat([peaks[key][2] for key in order])
+            best = rank.topk(min(top, int(rank.numel()))).indices
             pack = _Pack(device)
-            top_slots = (pack.add(signed[best]), pack.add(best), pack.add(at[best]))
+            top_slots = (
+                pack.add(signed[best]), pack.add(best), pack.add(at[best]), pack.add(rank[best]),
+            )
             trace_slots = {key: pack.add(value) for key, value in traces.items()}
             pop_slots = {key: pack.add(value) for key, value in pops.items()}
             host = pack.host()
 
-        values, flat_idx, peak_at = (_take(host, slot).tolist() for slot in top_slots)
+        values, flat_idx, peak_at, ranked = (_take(host, slot).tolist() for slot in top_slots)
         peaks_out: list[ActivityPeak] = []
-        for value, index, row in zip(values, flat_idx, peak_at, strict=True):
+        for value, index, row, key in zip(values, flat_idx, peak_at, ranked, strict=True):
+            if key < 0:      # no scaled, non-sink value anywhere: never ranks
+                continue
             kind, L, unit = flat.unit(int(index))
             peaks_out.append({
                 "unit": _unit_name(kind, L, unit),
