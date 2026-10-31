@@ -829,3 +829,32 @@ def test_generation_result_default_probe_readings_is_empty_dict():
     )
     assert result.probe_readings == {}
     assert result.to_dict()["probe_readings"] == {}
+
+
+def test_add_probe_on_an_unfitted_multi_node_manifold_refuses_before_fitting(
+    tiny_session: Any,
+) -> None:
+    """A bare probe selector naming an installed manifold that is not fitted
+    for this model falls back to extraction, which only fits one- and two-node
+    concepts.  For a multi-node manifold that used to fit every node, write the
+    fit and then fail to fold it with a bare ``ValueError`` (a scrubbed 500);
+    now it is a 400 with the fit command, and nothing is written."""
+    from drowse.base.paths import manifold_dir
+    from drowse.errors import ManifoldSpecError
+    from drowse.store import selectors
+    from drowse.store.manifold_authoring import create_discover_manifold_folder
+
+    folder = create_discover_manifold_folder(
+        "default", "moods", "Three moods.", fit_mode="pca",
+        node_corpora={"calm": ["Breathe."], "tense": ["Hurry!"], "glad": ["Yay."]},
+        hyperparams={"max_dim": 2, "var_threshold": 0.7},
+        node_kinds={"calm": "abstract", "tense": "abstract", "glad": "abstract"},
+    )
+    selectors.invalidate()
+    before = sorted(p.name for p in folder.iterdir())
+
+    with pytest.raises(ManifoldSpecError, match="has 3 nodes") as excinfo:
+        tiny_session.add_probe("moods")
+    assert excinfo.value.user_message()[0] == 400
+    assert "moods" not in tiny_session.monitor.probe_names
+    assert sorted(p.name for p in manifold_dir("default", "moods").iterdir()) == before

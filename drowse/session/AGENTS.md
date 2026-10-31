@@ -246,7 +246,10 @@ Monitor via `GeometryInstrument.adopt_whitener`.
 - Without `namespace`, an installed concept is fitted where it lives, never
   shadowed by a second `local/` copy. `force` on a bundled or hub-installed
   folder needs `namespace='local'` (`pack refresh` would restore its corpus); a
-  role mismatch on a reused folder is a `RequestError`.
+  role mismatch on a reused folder is a `RequestError`, and reusing a folder of
+  more than two nodes is a `ManifoldSpecError` (400) before any fit, since
+  only a one- or two-node fit folds to a vector. A probe attach on an
+  unfitted multi-node manifold reaches extraction last and gets that 400.
 - `sae` and `role` are exclusive. The returned name carries the variant tail
   (`:sae-<release>` / `:role-<slug>`); steer with that name.
 - Author-or-reuse is decided under the folder's manifest lock; corpus
