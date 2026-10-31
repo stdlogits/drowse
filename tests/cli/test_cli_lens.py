@@ -36,7 +36,8 @@ def test_ls_and_show_name_each_sources_kind_and_sites(capsys: pytest.CaptureFixt
     _sources()
     main(["lens", "ls", "org/model"])
     lines = capsys.readouterr().out.splitlines()
-    assert lines == ["* local:r  R-lens  out", "* local:s  S-lens  mid"]
+    # A mid-only S lens publishes unselected (``key.lens_selectable``).
+    assert lines == ["* local:r  R-lens  out", "  local:s  S-lens  mid"]
     main(["lens", "ls", "org/model", "-j"])
     rows = json.loads(capsys.readouterr().out)
     assert [(row["source"], row["family"], row["sites"]) for row in rows] == [
@@ -45,7 +46,7 @@ def test_ls_and_show_name_each_sources_kind_and_sites(capsys: pytest.CaptureFixt
     assert all("side" not in row for row in rows)
     main(["lens", "show", "org/model", "local:s"])
     shown = capsys.readouterr().out
-    assert "S-lens local:s for org/model (S family) (active)" in shown
+    assert "S-lens local:s for org/model (S family)" in shown and "(active)" not in shown
     assert "mid:      layers 0..0 (1)" in shown and "out:" not in shown
     main(["lens", "show", "org/model"])  # the active R-family source by default
     assert "R-lens local:r" in capsys.readouterr().out

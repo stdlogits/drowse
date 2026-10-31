@@ -99,7 +99,8 @@ def test_slens_atom_needs_an_s_lens_with_an_out_site(make_tiny_session: Any) -> 
     session = make_tiny_session(warm=False)
     with pytest.raises(LensNotFittedError, match="rs-s"):
         session.registry.ensure_profile_registered("slens/a")
-    _install_s_lens(session, sites=("mid",))
+    _install_s_lens(session, sites=("mid",))  # saved unselected (lens_selectable)
+    session.lens.select_source("local:s")
     # A mid-only S lens never stands in for out: steering injects at block outputs.
     with pytest.raises(LensNotFittedError, match="no 'out' site"):
         session.registry.ensure_profile_registered("slens/a")
@@ -119,6 +120,53 @@ def test_switching_the_s_source_drops_slens_directions_only(make_tiny_session: A
     assert "jlens/a" in session.registry.profiles
     session.lens.select_source("local:j")
     assert "jlens/a" not in session.registry.profiles
+
+
+def test_a_fit_drives_its_own_familys_residency_only(make_tiny_session: Any) -> None:
+    """Regression: the fitter evicted and adopted only the R family, so an S
+    or K fit left the S slot holding the replaced lens (and its ``slens/``
+    directions) until a later disk refresh.  Each fit now evicts and adopts
+    in its own family's slot and never touches the other's; a fit without
+    ``out`` touches neither."""
+    from drowse.base.source_registry import LOCAL, SourceRef
+    from drowse.lens.sources import LENS_SOURCES
+    from drowse.lens.store import lens_identity, load_local_lens_sidecar
+
+    session = make_tiny_session(warm=False)
+    lens = session.lens
+    lens.fit(_TINY_PROMPTS, kind="R", sites=("out",))
+    r_resident, r_identity = lens.resident_lens, lens.resident_identity
+    _install_s_lens(session, seed=3)  # hand-built local:s, selected
+    assert lens.resident_input() is not None
+    session.registry.ensure_profile_registered("jlens/a")
+    session.registry.ensure_profile_registered("slens/a")
+    session.add_probe("slens/a")
+    lens.probes["slens/a"]["layers"] = []
+
+    lens.fit(_TINY_PROMPTS, kind="S", force=True)
+    sidecar = load_local_lens_sidecar(session.model_id, "s")
+    assert sidecar is not None
+    # Adopted by the fit itself, without a resident_input() refresh.
+    assert lens.input_runtime.identity == lens_identity(sidecar)
+    assert lens.input_runtime.lens.sites == ("out", "mid")
+    assert lens.probes["slens/a"]["layers"] == list(range(len(session.layers)))
+    assert "slens/a" not in session.registry.profiles
+    # The R family is untouched.
+    assert lens.resident_lens is r_resident and lens.resident_identity == r_identity
+    assert "jlens/a" in session.registry.profiles
+
+    s_resident, s_identity = lens.input_runtime.lens, lens.input_runtime.identity
+    session.registry.ensure_profile_registered("slens/a")
+    lens.fit(_TINY_PROMPTS, kind="R", force=True)
+    assert lens.resident_identity != r_identity
+    assert lens.input_runtime.lens is s_resident and lens.input_runtime.identity == s_identity
+    assert "slens/a" in session.registry.profiles
+
+    # A fit without out selects and adopts nothing in either family.
+    lens.fit(_TINY_PROMPTS, kind="K", sites=("mid",))
+    assert LENS_SOURCES.active(session.model_id, "input") == SourceRef(LOCAL, "s")
+    assert lens.input_runtime.lens is s_resident
+    assert "slens/a" in session.registry.profiles
 
 
 # -- probes and gates -----------------------------------------------------------

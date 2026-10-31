@@ -618,9 +618,9 @@ def save_lens(
     forward and every other layer is written anew.  Every site the lens
     holds is written.  ``split_half`` (``{site: {layer: value}}``) is
     recorded for each site it covers at every layer.  Publication makes the
-    lens active for its side when it can serve that side
-    (:func:`~drowse.lens.key.lens_selectable`: an output-kind lens needs the
-    ``out`` site), and otherwise leaves the selection alone.
+    lens active for its family when it can serve that family
+    (:func:`~drowse.lens.key.lens_selectable`: a lens needs the ``out``
+    site), and otherwise leaves the selection alone.
     """
     from drowse.lens.sources import LENS_SOURCES
 
@@ -637,7 +637,7 @@ def save_lens(
                 checkpoint=False, name=name, reuse_layers=reuse_layers,
                 verified_reuse_proof=_verified_reuse_proof, split_half=split_half,
             )
-    if lens_selectable(lens.kind, lens.sites):
+    if lens_selectable(lens.sites):
         LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
     return path
 
@@ -1261,7 +1261,7 @@ def promote_lens_checkpoint(
         fsync_directory(directory)
         _cleanup_unreferenced_generations(directory)
         fsync_directory(directory)
-    if lens_selectable(durable["kind"], durable["sites"]):
+    if lens_selectable(durable["sites"]):
         LENS_SOURCES.select(model_id, SourceRef(LOCAL, name))
     return True
 

@@ -208,9 +208,10 @@ def _mid_only(kind: str) -> JacobianLens:
     return JacobianLens(mid=_mats(range(4), 2), n_prompts=5, d_model=_D, key=LensKey(kind))
 
 
-def test_publishing_an_output_lens_without_out_leaves_the_selection_alone() -> None:
-    """Every output read surface reads ``out``: an R lens fitted at ``mid``
-    only publishes, but never displaces the selected output source."""
+def test_publishing_a_lens_without_out_leaves_the_selection_alone() -> None:
+    """Both families' probes, gates and atoms read ``out``: a lens of either
+    family fitted at ``mid`` only publishes, but never displaces (or
+    becomes) its family's selected source."""
     save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("J")), _MODEL, _PROV)
     assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
     save_lens(_mid_only("R"), _MODEL, _PROV)
@@ -225,9 +226,15 @@ def test_publishing_an_output_lens_without_out_leaves_the_selection_alone() -> N
         seq_len=64, d_model=_D, model_fingerprint=cast(str, None),
     )
     assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
-    # An input lens at mid only is still its side's source.
+    # The S family follows the same rule: a mid-only S lens selects nothing,
+    # and never displaces an S-family source that holds out.
     save_lens(_mid_only("S"), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "s")
+    assert LENS_SOURCES.active(_MODEL, "input") is None
+    save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("K")), _MODEL, _PROV)
+    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "k")
+    save_lens(_mid_only("S"), _MODEL, _PROV)
+    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "k")
+    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
 
 
 def test_a_d_emb_v7_cannot_record_is_refused() -> None:

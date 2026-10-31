@@ -874,21 +874,16 @@ class TestPreparations:
         assert session.lens.live_layers is None
         session.lens.fit.assert_not_called()
 
-    def test_input_kind_noop_selects_only_its_own_side(
+    def test_input_kind_noop_selects_only_its_own_family(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
-        """An S/K no-op selects as a publishing input fit does: its own side
-        only.  It never turns live readout off or goes through
-        ``select_source``, which evicts the output resident."""
+        """An S/K no-op selects as a publishing S fit does: through
+        ``select_source`` into its own family's slot (which evicts only that
+        family's resident), never turning the R family's live readout off."""
         session, client = session_and_client
         monkeypatch.setattr(
             "drowse.lens.lifecycle.prove_lens_fit_noop",
             lambda *_a, **_k: {"n_prompts": 1},
-        )
-        selected: list[tuple[str, str]] = []
-        monkeypatch.setattr(
-            "drowse.lens.sources.use_lens_source",
-            lambda model_id, source: selected.append((model_id, source)),
         )
         session.lens.set_live(True)
         for kind in ("s", "k"):
@@ -899,9 +894,9 @@ class TestPreparations:
             assert resp.status_code == 202
             _wait_idle(client, "lens")
             assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
-        model_id = session.model_id
-        assert selected == [(model_id, "local:s"), (model_id, "local:k")]
-        session.lens.select_source.assert_not_called()
+        assert [c.args for c in session.lens.select_source.call_args_list] == [
+            ("local:s",), ("local:k",),
+        ]
         session.lens.fit.assert_not_called()
         assert session.lens.disable_calls == 0
         assert session.lens.enable_calls == [None]
@@ -910,10 +905,11 @@ class TestPreparations:
     def test_mid_only_output_fit_leaves_the_output_source_and_live_alone(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
-        """The live readout reads ``out``: an R fit at ``mid`` only, proven
-        or fitted, selects nothing and never toggles live readout."""
+        """Probes, atoms and the live readout read ``out``: a fit of either
+        family at ``mid`` only, proven or fitted, selects nothing and never
+        toggles live readout."""
         session, client = session_and_client
-        proofs: list[Any] = [{"n_prompts": 1}, None]
+        proofs: list[Any] = [{"n_prompts": 1}, None, {"n_prompts": 1}]
         monkeypatch.setattr(
             "drowse.lens.lifecycle.prove_lens_fit_noop",
             lambda *_a, **_k: proofs.pop(0),
@@ -922,10 +918,10 @@ class TestPreparations:
             "drowse.lens.corpus.stream_lens_corpus",
             lambda _n, _corpus, *, cancel_event=None: (["a long enough prompt."], "spec"),
         )
-        for _ in range(2):
+        for kind in ("r", "r", "s"):
             resp = client.post(
                 f"{_BASE}/lens/preparations",
-                json={"operation": "fit", "prompts": 1, "sites": ["mid"]},
+                json={"operation": "fit", "prompts": 1, "sites": ["mid"], "kind": kind},
             )
             assert resp.status_code == 202
             _wait_idle(client, "lens")

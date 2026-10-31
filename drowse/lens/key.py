@@ -101,15 +101,16 @@ def site_layers(kind: str, site: str, n_layers: int) -> list[int]:
     return list(range(max(top, 0)))
 
 
-def lens_selectable(kind: str, sites: Iterable[str]) -> bool:
-    """Whether a ``kind`` lens holding ``sites`` can be its side's active source.
+def lens_selectable(sites: Iterable[str]) -> bool:
+    """Whether a lens holding ``sites`` can be its family's active source.
 
-    Every output-side read surface reads the ``out`` site, so an output-kind
-    lens without it cannot serve the output side: publishing one leaves the
-    selection where it was, rather than displace a readable source with one
-    every readout refuses.  An input-kind lens always can.
+    Both families' probes, gates, steering atoms and the R family's live
+    readout read the ``out`` site, so a lens of either family without it
+    cannot serve its family: publishing one leaves the selection (and the
+    resident lens) where it was, rather than displace a readable source with
+    one those surfaces refuse.  Select it explicitly to read it at ``mid``.
     """
-    return LensKey(kind).side == "input" or "out" in set(sites)
+    return "out" in set(sites)
 
 
 def local_lens_name(kind: str, tag: str | None = None) -> str:

@@ -262,7 +262,9 @@ def test_listing_names_family_and_sites(
     sources.fetch_lens_source("org/model", "rs-r")
     sources.fetch_lens_source("org/model", "rs-s")
     save_lens(
-        JacobianLens(None, mid={0: torch.eye(_D)}, n_prompts=2, d_model=_D, key=LensKey("S")),
+        JacobianLens(
+            {0: torch.eye(_D)}, mid={0: torch.eye(_D)}, n_prompts=2, d_model=_D, key=LensKey("S"),
+        ),
         "org/model",
         LensProvenance(corpus_spec="t", corpus_sha256="a" * 64, seq_len=8, dim_batch=1),
     )
@@ -273,7 +275,7 @@ def test_listing_names_family_and_sites(
     assert by["rs-r"]["checkpoints"] == {"out": "model/r-lens/lens.pt"}
     assert (by["rs-s"]["family"], by["rs-s"]["sites"], by["rs-s"]["active"]) == ("S", ["mid"], False)
     assert (by["local:s"]["family"], by["local:s"]["sites"], by["local:s"]["active"]) == (
-        "S", ["mid"], True,
+        "S", ["out", "mid"], True,
     )
 
 

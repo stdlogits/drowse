@@ -423,14 +423,15 @@ def register_instrument_routes(app: FastAPI) -> None:
 
     async def lens_fit_body(body: LensFitRequest, layers: list[int] | str, corpus: Any) -> None:
         from drowse.lens.corpus import pin_lens_corpus, stream_lens_corpus
-        from drowse.lens.key import LensKey
+        from drowse.lens.key import LensKey, lens_selectable
 
         kind = body.kind.upper()
         source = f"local:{kind.lower()}"
-        # The live readout reads the output side's ``out`` site.  A fit that
-        # does not fit it (an input kind, or an output kind at ``mid`` only)
-        # leaves the output source, the resident lens and live readout alone.
-        reads_out = LensKey(kind).side == "output" and "out" in body.sites
+        # A fit selects its own family only, and only when it holds ``out``
+        # (``key.lens_selectable``); a ``mid``-only fit leaves the family's
+        # source and resident lens alone.  The live readout is the R family's.
+        selects = lens_selectable(body.sites)
+        reads_out = selects and LensKey(kind).side == "output"
 
         async def enable() -> None:
             lens_fit.state["live_layers"] = await enable_lens_live()
@@ -449,23 +450,18 @@ def register_instrument_routes(app: FastAPI) -> None:
             layers=layers, seq_len=body.seq_len,
         ) is not None:
             # Nothing to fit: skip the stream and select the proven artifact
-            # as a publishing fit would.  An output fit at ``out`` makes it
-            # the live source (live readout is the same best-effort step as
-            # after a fit); an input fit selects its own side only, never
-            # touching the output resident; a ``mid``-only output fit
-            # selects nothing.
+            # as a publishing fit would, in its own family's slot (evicting
+            # that family's resident only).  An R-family fit makes it the
+            # live source (live readout is the same best-effort step as after
+            # a fit); a ``mid``-only fit selects nothing.
             lens_fit.report(
                 "already fitted for this corpus and exact model source — nothing to do",
             )
+            if selects:
+                async with session_lock(app):
+                    await select_lens_source(source, live_off=reads_out)
             if reads_out:
-                async with session_lock(app):
-                    await select_lens_source(source)
                 await enable_live_after(lens_fit, enable)
-            elif LensKey(kind).side == "input":
-                from drowse.lens.sources import use_lens_source
-
-                async with session_lock(app):
-                    await run_in_thread(use_lens_source, session.model_id, source)
             lens_fit.report("done")
             return
         lens_fit.report(f"streaming {body.prompts} documents from {corpus}…")

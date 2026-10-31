@@ -188,10 +188,12 @@ sets, so a pack carrying `split_half` (or a `mid` site) waits on its reader
   collected. Collection is best-effort and deletes nothing when a pointer is
   unreadable. `lens_fit_lock` is cross-process and spans a whole fit or
   removal, on a `.fit` sibling so pointer reads aren't blocked.
-- `save_lens` and checkpoint promotion publish **and select** for the lens's
-  side when it can serve that side (`key.lens_selectable`): every output read
-  surface reads `out`, so an output-kind lens without it is published but
-  never displaces the selected output source. `save_lens_at(lens, dir,
+- `save_lens` and checkpoint promotion publish **and select** in the lens's
+  family slot when it can serve that family (`key.lens_selectable`): both
+  families' probes, gates and steering atoms (and the R family's live
+  readout) read `out`, so a lens of either family without it is published
+  but never displaces, or becomes, its family's selected source. `lens use`
+  selects one explicitly for `read` and `lens top` at `mid`. `save_lens_at(lens, dir,
   provenance, split_half=None)` writes the same layout anywhere without
   selecting it; it is the packaging path.
 
@@ -238,8 +240,8 @@ provider name, and carries one or both sites.
   shown) and `sites`. Selecting an S-family source over the server checks that
   it loads for these weights (409 otherwise), as the R family's live enable
   does.
-- A fit, a promotion or a fetch replaces its family's selection (an
-  output-kind fit only when it holds `out`). Removal unselects only an exact
+- A fit, a promotion or a fetch replaces its family's selection (a fit or
+  promotion only when it holds `out`). Removal unselects only an exact
   match. `select_source` evicts that family's resident lens.
 - `matches_loaded_model` decides compatibility. A local fit must match the
   loaded-weight fingerprint exactly. An external lens must match the model id,
@@ -371,17 +373,19 @@ with defaults would otherwise discard an hours-long fit. Ask for at least its
 documents of the same corpus (which tops up the missing site), or pass
 `force`. When a payload fails to load, the executor drops it and re-plans.
 
-An input-kind (K/S) fit adopts nothing: the resident lens is the output
-side's. Nor does an output fit without the `out` site, which the resident
-readout reads: the resident lens, its live readout and the output selection
-stay as they were.
+A fit drives its own family's slot (`LensFitter(residency={"output": …,
+"input": …})`; the instrument's `_InputResidency` is the S family's): an R/J
+fit evicts and adopts the R resident and its live readout, an S/K fit the S
+resident, its `slens/` directions and probe layers, and neither touches the
+other family. A fit without the `out` site adopts nothing: its family's
+resident lens, live readout and selection stay as they were.
 
 `prove_lens_fit_noop` proves a no-op without the model. A file corpus is
 identified by its raw digest, a pinned Hub corpus by spec plus prompt count
 (before streaming). The source fingerprint is computed last and the payload
 digests are verified. The CLI preflight and `fit_is_noop` (the server) both
-call it. A fit evicts the resident lens before the estimator owns the base and
-restores it on failure. A complete terminal checkpoint is promoted, not
+call it. A fit evicts its family's resident lens before the estimator owns
+the base and restores it on failure. A complete terminal checkpoint is promoted, not
 rewritten.
 
 ## Residency and the generation protocol

@@ -38,7 +38,7 @@ from drowse.lens.jlens import (
     JacobianLensCancelled,
     JacobianLensError,
 )
-from drowse.lens.key import FITTABLE_KINDS, LENS_SITES, LensKey, site_layers
+from drowse.lens.key import FITTABLE_KINDS, LENS_SITES, LensKey, lens_selectable, site_layers
 from drowse.model.layers import LayerSelector
 from drowse.lens.store import (
     LensProvenance,
@@ -515,7 +515,8 @@ LiveConfig = tuple[list[int], bool]
 
 
 class LensResidency(Protocol):
-    """The resident-lens transactions a fit drives (the lens instrument)."""
+    """The resident-lens transactions a fit drives on one family's slot (the
+    lens instrument: itself for the R family, its S-family view for K/S)."""
 
     @property
     def resident_lens(self) -> JacobianLens | None: ...
@@ -538,10 +539,11 @@ class LensResidency(Protocol):
 
 
 class _NoResidency:
-    """The residency of a fit nothing reads as resident: an input kind, or
-    an output kind without the ``out`` site the resident readout reads.  The
-    fit publishes (selecting only what can serve its side) and adopts
-    nothing; the resident lens and its live readout stay as they were."""
+    """The residency of a fit nothing reads as resident: one without the
+    ``out`` site its family's probes, gates, atoms and live readout read.
+    The fit publishes without selecting
+    (:func:`~drowse.lens.key.lens_selectable`) and adopts nothing; the
+    family's resident lens and live readout stay as they were."""
 
     resident_lens: JacobianLens | None = None
     resident_identity: str | None = None
@@ -608,8 +610,10 @@ class LensFitter:
 
     The caller holds the fit lock and the model-exclusive guard, unsteered:
     the fit verifies the model's block description and runs transport
-    passes through it.  ``residency`` is the output side's resident lens; a
-    fit that does not fit the ``out`` site of an output kind adopts nothing.
+    passes through it.  ``residency`` maps each family's slot (``output`` for
+    J/R, ``input`` for K/S) to its resident lens: a fit drives its own
+    family's and never touches the other's, and a fit without the ``out``
+    site adopts nothing.
     """
 
     def __init__(
@@ -618,7 +622,7 @@ class LensFitter:
         model: Any,
         tokenizer: Any,
         model_id: str,
-        residency: LensResidency,
+        residency: Mapping[str, LensResidency],
     ) -> None:
         self._model = model
         self._tokenizer = tokenizer
@@ -674,8 +678,8 @@ class LensFitter:
             policy=lens_estimator_policy(request.kind),
         )
         residency = (
-            self._residency
-            if LensKey(request.kind).side == "output" and "out" in request.sites
+            self._residency[LensKey(request.kind).side]
+            if lens_selectable(request.sites)
             else _NoResidency()
         )
         run = _FitRun(
@@ -760,9 +764,10 @@ class _FitRun:
         live: LiveConfig | None = None,
         restore_live: bool = False,
     ) -> JacobianLens:
-        """Make ``lens`` resident; a lens without the ``out`` site, which
-        the resident readout reads, leaves nothing resident instead (a fit
-        that does not fit ``out`` never gets here: it adopts nothing)."""
+        """Make ``lens`` resident in its family's slot; a lens without the
+        ``out`` site, which the family's resident reads need, leaves nothing
+        resident instead (a fit that does not fit ``out`` never gets here: it
+        adopts nothing)."""
         if "out" not in lens.sites:
             self.residency.evict()
             return lens

@@ -240,6 +240,42 @@ class LensRun:
         self.live_state = None
 
 
+
+class _InputResidency:
+    """The S family's slot as a fit drives it (:class:`LensResidency`).
+
+    An S/K fit evicts and adopts here exactly as an R/J fit does on the
+    instrument itself; there is no live S readout to carry across.
+    """
+
+    def __init__(self, lens: "LensInstrument") -> None:
+        self._lens = lens
+
+    @property
+    def resident_lens(self) -> Any:
+        return self._lens.input_runtime.lens
+
+    @property
+    def resident_identity(self) -> str | None:
+        return self._lens.input_runtime.identity
+
+    def live_config(self) -> LiveConfig | None:
+        return None
+
+    def evict(self) -> None:
+        self._lens.evict_input()
+
+    def adopt(
+        self,
+        lens: Any,
+        sidecar: Mapping[str, Any] | None,
+        *,
+        live: LiveConfig | None = None,
+        restore_live: bool = False,
+    ) -> Any:
+        del live, restore_live
+        return self._lens.adopt_input(lens, sidecar)
+
 class LensInstrument:
     """Session-lifetime handle for the J-lens read family."""
 
@@ -302,7 +338,8 @@ class LensInstrument:
         # this family supplies the lens read.
         self._replay = replay
         self._fitter = LensFitter(
-            model=model, tokenizer=tokenizer, model_id=model_id, residency=self,
+            model=model, tokenizer=tokenizer, model_id=model_id,
+            residency={"output": self, "input": _InputResidency(self)},
         )
         # Pinned J-lens token probes: name -> {word, token_id, layers}.  NOT
         # monitor probes — they read the lens readout channel (per-layer
@@ -879,8 +916,9 @@ class LensInstrument:
         a prefix of this corpus is extended; ``force`` restarts from zero.
         ``layers`` is ``None``/``"all"``, ``"workspace"`` or an index list,
         resolved per site.  Runs under the fit lock and the model-exclusive
-        guard, unsteered; an output-kind fit becomes resident.  Returns the
-        fitted lens restricted to the requested sites and layers.
+        guard, unsteered; a fit holding ``out`` is selected and becomes its
+        family's resident lens (the other family's is untouched).  Returns
+        the fitted lens restricted to the requested sites and layers.
         """
         from drowse.lens.jlens import (
             DEFAULT_CHECKPOINT_EVERY,
