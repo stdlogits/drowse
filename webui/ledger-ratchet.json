@@ -15,14 +15,14 @@
     "tintText": "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)"
   },
   "totals": {
-    "bridge": 3895,
-    "border": 162,
+    "bridge": 3381,
+    "border": 154,
     "outline": 0,
-    "shadow": 72,
-    "mono": 152,
-    "uppercase": 42,
-    "tracking": 38,
-    "easing": 12,
+    "shadow": 62,
+    "mono": 115,
+    "uppercase": 37,
+    "tracking": 34,
+    "easing": 9,
     "loop": 0,
     "colour": 2,
     "mix": 0,
@@ -146,12 +146,6 @@
       "uppercase": 3,
       "tracking": 3
     },
-    "src/drawers/TokenDrilldownDrawer.svelte": {
-      "bridge": 144,
-      "border": 5,
-      "shadow": 1,
-      "mono": 7
-    },
     "src/drawers/TranscriptDrawer.svelte": {
       "bridge": 81,
       "border": 8,
@@ -178,67 +172,6 @@
       "shadow": 1,
       "mono": 6,
       "uppercase": 2,
-      "tracking": 1
-    },
-    "src/drawers/token/DetailCardHeader.svelte": {
-      "bridge": 13,
-      "mono": 3
-    },
-    "src/drawers/token/DetailSection.svelte": {
-      "bridge": 8,
-      "uppercase": 1
-    },
-    "src/drawers/token/EmptyState.svelte": {
-      "bridge": 8,
-      "mono": 1
-    },
-    "src/drawers/token/EvidenceChips.svelte": {
-      "bridge": 9,
-      "mono": 1
-    },
-    "src/drawers/token/GeometryLayerReadings.svelte": {
-      "bridge": 15,
-      "mono": 1
-    },
-    "src/drawers/token/GeometryTab.svelte": {
-      "bridge": 48,
-      "shadow": 1,
-      "mono": 5,
-      "easing": 1
-    },
-    "src/drawers/token/InstrumentHeader.svelte": {
-      "bridge": 32,
-      "border": 1,
-      "mono": 2,
-      "uppercase": 2,
-      "tracking": 2
-    },
-    "src/drawers/token/LensTab.svelte": {
-      "bridge": 52,
-      "shadow": 6,
-      "mono": 5,
-      "uppercase": 1,
-      "tracking": 1,
-      "easing": 1
-    },
-    "src/drawers/token/LogitsTab.svelte": {
-      "bridge": 15,
-      "mono": 1
-    },
-    "src/drawers/token/PinnedReadings.svelte": {
-      "bridge": 6,
-      "mono": 2
-    },
-    "src/drawers/token/SaeTab.svelte": {
-      "bridge": 60,
-      "shadow": 1,
-      "mono": 2,
-      "easing": 1
-    },
-    "src/drawers/token/TokenRibbon.svelte": {
-      "bridge": 27,
-      "mono": 3,
-      "uppercase": 1,
       "tracking": 1
     },
     "src/lib/Combobox.svelte": {
@@ -335,11 +268,6 @@
     "src/lib/ui/TemplatePreview.svelte": {
       "bridge": 9
     },
-    "src/lib/ui/TokenLogitsPopover.svelte": {
-      "bridge": 26,
-      "border": 2,
-      "mono": 2
-    },
     "src/panels/JLensPanel.svelte": {
       "bridge": 54,
       "border": 4,
@@ -357,11 +285,6 @@
     },
     "src/panels/ProbeRack.svelte": {
       "bridge": 7
-    },
-    "src/panels/RawBuffer.svelte": {
-      "bridge": 51,
-      "shadow": 1,
-      "mono": 2
     },
     "src/panels/SaePanel.svelte": {
       "bridge": 54,

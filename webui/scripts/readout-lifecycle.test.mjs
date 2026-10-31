@@ -10,20 +10,6 @@ const server = await createServer({
 const flush = () => new Promise(resolve => setImmediate(resolve));
 const envelope = { measurements: { instruments: { geometry: { readings: {} } } } };
 try {
-  const { availableDrilldownTab } = await server.ssrLoadModule("/src/drawers/token/drilldown.svelte.ts");
-  const none = { lens: false, sae: false, geometry: false };
-  assert.equal(availableDrilldownTab("lens", none), "logits", "base models without instruments open logits");
-  assert.equal(availableDrilldownTab("lens", { ...none, sae: true }), "sae");
-  assert.equal(availableDrilldownTab("lens", { ...none, geometry: true }), "geometry");
-  assert.equal(availableDrilldownTab("lens", { ...none, lens: true }), "lens");
-  for (let mask = 0; mask < 8; mask += 1) {
-    const available = { lens: !!(mask & 1), sae: !!(mask & 2), geometry: !!(mask & 4) };
-    for (const preferred of ["lens", "sae", "geometry", "logits"]) {
-      const selected = availableDrilldownTab(preferred, available);
-      assert.ok(selected === "logits" || available[selected], "automatic selection must be usable");
-      if (preferred === "logits" || available[preferred]) assert.equal(selected, preferred, "usable preferences stay sticky");
-    }
-  }
   const requests = [];
   const metadataRequests = [];
   const sourceRequests = [];

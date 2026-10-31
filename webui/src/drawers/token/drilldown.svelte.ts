@@ -1,35 +1,9 @@
-// Page-session drilldown UI state.
+// Page-session state for the token view.
 //
-// The selected tab is STICKY across token clicks and drawer reopens — a
-// research pass compares one instrument across many tokens, and the old
-// per-open reset kept bouncing the user off it.  Module scope = page
-// session; prefer j-lens when the inspected token can provide it.
-
-import type { ReplayReadout } from "./readout.svelte";
+// The view reads in one order (alternatives, the lens by depth and layer, probes, features); there
+// are no tabs. ``tab`` is the section last brought into view, which the WebMCP token inspector
+// reads and sets (setting it scrolls that section into view). Module scope = page session.
 
 export type DrilldownTab = "geometry" | "logits" | "sae" | "lens";
 
-export const drilldownUi: { tab: DrilldownTab } = $state({ tab: "lens" });
-
-export function readoutBadge<T>(
-  readout: ReplayReadout<T>,
-  captured: T | null,
-  steered: boolean,
-  count: (data: T) => number,
-): string | undefined {
-  if (readout.loading) return "…";
-  if (readout.error) return undefined;
-  const data = readout.data ?? (steered ? captured : null);
-  return data === null ? undefined : String(count(data));
-}
-
-export function availableDrilldownTab(
-  preferred: DrilldownTab,
-  available: Record<Exclude<DrilldownTab, "logits">, boolean>,
-): DrilldownTab {
-  if (preferred === "logits" || available[preferred]) return preferred;
-  if (available.lens) return "lens";
-  if (available.sae) return "sae";
-  if (available.geometry) return "geometry";
-  return "logits";
-}
+export const drilldownUi: { tab: DrilldownTab } = $state({ tab: "logits" });
