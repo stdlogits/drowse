@@ -241,7 +241,11 @@ carries `LABEL_CREDIT` ("Labels by Claude Haiku 5.5") and the unit's page,
 explorer's route). An uncatalogued model is `NoUnitCatalogError` (404);
 reading or fetching needs pyarrow (`drowse.ai[hf]`), else
 `UnitCatalogDependencyError` (503). `CatalogBinding` opens the binding lazily
-and reopens after a fetch or removal.
+and checks `catalog.json`'s on-disk identity (inode, mtime, size; one `stat`)
+on every `get`, so a fetch, refetch or removal from another process (`drowse
+unit fetch` beside a running server) reaches the session at once, a cached
+"no catalog" included. A unit view takes `bound`, `url` and `reason` from one
+`view()`, so an unbound block always says why.
 
 ## Testing
 

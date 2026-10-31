@@ -1019,8 +1019,8 @@ class UnitReader:
 
     def _neuron_firing(self, ref: NeuronRef) -> tuple[Firing, Firing]:
         stats, reason = self._stats()
-        catalog = self.catalog.get()
-        cat_absent = None if catalog is not None else self.catalog.status().get("reason")
+        catalog, status = self.catalog.view()
+        cat_absent = status["reason"]
         out: list[Firing] = []
         for row, pole in enumerate((1, -1)):
             neutral = None
@@ -1049,27 +1049,26 @@ class UnitReader:
         return plus, minus
 
     def _catalog_summary(self) -> dict[str, Any]:
-        """The binding without a unit: bound, slug, credit or why not."""
-        status = self.catalog.status()
-        bound = self.catalog.get() is not None
+        """The binding without a unit: bound, slug, credit or why not (one
+        view of the binding, so ``bound`` and ``reason`` always agree)."""
+        catalog, status = self.catalog.view()
         return {
-            "bound": bound,
+            "bound": catalog is not None,
             "slug": status.get("slug"),
-            "credit": LABEL_CREDIT if bound else None,
-            "reason": None if bound else status.get("reason"),
+            "credit": LABEL_CREDIT if catalog is not None else None,
+            "reason": status["reason"],
         }
 
     def _catalog_block(self, ref: UnitRef) -> dict[str, Any]:
         """The catalog binding as a unit view shows it: bound or why not, the
         unit's neuron-lens.com page and the label credit."""
-        status = dict(self.catalog.status())
-        catalog = self.catalog.get()
+        catalog, status = self.catalog.view()
         return {
             "bound": catalog is not None,
             "slug": status.get("slug"),
             "url": None if catalog is None else catalog.url(ref),
             "credit": LABEL_CREDIT if catalog is not None else None,
-            "reason": None if catalog is not None else status.get("reason"),
+            "reason": status["reason"],
         }
 
     # ------------------------------------------------------------------ heads
@@ -1298,9 +1297,9 @@ class UnitReader:
                 "mean_z_norm": round(float(layer.head_mean[ref.index].norm()), 6),
                 "documents": float(stats.n_documents),
             }
-        catalog = self.catalog.get()
+        catalog, status = self.catalog.view()
         if catalog is None:
-            return Firing(neutral, reason, None, self.catalog.status().get("reason"))
+            return Firing(neutral, reason, None, status["reason"])
         row = catalog.head_acts(ref.layer, ref.index)
         return Firing(
             neutral, reason, row,

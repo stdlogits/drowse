@@ -473,24 +473,46 @@ class UnitCatalog:
         return {key: value for key, value in row.items() if key not in HEAD_KEYS}
 
 
+#: ``catalog.json``'s on-disk identity (inode, mtime, size), or ``None``
+#: when there is no binding: what :class:`CatalogBinding` compares before
+#: trusting what it opened.
+_Identity = tuple[int, int, int] | None
+
+
+def _binding_identity(model_id: str) -> _Identity:
+    try:
+        stat = (catalog_dir(model_id) / "catalog.json").stat()
+    except OSError:
+        return None
+    return (stat.st_ino, stat.st_mtime_ns, stat.st_size)
+
+
 class CatalogBinding:
-    """The session's view of its model's catalog: opened lazily, reopened
-    after a fetch or removal."""
+    """The session's view of its model's catalog, opened lazily.
+
+    Another process may fetch, refetch or remove the binding (``drowse unit
+    fetch`` beside a running ``drowse serve``), so every :meth:`get` compares
+    ``catalog.json``'s on-disk identity (one ``stat``) with the one it opened
+    and reopens on a change, a cached "no catalog" included.
+    """
 
     def __init__(self, model_id: str) -> None:
         self.model_id = model_id
         self._catalog: UnitCatalog | None = None
         self._opened = False
+        self._identity: _Identity = None
         self._lock = threading.Lock()
 
     def get(self) -> UnitCatalog | None:
+        identity = _binding_identity(self.model_id)
         with self._lock:
-            if not self._opened:
+            if not self._opened or identity != self._identity:
                 try:
                     self._catalog = UnitCatalog.open(self.model_id)
                 except UnitCatalogDependencyError:
                     self._catalog = None
                 self._opened = True
+                self._identity = identity
             return self._catalog
 
     def status(self) -> dict[str, Any]:
@@ -502,10 +524,24 @@ class CatalogBinding:
                 status = {**status, "bound": False, "reason": str(exc)}
         return status
 
+    def view(self) -> tuple[UnitCatalog | None, dict[str, Any]]:
+        """``(catalog, status)`` that agree: ``status["bound"]`` is whether
+        ``catalog`` opened, and an unbound status always says why."""
+        catalog = self.get()
+        status = self.status()
+        if catalog is not None:
+            return catalog, {**status, "bound": True, "slug": catalog.slug, "reason": None}
+        reason = status.get("reason") if not status["bound"] else None
+        return None, {
+            **status, "bound": False,
+            "reason": reason or "the catalog binding changed while it was read; read again",
+        }
+
     def reset(self) -> None:
         with self._lock:
             self._catalog = None
             self._opened = False
+            self._identity = None
 
     def fetch(self, *, force: bool = False, on_progress: Callable[[str], None] | None = None) -> dict[str, Any]:
         try:

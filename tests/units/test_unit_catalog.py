@@ -89,15 +89,54 @@ def _remote_paths() -> list[str]:
     return paths + [f"{SLUG}/heads/{table}.parquet" for table in ("labels", "acts", "legible")]
 
 
+#: Files the dataset holds that a binding never copies: the bulk tables, the
+#: causal sample, media, documents, another model's folder, and paths of the
+#: wrong depth for their kind.
+_SKIPPED_PATHS = (
+    f"{SLUG}/neurons/reads/L00.parquet",
+    f"{SLUG}/neurons/drivers/L01.parquet",
+    f"{SLUG}/heads/reads.parquet",
+    f"{SLUG}/heads/drivers.parquet",
+    f"{SLUG}/causal/sample.parquet",
+    f"{SLUG}/media/L00/n0.png",
+    f"{SLUG}/docs.parquet",
+    f"{SLUG}/neurons/labels/README.md",
+    f"{SLUG}/neurons/labels.parquet",
+    f"{SLUG}/heads/labels/L00.parquet",
+    "other-model/neurons/labels/L00.parquet",
+    "other-model/heads/labels.parquet",
+    "README.md",
+)
+
+
+def _upstream_sha(path: str) -> str:
+    import hashlib
+
+    return hashlib.sha256(path.encode()).hexdigest()
+
+
 @pytest.fixture
 def hub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
-    """A fake Hub: the file listing and projected reads, with the calls recorded."""
+    """A fake Hub: the dataset's sibling listing (the real path filter runs
+    over it) and projected reads, with the calls recorded."""
+    from types import SimpleNamespace
+
+    import huggingface_hub
+
     calls: dict[str, Any] = {"listings": 0, "reads": []}
 
-    def remote_files(slug: str, revision: str) -> list[cat.RemoteFile]:
-        assert (slug, revision) == (SLUG, cat.CATALOG_REVISION)
-        calls["listings"] += 1
-        return [cat.RemoteFile(path, f"{i:064x}", 1000 + i) for i, path in enumerate(_remote_paths())]
+    class FakeApi:
+        def dataset_info(self, repo_id: str, *, revision: str, files_metadata: bool) -> Any:
+            assert (repo_id, revision, files_metadata) == (cat.CATALOG_REPO, cat.CATALOG_REVISION, True)
+            calls["listings"] += 1
+            siblings = [
+                SimpleNamespace(
+                    rfilename=path, size=1000 + i,
+                    lfs=SimpleNamespace(sha256=_upstream_sha(path), size=1000 + i),
+                )
+                for i, path in enumerate(sorted([*_remote_paths(), *_SKIPPED_PATHS]))
+            ]
+            return SimpleNamespace(siblings=siblings)
 
     def read_remote(path: str, revision: str, columns: Any) -> Any:
         assert revision == cat.CATALOG_REVISION
@@ -109,7 +148,7 @@ def hub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         )
         return table if columns is None else table.select(list(columns))
 
-    monkeypatch.setattr(cat, "_remote_files", remote_files)
+    monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
     monkeypatch.setattr(cat, "_read_remote_table", read_remote)
     return calls
 
@@ -135,7 +174,15 @@ def test_fetch_binds_labels_and_projected_tables(hub: dict[str, Any], catalogued
     entry = record["files"]["neurons/acts/L02.parquet"]
     assert entry["upstream"] == f"{SLUG}/neurons/acts/L02.parquet"
     assert entry["sha256"] == hash_file(root / "neurons/acts/L02.parquet")
-    assert entry["upstream_sha256"] and entry["rows"] == 2 * D_FF
+    assert entry["rows"] == 2 * D_FF
+    # The listing's path filter keeps exactly this model's label, acts and
+    # legible tables (4-part neuron paths, 3-part head paths) and records
+    # each one's upstream LFS digest; nothing else is read.
+    assert sorted(item["upstream"] for item in record["files"].values()) == sorted(_remote_paths())
+    assert all(
+        item["upstream_sha256"] == _upstream_sha(item["upstream"]) for item in record["files"].values()
+    )
+    assert sorted(path for path, _ in hub["reads"]) == sorted(_remote_paths())
     # Labels whole; acts and legible projected (the bulk columns never asked for).
     asked = dict(hub["reads"])
     assert asked[f"{SLUG}/neurons/labels/L00.parquet"] is None
@@ -252,3 +299,55 @@ def test_session_unit_views_carry_the_catalog(
     assert stats["poles"][0]["label"]["url"].endswith("/L1/n3")
     top = session.units.top("a", layers=[1], k=2)
     assert all(hit.label is not None and hit.label["fires"].startswith("L1 ") for hit in top.hits)
+
+
+def test_a_catalog_bound_by_another_process_reaches_a_running_session(
+    hub: dict[str, Any], monkeypatch: pytest.MonkeyPatch, make_tiny_session: Any,
+) -> None:
+    """Regression: the session's binding cached its first open, a "no
+    catalog" included, so a ``drowse unit fetch`` from another terminal never
+    reached a running server, and its unit views said ``bound: false`` with
+    no reason.  Every view now rechecks ``catalog.json`` on disk."""
+    session = make_tiny_session()
+    monkeypatch.setattr(cat, "CATALOG_MODELS", {
+        **cat.CATALOG_MODELS, session.model_id.lower(): cat.CatalogModel(session.model_id, SLUG),
+    })
+    binding = session.units.reads.catalog
+    before = cast(NeuronRead, session.units.read("neuron/L1n3")).to_dict()
+    assert before["catalog"]["bound"] is False and "not fetched" in before["catalog"]["reason"]
+    assert binding.get() is None
+    # Another process binds it: the module function, not the session's binding.
+    cat.fetch_catalog(session.model_id)
+    read = cast(NeuronRead, session.units.read("neuron/L1n3")).to_dict()
+    assert read["catalog"] == {
+        "bound": True, "slug": SLUG, "url": f"https://neuron-lens.com/{SLUG}/L1/n3",
+        "credit": "Labels by Claude Haiku 5.5", "reason": None,
+    }
+    assert read["poles"][0]["label"]["fires"] == "L1 n3 + fires"
+    assert read["poles"][0]["firing"]["rate"] is not None
+    opened = binding.get()
+    assert opened is not None and binding.get() is opened  # unchanged on disk: no reopen
+    # Refetched elsewhere: the new binding on disk is reopened.
+    cat.fetch_catalog(session.model_id, force=True)
+    reopened = binding.get()
+    assert reopened is not None and reopened is not opened
+    # Removed elsewhere: the views say so, with the reason.
+    assert cat.remove_catalog(session.model_id)
+    stats = session.units.stats("neuron/L1n3")
+    assert stats["catalog"]["bound"] is False and "not fetched" in stats["catalog"]["reason"]
+    assert stats["poles"][0]["label"] is None
+    head = cast(HeadRead, session.units.read("head/L2h1")).to_dict()
+    assert head["catalog"]["bound"] is False and head["catalog"]["reason"]
+    assert head["firing"]["catalog_absent"] == head["catalog"]["reason"]
+
+
+def test_a_binding_view_never_contradicts_itself(
+    hub: dict[str, Any], monkeypatch: pytest.MonkeyPatch, catalogued: str,
+) -> None:
+    """A status that says bound while the catalog does not open (a binding
+    replaced mid-read) still gives a reason."""
+    cat.fetch_catalog(catalogued)
+    binding = cat.CatalogBinding(catalogued)
+    monkeypatch.setattr(cat.UnitCatalog, "open", classmethod(lambda cls, model_id: None))
+    catalog, status = binding.view()
+    assert catalog is None and status["bound"] is False and status["reason"]
