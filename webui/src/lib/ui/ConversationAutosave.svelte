@@ -96,4 +96,5 @@
   .autosave-error span { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
   .autosave-error .dw-quiet { background: var(--wash2); }
   @media (max-width: 720px) { .autosave-error { margin: 0 var(--s4) var(--s2); } }
+  @media (pointer: coarse) { .dw-text { min-height: 44px; } }
 </style>

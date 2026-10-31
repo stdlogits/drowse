@@ -447,4 +447,5 @@
     .search-field input, .rename-field input { font-size: 16px; }
     .card-actions .dw-quiet { height: 44px; }
   }
+  @media (pointer: coarse) { .dw-text, .search-field input, .rename-field input { min-height: 44px; } }
 </style>

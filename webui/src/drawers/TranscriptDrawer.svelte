@@ -341,4 +341,5 @@
     .drawer-shell { padding: var(--s4) var(--s4) 0; }
     .field input[type="text"], .yaml { font-size: 16px; }
   }
+  @media (pointer: coarse) { .tab, .field input[type="text"] { min-height: 44px; } }
 </style>

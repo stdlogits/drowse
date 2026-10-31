@@ -265,6 +265,7 @@
     textarea { font-size: 16px; }
   }
   @media (pointer: coarse) {
-    .row-head .dw-text, footer .dw-text { min-height: 44px; }
+    .dw-text { min-height: 44px; }
+    .star, .tokens button { min-width: 44px; min-height: 44px; }
   }
 </style>

@@ -573,4 +573,5 @@
   @media (forced-colors: active) {
     .modal-error { background: Canvas; color: CanvasText; }
   }
+  @media (pointer: coarse) { .dw-text, .modal-body input { min-height: 44px; } }
 </style>

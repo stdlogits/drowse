@@ -109,4 +109,5 @@
     .download-chat { padding: var(--s4) var(--s4) var(--s5); }
     input { font-size: 16px; }
   }
+  @media (pointer: coarse) { .dw-text, input { min-height: 44px; } }
 </style>

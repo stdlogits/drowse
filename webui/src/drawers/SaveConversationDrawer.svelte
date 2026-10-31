@@ -240,4 +240,5 @@
     .drawer-shell:not(.embedded) { padding: var(--s4) var(--s4) var(--s5); }
     .name-field input { font-size: 16px; }
   }
+  @media (pointer: coarse) { .dw-text { min-height: 44px; } }
 </style>

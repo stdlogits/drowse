@@ -7,7 +7,7 @@
   import type { LoomNodeJSON } from "../../lib/types";
   import { tokenRowToScore } from "../../lib/stores.svelte";
   import { highlightStyleString } from "../../lib/highlight";
-  import { splitTokenSentences } from "./loomSentences";
+  import { leadingSpace, splitTokenSentences, tokenWords } from "./loomSentences";
 
   interface Props {
     node: LoomNodeJSON;
@@ -153,8 +153,13 @@
 
   const roleName = $derived(node.role_label?.trim() || node.role);
   const visibleTokens = $derived(node.tokens?.slice(tokenStart, tokenEnd) ?? []);
+  // Each sentence's tokens grouped into words: a word is one inline box, so a line never breaks
+  // inside it (each token is a button, and a button is atomic in the line). The space a word opens
+  // with is drawn before its box, where a wrapped line hangs it.
   const sentences = $derived(splitTokenSentences(visibleTokens).map(sentence => ({
     ...sentence, start: sentence.start + tokenStart, end: sentence.end + tokenStart,
+    words: tokenWords(node.tokens ?? [], sentence.start + tokenStart, sentence.end + tokenStart)
+      .map(word => ({ ...word, lead: leadingSpace(node.tokens?.[word.start]?.text ?? "") })),
   })));
 
   function tokenName(text: string): string {
@@ -238,7 +243,7 @@
           data-sentence-start={sentence.start}
           data-sentence-end={sentence.end}
         >
-          <span class="sentence-tokens">{#each node.tokens.slice(sentence.start, sentence.end + 1) as token, offset (`${token.raw_index ?? sentence.start + offset}:${token.token_id ?? token.text}`)}{@const tokenIndex = sentence.start + offset}<button
+          <span class="sentence-tokens">{#each sentence.words as word (word.start)}{word.lead}<span class="word">{#each node.tokens.slice(word.start, word.end + 1) as token, offset (`${token.raw_index ?? word.start + offset}:${token.token_id ?? token.text}`)}{@const tokenIndex = word.start + offset}<button
                 type="button"
                 class="token-node"
                 data-cursor="inspect"
@@ -253,7 +258,7 @@
                   ev.stopPropagation();
                   onselecttoken?.(tokenIndex, ev);
                 }}
-              >{token.text || "∅"}</button>{/each}</span><button
+              >{(offset === 0 ? token.text.slice(word.lead.length) : token.text) || "∅"}</button>{/each}</span>{/each}</span><button
             type="button"
             class="sentence-branch"
             disabled={!canBranch}
@@ -390,7 +395,9 @@
   .token-field { display: flex; flex-direction: column; gap: 2px; min-width: 0; margin: 0 calc(var(--s2) * -1); }
   .sentence-node { padding: 2px var(--s2); border-radius: var(--r-col); transition: background-color var(--fast) var(--ease); }
   .node:not(.shared) .sentence-node:hover, .node:not(.shared) .sentence-node:focus-within { background: color-mix(in oklab, var(--paper) 55%, transparent); }
-  .sentence-tokens { line-height: 22px; overflow-wrap: anywhere; }
+  .sentence-tokens { line-height: 22px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  /* A word holds together; one wider than the turn still wraps, at its token boundaries. */
+  .word { display: inline-block; max-width: 100%; }
   .token-node {
     display: inline;
     padding: 0;

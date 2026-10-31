@@ -358,4 +358,5 @@
     .pair { grid-template-columns: minmax(0, 1fr); }
     .field input { font-size: 16px; }
   }
+  @media (pointer: coarse) { .dw-text, .field input { min-height: 44px; } }
 </style>

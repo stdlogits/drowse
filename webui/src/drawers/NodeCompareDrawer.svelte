@@ -484,6 +484,7 @@
             <span class="head">Siblings</span>
             <span class="meta">against {siblingSummary[0]?.label ?? "A"}</span>
           </div>
+          <div class="table-wide">
           <table class="table">
             <thead>
               <tr>
@@ -518,6 +519,7 @@
               {/each}
             </tbody>
           </table>
+          </div>
         </section>
       {/if}
 
@@ -710,8 +712,10 @@
   .col-tag, .pane-label, .tag { color: var(--ink); font: var(--type-control); }
   .col-preview { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; color: var(--ink2); overflow-wrap: anywhere; }
 
-  .siblings-summary, .joint-table, .readings-table { display: grid; gap: var(--s2); min-width: 0; }
+  .siblings-summary, .joint-table, .readings-table { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s2); min-width: 0; }
   .table-scroll { max-height: 360px; overflow: auto; }
+  /* A table wider than the column scrolls on its own; the drawer body never pans sideways. */
+  .table-wide { overflow-x: auto; overscroll-behavior-inline: contain; }
   .table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
   .table th { position: sticky; top: 0; padding: var(--s1) var(--s2); background: var(--paper); color: var(--ink3); font: var(--type-head); text-align: start; white-space: nowrap; }
   .table td { padding: var(--s1) var(--s2); color: var(--ink2); vertical-align: top; }
@@ -721,7 +725,8 @@
   .table td:first-child, .table th:first-child { border-radius: var(--r-col) 0 0 var(--r-col); }
   .table td:last-child, .table th:last-child { border-radius: 0 var(--r-col) var(--r-col) 0; }
   .table .num { text-align: end; white-space: nowrap; }
-  .table .preview { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* max-width 0 lets the reply column take what the numbers leave, down to an ellipsis. */
+  .table .preview { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .table .token { color: var(--ink); white-space: pre; }
   .table .pos { color: var(--ink3); }
   .table .flag { width: 24px; text-align: center; }

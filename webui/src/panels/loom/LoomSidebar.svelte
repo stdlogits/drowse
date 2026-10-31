@@ -56,15 +56,17 @@
     loomBranchJunctions,
     type LoomLayoutEdge,
   } from "./loomLayout";
-  import { tokenSentences } from "./loomSentences";
+  import { leadingSpace, tokenSentences, tokenWords } from "./loomSentences";
   import {
     centerLoomRect,
     fitLoomCamera,
     LOOM_MAX_ZOOM,
     LOOM_MIN_ZOOM,
     resizeLoomCamera,
+    settleLoomCenter,
     zoomLoomAt,
     type LoomCamera,
+    type LoomRect,
   } from "./loomViewport";
   import type { LoomNodeJSON } from "../../lib/types";
   import { userFacingError } from "../../lib/runtime/userFacingError";
@@ -412,9 +414,7 @@
       zoomView(1);
       await tick();
     }
-    centerNode(segment.id);
-    await tick();
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await centerSettled(segment.id);
     const card = viewportEl?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(segment.id)}"]`);
     const sentence = [...(card?.querySelectorAll<HTMLElement>(".sentence-node") ?? [])].find(element =>
       filterState.mode === "text" && loomTextMatches(element.querySelector(".sentence-tokens")?.textContent ?? "", filterState.expr));
@@ -569,7 +569,7 @@
       return;
     }
     camera.zoom = 0.9;
-    if (loomTree.active_node_id) centerNode(loomTree.active_node_id);
+    if (loomTree.active_node_id) void centerSettled(loomTree.active_node_id);
     else fitView();
   }
 
@@ -807,34 +807,53 @@
     el.focus({ preventScroll: true });
   }
 
-  function centerNode(nodeId: string): void {
+  function placedRect(nodeId: string): LoomRect | null {
     const placed = graph.nodes.find((node) => node.id === nodeId);
-    if (!placed || !viewportEl) return;
+    return placed ? { x: placed.x, y: placed.y, width: placed.width, height: placed.height } : null;
+  }
+
+  function centerOn(rect: LoomRect): LoomCamera {
     cameraFitted = false;
     setCameraMotion(cameraInitialized);
-    camera = centerLoomRect(viewportSize(), {
-      x: placed.x,
-      y: placed.y,
-      width: placed.width,
-      height: placed.height,
-    }, camera.zoom);
+    camera = centerLoomRect(viewportSize(), rect, camera.zoom);
     cameraInitialized = true;
     lastViewportSize = viewportSize();
+    return { ...camera };
+  }
+
+  function centerNode(nodeId: string): void {
+    const rect = placedRect(nodeId);
+    if (rect && viewportEl) centerOn(rect);
+  }
+
+  const nextFrames = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  /** A newer centring supersedes a settling one. */
+  let centering = 0;
+
+  /** Centre on a turn and follow it while the turns brought into view replace their estimated
+   *  heights with measured ones (which moves everything below and beside them). */
+  async function centerSettled(nodeId: string): Promise<void> {
+    if (!viewportEl) return;
+    const run = ++centering;
+    await settleLoomCenter({
+      placement: () => (run === centering && viewportEl ? placedRect(nodeId) : null),
+      center: centerOn,
+      camera: () => ({ ...camera }),
+      remeasured: () => nextFrames().then(() => tick()),
+    });
   }
 
   function centerCurrent(): void {
     if (!loomTree.active_node_id) return;
     if (compactMap) void expandMapNode(loomTree.active_node_id);
-    else centerNode(loomTree.active_node_id);
+    else void centerSettled(loomTree.active_node_id);
   }
 
   async function expandMapNode(nodeId: string): Promise<void> {
     if (performance.now() < suppressNodeClickUntil) return;
     zoomView(1);
     await tick();
-    centerNode(nodeId);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    centerNode(nodeId);
+    await centerSettled(nodeId);
     await focusNode(nodeId, false);
   }
 
@@ -1453,11 +1472,11 @@
 >
   <div class="loom-top">
     <Tabs label="Loom views" scroll value={loomUiState.view} onchange={(view) => setLoomView(view)} options={[
-      { value: "weave", label: "Weave", hint: "Text and alternatives" },
-      { value: "map", label: "Map", hint: "All branches" },
-      { value: "path", label: "Path", count: String(pathSnippets.length), hint: "Sentences on the current path" },
-      { value: "options", label: "Options", count: String(optionNodes.length), hint: "Alternatives at this point" },
-      { value: "saved", label: "Starred", count: String(savedRows.length), hint: "Starred points" },
+      { value: "weave", label: "Weave" },
+      { value: "map", label: "Map" },
+      { value: "path", label: "Path", count: String(pathSnippets.length) },
+      { value: "options", label: "Options", count: String(optionNodes.length) },
+      { value: "saved", label: "Starred", count: String(savedRows.length) },
     ]} />
   </div>
 
@@ -1771,7 +1790,7 @@
                   onclick={(ev) => openMenu(ev, snippet.node.id)}>•••</button>
               </header>
               {#if snippet.sentenceIndex !== null && snippet.node.tokens}
-                <p class="snippet-tokens">{#each snippet.node.tokens.slice(snippet.start, snippet.end + 1) as token, offset (`${token.raw_index ?? snippet.start + offset}:${token.token_id ?? token.text}`)}{@const tokenIndex = snippet.start + offset}<button
+                <p class="snippet-tokens">{#each tokenWords(snippet.node.tokens, snippet.start, snippet.end) as word (word.start)}{@const lead = leadingSpace(snippet.node.tokens[word.start].text)}{lead}<span class="word">{#each snippet.node.tokens.slice(word.start, word.end + 1) as token, offset (`${token.raw_index ?? word.start + offset}:${token.token_id ?? token.text}`)}{@const tokenIndex = word.start + offset}<button
                       type="button"
                       class="path-token"
                       data-cursor="inspect"
@@ -1781,7 +1800,7 @@
                       aria-label={`Open token ${tokenIndex + 1}: ${token.text.trim() || "whitespace"}`}
                       aria-haspopup="dialog"
                       onclick={() => void inspectLoomToken(snippet.node, tokenIndex)}
-                    >{token.text || "∅"}</button>{/each}</p>
+                    >{(offset === 0 ? token.text.slice(lead.length) : token.text) || "∅"}</button>{/each}</span>{/each}</p>
               {:else}
                 <button type="button" class="snippet-text" onclick={() => void usePath(snippet.node)}>
                   {readableNodeText(snippet.node)}
@@ -1983,7 +2002,9 @@
 />
 
 <style>
-  .loom-sidebar { display: flex; flex-direction: column; gap: var(--s3); height: 100%; min-width: 0; min-height: 0; overflow: clip; color: var(--ink2); font: var(--type-small); }
+  /* Clipped top and bottom only: every row inside handles its own width, and a focus ring on a
+   * control flush with either side (the search field) must not lose its edge. */
+  .loom-sidebar { display: flex; flex-direction: column; gap: var(--s3); height: 100%; min-width: 0; min-height: 0; overflow-x: visible; overflow-y: clip; color: var(--ink2); font: var(--type-small); }
   .loom-top, .loom-actions, .filter-bar, .search-feedback, .loom-status, .loom-map-bar { flex: none; min-width: 0; }
   .loom-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); margin-top: calc(var(--s2) * -1); }
   .loom-actions .dw-text { font: var(--type-meta); }
@@ -2067,6 +2088,10 @@
   .snippet-body { display: grid; gap: var(--s1); min-width: 0; }
   .snippet-tokens, .snippet-text { margin: 0; color: var(--ink); font: var(--type-body); line-height: 28px; overflow-wrap: anywhere; }
   .snippet-text { padding: 0; border: 0; background: transparent; text-align: start; white-space: pre-wrap; cursor: pointer; }
+  /* A word holds together (a token is a button, atomic in the line) and a longer one wraps inside;
+   * the space before a word is text, which a wrapped line hangs at its end. */
+  .snippet-tokens { white-space: pre-wrap; }
+  .snippet-tokens .word { display: inline-block; max-width: 100%; }
   .path-token { display: inline; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; white-space: pre-wrap; cursor: pointer; transition: background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease); }
   .path-token:hover { background: var(--paper); box-shadow: 0 0 0 2px var(--paper); }
   .path-snippet:not(:hover):not(.current-snippet) .path-token:hover { background: var(--wash2); box-shadow: 0 0 0 2px var(--wash2); }
@@ -2127,10 +2152,15 @@
     .tree-node-wrap, .loom-edges path { transition: none; }
   }
   @media (pointer: coarse) {
+    /* Every target 44 px on touch: the text actions grow to it, a token's line is 44 px tall. */
     .loom-menu button { min-height: 44px; }
     .step, .more { width: 44px; height: 44px; }
+    .filter-input { height: 44px; }
+    .clear { top: 6px; }
     .loom-actions { gap: 0 var(--s4); }
-    .loom-actions .dw-text { min-height: 44px; }
+    .dw-text { min-height: 44px; }
+    .loom-view-controls .dw-text { min-width: 44px; }
+    .snippet-tokens { line-height: 44px; }
   }
   @media (max-width: 720px) {
     /* One row of actions that scrolls sideways, as the view tabs do. */

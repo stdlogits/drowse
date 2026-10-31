@@ -174,4 +174,5 @@
   .grid .col-label > span { display: inline-block; padding-bottom: var(--s2); white-space: nowrap; transform: rotate(-60deg); transform-origin: left bottom; }
   .grid .cell-td { line-height: 0; }
   @media (max-width: 720px) { .drawer { padding: var(--s4) var(--s4) 0; } }
+  @media (pointer: coarse) { .dw-text { min-height: 44px; } }
 </style>
