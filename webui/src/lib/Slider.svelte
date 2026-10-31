@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { onMount, tick } from "svelte";
-  import { MorphText } from "@stdlogits/ledger";
-  // Shared range slider — one consistent thumb / track across the whole
-  // webui (sampling strip, steering strips, the steering picker).
+  import { onMount } from "svelte";
+  import { hideTip, showTip } from "@stdlogits/ledger";
+  // The one range slider (sampling, steering strengths, the steering picker): a 4 px wash2 groove
+  // and a 14 px ink thumb, as the Instruments canvas draws it. While it is dragged or stepped from
+  // the keyboard, Ledger's tip shows the value above the thumb.
   //
-  // Deliberately dumb: it reports the raw value through ``oninput`` and
-  // ``bind:value``; consumers own any snapping (e.g. the steering strip's
-  // 0-detent).  The thumb tints to ``accent`` so a slider reads as the
-  // same control wherever it appears.
+  // Deliberately dumb: it reports the raw value through ``oninput`` and ``bind:value``; callers own
+  // any snapping (the steering strip's 0-detent, say).
 
   interface Props {
     /** Current value — bindable. */
@@ -35,6 +34,14 @@
     oninput,
   }: Props = $props();
 
+  /** The thumb's diameter in px (the CSS below draws it). */
+  const THUMB = 14;
+
+  let inputEl: HTMLInputElement;
+  let active = $state(false);
+  let tipShown = false;
+  const formattedValue = $derived(displayValue ?? value.toFixed(Math.min(6, (String(step).split(".")[1] ?? "").length)));
+
   function handle(ev: Event): void {
     const v = parseFloat((ev.currentTarget as HTMLInputElement).value);
     if (!Number.isFinite(v)) return;
@@ -43,51 +50,46 @@
     oninput?.(v);
   }
 
-  let inputEl: HTMLInputElement;
-  let bubble: HTMLSpanElement;
-  let active = $state(false);
-  const formattedValue = $derived(displayValue ?? value.toFixed(Math.min(6, (String(step).split(".")[1] ?? "").length)));
+  function fractionOf(v: number): number {
+    return max === min ? 0 : Math.max(0, Math.min(1, (v - min) / (max - min)));
+  }
 
-  function placeBubble() {
-    if (!active || !inputEl || !bubble) return;
+  /** The tip over the thumb, or none when the slider is idle or scrolled away. */
+  function placeTip(): void {
+    if (!inputEl) return;
+    if (!active || disabled) { hideValue(); return; }
     const rect = inputEl.getBoundingClientRect();
-    const fraction = max === min ? 0 : Math.max(0, Math.min(1, (value - min) / (max - min)));
-    const x = rect.left + 10 + (getComputedStyle(inputEl).direction === "rtl" ? 1 - fraction : fraction) * (rect.width - 20);
-    const half = bubble.getBoundingClientRect().width / 2;
-    const viewport = window.visualViewport;
-    const left = viewport?.offsetLeft ?? 0;
-    const top = viewport?.offsetTop ?? 0;
-    const width = viewport?.width ?? innerWidth;
-    const height = viewport?.height ?? innerHeight;
-    if (rect.bottom <= top || rect.top >= top + height) { bubble.hidePopover(); return; }
-    if (!bubble.matches(":popover-open")) bubble.showPopover();
-    bubble.style.left = `${Math.max(left + half + 8, Math.min(left + width - half - 8, x))}px`;
-    bubble.style.top = `${Math.max(top + 8, Math.min(top + height - bubble.offsetHeight - 8, rect.top - bubble.offsetHeight + 2))}px`;
+    if (rect.bottom <= 0 || rect.top >= window.innerHeight) { hideValue(); return; }
+    const rtl = getComputedStyle(inputEl).direction === "rtl";
+    const fraction = fractionOf(value);
+    const x = rect.left + THUMB / 2 + (rtl ? 1 - fraction : fraction) * (rect.width - THUMB);
+    const y = rect.top + rect.height / 2;
+    showTip(new DOMRect(x - THUMB / 2, y - THUMB / 2, THUMB, THUMB), { title: formattedValue });
+    tipShown = true;
+  }
+
+  function hideValue(): void {
+    if (!tipShown) return;
+    tipShown = false;
+    hideTip();
   }
 
   onMount(() => {
-    window.addEventListener("resize", placeBubble);
-    document.addEventListener("scroll", placeBubble, true);
-    window.visualViewport?.addEventListener("resize", placeBubble);
-    window.visualViewport?.addEventListener("scroll", placeBubble);
+    window.addEventListener("resize", placeTip);
+    document.addEventListener("scroll", placeTip, true);
     return () => {
-      window.removeEventListener("resize", placeBubble);
-      document.removeEventListener("scroll", placeBubble, true);
-      window.visualViewport?.removeEventListener("resize", placeBubble);
-      window.visualViewport?.removeEventListener("scroll", placeBubble);
+      window.removeEventListener("resize", placeTip);
+      document.removeEventListener("scroll", placeTip, true);
+      hideValue();
     };
   });
 
   $effect(() => {
     void value;
     void formattedValue;
-    if (active && !disabled) {
-      void tick().then(() => {
-        if (!active || disabled || !bubble?.isConnected) return;
-        bubble.showPopover();
-        placeBubble();
-      });
-    } else bubble?.hidePopover();
+    void active;
+    void disabled;
+    placeTip();
   });
 
   let drag: { id: number; offset: number } | null = null;
@@ -96,9 +98,9 @@
     if (!drag || event.pointerId !== drag.id || disabled) return;
     const input = event.currentTarget as HTMLInputElement;
     const rect = input.getBoundingClientRect();
-    const width = Math.max(1, rect.width - 20);
+    const width = Math.max(1, rect.width - THUMB);
     const rtl = getComputedStyle(input).direction === "rtl";
-    const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left - 10 - drag.offset) / width));
+    const fraction = Math.max(0, Math.min(1, (event.clientX - rect.left - THUMB / 2 - drag.offset) / width));
     const raw = min + (rtl ? 1 - fraction : fraction) * (max - min);
     input.value = String(Math.max(min, Math.min(max, min + Math.round((raw - min) / step) * step)));
     value = input.valueAsNumber;
@@ -110,8 +112,8 @@
     event.preventDefault();
     const input = event.currentTarget as HTMLInputElement;
     const rect = input.getBoundingClientRect();
-    const fraction = max === min ? 0 : (value - min) / (max - min);
-    const center = rect.left + 10 + (getComputedStyle(input).direction === "rtl" ? 1 - fraction : fraction) * (rect.width - 20);
+    const fraction = fractionOf(value);
+    const center = rect.left + THUMB / 2 + (getComputedStyle(input).direction === "rtl" ? 1 - fraction : fraction) * (rect.width - THUMB);
     const offset = event.clientX - center;
     active = true;
     drag = { id: event.pointerId, offset: Math.abs(offset) <= 12 ? offset : 0 };
@@ -151,88 +153,65 @@
   onlostpointercapture={end}
 />
 
-<span bind:this={bubble} class="slider-bubble" popover="manual" aria-hidden="true"><MorphText text={formattedValue} duration={120} /></span>
-
 <style>
-  .slider-bubble { position: fixed; inset: auto; margin: 0; transform: translateX(-50%); pointer-events: none; padding: var(--space-1) var(--space-2); border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--bg-deep); color: var(--fg); box-shadow: var(--shadow-control); font: var(--text-sm)/1.4 var(--font-mono); font-variant-numeric: tabular-nums; max-width: calc(100vw - 16px); }
-
   .sk-slider {
     -webkit-appearance: none;
     appearance: none;
+    display: block;
     width: 100%;
-    height: var(--control-target);
-    min-height: 44px;
+    height: 32px;
+    margin: 0;
+    padding: 0;
+    border: 0;
+    border-radius: var(--r-chip);
+    background: transparent;
     touch-action: none;
     -webkit-user-select: none;
     user-select: none;
-    margin: 0;
-    /* Borderless: the track is a recessed groove — fill only.  The thumb
-     * keeps its --bg-deep cutout ring (a glyph stroke, not chrome). */
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius-pill);
     cursor: ew-resize;
   }
+  .sk-slider:disabled { opacity: 0.4; cursor: default; }
   .sk-slider::-webkit-slider-runnable-track {
     height: 4px;
-    background: var(--data-track);
     border: 0;
-    border-radius: var(--radius-pill);
+    border-radius: 2px;
+    background: var(--wash2);
   }
   .sk-slider::-moz-range-track {
     height: 4px;
-    background: var(--data-track);
     border: 0;
-    border-radius: var(--radius-pill);
+    border-radius: 2px;
+    background: var(--wash2);
   }
-  .sk-slider:disabled {
-    cursor: not-allowed;
-    opacity: var(--disabled-opacity);
-  }
-
   .sk-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 20px;
-    height: 20px;
-    box-sizing: border-box;
-    margin-top: -8px;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border: 0;
     border-radius: 50%;
-    background: var(--accent);
-    border: 1px solid var(--bg-deep);
+    background: var(--ink);
     cursor: inherit;
-    transition: transform var(--selection-dur) var(--selection-ease),
-      box-shadow var(--selection-dur) var(--selection-ease);
+    transition: scale var(--fast) var(--ease), background-color var(--fast) var(--ease);
   }
   .sk-slider::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
-    box-sizing: border-box;
+    width: 14px;
+    height: 14px;
+    border: 0;
     border-radius: 50%;
-    background: var(--accent);
-    border: 1px solid var(--bg-deep);
+    background: var(--ink);
     cursor: inherit;
-    transition: transform var(--selection-dur) var(--selection-ease),
-      box-shadow var(--selection-dur) var(--selection-ease);
+    transition: scale var(--fast) var(--ease), background-color var(--fast) var(--ease);
   }
   .sk-slider:hover:not(:disabled)::-webkit-slider-thumb,
-  .sk-slider:active:not(:disabled)::-webkit-slider-thumb {
-    transform: scale(1.05);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
-  }
+  .sk-slider:active:not(:disabled)::-webkit-slider-thumb { scale: 1.15; }
   .sk-slider:hover:not(:disabled)::-moz-range-thumb,
-  .sk-slider:active:not(:disabled)::-moz-range-thumb {
-    transform: scale(1.05);
-    box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 25%, transparent);
-  }
-  .sk-slider:disabled::-webkit-slider-thumb {
-    background: var(--fg-muted);
-  }
-  .sk-slider:disabled::-moz-range-thumb {
-    background: var(--fg-muted);
-  }
-  .sk-slider:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 0;
+  .sk-slider:active:not(:disabled)::-moz-range-thumb { scale: 1.15; }
+  .sk-slider:disabled::-webkit-slider-thumb { background: var(--ink3); }
+  .sk-slider:disabled::-moz-range-thumb { background: var(--ink3); }
+
+  @media (max-width: 720px), (pointer: coarse) {
+    .sk-slider { height: 44px; }
   }
 </style>

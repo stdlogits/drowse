@@ -1,8 +1,7 @@
 <script lang="ts">
   import { Icon } from "@stdlogits/ledger";
-  // Drowse editable combobox — arbitrary role labels plus a themed roster
-  // picker. Unlike a native datalist, the popup stays inside the webui's
-  // surface, type, focus, and keyboard system.
+  // The editable combobox: free text (a role label, say) over a roster to pick from. A wash field
+  // like every text field; its list opens as the same flat wash2 surface as Select's.
   import { onMount, tick } from "svelte";
   import { dropdownMotion } from "./dropdownMotion.svelte";
 
@@ -155,7 +154,7 @@
   });
 </script>
 
-<div class="sk-combobox field-focus" class:is-open={open} class:is-invalid={invalid}>
+<div class="sk-combobox" class:is-open={open} class:is-invalid={invalid}>
   <input
     bind:this={input} bind:value {placeholder} {disabled} {...{ "aria-description": (title) }} {spellcheck}
     role="combobox" aria-label={ariaLabel} aria-autocomplete="list"
@@ -184,7 +183,7 @@
           onkeydown={(ev) => {
             if (ev.key === "Enter" || ev.key === " ") void commit(i);
           }}
-          onclick={() => void commit(i)}>{opt.label}</li>
+          onclick={() => void commit(i)}><span class="text">{opt.label}</span>{#if opt.value === value}<span class="check" aria-hidden="true"><Icon name="check" /></span>{/if}</li>
       {:else}
         <li class="empty" role="option" aria-selected="false" aria-disabled="true">
           Custom role: “{value.trim()}”
@@ -195,37 +194,96 @@
 </div>
 
 <style>
-  .sk-combobox { position: relative; display: flex; align-items: center; min-width: 0;
-    min-height: var(--control-field);
-    width: 100%; border-radius: var(--radius); background: var(--control-sheen), var(--input-well);
-    box-shadow: var(--shadow-well);
-    transition: background var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out); }
-  .sk-combobox:hover, .sk-combobox.is-open {
-    background: var(--control-sheen), var(--surface-hi);
-    box-shadow: var(--shadow-control-hover);
+  .sk-combobox {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    border-radius: var(--r-col);
+    background: var(--field);
+    transition: background-color var(--fast) var(--ease);
   }
-  .sk-combobox.is-invalid { background: color-mix(in oklab, var(--ink) 10%, var(--paper)); }
-  input { width: 100%; min-width: 0; min-height: var(--control-field);
-    padding-block: var(--space-2);
-    padding-inline: var(--space-sm) calc(var(--control-compact) + var(--space-xs));
-    border: 0; border-radius: inherit; outline: 0; background: transparent; color: var(--fg); font: inherit;
-    font-family: var(--font-mono); font-size: var(--text-sm); }
-  input:disabled, input:disabled + .caret { opacity: var(--disabled-opacity); cursor: not-allowed; }
-  .caret { position: absolute; inset-inline-end: 0; display: grid; place-items: center; width: var(--control-compact);
-    height: 100%; padding: 0; border: 0; border-radius: inherit; background: transparent; background-image: none !important; color: var(--fg-muted);
-    cursor: pointer; transition: color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out); }
-  .is-open .caret { color: var(--accent); transform: rotate(180deg); }
-  .popover { --popup-radius: var(--radius-lg); position: fixed; inset: auto; z-index: var(--z-modal); box-sizing: border-box;
-    overflow-y: auto; margin: 0; padding: var(--space-2); list-style: none;
-    border: 1px solid var(--popup-border); border-radius: var(--popup-radius); background: var(--surface-sheen), var(--popup-bg); }
-  li { display: flex; align-items: center; min-height: var(--control-option); padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    color: var(--fg-strong); font-size: var(--text-sm); line-height: 1.45;
-    overflow-wrap: anywhere; white-space: normal; cursor: pointer; }
-  li.highlight { background: var(--control-sheen), var(--bg-hover); color: var(--fg); }
-  li.active { background: var(--control-sheen), var(--accent-subtle); }
-  li.active.highlight { background: var(--control-sheen), var(--accent-strong); }
-  li.empty { color: var(--fg-muted); cursor: default; }
+  .sk-combobox:hover, .sk-combobox.is-open { background: var(--field-hover); }
+  /* Ledger has no red: an invalid field darkens toward ink. */
+  .sk-combobox.is-invalid { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
+  input {
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 40px 0 var(--s3);
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: var(--ink);
+    font: var(--type-small);
+  }
+  input:disabled, input:disabled + .caret { opacity: 0.4; cursor: default; }
+  .caret {
+    position: absolute;
+    inset-inline-end: 0;
+    display: grid;
+    place-items: center;
+    width: 36px;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: inherit;
+    background: transparent;
+    color: var(--ink3);
+    cursor: pointer;
+    transition: color var(--fast) var(--ease), rotate var(--glide) var(--ease);
+  }
+  .caret:hover:not(:disabled) { color: var(--ink); }
+  .is-open .caret { rotate: 180deg; color: var(--ink); }
+
+  /* The list: Select's flat wash2 surface, rising 6 px as it fades in. */
+  .popover {
+    --dropdown-close-dur: var(--out);
+    position: fixed;
+    inset: auto;
+    z-index: 60;
+    box-sizing: border-box;
+    margin: 0;
+    padding: var(--s1);
+    overflow-y: auto;
+    list-style: none;
+    border: 0;
+    border-radius: var(--r-box);
+    background: var(--wash2);
+    color: var(--ink2);
+    opacity: 0;
+    translate: 0 6px;
+    transition: opacity var(--in) var(--ease), translate var(--in) var(--ease);
+  }
+  .popover[data-origin="bottom-left"] { translate: 0 -6px; }
+  .popover.is-open { opacity: 1; translate: 0 0; }
+  .popover.is-closing { opacity: 0; translate: 0 0; transition-duration: var(--out); }
+  li {
+    display: flex;
+    align-items: center;
+    gap: var(--s2);
+    min-height: 40px;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-col);
+    color: var(--ink2);
+    font: var(--type-control);
+    overflow-wrap: anywhere;
+    cursor: pointer;
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
+  }
+  li .text { flex: 1 1 auto; min-width: 0; }
+  li .check { display: grid; flex: none; }
+  li.active { color: var(--ink); }
+  li.highlight { background: var(--paper); color: var(--ink); }
+  li.empty { color: var(--ink3); cursor: default; }
+
+  @media (max-width: 720px), (pointer: coarse) {
+    .sk-combobox, input, li { min-height: 44px; }
+    .caret { width: 44px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .popover, .popover[data-origin="bottom-left"] { translate: none; }
+  }
 </style>

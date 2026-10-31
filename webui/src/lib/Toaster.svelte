@@ -1,13 +1,12 @@
 <script lang="ts">
-  import { Icon } from "@stdlogits/ledger";
   // Toast host — renders ``toasts.entries`` in the bottom-right corner.
-  // Each toast auto-dismisses after its ``ttlMs`` fires; clicking the
-  // ✕ dismisses early.  Toasts with ``ttlMs === null`` are sticky —
-  // used by long-running async work (extract / clone) that drives a
-  // single chip from kickoff to completion via ``updateToast``.
+  // Each toast auto-dismisses after its ``ttlMs`` fires (paused under the
+  // pointer or focus); the ✕ dismisses early.  Toasts with ``ttlMs === null``
+  // are sticky — long-running async work (extract / clone) drives a single
+  // toast from kickoff to completion via ``updateToast``.
 
   import { onDestroy } from "svelte";
-  import { fadeOut, rise } from "@stdlogits/ledger";
+  import { Icon, fadeOut, rise } from "@stdlogits/ledger";
   import { dismissToast, toasts } from "./stores.svelte";
 
   // Track which toast ids have an active timer so we don't re-schedule
@@ -92,7 +91,7 @@
         role={t.kind === "error" ? "alert" : "status"}
         aria-live={t.kind === "error" ? "assertive" : "polite"}
         aria-atomic="true"
-        in:rise={{ y: -6 }}
+        in:rise
         out:fadeOut
         onpointerenter={() => pause(t.id)}
         onpointerleave={() => resume(t.id)}
@@ -121,90 +120,66 @@
 {/if}
 
 <style>
+  /* Toasts: flat wash2 surfaces stacked at the bottom right, no line and no shadow. An error is told
+   * by its role and its words, not a colour (Ledger has none for it). */
   .toaster {
     position: fixed;
-    inset-inline-end: calc(var(--space-6) + env(safe-area-inset-right, 0px));
-    bottom: calc(var(--space-6) + env(safe-area-inset-bottom, 0px));
+    inset-inline-end: calc(var(--s5) + env(safe-area-inset-right, 0px));
+    bottom: calc(var(--s5) + env(safe-area-inset-bottom, 0px));
+    z-index: 70;
     display: flex;
     flex-direction: column;
-    gap: var(--space-3);
-    z-index: calc(var(--z-modal) + 10);
-    max-width: min(32em, calc(100vw - 2 * var(--space-6)));
+    align-items: flex-end;
+    gap: var(--s2);
+    width: min(400px, calc(100vw - var(--s5) * 2));
     pointer-events: none;
   }
   .toast {
-    pointer-events: auto;
-    background: var(--surface-sheen), var(--popup-bg);
-    color: var(--fg);
-    border: 1px solid var(--popup-border);
-    border-radius: var(--popup-radius);
-    padding: var(--surface-padding);
-    font-family: var(--font-reading);
-    font-size: var(--text-base);
     display: flex;
     align-items: flex-start;
-    gap: var(--space-4);
-    line-height: 1.5;
-  }
-  .toast.warning {
-    color: var(--accent-yellow);
-  }
-  .toast.error {
-    color: var(--error-text);
-  }
-  .toast.error .detail,
-  .toast.error .dismiss {
-    color: inherit;
-  }
-  @media (prefers-contrast: more) {
-    .toast.error {
-      background: var(--bg);
-      border-color: currentColor;
-    }
-  }
-  @media (forced-colors: active) {
-    .toast.error {
-      background: Canvas;
-      color: CanvasText;
-      border-color: CanvasText;
-    }
+    gap: var(--s3);
+    max-width: 100%;
+    padding: var(--s3) var(--s2) var(--s3) var(--s4);
+    border: 0;
+    border-radius: var(--r-box);
+    background: var(--wash2);
+    color: var(--ink);
+    font: var(--type-small);
+    pointer-events: auto;
   }
   .body {
+    display: grid;
     flex: 1 1 auto;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
+    gap: 2px;
     min-width: 0;
+    padding-block: var(--s1);
   }
-  .msg {
-    word-break: break-word;
-  }
-  .detail {
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    word-break: break-word;
-  }
+  .msg { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
+  .toast.warning .msg, .toast.error .msg { font-weight: 600; }
+  .detail { color: var(--ink2); font: var(--type-meta); overflow-wrap: anywhere; }
   .dismiss {
-    background: transparent;
+    display: grid;
+    flex: none;
+    place-items: center;
+    width: 28px;
+    height: 28px;
+    padding: 0;
     border: 0;
-    border-radius: var(--radius);
-    color: var(--fg-dim);
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--ink3);
     cursor: pointer;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0 var(--space-2);
-    font: inherit;
-    font-family: var(--font-mono);
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
-  .dismiss:hover {
-    color: var(--accent-red);
+  .dismiss:hover { background: var(--paper); color: var(--ink); }
+  .dismiss:active { scale: 0.97; }
+  @media (forced-colors: active) {
+    .toast { border: 1px solid CanvasText; }
   }
-  .dismiss:active { transform: scale(var(--press-scale)); }
-
-  @media (prefers-reduced-motion: reduce) {
-    .dismiss { transition: none; }
+  @media (max-width: 720px) {
+    .toaster { inset-inline: var(--s4); bottom: calc(var(--s4) + env(safe-area-inset-bottom, 0px)); width: auto; align-items: stretch; }
+  }
+  @media (max-width: 720px), (pointer: coarse) {
+    .dismiss { width: 44px; height: 44px; margin-block: calc(var(--s2) * -1); }
   }
 </style>

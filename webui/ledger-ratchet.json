@@ -15,26 +15,20 @@
     "tintText": "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)"
   },
   "totals": {
-    "bridge": 3895,
-    "border": 162,
+    "bridge": 3238,
+    "border": 129,
     "outline": 0,
-    "shadow": 72,
-    "mono": 152,
-    "uppercase": 42,
-    "tracking": 38,
+    "shadow": 53,
+    "mono": 135,
+    "uppercase": 39,
+    "tracking": 35,
     "easing": 12,
     "loop": 0,
-    "colour": 2,
+    "colour": 1,
     "mix": 0,
     "tintText": 0
   },
   "files": {
-    "src/drawers/AdvancedSamplingDrawer.svelte": {
-      "bridge": 59,
-      "border": 3,
-      "shadow": 1,
-      "mono": 1
-    },
     "src/drawers/CastDrawer.svelte": {
       "bridge": 90,
       "border": 4,
@@ -58,24 +52,6 @@
     "src/drawers/DownloadChatDrawer.svelte": {
       "bridge": 36,
       "border": 1
-    },
-    "src/drawers/DrawerOutlet.svelte": {
-      "bridge": 3
-    },
-    "src/drawers/FeedbackDrawer.svelte": {
-      "bridge": 13
-    },
-    "src/drawers/HealthDrawer.svelte": {
-      "bridge": 58,
-      "border": 2,
-      "mono": 2,
-      "uppercase": 3,
-      "tracking": 3
-    },
-    "src/drawers/HelpDrawer.svelte": {
-      "bridge": 70,
-      "shadow": 1,
-      "mono": 2
     },
     "src/drawers/LoadConversationDrawer.svelte": {
       "bridge": 124,
@@ -128,12 +104,6 @@
       "tracking": 1,
       "easing": 3
     },
-    "src/drawers/SessionAdminDrawer.svelte": {
-      "bridge": 54,
-      "border": 4,
-      "shadow": 1,
-      "mono": 2
-    },
     "src/drawers/SystemPromptDrawer.svelte": {
       "bridge": 43,
       "border": 4
@@ -156,9 +126,6 @@
       "bridge": 81,
       "border": 8,
       "mono": 5
-    },
-    "src/drawers/UnavailableRuntimeDrawer.svelte": {
-      "bridge": 9
     },
     "src/drawers/manifold/AuthoredForm.svelte": {
       "bridge": 4,
@@ -241,40 +208,6 @@
       "uppercase": 1,
       "tracking": 1
     },
-    "src/lib/Combobox.svelte": {
-      "bridge": 48,
-      "border": 1,
-      "shadow": 2,
-      "mono": 1
-    },
-    "src/lib/NumberInput.svelte": {
-      "bridge": 44,
-      "border": 4,
-      "shadow": 2,
-      "mono": 2
-    },
-    "src/lib/Radio.svelte": {
-      "bridge": 29,
-      "border": 3,
-      "mono": 1
-    },
-    "src/lib/Select.svelte": {
-      "bridge": 51,
-      "border": 3,
-      "shadow": 2,
-      "mono": 1
-    },
-    "src/lib/Slider.svelte": {
-      "bridge": 33,
-      "border": 3,
-      "shadow": 3,
-      "mono": 1
-    },
-    "src/lib/Toaster.svelte": {
-      "bridge": 29,
-      "border": 2,
-      "mono": 1
-    },
     "src/lib/builder/AdvancedSection.svelte": {
       "bridge": 2
     },
@@ -306,31 +239,12 @@
       "border": 2,
       "mono": 2
     },
-    "src/lib/ui/BaseModelTag.svelte": {
-      "bridge": 9,
-      "mono": 1
-    },
-    "src/lib/ui/Button.svelte": {
-      "bridge": 57,
-      "border": 5,
-      "shadow": 6,
-      "colour": 1
-    },
-    "src/lib/ui/ContactForm.svelte": {
-      "bridge": 54,
-      "border": 2,
-      "shadow": 1,
-      "mono": 1
-    },
     "src/lib/ui/ConversationAutosave.svelte": {
       "bridge": 5
     },
     "src/lib/ui/ManifoldJobProgress.svelte": {
       "bridge": 17,
       "mono": 1
-    },
-    "src/lib/ui/ResetSettings.svelte": {
-      "bridge": 7
     },
     "src/lib/ui/TemplatePreview.svelte": {
       "bridge": 9
@@ -370,11 +284,6 @@
     },
     "src/panels/SaeSourceSection.svelte": {
       "bridge": 9,
-      "mono": 1
-    },
-    "src/panels/SamplingStrip.svelte": {
-      "bridge": 30,
-      "border": 1,
       "mono": 1
     },
     "src/panels/loom/LoomDialog.svelte": {

@@ -1,13 +1,13 @@
 <script lang="ts">
-  // v2 button — the one button. Four variants on one skeleton:
-  //   solid  — accent-filled, dark text; the primary action of a surface
-  //   ghost  — borderless glass fill + wash on hover; the default workhorse
-  //   flat   — transparent compact action; color-only hover feedback
-  //   danger — red ghost; destructive affordances
+  // The one button, in Ledger: a pill with no line, told apart by fill alone.
+  //   solid  — ink fill, paper text: the primary action of a surface
+  //   ghost  — a wash that steps to wash2 on hover: the default workhorse
+  //   flat   — text only, ink3 to ink on hover
+  //   danger — a ghost for destructive actions (Ledger has no red: the confirm step carries it)
   //
-  // ``accent`` retints a button to a pillar hue (pass the CSS color) —
-  // solid fills with it, ghost/danger tint text + hover wash.
-  // Busy feedback is decorative; callers still own labels and disabling.
+  // ``accent`` tints the fill (never the text): solid fills with it, ghost and danger take it at
+  // 14% in oklch. Busy is announced (aria-busy, the progress cursor); callers own the label and
+  // disabling. Path and props are shared with drowse.ai.
 
   import type { Snippet } from "svelte";
 
@@ -15,7 +15,7 @@
     children: Snippet;
     variant?: "solid" | "ghost" | "flat" | "danger";
     size?: "sm" | "md";
-    /** Pillar/state hue override — any CSS color. */
+    /** A fill tint: any CSS colour (a depth on the ramp, usually). */
     accent?: string;
     disabled?: boolean;
     busy?: boolean;
@@ -46,11 +46,8 @@
 <button
   class="sk-btn {variant} {size}"
   class:accented={accent !== undefined}
-  class:loading-pulse={busy}
   class:static={isStatic}
   style:--btn-accent={accent}
-  style:--btn-solid-fill={accent ?? "var(--action-bg)"}
-  style:--btn-solid-ink={accent ? "var(--text-on-accent)" : "var(--action-ink)"}
   {disabled}
   {...{ "aria-description": (title) }}
   aria-label={ariaLabel}
@@ -64,105 +61,50 @@
 
 <style>
   .sk-btn {
-    --btn-accent: var(--accent);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    gap: var(--control-label-gap);
-    border-radius: var(--radius);
-    font-family: var(--font-structure);
-    font-weight: var(--weight-structure);
-    min-width: var(--control-target);
+    gap: var(--s2);
     max-width: 100%;
-    line-height: 1.4;
+    min-height: 36px;
+    padding: var(--s2) var(--s4);
+    border: 0;
+    border-radius: var(--r-pill);
+    background: transparent;
+    color: var(--ink);
+    font: var(--type-control);
+    text-align: center;
+    text-wrap: balance;
     overflow-wrap: anywhere;
-    border: 1px solid transparent;
+    cursor: pointer;
     transition:
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      filter var(--dur-fast) var(--ease-out),
-      scale var(--dur-fast) var(--ease-out);
+      background-color var(--fast) var(--ease),
+      color var(--fast) var(--ease),
+      opacity var(--fast) var(--ease),
+      scale var(--fast) var(--ease);
   }
-  .sk-btn:active:not(:disabled):not(.static) {
-    scale: var(--press-scale);
-  }
-  .sk-btn:disabled {
-    cursor: not-allowed;
-    opacity: var(--disabled-opacity);
-  }
+  .sk-btn:active:not(:disabled):not(.static) { scale: 0.97; }
+  .sk-btn:disabled { opacity: 0.4; cursor: default; }
 
-  .md {
-    font-size: var(--text-sm);
-    padding: var(--space-xs) var(--space-sm);
-    min-height: var(--control-field);
-  }
-  .sm {
-    min-height: var(--control-target);
-    font-size: var(--text-sm);
-    padding: var(--space-xs) var(--space-xs);
-    border-radius: var(--radius-sm);
-  }
+  .md { font: var(--type-control); }
+  .sm { min-height: 32px; padding: var(--s1) var(--s3); font: var(--type-control); }
 
-  /* Solid buttons use one quiet, legible accent fill. */
-  .solid {
-    background: var(--control-sheen), var(--btn-solid-fill);
-    color: var(--btn-solid-ink);
-    border-color: transparent;
-    box-shadow: var(--shadow-control);
-  }
-  .solid:hover:not(:disabled) {
-    background: var(--control-sheen), color-mix(in oklab, var(--btn-solid-fill) 94%, white);
-    box-shadow: var(--shadow-control-hover);
-  }
+  .solid { padding-inline: var(--s5); background: var(--ink); color: var(--paper); }
+  .solid.sm { padding-inline: var(--s4); }
+  .solid.accented { background: var(--btn-accent); }
+  .solid:hover:not(:disabled) { opacity: 0.86; }
 
-  /* Borderless doctrine: the control floats UP on a glass fill — shape
-   * without an outline. Hover deepens the wash toward the accent. */
-  .ghost {
-    background: var(--control-sheen), var(--glass);
-    color: var(--fg-dim);
-    border-color: transparent;
-    box-shadow: var(--shadow-control);
-  }
-  .ghost:hover:not(:disabled) {
-    background: var(--control-sheen), var(--glass-strong);
-    color: var(--fg);
-    box-shadow: var(--shadow-control-hover);
-  }
-  .ghost.accented {
-    background: var(--control-sheen), color-mix(in oklab, var(--btn-accent) 7%, var(--glass));
-    color: var(--ink);
-  }
-  .ghost.accented:hover:not(:disabled) {
-    background: var(--control-sheen), color-mix(in oklab, var(--btn-accent) 10%, var(--glass));
-    color: var(--ink);
-  }
+  .ghost, .danger { background: var(--wash); }
+  .ghost:hover:not(:disabled), .danger:hover:not(:disabled) { background: var(--wash2); }
+  .ghost.accented, .danger.accented { background: color-mix(in oklch, var(--btn-accent) 14%, var(--wash)); }
+  .ghost.accented:hover:not(:disabled), .danger.accented:hover:not(:disabled) { background: color-mix(in oklch, var(--btn-accent) 22%, var(--wash)); }
 
-  .flat {
-    background: transparent;
-    color: var(--fg-muted);
-    border-color: transparent;
-  }
-  .flat:hover:not(:disabled) {
-    background: transparent;
-    color: var(--ink);
-  }
+  .flat, .flat.sm { padding-inline: 0; background: transparent; color: var(--ink3); }
+  .flat:hover:not(:disabled) { color: var(--ink); }
 
-  .danger {
-    background: var(--control-sheen), var(--danger-bg);
-    color: var(--accent-red);
-    border-color: transparent;
-    box-shadow: var(--shadow-control);
-  }
-  .danger:hover:not(:disabled) {
-    background: var(--control-sheen), var(--danger-hover);
-  }
-
-  .sk-btn:active:not(:disabled):not(.flat) { box-shadow: var(--shadow-control-pressed); }
-
-  .sk-btn:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+  /* Phones and touch screens: every target 44 px, a text-only button included. */
+  @media (max-width: 720px), (pointer: coarse) {
+    .sk-btn, .sm { min-height: 44px; }
+    .flat { min-width: 44px; }
   }
 </style>

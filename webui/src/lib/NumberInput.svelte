@@ -1,11 +1,8 @@
 <script lang="ts">
-  import { MorphText } from "@stdlogits/ledger";
-  import { Icon } from "@stdlogits/ledger";
-  // Themed numeric input — strips the OS spinner buttons, exposes a
-  // hover-revealed ▴/▾ pair on the right edge.  Keyboard ↑/↓ still
-  // works natively because the underlying ``<input type="number">`` is
-  // unchanged; the visible steppers just give mouse users the same
-  // affordance.
+  import { Icon, MorphText } from "@stdlogits/ledger";
+  // The numeric field: a wash field without the OS spinners, with a quiet ▴/▾ pair at the right
+  // edge on hover. Keyboard ↑/↓ still work natively (the ``<input type="number">`` is unchanged);
+  // the steppers give a pointer the same steps.
   //
   // Drop-in for ``<input type="number">``: same ``min`` / ``max`` /
   // ``step`` / ``placeholder`` props, ``bind:value`` to a number (with
@@ -196,110 +193,92 @@
 </span>
 
 <style>
-  .resting .sk-number-input { color: transparent; }
-  .number-rest { position: absolute; inset-inline: calc(var(--space-3) + 1px) var(--space-6); top: 50%; transform: translateY(-50%); pointer-events: none; font: var(--text-sm)/normal var(--font-mono); color: var(--fg); overflow: hidden; }
+  /* A wash field like every text field. The value at rest is drawn over the input with MorphText,
+   * so a change rolls rather than jumps; editing shows the input itself. */
   .sk-number {
     position: relative;
     display: inline-flex;
     align-items: stretch;
     width: 100%;
-    border-radius: var(--radius);
+    min-width: 0;
+    border-radius: var(--r-col);
   }
-
-  /* Strip the native spinner across browsers. */
   .sk-number-input {
     flex: 1 1 0;
-    min-width: 0;
-    min-height: var(--control-field);
     width: 100%;
-    padding: var(--space-2) var(--space-3);
-    padding-inline-end: var(--space-6); /* room for the steppers */
-    /* Borderless input: recessed well fill; ring on focus only. */
-    background: var(--control-sheen), var(--input-well);
-    box-shadow: var(--shadow-well);
-    color: var(--fg);
-    border: 1px solid transparent;
+    min-width: 0;
+    min-height: 36px;
+    padding: 0 28px 0 var(--s3);
+    border: 0;
     border-radius: inherit;
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
+    background: var(--field);
+    color: var(--ink);
+    font: var(--type-small);
+    font-variant-numeric: tabular-nums;
     -moz-appearance: textfield;
     appearance: textfield;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out);
+    transition: background-color var(--fast) var(--ease);
   }
   .sk-number-input::-webkit-outer-spin-button,
   .sk-number-input::-webkit-inner-spin-button {
     -webkit-appearance: none;
     margin: 0;
   }
-  .sk-number-input:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 1px;
-    border-color: var(--accent-strong);
-    box-shadow: var(--shadow-control-hover);
-  }
-  .sk-number:hover .sk-number-input:not(:disabled) {
-    background: var(--control-sheen), color-mix(in oklab, var(--surface-hi) 72%, var(--input-well));
-  }
-  .sk-number.is-invalid .sk-number-input {
-    border-color: var(--accent-red);
-  }
-  .sk-number-input:disabled {
-    cursor: not-allowed;
+  .sk-number:hover .sk-number-input:not(:disabled) { background: var(--field-hover); }
+  /* Ledger has no red: an invalid field darkens toward ink. */
+  .sk-number.is-invalid .sk-number-input { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
+  .sk-number-input:disabled { cursor: default; }
+  .resting .sk-number-input { color: transparent; }
+  .number-rest {
+    position: absolute;
+    inset-inline: var(--s3) 28px;
+    top: 50%;
+    overflow: hidden;
+    color: var(--ink);
+    font: var(--type-small);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+    transform: translateY(-50%);
+    pointer-events: none;
   }
 
+  /* The steppers: two quiet glyphs at the right edge, shown on hover and focus. */
   .sk-number-steppers {
     position: absolute;
-    top: 1px;
-    bottom: 1px;
-    inset-inline-end: 1px;
+    top: 2px;
+    bottom: 2px;
+    inset-inline-end: 2px;
     display: flex;
     flex-direction: column;
-    width: 14px;
-    border-radius: 0 var(--radius) var(--radius) 0;
-    overflow: hidden;
-    border-inline-start: 1px solid transparent;
+    width: 24px;
     opacity: 0;
-    transition: opacity var(--dur-fast) var(--ease-out);
     pointer-events: none;
+    transition: opacity var(--fast) var(--ease);
   }
   .sk-number:hover .sk-number-steppers,
   .sk-number:focus-within .sk-number-steppers {
     opacity: 1;
     pointer-events: auto;
   }
-
   .sk-number-step {
+    display: grid;
     flex: 1 1 0;
+    place-items: center;
     padding: 0;
-    background: transparent;
-    color: var(--fg-muted);
     border: 0;
-    font-size: var(--text-glyph-xs);
-    line-height: 1;
+    border-radius: var(--r-chip);
+    background: transparent;
+    color: var(--ink3);
     cursor: pointer;
-    transition: background var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out);
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
   }
-  .sk-number-step:hover {
-    background: var(--bg-hover);
-    color: var(--accent);
-  }
-  .sk-number-step:active {
-    background: var(--accent-strong);
-  }
+  .sk-number-step:hover { background: var(--paper); color: var(--ink); }
 
-  .sk-number.is-disabled {
-    opacity: var(--disabled-opacity);
-  }
+  .sk-number.is-disabled { opacity: 0.4; }
 
-  @media (max-width: 720px) {
-    .sk-number-input {
-      padding-inline-end: var(--space-3);
-    }
+  @media (max-width: 720px), (pointer: coarse) {
+    .sk-number-input { min-height: 44px; padding-inline-end: var(--s3); }
+    .number-rest { inset-inline-end: var(--s3); }
     .sk-number-steppers { display: none; }
   }
 </style>

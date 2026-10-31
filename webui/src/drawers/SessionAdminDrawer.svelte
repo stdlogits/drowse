@@ -1,17 +1,26 @@
 <script lang="ts">
-  import { IconButton } from "@stdlogits/ledger";
+  // The Model room's API access section (a dialog anywhere else): the bearer key this tab sends,
+  // and the server's sessions as rows, the current one on wash2. drowse.ai swaps this file for the
+  // unavailable one through the @runtime-session-drawer alias.
+  import { IconButton, MorphText } from "@stdlogits/ledger";
+  import { onMount } from "svelte";
+  import Button from "../lib/ui/Button.svelte";
   import { getApiKey, setApiKey } from "../lib/runtime/http-auth";
   import { apiSessions } from "../lib/runtime/services";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import type { SessionInfo } from "../lib/types";
   import { closeDrawer, refreshSession, sessionState } from "../lib/stores.svelte";
 
+  let { params = null }: { params?: unknown } = $props();
+  const embedded = $derived((params as { embedded?: boolean } | null)?.embedded === true);
+
   let key = $state(getApiKey() ?? "");
   let sessions: SessionInfo[] = $state([]);
+  let loaded = $state(false);
   let busy = $state(false);
   let errorMsg: string | null = $state(null);
   let saved = $state(false);
-  const keyId = $props.id();
+  const uid = $props.id();
 
   async function loadSessions(): Promise<void> {
     busy = true;
@@ -19,6 +28,7 @@
     try {
       const r = await apiSessions.list();
       sessions = r.sessions;
+      loaded = true;
     } catch (e) {
       errorMsg = userFacingError(e, "Unable to load server sessions. Check the server connection and try again.");
     } finally {
@@ -32,89 +42,98 @@
     await refreshSession();
     await loadSessions();
   }
+
+  onMount(() => { void loadSessions(); });
 </script>
 
-<section class="drawer-shell" aria-label="Session and auth drawer">
-  <header class="header">
-    <div>
-      <h2 class="title">API access</h2>
-    </div>
-    <IconButton icon="close" label="Close" onclick={closeDrawer} />
-  </header>
+<section class="access" class:embedded aria-label={embedded ? "API access" : "Session and auth drawer"}>
+  {#if !embedded}
+    <header class="dlg-head">
+      <h2>API access</h2>
+      <IconButton icon="close" label="Close" onclick={closeDrawer} />
+    </header>
+  {/if}
 
   <div class="body">
-    <section class="panel">
-      <h3><label for={keyId}>API key</label></h3>
+    <section class="dw-sec" aria-labelledby={`${uid}-key-head`}>
+      <div class="dw-sec-head"><span class="head" id={`${uid}-key-head`}>Key</span><span class="meta">This tab, until you reload</span></div>
       <form class="key-row" onsubmit={(event) => { event.preventDefault(); void saveKey(); }}>
+        <label class="sr-only" for={`${uid}-key`}>Drowse API key</label>
         <input
-          id={keyId}
+          id={`${uid}-key`}
           type="password"
           bind:value={key}
           placeholder="DROWSE_API_KEY"
           autocomplete="off"
-          aria-label="Drowse API key"
           oninput={() => (saved = false)}
         />
-        <button type="submit">Apply key</button>
-        <button type="button" onclick={() => { key = ""; void saveKey(); }}>Clear key</button>
+        <Button type="submit" variant="solid">Apply</Button>
+        <Button variant="flat" onclick={() => { key = ""; void saveKey(); }}>Clear</Button>
       </form>
-      <p class="hint">Changes apply only to this tab until you reload.</p>
-      <p class="hint" role="status">{saved ? "API key updated for this tab." : ""}</p>
+      <!-- The live region stays in the tree (so the word is announced) and takes no line until then. -->
+      <p class="meta" class:sr-only={!saved} role="status"><MorphText text={saved ? (key ? "Applied" : "Cleared") : ""} numbers={false} /></p>
     </section>
 
-    <section class="panel">
-      <div class="section-head">
-        <h3>Server sessions</h3>
-        <button type="button" class:loading-pulse={busy} aria-busy={busy} disabled={busy} onclick={loadSessions}>
-          {busy ? "Loading…" : "Refresh sessions"}
+    <section class="dw-sec" aria-labelledby={`${uid}-sessions-head`}>
+      <div class="dw-sec-head">
+        <span class="head" id={`${uid}-sessions-head`}>Sessions</span>
+        <button type="button" class="dw-text" aria-busy={busy} disabled={busy} onclick={loadSessions}>
+          <MorphText text={busy ? "Loading…" : "Refresh"} numbers={false} />
         </button>
       </div>
       {#if errorMsg}
         <p class="error" role="alert">{errorMsg}</p>
       {/if}
-      <div class="sessions">
-        {#if sessions.length === 0}
-          <div class="empty">Select Refresh sessions to list the models running on this server.</div>
-        {:else}
+      {#if !loaded && busy}
+        <div class="dw-blocks" aria-hidden="true"><i></i></div>
+      {:else if loaded && sessions.length === 0}
+        <p class="meta">None on this server</p>
+      {:else}
+        <ul class="sessions">
           {#each sessions as s (s.id)}
-            <article class:active={sessionState.info?.id === s.id}>
-              <strong>{s.id}</strong>
-              {#if sessionState.info?.id === s.id}<span>Current session</span>{/if}
-              <code>{s.model_id}</code>
-              <span>{s.device}/{s.dtype} · {s.profiles.length} profiles · {s.probes.length} probes</span>
-            </article>
+            <li class="session" aria-current={sessionState.info?.id === s.id ? "true" : undefined}>
+              <span class="id">{s.id}</span>
+              <span class="model">{s.model_id}</span>
+              <span class="meta">{s.device}/{s.dtype} · {s.profiles.length} profiles · {s.probes.length} probes{sessionState.info?.id === s.id ? " · this tab" : ""}</span>
+            </li>
           {/each}
-        {/if}
-      </div>
+        </ul>
+      {/if}
     </section>
-
   </div>
 </section>
 
 <style>
-  .drawer-shell { display: flex; flex-direction: column; min-height: 0; background: transparent; }
-  .header { display: flex; justify-content: space-between; gap: var(--space-6); padding: var(--drawer-gutter-block) var(--drawer-gutter-inline); background: transparent; }
-  .title { color: var(--fg); letter-spacing: 0; font-size: var(--text-md); font-weight: var(--weight-medium); }
-  .hint, .panel p { margin: var(--space-1) 0 0; color: var(--fg-muted); line-height: 1.45; }
-  .body { display: grid; gap: var(--drawer-section-gap); padding: var(--drawer-gutter-block) var(--drawer-gutter-inline); overflow: auto; }
-  .panel {
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--glass);
-    box-shadow: var(--shadow-well);
-    padding: var(--panel-padding);
+  .access { display: flex; flex-direction: column; min-height: 0; color: var(--ink2); }
+  .dlg-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--s4); padding: var(--s5) var(--s5) 0; }
+  .dlg-head h2 { margin: 0; color: var(--ink); font: var(--type-mark); }
+  .body { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); align-content: start; max-width: 760px; padding: var(--s5); overflow: auto; }
+  .embedded .body { padding: 0; overflow: visible; }
+
+  .key-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+  .key-row input { flex: 1 1 280px; min-width: 0; font: var(--type-small); }
+  .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
+
+  /* The sessions as rows (the Lens room's source rows): an ID, the model, its facts. */
+  .sessions { display: grid; gap: 2px; }
+  .session { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 2px var(--s3); align-items: baseline; min-height: 40px; padding: var(--s2) var(--s3); border-radius: var(--r-box); }
+  .session[aria-current="true"] { background: var(--wash2); }
+  .session .id { color: var(--ink); font: 600 14px/20px var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
+  .session .model { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
+  .session .meta { grid-column: 2; }
+  .dw-blocks > i { height: 40px; }
+
+  @media (max-width: 720px) {
+    .dlg-head { padding: var(--s4) var(--s4) 0; }
+    .body { padding: var(--s4); }
+    .key-row input { flex-basis: 100%; }
+    .session { grid-template-columns: minmax(0, 1fr); }
+    .session .meta { grid-column: 1; }
   }
-  h3 { margin: 0 0 var(--space-4); color: var(--fg); font-size: var(--text-sm); letter-spacing: 0; }
-  .key-row { display: flex; flex-wrap: wrap; gap: var(--space-3); }
-  input { min-width: 0; flex: 1 1 100%; min-height: var(--control-target); border: 1px solid transparent; border-radius: var(--radius); background: var(--input-well); color: var(--fg); padding: var(--space-4); font-family: var(--font-mono); }
-  button { min-height: var(--control-target); border: 1px solid transparent; border-radius: var(--radius); background: var(--glass); color: var(--fg); padding: var(--space-3) var(--space-5); }
-  button:hover:not(:disabled) { background: var(--glass-strong); color: var(--accent); }
-  .section-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4); }
-  .sessions { display: grid; gap: var(--space-3); }
-  article { display: grid; gap: var(--space-2); border: 1px solid transparent; border-radius: var(--radius); background: var(--surface-sheen), var(--bg-elev); padding: var(--surface-padding); }
-  article.active { border-color: var(--accent); background: var(--surface-sheen), var(--accent-subtle); }
-  strong { color: var(--fg); overflow-wrap: anywhere; }
-  code { color: var(--fg-strong); font-family: var(--font-mono); overflow-wrap: anywhere; }
-  article span { color: var(--fg-muted); }
-  .panel .error { color: var(--accent-red); }
-  .empty { color: var(--fg-muted); background: var(--surface-sheen), var(--bg); border-radius: var(--radius); padding: var(--panel-padding); text-align: center; }
+  /* Phones and touch screens: every target 44 px. */
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
+    .key-row input { min-height: 44px; }
+    .dw-sec-head .dw-text { min-height: 44px; }
+  }
 </style>

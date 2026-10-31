@@ -8,17 +8,24 @@
 </script>
 
 <section class="feedback-drawer" aria-label="Submit Feedback">
-  <header><h2>Share feedback</h2><IconButton icon="close" label="Close feedback" onclick={closeDrawer} /></header>
-  <div class="body"><ContactForm source="feedback" ondone={closeDrawer} /><p class="contact-link">Need help? <a href={runtimeClient.mode === "http" ? "https://drowse.ai/contact" : "/contact"} target="_blank" rel="noreferrer">Contact us<span class="sr-only"> (opens a new tab)</span></a> or email <a href={`mailto:${CONTACT_ADDRESS}`}>{CONTACT_ADDRESS}</a>.</p></div>
+  <header class="dlg-head"><h2>Share feedback</h2><IconButton icon="close" label="Close feedback" onclick={closeDrawer} /></header>
+  <div class="body">
+    <ContactForm source="feedback" ondone={closeDrawer} />
+    <p class="contact-link">Need help? <a class="prose-link" href={runtimeClient.mode === "http" ? "https://drowse.ai/contact" : "/contact"} target="_blank" rel="noreferrer">Contact us<span class="sr-only"> (opens a new tab)</span></a> or email <a class="prose-link" href={`mailto:${CONTACT_ADDRESS}`}>{CONTACT_ADDRESS}</a>.</p>
+  </div>
 </section>
 
 <style>
   .feedback-drawer { display: flex; flex-direction: column; height: 100%; min-height: 0; }
-  header { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--space-md); padding: var(--surface-padding); }
-  h2 { margin: 0; font-family: var(--font-structure); font-size: var(--text-lg); font-weight: var(--weight-structure); }
-  .body { overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--surface-padding) var(--surface-padding); scrollbar-gutter: stable; }
-  .contact-link { margin: var(--space-lg) 0 0; color: var(--fg-dim); font-size: var(--text-xs); line-height: 1.5; }
-  a { color: var(--accent); text-underline-offset: 3px; }
-  a:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: var(--radius-sm); }
-  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .dlg-head { display: flex; flex: none; align-items: center; justify-content: space-between; gap: var(--s4); padding: var(--s5) var(--s5) 0; }
+  .dlg-head h2 { margin: 0; color: var(--ink); font: var(--type-mark); }
+  .body { display: grid; gap: var(--s6); align-content: start; padding: var(--s5); overflow-y: auto; overscroll-behavior: contain; }
+  .contact-link { color: var(--ink3); font: var(--type-meta); }
+  @media (max-width: 720px) {
+    .dlg-head { padding: var(--s4) var(--s4) 0; }
+    .body { padding: var(--s4); }
+  }
+  @media (max-width: 720px), (pointer: coarse) {
+    .dlg-head :global(.icon) { width: 44px; height: 44px; }
+  }
 </style>

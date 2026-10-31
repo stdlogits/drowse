@@ -3,8 +3,8 @@
   import RollingNumber from "../lib/ui/RollingNumber.svelte";
   import ResetSettings from "../lib/ui/ResetSettings.svelte";
   import { settingsResetState } from "../lib/stores/settingsReset.svelte";
-  // SamplingStrip keeps the four everyday controls visible. Secondary
-  // generation and inspection controls live in AdvancedSamplingDrawer.
+  // The Inspector's Sampling section (the Instruments canvas): the everyday controls as rows.
+  // Secondary generation and inspection controls live in AdvancedSamplingDrawer.
   //
   // Every edit applies immediately.  temperature / top-p / top-k /
   // max-tokens / thinking PATCH the session defaults as the user moves
@@ -13,8 +13,6 @@
   // them onto each call's ``SamplingConfig``.  Either way the value the
   // strip shows is the value the next generation uses.
   //
-  // Empty seed = null = no per-call seed pin (model RNG).  The 🎲 button
-  // fills with a fresh ``Math.floor(Math.random() * 2**31)`` integer.
 
   import {
     samplingState,
@@ -174,52 +172,40 @@
 </script>
 
 <section class="sampling-strip" aria-label="sampling controls">
-  <!-- Row 1: temperature + top-p sliders -->
-  <div class="row sliders">
-    <div class="control" use:describedBy={"sampling-temperature-help"}>
-      <span class="control-label">
-        <span class="label" data-tip={HELP.temperature}>Temperature</span>
-      </span>
-      <span class="slider-cell">
-        <Slider
-          value={tempView}
-          min={TEMP_MIN}
-          max={Math.max(TEMP_MAX, tempView)}
-          step={TEMP_STEP}
-          disabled={!ready}
-          oninput={onTemp}
-          ariaLabel="Temperature"
-        />
-      </span>
+  <div class="ranges">
+    <div class="range" use:describedBy={"sampling-temperature-help"}>
+      <span class="label" data-tip={HELP.temperature}>Temperature</span>
+      <Slider
+        value={tempView}
+        min={TEMP_MIN}
+        max={Math.max(TEMP_MAX, tempView)}
+        step={TEMP_STEP}
+        disabled={!ready}
+        oninput={onTemp}
+        ariaLabel="Temperature"
+      />
       <span class="value"><RollingNumber value={tempView} digits={2} /></span>
       <span id="sampling-temperature-help" class="sr-only">{HELP.temperature}</span>
     </div>
 
-    <div class="control" use:describedBy={"sampling-top-p-help"}>
-      <span class="control-label">
-        <span class="label" data-tip={HELP.topP}>Top P</span>
-      </span>
-      <span class="slider-cell">
-        <Slider
-          value={topPView}
-          min={TOP_P_MIN}
-          max={TOP_P_MAX}
-          step={TOP_P_STEP}
-          disabled={!ready}
-          oninput={onTopP}
-          ariaLabel="Top P"
-        />
-      </span>
+    <div class="range" use:describedBy={"sampling-top-p-help"}>
+      <span class="label" data-tip={HELP.topP}>Top-p</span>
+      <Slider
+        value={topPView}
+        min={TOP_P_MIN}
+        max={TOP_P_MAX}
+        step={TOP_P_STEP}
+        disabled={!ready}
+        oninput={onTopP}
+        ariaLabel="Top P"
+      />
       <span class="value"><RollingNumber value={topPView} digits={2} /></span>
       <span id="sampling-top-p-help" class="sr-only">{HELP.topP}</span>
     </div>
-  </div>
-  <div class="row details">
-    <div class="control" use:describedBy={"sampling-max-tokens-help"}>
-      <span class="control-label">
-        <span class="label" data-tip={HELP.maxTokens}>Max tokens</span>
-      </span>
-      <span class="num-cell">
+
+    <div class="range" use:describedBy={"sampling-max-tokens-help"}>
+      <span class="label" data-tip={HELP.maxTokens}>Max tokens</span>
+      <span class="field">
         <NumberInput
           value={maxView}
           min={MAX_TOK_MIN}
@@ -232,17 +218,15 @@
       </span>
       <span id="sampling-max-tokens-help" class="sr-only">{HELP.maxTokens}</span>
     </div>
-    {#if thinkingSupported}
-    <div
-      class="control toggle"
-      class:forced={thinkingForced}
-      use:describedBy={"sampling-thinking-help"}
-    >
+  </div>
+
+  {#if thinkingSupported}
+    <div class="thinking" class:forced={thinkingForced} use:describedBy={"sampling-thinking-help"}>
       <span inert={!ready || thinkingForced}>
         <Switch
           checked={thinkingForced ? true : thinkingView}
           onchange={onThinking}
-          label={`Thinking${thinkingForced ? " (always on)" : ""}`}
+          label={`Thinking${thinkingForced ? ", always on" : ""}`}
           hint={!thinkingOptional
             ? "This model always uses its reasoning phase, so this setting cannot be changed."
             : HELP.thinking}
@@ -254,162 +238,35 @@
           : HELP.thinking}
       </span>
     </div>
+  {/if}
+
+  <div class="actions">
+    <button type="button" class="dw-text" disabled={!ready} onclick={openAdvanced}>More settings</button>
+    {#if !sessionState.info?.is_base_model}
+      <button type="button" class="dw-text" disabled={!ready} onclick={openSystemPrompt}>System prompt</button>
     {/if}
+    <ResetSettings />
   </div>
-
-  <div class="row actions">
-    <button
-      type="button"
-      class="sys-btn"
-      disabled={!ready}
-      onclick={openAdvanced}
-    >Sampling settings</button>
-
-    {#if !sessionState.info?.is_base_model}<button
-      type="button"
-      class="sys-btn"
-      disabled={!ready}
-      onclick={openSystemPrompt}
-    >System prompt</button>{/if}
-  </div>
-  <ResetSettings />
 </section>
 
 <style>
-  .sampling-strip {
-    container-type: inline-size;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-    padding: 0 var(--panel-padding) var(--panel-padding);
-    font-family: var(--font-reading);
-    font-size: var(--text-sm);
-    color: var(--fg-strong);
-  }
+  /* The Instruments canvas's sampling: one row per setting (a label, the control, its value), a
+   * switch for thinking, then the quiet text actions. */
+  .sampling-strip { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s3); min-width: 0; color: var(--ink2); }
+  .ranges { display: grid; gap: var(--s1); }
+  .range { display: grid; grid-template-columns: 96px minmax(0, 1fr) 40px; gap: var(--s4); align-items: center; min-height: 32px; }
+  .label { justify-self: start; color: var(--ink2); font: var(--type-small); }
+  .value { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
+  .field { display: flex; grid-column: 2 / -1; min-width: 0; }
+  .thinking { display: flex; align-items: center; }
+  .thinking.forced { opacity: 0.6; }
+  .actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); }
+  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-  /* Each row uses equal tracks so labels and controls stay aligned. */
-  .row {
-    display: grid;
-    grid-auto-flow: row;
-    grid-template-columns: minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-6);
-    width: 100%;
+  @media (max-width: 720px) {
+    .range { grid-template-columns: 88px minmax(0, 1fr) 40px; gap: var(--s3); min-height: 44px; }
   }
-  .row > .control {
-    min-width: 0;
+  @media (max-width: 720px), (pointer: coarse) {
+    .actions .dw-text { min-height: 44px; }
   }
-  /* Keep the two secondary actions balanced across the panel. */
-  .row.actions {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--space-2);
-    padding-top: var(--space-3);
-  }
-  .row.actions > * {
-    min-width: 0;
-  }
-  .row.actions > :only-child { grid-column: 1 / -1; }
-  .control {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-height: 2.6rem;
-    padding: 0;
-    background: transparent;
-    white-space: nowrap;
-    min-width: 0;
-  }
-
-  /* Boxed inputs fill their (grown) control after the fixed-width label.
-   * The inner <input> is width:100%, so the cell owns the sizing. */
-  .slider-cell,
-  .num-cell {
-    display: inline-flex;
-    flex: 1 1 0;
-    min-width: 0;
-  }
-
-  .control-label {
-    display: inline-flex;
-    align-items: center;
-    flex: 0 0 auto;
-    gap: var(--space-1);
-    min-width: 10.25rem;
-  }
-
-  .label {
-    flex: 1 1 auto;
-    min-width: 0;
-    color: var(--fg-strong);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-structure);
-    text-align: start;
-  }
-
-  .value {
-    flex: 0 0 auto;
-    color: var(--fg-strong);
-    font-family: var(--font-data);
-    font-variant-numeric: tabular-nums;
-    min-width: 2.5em;
-    text-align: end;
-  }
-
-
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
-
-  .sys-btn {
-    background: var(--glass);
-    color: var(--fg-strong);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-1) var(--space-4);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    line-height: 1.3;
-    min-height: var(--control-field);
-  }
-  .sys-btn:hover:not(:disabled) {
-    background: var(--glass-strong);
-    color: var(--accent);
-  }
-  .sys-btn:disabled {
-    color: var(--fg-muted);
-    cursor: not-allowed;
-  }
-
-  @container (max-width: 26rem) {
-    .control {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      gap: var(--space-2) var(--space-3);
-      white-space: normal;
-    }
-
-    .control-label {
-      grid-column: 1 / -1;
-      min-width: 0;
-      width: 100%;
-    }
-
-    .slider-cell,
-    .num-cell { grid-column: 1; }
-
-    .num-cell { grid-column: 1 / -1; }
-    .value { grid-column: 2; }
-
-  }
-  /* (Role-input styles moved to Chat.svelte's cast row.) */
 </style>

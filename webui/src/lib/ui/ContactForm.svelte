@@ -1,10 +1,10 @@
 <script lang="ts">
-  import { MorphText } from "@stdlogits/ledger";
+  // The contact and feedback form (drowse.ai's contact page shares it): wash fields with no lines,
+  // an invalid field darkened toward ink with its reason under it, and the send action on the right.
+  import { Expander, Icon, MorphText, fadeOut, rise } from "@stdlogits/ledger";
   import { tick } from "svelte";
   import Select from "../Select.svelte";
   import Button from "./Button.svelte";
-  import { Icon } from "@stdlogits/ledger";
-  import { fadeIn, fadeOut, rise } from "@stdlogits/ledger";
   import { CONTACT_ADDRESS, CONTACT_LIMITS, CONTACT_REASONS, contactTopics, type ContactSource } from "../contact";
   import { contactDrafts, resetContact, submitContact } from "../stores/contact.svelte";
 
@@ -54,10 +54,10 @@
     <div class="success-icon"><Icon name="check" size={24} /></div>
     <div role="status">
       <h2 id={`${uid}-success`}>Message sent</h2>
-      <p>Your message is on its way to <a href={`mailto:${CONTACT_ADDRESS}`}>{CONTACT_ADDRESS}</a>.</p>
+      <p>Your message is on its way to <a class="prose-link" href={`mailto:${CONTACT_ADDRESS}`}>{CONTACT_ADDRESS}</a>.</p>
       <p>{draft.fields.email.trim() ? `We can reply to ${draft.fields.email.trim()}.` : "You didn't leave an email, so we can't reply."}</p>
     </div>
-    <details class="reference"><summary>Message reference</summary><code>{draft.requestId}</code></details>
+    <div class="reference"><Expander label="Message reference"><code>{draft.requestId}</code></Expander></div>
     <div class="actions">
       <Button onclick={() => resetContact(source)}>Send another message</Button>
       {#if ondone}<Button variant="solid" onclick={ondone}>Done</Button>{/if}
@@ -65,8 +65,6 @@
   </section>
 {:else}
   <form class="contact-form" bind:this={form} onsubmit={submit} novalidate aria-label={source === "feedback" ? "Feedback form" : "Contact form"} aria-busy={busy}>
-    {#if source === "feedback"}<p class="intro">Tell us what could work better.</p>{/if}
-    <p class="required-note">All fields are required unless marked optional.</p>
     <div class="categories">
       {#if source === "contact"}
         <div class="field">
@@ -93,16 +91,16 @@
       {#if draft.errors.body}<span id={`${uid}-body-error`} class="error">{draft.errors.body}</span>{/if}
     </label>
     <label class="field">
-      <span class="label" id={`${uid}-email-label`}>Email <span class="optional">(optional)</span></span>
-      <input type="email" name="email" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" bind:value={draft.fields.email} maxlength={CONTACT_LIMITS.email} disabled={busy} aria-labelledby={`${uid}-email-label`} aria-invalid={Boolean(draft.errors.email)} aria-describedby={`${uid}-email-hint`} placeholder="you@example.com" />
-      <span id={`${uid}-email-hint`} class:error={Boolean(draft.errors.email)} class="hint">{draft.errors.email || "Add an email if you'd like a reply."}</span>
+      <span class="label" id={`${uid}-email-label`}>Email <span class="optional">optional</span></span>
+      <input type="email" name="email" autocomplete="email" inputmode="email" autocapitalize="none" spellcheck="false" bind:value={draft.fields.email} maxlength={CONTACT_LIMITS.email} disabled={busy} aria-labelledby={`${uid}-email-label`} aria-invalid={Boolean(draft.errors.email)} aria-describedby={draft.errors.email ? `${uid}-email-error` : undefined} placeholder="you@example.com" />
+      {#if draft.errors.email}<span id={`${uid}-email-error`} class="error">{draft.errors.email}</span>{/if}
     </label>
     <div class="honeypot" aria-hidden="true" inert><label>Website<input name="website" bind:value={draft.fields.website} tabindex="-1" autocomplete="off" /></label></div>
     {#if draft.message}
       <div class="notice" bind:this={result} tabindex="-1" in:rise out:fadeOut>
         <p role="alert">{draft.message}</p>
-        {#if draft.requestId}<details class="reference"><summary>Message reference</summary><code>{draft.requestId}</code></details>{/if}
-        <div class="recovery-actions"><Button onclick={copyDraft}><MorphText text={copied ? "Draft copied" : "Copy draft"} /></Button><a href={`mailto:${CONTACT_ADDRESS}`}>Email us directly</a></div>
+        {#if draft.requestId}<div class="reference"><Expander label="Message reference"><code>{draft.requestId}</code></Expander></div>{/if}
+        <div class="recovery-actions"><Button onclick={copyDraft}><MorphText text={copied ? "Draft copied" : "Copy draft"} /></Button><a class="prose-link" href={`mailto:${CONTACT_ADDRESS}`}>Email us directly</a></div>
         <span class="sr-only" role="status"><MorphText text={copied ? "Draft copied to clipboard." : ""} /></span>
       </div>
     {/if}
@@ -118,44 +116,57 @@
 {/if}
 
 <style>
-  .contact-form, .success { display: flex; flex-direction: column; gap: var(--space-md); min-width: 0; }
+  .contact-form, .success { display: flex; flex-direction: column; gap: var(--s5); min-width: 0; }
   p, h2 { margin: 0; }
-  .intro, .privacy, .hint, .draft-note, .required-note, .success p { color: var(--fg-dim); line-height: 1.5; text-wrap: pretty; }
-  .intro { font-size: var(--text-base); }
-  .field { display: flex; flex-direction: column; gap: var(--control-label-gap); min-width: 0; }
-  .categories { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 14rem), 1fr)); gap: var(--space-sm); }
-  .label { font-family: var(--font-structure); font-weight: var(--weight-structure); font-size: var(--text-sm); }
-  .field.is-disabled .label { color: var(--fg-muted); }
-  .optional { color: var(--fg-dim); font-weight: normal; }
-  input, textarea { width: 100%; min-width: 0; min-height: var(--control-field); padding: var(--space-xs) var(--space-sm); border: 1px solid transparent; border-radius: var(--radius); background: var(--input-well); box-shadow: var(--shadow-well); color: var(--fg); font-family: var(--font-reading); font-size: var(--text-base); font-weight: var(--weight-reading); line-height: 1.5; transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out); }
-  textarea { resize: vertical; min-height: 10rem; max-height: 24rem; }
-  input:focus-visible, textarea:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  input[aria-invalid="true"], textarea[aria-invalid="true"] { border-color: var(--accent-red); }
-  input:disabled, textarea:disabled { opacity: 0.7; }
-  input::placeholder, textarea::placeholder { color: var(--fg-muted); }
-  .hint, .privacy, .draft-note, .required-note, .reference { font-size: var(--text-xs); }
-  .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-sm); }
-  .count { flex: none; color: var(--fg-muted); font-family: var(--font-data); font-size: var(--text-xs); font-weight: var(--weight-data); font-variant-numeric: tabular-nums; }
-  .error { color: var(--accent-red); font-size: var(--text-xs); }
-  .notice { padding: var(--surface-padding); border-radius: var(--popup-radius); background: var(--danger-bg); display: grid; gap: var(--space-sm); }
-  .notice > p:first-child { color: var(--accent-red); line-height: 1.5; }
-  .reference { color: var(--fg-dim); min-width: 0; overflow-wrap: anywhere; }
-  .reference summary { width: fit-content; max-width: 100%; min-height: var(--control-target); align-content: center; cursor: pointer; }
-  .reference code { display: block; padding-block: var(--space-xs); font-size: inherit; user-select: all; }
-  .actions, .recovery-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--space-sm); }
+  .field { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; }
+  .categories { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: var(--s4); }
+  .label { color: var(--ink2); font: var(--type-control); }
+  .field.is-disabled .label { color: var(--ink3); }
+  .optional { color: var(--ink3); font: var(--type-meta); }
+  input, textarea {
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    border: 0;
+    border-radius: var(--r-col);
+    background: var(--field);
+    color: var(--ink);
+    font: var(--type-small);
+    transition: background-color var(--fast) var(--ease);
+  }
+  input { padding: 0 var(--s3); }
+  textarea { min-height: 160px; max-height: 400px; padding: var(--s2) var(--s3); resize: vertical; }
+  input:hover:not(:disabled), textarea:hover:not(:disabled) { background: var(--field-hover); }
+  /* Ledger has no red: an invalid field darkens toward ink, and its reason sits under it. */
+  input[aria-invalid="true"], textarea[aria-invalid="true"] { background: color-mix(in oklab, var(--ink) 14%, var(--field)); }
+  input:disabled, textarea:disabled { opacity: 0.6; }
+  input::placeholder, textarea::placeholder { color: var(--ink3); }
+  .label-row { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); }
+  .count { flex: none; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .privacy, .draft-note { color: var(--ink3); font: var(--type-meta); }
+  .error { color: var(--ink); font: var(--type-meta); }
+  .notice { display: grid; gap: var(--s3); padding: var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  /* On the notice's wash, its button steps up to wash2 (and to paper on hover). */
+  .notice :global(.sk-btn.ghost) { background: var(--wash2); }
+  .notice :global(.sk-btn.ghost:hover:not(:disabled)) { background: var(--paper); }
+  .notice > p:first-child { color: var(--ink); font: var(--type-small); }
+  .reference { min-width: 0; color: var(--ink2); overflow-wrap: anywhere; }
+  .reference code { display: block; color: var(--ink); font: var(--type-small); user-select: all; }
+  .actions, .recovery-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s3); }
   .recovery-actions { justify-content: flex-start; }
-  .send-section { display: grid; gap: var(--space-sm); }
+  .recovery-actions a { display: inline-flex; align-items: center; min-height: 36px; font: var(--type-control); }
+  .send-section { display: grid; gap: var(--s3); }
   .form-actions { justify-content: space-between; }
   .secondary-action { margin-inline-end: auto; }
   .draft-note { text-align: end; }
-  .recovery-actions a { display: inline-flex; align-items: center; min-height: var(--control-target); }
-  a { color: var(--accent); text-underline-offset: 3px; }
-  a:focus-visible, summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 4px; border-radius: var(--radius-sm); }
-  .success { padding-block: var(--space-lg); }
-  .success [role="status"] { display: grid; gap: var(--space-sm); }
-  .success-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--glass); color: var(--accent); }
-  .success h2 { font-size: var(--text-lg); text-wrap: balance; }
+  .success { padding-block: var(--s4); }
+  .success [role="status"] { display: grid; gap: var(--s2); }
+  .success p { color: var(--ink2); font: var(--type-small); }
+  .success-icon { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; background: var(--wash); color: var(--ink); }
+  .success h2 { color: var(--ink); font: var(--type-mark); text-wrap: balance; }
   .honeypot, .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  @media (max-width: 760px), (pointer: coarse) { input, textarea { font-size: var(--text-input-touch); } }
-  @media (prefers-reduced-motion: reduce) { input, textarea { transition: none; } }
+  @media (max-width: 720px), (pointer: coarse) {
+    input, textarea { font-size: 16px; }
+    input, .recovery-actions a, .reference :global(.expander > .toggle) { min-height: 44px; }
+  }
 </style>
