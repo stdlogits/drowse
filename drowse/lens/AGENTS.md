@@ -259,7 +259,10 @@ provider name, and carries one or both sites.
   for the R family, `select_s_lens` for the S family, which skips sources
   without `out`) use it. `list_lens_sources` rows carry `lens` (kind),
   `family` (`R` or `S`; `output`/`input` is the internal slot name, never
-  shown) and `sites`. Selecting an S-family source over the server checks that
+  shown), `sites`, each site's `layers`, `n_prompts` and, where the fit
+  recorded one, `split_half` (`{site: {layer: difference}}`; imports lack
+  it). `lens_providers()` lists every fetchable provider by family, in
+  picker order. Selecting an S-family source over the server checks that
   it loads for these weights (409 otherwise), as the R family's live enable
   does.
 - A fit, a promotion or a fetch replaces its family's selection (a fit or
@@ -394,7 +397,9 @@ more documents than the request, or a site or layer it omits: the default
 dropped from 100 documents and `out` only to 25 at both sites, and a re-run
 with defaults would otherwise discard an hours-long fit. Ask for at least its
 documents of the same corpus (which tops up the missing site), or pass
-`force`. When a payload fails to load, the executor drops it and re-plans.
+`force`. Both refusals raise `LensReplaceRefused` (a `JacobianLensError`), so
+a caller can offer the forced fit for them alone. When a payload fails to
+load, the executor drops it and re-plans.
 
 A fit drives its own family's slot (`LensFitter(residency={"output": …,
 "input": …})`; the instrument's `_InputResidency` is the S family's): an R/J
@@ -589,7 +594,7 @@ the per-layer softmax probability `p_l(v)`.
 ## Errors, seams, tests
 
 - Errors: `JacobianLensError` (422), `LensNotFittedError` (404),
-  `JacobianLensCancelled` (409), `UnsupportedBlockError` (422, in
+  `JacobianLensCancelled` (409), `LensReplaceRefused` (422, in `lifecycle.py`), `UnsupportedBlockError` (422, in
   `errors.py`, from the block description). `MultiTokenWordError`, `InvalidTokenIdError`,
   `EmptyCorpusError` and `SourceSpecError` are `RequestError`s (400). `HFError`
   (502) means an unresolvable repo commit.

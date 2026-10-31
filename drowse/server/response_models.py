@@ -714,9 +714,13 @@ class InstrumentSourceJSON(TypedDict):
     """One usable artifact source (lens binding / SAE source row).
 
     A lens row names its kind (``lens``: J/R/K/S), the family slot it
-    selects into (``family``: ``R`` or ``S``), the sites it carries and,
-    for a provider binding, the repository file bound per site
-    (``checkpoints``).
+    selects into (``family``: ``R`` or ``S``), the sites it carries, each
+    site's layers (``layers``), its documents (``n_prompts``), each site's
+    recorded split-half difference by layer where the fit kept one
+    (``split_half``, ``{site: {layer: difference}}``; imports lack it),
+    on a family's active row whether it matches the loaded weights
+    (``compatible``) and, for a provider binding, the repository file bound
+    per site (``checkpoints``).
     """
 
     __pydantic_config__ = _Open  # type: ignore[misc]
@@ -728,6 +732,10 @@ class InstrumentSourceJSON(TypedDict):
     lens: NotRequired[Literal["J", "R", "K", "S"]]
     family: NotRequired[Literal["R", "S"]]
     sites: NotRequired[list[Literal["out", "mid"]]]
+    layers: NotRequired[dict[str, list[int]]]
+    n_prompts: NotRequired[int]
+    split_half: NotRequired[dict[str, dict[str, float]]]
+    compatible: NotRequired[bool]
     provider: NotRequired[str]
     repo_id: NotRequired[str]
     repo_revision: NotRequired[str]
@@ -753,9 +761,35 @@ class SaeReleaseJSON(TypedDict):
     source: Literal["local", "saelens"]
 
 
+class LensBandJSON(TypedDict):
+    """The session's S→R crossover band (``lens/depth.py``): its ends as
+    fractions of depth and ``[w_S, w_R]`` at every layer of the model."""
+
+    lo: float
+    hi: float
+    weights: list[list[float]]
+
+
+class LensProviderJSON(TypedDict):
+    """One fetchable lens provider source, prepared or not."""
+
+    source: str
+    lens: Literal["J", "R", "K", "S"]
+    family: Literal["R", "S"]
+    sites: list[Literal["out", "mid"]]
+    repo_id: str
+
+
 class SourcesResponse(TypedDict):
+    """Prepared sources.  The SAE adds its provider ``releases``; the lens
+    adds its fetchable ``providers``, the crossover ``band`` and the
+    documents a local fit averages over by default (``fit_documents``)."""
+
     sources: list[InstrumentSourceJSON]
     releases: NotRequired[list[SaeReleaseJSON]]
+    providers: NotRequired[list[LensProviderJSON]]
+    band: NotRequired[LensBandJSON]
+    fit_documents: NotRequired[int]
 
 
 class SourceSwitchResponse(TypedDict):
@@ -786,7 +820,12 @@ class SaeRuntimeInfo(TypedDict):
 
 class PreparationStatusJSON(TypedDict):
     """One shape over lens ``fetch``/``fit``, sae ``fetch``/``train`` and the
-    units ``fetch`` (the neuron-lens catalog; ``slug`` names it)."""
+    units ``fetch`` (the neuron-lens catalog; ``slug`` names it).
+
+    A lens fit's ``replaceable`` is true only when it failed because it
+    would replace the artifact at its name; the same request with ``force``
+    replaces it.
+    """
 
     state: str
     operation: str | None
@@ -798,6 +837,7 @@ class PreparationStatusJSON(TypedDict):
     cancellable: bool
     live_layers: NotRequired[list[int] | None]
     source: NotRequired[str | None]
+    replaceable: NotRequired[bool | None]
     release: NotRequired[str | None]
     name: NotRequired[str | None]
     slug: NotRequired[str | None]

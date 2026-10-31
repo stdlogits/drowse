@@ -52,6 +52,13 @@ from drowse.errors import RequestError
 if TYPE_CHECKING:
     from drowse.lens.fit import LensFit, LensSums
 
+
+class LensReplaceRefused(JacobianLensError):
+    """A fit refused because publishing it would lose part of the durable
+    artifact already at its name (fewer documents, another corpus, an
+    omitted site or layer).  The same fit with ``force`` replaces it."""
+
+
 #: The corpus identity a fit records: sha256 of the consumed token-id rows.
 CORPUS_HASH_KIND = "token_ids_v1"
 
@@ -299,7 +306,7 @@ def plan_lens_fit(
 ) -> LensFitPlan:
     """Decide a fit from metadata alone (see the module docstring).
 
-    Raises :class:`JacobianLensError` when the fit would publish over a
+    Raises :class:`LensReplaceRefused` when the fit would publish over a
     durable artifact and lose part of it: extending the corpus would drop
     durable layers the request does not name (one artifact has one corpus
     identity, so a subset extension cannot keep the other layers), or a
@@ -325,7 +332,7 @@ def plan_lens_fit(
                 # Another corpus, so the plan would publish over the
                 # artifact: never silently trade a fit that may have taken
                 # hours for a smaller or narrower one.
-                raise JacobianLensError(
+                raise LensReplaceRefused(
                     f"local:{identity.name} already holds a {identity.kind} lens "
                     f"over {saved_n} documents"
                     + (f", with layers this request omits ({extra})" if extra else "")
@@ -362,7 +369,7 @@ def _plan_on_durable(
     requested = identity.layers
     n_usable = identity.corpus.n_usable
     if saved_n < n_usable and extra:
-        raise JacobianLensError(
+        raise LensReplaceRefused(
             f"cannot extend only a subset of an existing {identity.kind} lens: "
             f"it holds layers the request omits ({dict(extra)}). Request every "
             "site and layer it holds to extend its corpus, or pass "

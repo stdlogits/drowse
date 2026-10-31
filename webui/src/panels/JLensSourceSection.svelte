@@ -1,240 +1,44 @@
 <script lang="ts">
-  import { MorphText } from "@stdlogits/ledger";
+  // The Lens room's four lenses (the Lens canvas's 2x2): the S family beside the R family, each
+  // with its selected source at the out and mid sites, its sources and a local fit. drowse.ai swaps
+  // this module for its hosted source section through the @runtime-jlens-source alias, so the fit
+  // and fetch jobs (instrumentAuthoring) are imported only here.
   import { onMount } from "svelte";
-  import Bar from "../lib/charts/Bar.svelte";
-  import Button from "../lib/ui/Button.svelte";
+  import LensFamily from "./rooms/lens/LensFamily.svelte";
+  import { layerCount, sharedScale } from "../lib/lensRoom";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
-  import {
-    instrumentFamily,
-    lensFetch,
-    lensSourceState,
-    refreshLensSources,
-    sessionState,
-    useLensSource,
-  } from "../lib/stores.svelte";
+  import { instrumentFamily, lensFetch, lensSourceState, refreshLensSources } from "../lib/stores.svelte";
   import { lensFit } from "../lib/stores/instrumentAuthoring.svelte";
-  import InstrumentSourceSection from "./rack/InstrumentSourceSection.svelte";
 
-  const fitted = $derived(sessionState.info?.jlens_fitted === true);
-  const allowLocalFitting = runtimeOperationAvailability("jlens_fitting").available;
-  const allowPackFetch = $derived(
-    instrumentFamily("lens")?.capabilities.preparations.includes("fetch") === true,
-  );
-  const allowSourceSwitch = $derived(
-    instrumentFamily("lens")?.capabilities.source_switch === true,
-  );
-  const visibleSources = $derived(
-    allowSourceSwitch
-      ? lensSourceState.sources
-      : lensSourceState.sources.filter((source) => source.active === true),
-  );
-  const sourceBusy = $derived(
-    lensSourceState.loading || lensSourceState.busy ||
-      lensFetch.state.running || (allowLocalFitting && lensFit.state.running),
-  );
-  const providerOptions = $derived(allowPackFetch ? [
-    { value: "workspace-r", label: "workspace-r (RelP)" },
-    { value: "neuronpedia", label: "neuronpedia" },
-    { value: "workspace-j", label: "workspace-j" },
-  ] : []);
-  let fitPrompts = $state(100);
-  let fitLayers = $state("all");
-  // The estimator: r = RelP R-lens (local:r), j = standard J-lens (local:j).
-  let fitKind = $state<"r" | "j">("r");
-  let fitConfirm = $state(false);
-  let selectedSource = $state("");
-  const fitReady = $derived(
-    Number.isInteger(fitPrompts) && fitPrompts >= 1 && fitPrompts <= 5000 &&
-      fitLayers.trim().length > 0,
-  );
-  const fitIsPreparing = $derived(
-    (lensFit.state.message ?? "").startsWith("streaming "),
-  );
-
-  function requestFit(): void {
-    if (!allowLocalFitting) return;
-    if (!fitConfirm) {
-      fitConfirm = true;
-      return;
-    }
-    fitConfirm = false;
-    void lensFit.start({
-      prompts: fitPrompts,
-      layers: fitLayers.trim(),
-      kind: fitKind,
-    });
-  }
+  const n = $derived(layerCount(lensSourceState.band, lensSourceState.sources));
+  /** One scale for every card: the largest split-half difference among the selected sources. */
+  const scale = $derived(sharedScale(lensSourceState.sources.filter(row => row.active === true)));
 
   onMount(() => {
-    if (allowLocalFitting) void lensFit.check();
-    if (allowPackFetch) void lensFetch.check();
+    if (runtimeOperationAvailability("jlens_fitting").available) void lensFit.check();
+    if (instrumentFamily("lens")?.capabilities.preparations.includes("fetch") === true) void lensFetch.check();
     void refreshLensSources();
-  });
-
-  $effect(() => {
-    if (selectedSource !== "local") fitConfirm = false;
   });
 </script>
 
-<InstrumentSourceSection
-  ready={fitted}
-  sources={visibleSources}
-  bind:value={selectedSource}
-  busy={sourceBusy}
-  sourceError={lensSourceState.error}
-  working={lensFetch.state.running || (allowLocalFitting && lensFit.state.running)}
-  allowLocal={allowLocalFitting}
-  onuse={(source) => void useLensSource(source)}
-  {providerOptions}
-  providerPlaceholder="lens provider"
-  onfetch={(source) => void lensFetch.start({ source })}
-  unavailableMessage="Word insights are missing. Switch models, then download this one again."
-  localSectionLabel="Create on this device"
-  localActionLabel={fitConfirm ? "confirm fit" : "fit"}
-  localActionDisabled={sourceBusy || !fitReady}
-  onlocal={requestFit}
->
-  {#snippet localControls()}
-    <label class="setup-field setup-field-medium">
-      <span class="setup-field-label">prompts</span>
-      <input
-        class="add-input"
-        type="number"
-        min="1"
-        max="5000"
-        step="25"
-        bind:value={fitPrompts}
-        placeholder="100"
-        aria-label="J-lens corpus prompts"
-        {...{ "aria-description": "1–5000" }}
-      />
-    </label>
-    <label class="setup-field setup-field-wide">
-      <span class="setup-field-label">layers</span>
-      <input
-        class="add-input"
-        bind:value={fitLayers}
-        placeholder="workspace | all | 13,14,…"
-        aria-label="J-lens source layers"
-        {...{ "aria-description": "workspace | all | layer ids" }}
-      />
-    </label>
-    <label class="setup-field setup-field-medium">
-      <span class="setup-field-label">estimator</span>
-      <button
-        type="button"
-        class="add-input relp-toggle"
-        class:relp-on={fitKind === "r"}
-        onclick={() => (fitKind = fitKind === "r" ? "j" : "r")}
-        aria-pressed={fitKind === "r"}
-        {...{ "aria-description": "r: RelP R-lens (default, local:r) · j: standard J-lens (local:j)" }}
-      >{fitKind === "r" ? "r (RelP R-lens)" : "j (standard J-lens)"}</button>
-    </label>
-  {/snippet}
-  {#snippet progress()}
-    {#if lensFetch.state.running}
-      <p class="work-status loading-pulse loading-placeholder" role="status" aria-live="polite">
-        <MorphText text={lensFetch.state.message ?? "fetching official lens…"} />
-      </p>
-    {:else}
-      <div class="fit-progress loading-pulse loading-placeholder" role="status" aria-live="polite" aria-label="Lens fit progress">
-        <div class="fit-line">
-          <span class="fit-msg"><MorphText text={lensFit.state.message ?? "fitting…"} /></span>
-          {#if lensFit.state.total > 0}
-            <span class="fit-count"><MorphText text={`${lensFit.state.current}/${lensFit.state.total}`} /></span>
-          {/if}
-        </div>
-        <div
-          class="fit-bar"
-          role="progressbar"
-          aria-label="J-lens prompts fitted"
-          aria-valuemin="0"
-          aria-valuemax={Math.max(lensFit.state.total, 1)}
-          aria-valuenow={lensFit.state.current}
-        >
-          <Bar
-            value={lensFit.state.current}
-            max={Math.max(lensFit.state.total, 1)}
-            width={160}
-            height={8}
-            color="var(--tint)"
-          />
-        </div>
-        <p class="hint">
-          {#if lensFit.state.cancelling}
-            stopping background work…
-          {:else if fitIsPreparing}
-            generation available during corpus setup
-          {:else}
-            generation paused during model fitting
-          {/if}
-        </p>
-        <Button
-          size="sm"
-          variant="danger"
-          disabled={lensFit.state.cancelling}
-          onclick={() => void lensFit.cancel()}
-        >
-          <MorphText text={lensFit.state.cancelling ? "cancelling…" : "cancel"} />
-        </Button>
-      </div>
-    {/if}
-  {/snippet}
-  {#snippet warning()}
-    {#if fitConfirm && !lensFit.state.running}
-      <p class="hint fit-warning" role="alert">Blocks generation; may take hours. Confirm again.</p>
-    {/if}
-  {/snippet}
-  {#snippet messages()}
-    {#if lensFit.state.error}
-      <p class="hint fit-error" role="alert">local fit: {lensFit.state.error}</p>
-    {/if}
-    {#if lensFetch.state.error}
-      <p class="hint fit-error" role="alert">official fetch: {lensFetch.state.error}</p>
-    {/if}
-  {/snippet}
-</InstrumentSourceSection>
+<section class="quad" aria-label="The four lenses">
+  <div class="rowlabs" aria-hidden="true">
+    <span></span>
+    <span class="rowlab" data-tip="neuron outputs, attention inputs">Out</span>
+    <span class="rowlab" data-tip="neuron inputs, attention outputs">Mid</span>
+    <span></span>
+  </div>
+  <LensFamily family="S" {n} {scale} />
+  <LensFamily family="R" {n} {scale} />
+</section>
+{#if lensSourceState.error}<p class="meta" role="alert">{lensSourceState.error}</p>{/if}
 
 <style>
-  .work-status,
-  .hint {
-    margin: 0;
-    color: var(--ink2);
-    font: var(--type-small);
-  }
-  .fit-error { color: var(--ink); }
-  .fit-warning { color: var(--ink); }
-  .fit-progress {
-    display: flex;
-    flex-direction: column;
-    gap: var(--s2);
-  }
-  .fit-line {
-    display: flex;
-    align-items: baseline;
-    justify-content: space-between;
-    gap: var(--s3);
-  }
-  .fit-msg {
-    overflow: hidden;
-    min-width: 0;
-    color: var(--ink);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .fit-count {
-    flex: 0 0 auto;
-    color: var(--ink3);
-    font: var(--type-meta);
-    font-variant-numeric: tabular-nums;
-  }
-  .fit-bar :global(.bar) {
-    display: block;
-    width: 100%;
-    height: 4px;
-  }
-  .relp-toggle {
-    cursor: pointer;
-    text-align: start;
+  .quad { display: grid; grid-template-columns: 64px repeat(2, minmax(0, 1fr)); grid-template-rows: repeat(4, auto); gap: var(--s3) var(--s5); min-width: 0; }
+  .rowlabs { grid-row: 1 / span 4; display: grid; grid-template-rows: subgrid; min-width: 0; }
+  .rowlab { padding-top: var(--s4); color: var(--ink); font: var(--type-control); cursor: default; }
+  @media (max-width: 720px) {
+    .quad { grid-template-columns: minmax(0, 1fr); grid-template-rows: none; gap: var(--s7); }
+    .rowlabs { display: none; }
   }
 </style>

@@ -292,9 +292,13 @@ export interface InstrumentFamilyBlock {
  * One usable artifact source (lens binding / SAE source row).
  *
  * A lens row names its kind (``lens``: J/R/K/S), the family slot it
- * selects into (``family``: ``R`` or ``S``), the sites it carries and,
- * for a provider binding, the repository file bound per site
- * (``checkpoints``).
+ * selects into (``family``: ``R`` or ``S``), the sites it carries, each
+ * site's layers (``layers``), its documents (``n_prompts``), each site's
+ * recorded split-half difference by layer where the fit kept one
+ * (``split_half``, ``{site: {layer: difference}}``; imports lack it),
+ * on a family's active row whether it matches the loaded weights
+ * (``compatible``) and, for a provider binding, the repository file bound
+ * per site (``checkpoints``).
  */
 export interface InstrumentSourceJSON {
   source: string;
@@ -304,6 +308,10 @@ export interface InstrumentSourceJSON {
   lens?: "J" | "R" | "K" | "S";
   family?: "R" | "S";
   sites?: ("out" | "mid")[];
+  layers?: Record<string, number[]>;
+  n_prompts?: number;
+  split_half?: Record<string, Record<string, number>>;
+  compatible?: boolean;
   provider?: string;
   repo_id?: string;
   repo_revision?: string;
@@ -346,6 +354,16 @@ export interface LensAggregateTokenJSON {
 }
 
 /**
+ * The session's S→R crossover band (``lens/depth.py``): its ends as
+ * fractions of depth and ``[w_S, w_R]`` at every layer of the model.
+ */
+export interface LensBandJSON {
+  lo: number;
+  hi: number;
+  weights: number[][];
+}
+
+/**
  * What the lens channel was measuring: the source of each lens family
  * that produced its data, keyed ``R`` (``jlens/`` readings, the native
  * readout) and ``S`` (``slens/`` readings), present only for a family that
@@ -377,6 +395,15 @@ export interface LensProbeInfo {
   feature_space: string;
   word: string;
   token_id: number | null;
+}
+
+/** One fetchable lens provider source, prepared or not. */
+export interface LensProviderJSON {
+  source: string;
+  lens: "J" | "R" | "K" | "S";
+  family: "R" | "S";
+  sites: ("out" | "mid")[];
+  repo_id: string;
 }
 
 /**
@@ -677,6 +704,10 @@ export interface PreparationProgress {
 /**
  * One shape over lens ``fetch``/``fit``, sae ``fetch``/``train`` and the
  * units ``fetch`` (the neuron-lens catalog; ``slug`` names it).
+ *
+ * A lens fit's ``replaceable`` is true only when it failed because it
+ * would replace the artifact at its name; the same request with ``force``
+ * replaces it.
  */
 export interface PreparationStatusJSON {
   state: string;
@@ -689,6 +720,7 @@ export interface PreparationStatusJSON {
   cancellable: boolean;
   live_layers?: number[] | null;
   source?: string | null;
+  replaceable?: boolean | null;
   release?: string | null;
   name?: string | null;
   slug?: string | null;
@@ -977,9 +1009,17 @@ export interface SourceSwitchResponse {
   live_layers: number[];
 }
 
+/**
+ * Prepared sources.  The SAE adds its provider ``releases``; the lens
+ * adds its fetchable ``providers``, the crossover ``band`` and the
+ * documents a local fit averages over by default (``fit_documents``).
+ */
 export interface SourcesResponse {
   sources: InstrumentSourceJSON[];
   releases?: SaeReleaseJSON[];
+  providers?: LensProviderJSON[];
+  band?: LensBandJSON;
+  fit_documents?: number;
 }
 
 /** ``POST .../steering/validate`` — a form result, not a failed request. */

@@ -212,7 +212,8 @@ opportunistically and never blocks the current store. `lib/theme.ts` (the stored
 main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
 panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread
 panels/inspector/     Inspector (by selection), Instruments, TermView, UnitView (+ UnitTrace)
-panels/rooms/         RoomSections (Manifolds, Model), LensRoom, UnitsRoom (+ UnitAtlas)
+panels/rooms/         RoomSections (Manifolds, Model), LensRoom (lens/: the depth axis, a family
+                      column, a card), UnitsRoom (+ UnitAtlas)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
@@ -226,6 +227,7 @@ lib/templates.ts      client mirror of the template validator
 lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
 lib/units.ts          unit IDs, reads, activity and atlas arithmetic (store-free); stores/units
 lib/unitTerms.ts      a unit's recipe terms and their one validity rule (import-free)
+lib/lensRoom.ts       the Lens room's arithmetic (band spans, site series, family sources, fit ladder)
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
 lib/style/            drowse.css (the shell's Ledger classes), global.css, bridge.css (temporary)
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
@@ -254,9 +256,19 @@ The workbench has three layouts. From 1240 px the three regions sit side by side
 scrolls on its own. From the phone up to 1240 px it is Page | Inspector, with the thread
 folded into a row over the page, so a selection always shows beside the conversation. On a
 phone (720 px and under) it is one column: the Inspector is a sheet between the log and the
-composer, and the loom page takes the column (no sheet while it shows). The SAE source picker
-lives in the Lens room beside the lens sources; the Inspector's Features shows a "Choose an
-SAE" button that leads there until an SAE is loaded.
+composer, and the loom page takes the column (no sheet while it shows).
+
+The Lens room (`#/lens`) is where lens and SAE sources are chosen, fetched and fitted. Its
+depth axis draws the server's crossover band (shown only when the runtime sends one); its 2x2
+(`panels/JLensSourceSection.svelte`, the `@runtime-jlens-source` alias, so drowse.ai shows its
+hosted section there instead) holds the S and R families, each with its selected source at the
+out and mid sites (layers held and split-half difference per layer), its sources (providers
+still to fetch among them) and a local fit whose documents start at the server's
+`fit_documents`. A selected source the server marks not `compatible` says it is not loaded (a
+provider's offers Fetch again), and a failed fit offers Replace only when the status is
+`replaceable`. The room's fit always covers every layer, since each family reads its own span of
+the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is one line per family and the SAE, with a link to the
+room; its Features shows a "Choose an SAE" button that leads there until an SAE is loaded.
 
 Slices import each other directly, never through the barrel. The import graph has cycles
 (loom ↔ ws, chat ↔ pending). These are safe only because every cross-slice reference sits

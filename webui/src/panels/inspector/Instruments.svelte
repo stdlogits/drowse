@@ -11,7 +11,10 @@
   import ProbeRack from "../ProbeRack.svelte";
   import JLensPanel from "../JLensPanel.svelte";
   import SaePanel from "../SaePanel.svelte";
+  import { onMount } from "svelte";
   import { saeLoaded, sessionState } from "../../lib/stores/session.svelte";
+  import { lensSourceState, refreshLensSources } from "../../lib/stores/instruments.svelte";
+  import { sitesText, unloaded } from "../../lib/lensRoom";
   import {
     genStatus,
     openDrawer,
@@ -32,13 +35,26 @@
   const saeOn = $derived(saeLoaded());
   const hovered = $derived(tokenHoverState.active ? tokenParts(tokenHoverState.tokenText) : null);
 
+  // The sources, one line each: the R family's from the session (the source every lens reading is
+  // stamped with), the S family's from the source list, the SAE's from the session.
   const sources = $derived.by(() => {
     const blocks = sessionState.info?.instruments ?? [];
     const of = (family: string) => blocks.find(block => block.family === family)?.source ?? null;
+    const lensRow = (family: "R" | "S") => lensSourceState.sources.find(row => row.family === family && row.active === true) ?? null;
+    const r = of("lens");
+    const rRow = lensSourceState.sources.find(row => row.source === r) ?? null;
+    const s = lensRow("S");
+    // A selected source that does not load for these weights says so (the R family's from the
+    // session's jlens_fitted, which every runtime sends; the S family's from its row).
+    const rLoads = !(r && sessionState.info?.jlens_fitted === false) && !unloaded(rRow);
     return [
-      { key: "Lens", value: of("lens"), meta: sessionState.info?.jlens_fitted ? "fitted" : "" },
+      { key: "R-lens", value: r, meta: rLoads ? sitesText(rRow?.sites) : "not loaded for this model" },
+      { key: "S-lens", value: s?.source ?? null, meta: unloaded(s) ? "not loaded for this model" : sitesText(s?.sites) },
       { key: "SAE", value: of("sae"), meta: "" },
     ];
+  });
+  onMount(() => {
+    if (lensSourceState.sources.length === 0) void refreshLensSources();
   });
 
   // ---------- sampling ----------
@@ -122,7 +138,7 @@
 
   <section class="dw-sec" id="instrument-lens" aria-labelledby="instrument-lens-head">
     <div class="dw-sec-head"><span class="head" id="instrument-lens-head">Live</span>{@render at()}</div>
-    <JLensPanel sources={false} />
+    <JLensPanel />
   </section>
 
   <section class="dw-sec" id="instrument-sae" aria-labelledby="instrument-sae-head">
@@ -173,10 +189,10 @@
           <span class="sk">{row.key}</span>
           <span class="sv" class:none={!row.value}>{row.value ?? "none"}</span>
           <span class="meta">{row.meta}</span>
-          <button type="button" class="dw-text change" onclick={() => goto("lens")} aria-label={`Change the ${row.key} source`}>Change</button>
         </div>
       {/each}
     </div>
+    <button type="button" class="dw-text room" onclick={() => goto("lens")}>Lens room</button>
   </section>
 </div>
 
@@ -210,20 +226,20 @@
   .more .dw-text { font: var(--type-meta); }
 
   .srcs { display: grid; gap: var(--s2); }
-  .src { display: grid; grid-template-columns: 96px auto minmax(0, 1fr) auto; gap: var(--s4); align-items: baseline; }
+  .src { display: grid; grid-template-columns: 96px auto minmax(0, 1fr); gap: var(--s4); align-items: baseline; }
   .sk { color: var(--ink2); font: var(--type-small); }
   .sv { color: var(--ink); font: 600 14px/20px var(--display); letter-spacing: -0.01em; overflow-wrap: anywhere; }
   .sv.none { color: var(--ink3); font: var(--type-small); }
-  .change { font: var(--type-meta); }
+  .room { justify-self: start; }
 
   /* Phone sizes: every target 44 px (a range's thumb, the text buttons, the switch). */
   @media (max-width: 720px), (pointer: coarse) {
     .range { grid-template-columns: 88px minmax(0, 1fr) 40px; gap: var(--s3); min-height: 44px; }
     .range input { height: 44px; }
-    .more .dw-text, .change { min-height: 44px; }
+    .more .dw-text, .room { min-height: 44px; }
     .switch-row :global(.switch) { height: 44px; }
   }
   @media (max-width: 720px) {
-    .src { grid-template-columns: 64px auto minmax(0, 1fr) auto; gap: var(--s3); align-items: center; }
+    .src { grid-template-columns: 64px auto minmax(0, 1fr); gap: var(--s3); }
   }
 </style>
