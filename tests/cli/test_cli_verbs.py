@@ -45,7 +45,7 @@ def test_exactly_nine_top_level_verbs() -> None:
 
 def test_the_unit_group() -> None:
     assert set(_subparsers(_parser_at(["unit"]))) == {
-        "read", "top", "find", "stats", "fetch", "catalog", "rm",
+        "read", "top", "find", "stats", "fetch", "ls", "rm",
     }
 
 
@@ -129,7 +129,8 @@ def _parser_at(argv: list[str]) -> argparse.ArgumentParser:
     ["unit", "top", "owl", "-m", "x", "-k", "0"],
     ["unit", "fetch"],
     ["unit", "fetch", "m", "-d", "cpu"],        # no model load: no -d/-q
-    ["unit", "catalog", "m", "-f"],
+    ["unit", "ls", "m", "-f"],
+    ["unit", "catalog"],                       # the binding is listed by `ls`
     ["unit", "rm", "m", "-j"],
     ["lens", "decompose", "x", "-m", "m", "--dictionary", "heads"],
 ])
@@ -192,7 +193,7 @@ def test_rejected_argv(argv: list[str]) -> None:
      {"command": "unit find", "selector": "honest", "top_k": 16, "layers": "workspace"}),
     (["unit", "stats", "neuron/L1n2", "-m", "m", "-j"], {"command": "unit stats", "json_output": True}),
     (["unit", "fetch", "Qwen/Qwen3-8B", "-f"], {"command": "unit fetch", "model": "Qwen/Qwen3-8B", "force": True}),
-    (["unit", "catalog"], {"command": "unit catalog", "model": None}),
+    (["unit", "ls"], {"command": "unit ls", "model": None}),
     (["unit", "rm", "Qwen/Qwen3-8B", "-y"], {"command": "unit rm", "yes": True}),
     (["lens", "decompose", "x", "-m", "m", "--dictionary", "neurons"], {"dictionary": "neurons"}),
 ])

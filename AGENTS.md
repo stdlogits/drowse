@@ -82,7 +82,7 @@ drowse sae ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
 drowse config show [-c PATH...] [--no-default] [-m MODEL] | validate FILE
 drowse unit read UNIT -m MODEL [-k K] [--hide-hubs] | stats UNIT -m MODEL      # neuron/L8n344, head/L20h17
 drowse unit top TOKEN -m MODEL [--by writes|fires] [--layers L] [-k K] | find SELECTOR -m MODEL [-k K] [--layers L]
-drowse unit fetch MODEL [-f] | catalog [MODEL] | rm MODEL -y   # neuron-lens catalog: Qwen3-8B, Gemma 4 12B
+drowse unit fetch MODEL [-f] | ls [MODEL] | rm MODEL -y        # neuron-lens catalog: Qwen3-8B, Gemma 4 12B
 
 pytest -q -m "not gpu"             # the CI suite (CPU)
 pytest -q -n auto -m "not perf"    # everything this machine can run

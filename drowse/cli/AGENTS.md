@@ -282,9 +282,11 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   layer's residual read through both families (S footprint z, R readout
   probability), S line first, each with its depth weight and lens label or
   the reason it is absent; `-j` emits `LensRead.to_dict()` per position.
-  `decompose --dictionary tokens-out|tokens-in` (default `tokens-out`).
   `decompose --dictionary tokens-out|tokens-in|neurons` (default `tokens-out`;
-  `neurons` needs no lens, and `unit find` is it with poles and labels).
+  `neurons` needs no lens, and `unit find` is it with poles and labels). A
+  neuron's coefficient is signed, the sign its pole: the text prints
+  `+neuron/L8n344 0.42`, and `-j` lists `neurons` (`unit`, `pole`, `coeff`)
+  where a token dictionary lists `tokens`.
 - `top` reads a raw prompt (no chat template); `decompose SELECTOR -m` takes the
   model as a flag, unlike the rest of the group.
 
@@ -299,10 +301,13 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   (or fire on) the token most specifically across the layers (default all;
   `sample` exits 2); `find SELECTOR -m` is `lens decompose --dictionary
   neurons` with poles and labels; `stats UNIT -m` the firing block alone.
-- `fetch MODEL [-f]`, `catalog [MODEL]` and `rm MODEL -y` never load a model:
-  the catalog exists for `Qwen/Qwen3-8B` and `google/gemma-4-12B` only, and
-  any other model is a 404 (exit 1). `rm` without `-y` exits 2, like every
-  `rm`. Unit reads and the catalog need no `-d/-q` beyond the read verbs.
+- `fetch MODEL [-f]`, `ls [MODEL]` and `rm MODEL -y` never load a model:
+  the catalog binding is the model's label source, fetched, listed and
+  removed as `lens` and `sae` sources are (`ls` without a model lists every
+  catalogued one). The catalog exists for `Qwen/Qwen3-8B` and
+  `google/gemma-4-12B` only, and any other model is a 404 (exit 1). `rm`
+  without `-y` exits 2, like every `rm`. Unit reads and the catalog need no
+  `-d/-q` beyond the read verbs.
 
 **sae** — `train`'s `--layer` defaults to the layer nearest 65% depth within the
 40–90% band (`sae.backend.select_runtime_layer`); `--width` overrides

@@ -352,7 +352,7 @@ resolved configuration with `drowse config show` and validate a file with
 
 ## Command-line artifact workflows
 
-The CLI has eight top-level verbs. The WebUI covers the interactive versions of
+The CLI has nine top-level verbs. The WebUI covers the interactive versions of
 most workflows; the CLI is useful for reproducible preparation, distribution, and
 batch work.
 
@@ -366,6 +366,7 @@ batch work.
 | `template` | Create and score restricted-choice completion templates |
 | `lens` | Fit, fetch, select, read, decompose, or remove Jacobian lenses |
 | `sae` | Train, fetch, select, inspect, or remove SAE sources |
+| `unit` | Read neurons and heads from their weights, find the neurons behind a token or a direction, and fetch, list, or remove the neuron-lens catalog |
 
 Representative commands:
 

@@ -1,8 +1,9 @@
 """``drowse unit <verb>`` — a model's MLP neurons and attention heads as
 objects: what a unit is about from its weights (``read``, ``stats``), which
 units write or fire on a token (``top``), which neurons a direction is made of
-(``find``), and the neuron-lens catalog's labels (``fetch``, ``catalog``,
-``rm``)."""
+(``find``), and the neuron-lens catalog's labels (``fetch``, ``ls``, ``rm``:
+the catalog binding is a model's label source, listed and removed as ``lens``
+and ``sae`` list and remove theirs)."""
 
 from __future__ import annotations
 
@@ -215,7 +216,7 @@ def run_fetch(args: argparse.Namespace) -> None:
     )
 
 
-def run_catalog(args: argparse.Namespace) -> None:
+def run_ls(args: argparse.Namespace) -> None:
     from drowse.units.catalog import catalog_status, list_catalogs
 
     rows = [catalog_status(args.model)] if args.model else list_catalogs()
@@ -248,7 +249,7 @@ _UNIT = arg("unit", help="neuron/L<layer>n<index> or head/L<layer>h<index> (e.g.
 
 GROUP = Verb(
     "unit",
-    "MLP neurons and attention heads (read/top/find/stats/fetch/catalog/rm)",
+    "MLP neurons and attention heads (read/top/find/stats/fetch/ls/rm)",
     description="A model's neurons and heads from their weights, read through "
                 "the depth rule (S early, R late): what a neuron writes and fires "
                 "on per pole, what a head copies and reads, which neurons write a "
@@ -330,8 +331,8 @@ GROUP = Verb(
             args=(MODEL, FORCE.but(help="Fetch again over a current binding"), JSON),
         ),
         Verb(
-            "catalog", "Show the catalog binding of one model, or every catalogued model",
-            run=run_catalog,
+            "ls", "List the catalog binding of one model, or of every catalogued model",
+            run=run_ls,
             args=(arg("model", nargs="?", default=None, help="Model ID (default: every catalogued model)"), JSON),
         ),
         Verb(

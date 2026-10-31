@@ -312,7 +312,7 @@ def remove_catalog(model_id: str) -> bool:
 
 
 def catalog_status(model_id: str) -> dict[str, Any]:
-    """What a unit view or ``unit catalog`` says about the binding.
+    """What a unit view or ``unit ls`` says about the binding.
 
     ``available``: the model is catalogued; ``bound``: a current binding is
     on disk; ``reason``: why labels are absent otherwise.  Disk only.

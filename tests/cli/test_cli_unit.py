@@ -66,11 +66,11 @@ def test_catalog_verbs_never_load_a_model(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
     attempts = poison_session(monkeypatch)
-    main(["unit", "catalog", "-j"])
+    main(["unit", "ls", "-j"])
     rows = _json(capsys)
     assert {row["model_id"] for row in rows} == {"Qwen/Qwen3-8B", "google/gemma-4-12B"}
     assert all(row["available"] and not row["bound"] for row in rows)
-    main(["unit", "catalog", "Qwen/Qwen3-8B"])
+    main(["unit", "ls", "Qwen/Qwen3-8B"])
     assert "not fetched" in capsys.readouterr().out
     with pytest.raises(SystemExit) as exc:
         main(["unit", "fetch", "HuggingFaceTB/SmolLM2-360M-Instruct"])

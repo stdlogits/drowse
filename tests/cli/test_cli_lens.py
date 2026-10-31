@@ -70,6 +70,8 @@ class _Lens:
 
     def decompose(self, selector: str, **kwargs: Any) -> Any:
         self.calls.append(("decompose", {"selector": selector, **kwargs}))
+        if kwargs.get("dictionary") == "neurons":
+            return {2: (0.5, [("neuron/L2n7", 0.75), ("neuron/L2n3", -0.25)])}
         return {2: (0.5, [(" owl", 1.0)])}
 
 
@@ -110,6 +112,15 @@ def test_decompose_takes_the_dictionary(
     assert payload["dictionary"] == "tokens-in"
     assert created[0].lens.calls[0][1]["dictionary"] == "tokens-in"
     main(["lens", "decompose", "x", "-m", "m/x", "--dictionary", "neurons", "-j"])
-    assert json.loads(capsys.readouterr().out)["dictionary"] == "neurons"
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["dictionary"] == "neurons"
+    # Regression: the neuron atoms were nested under "tokens" and the text
+    # dropped their signs, which are the poles.
+    assert payload["layers"]["2"] == {"share": 0.5, "neurons": [
+        {"unit": "neuron/L2n7", "pole": "+", "coeff": 0.75},
+        {"unit": "neuron/L2n3", "pole": "-", "coeff": -0.25},
+    ]}
+    main(["lens", "decompose", "x", "-m", "m/x", "--dictionary", "neurons"])
+    assert "+neuron/L2n7 0.75  -neuron/L2n3 0.25" in capsys.readouterr().out
     with pytest.raises(SystemExit):
         main(["lens", "decompose", "x", "-m", "m/x", "--dictionary", "heads"])
