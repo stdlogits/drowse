@@ -72,7 +72,8 @@ DepthBasis = Literal[
     "share_weighted_coord_mass",
     # lens: mass = the token's per-layer readout probability p_l
     "readout_probability_mass",
-    # lens (slens/ probes): mass = max(z_l, 0), the token's per-layer footprint z
+    # lens (slens/ probes): mass = w_S(l) * max(z_l, 0), the token's per-layer
+    # footprint z under the depth rule's S weight
     "footprint_z",
     # sae: the resident hook layer's normalized depth, a constant
     "single_layer",
@@ -227,8 +228,9 @@ class DepthSummary:
 
 #: The lens strength unit — ``mean_l p_l(v)`` over the fitted layers.
 UNIT_MEAN_TOKEN_PROBABILITY = "mean_token_probability"
-#: The ``slens/`` probe unit — ``mean_l z_l(v)``, the token's footprint z
-#: (a vocabulary z-score) averaged over the S lens's ``out`` layers.
+#: The ``slens/`` probe unit — ``Σ_l w_S(l) z_l(v) / Σ_l w_S(l)``, the
+#: token's footprint z (a vocabulary z-score) averaged over the S lens's
+#: ``out`` layers under the depth rule's S weight (``lens/depth.py``).
 UNIT_MEAN_FOOTPRINT_Z = "mean_footprint_z"
 #: The SAE strength unit when Neuronpedia ``maxActApprox`` is cached.
 UNIT_ACTIVATION_OVER_MAX = "activation_over_max"
@@ -363,8 +365,9 @@ class ScalarReading:
 
     * ``"mean_token_probability"`` — lens strength, ``mean_l p_l(v)`` in
       ``[0, 1]``;
-    * ``"mean_footprint_z"`` — an ``slens/`` probe, ``mean_l z_l(v)``, the
-      token's footprint z (a vocabulary z-score, unbounded);
+    * ``"mean_footprint_z"`` — an ``slens/`` probe, the ``w_S``-weighted mean
+      ``Σ_l w_S(l) z_l(v) / Σ_l w_S(l)`` of the token's footprint z (a
+      vocabulary z-score, unbounded) where S is the faithful lens;
     * ``"activation_over_max"`` — SAE activation normalized by the
       Neuronpedia ``maxActApprox`` corpus max, ~``[0, 1]``;
     * ``"raw_activation"`` — SAE activation with no metadata available

@@ -65,7 +65,7 @@ from drowse.lens.jlens import (
 from drowse.base.exclusive import ExclusiveGuard
 from drowse.base.lru import BoundedLRU
 from drowse.model.layers import LayerSelector
-from drowse.lens.depth import LensBand
+from drowse.lens.depth import LensBand, kind_weights
 from drowse.lens.footprint import (
     TokenEmbeddings,
     depth_moments_positive,
@@ -112,8 +112,9 @@ def _spec_side(spec: Mapping[str, Any]) -> str:
 
 class _InputBlock(NamedTuple):
     """``slens/`` probe readings still on the device: ``values`` is
-    ``[3 + L, P]`` (mean z, depth center, depth spread, then ``z_L`` per
-    layer) for ``names`` (columns) over ``layers`` (rows from 3)."""
+    ``[3 + L, P]`` (the ``w_S``-weighted mean z, depth center, depth spread,
+    then ``z_L`` per layer) for ``names`` (columns) over ``layers`` (rows
+    from 3)."""
 
     names: tuple[str, ...]
     layers: tuple[int, ...]
@@ -319,6 +320,11 @@ class LensInstrument:
         # embedding mean and covariance (fp32) every footprint z divides by.
         self._embeddings: TokenEmbeddings | None = None
         self._footprint_norms: BoundedLRU[tuple[str | None, int], torch.Tensor] = (
+            BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
+        )
+        # ``slens/`` probe layer weights (``w_S`` normalized over the read
+        # layers), ``[L, 1]`` on the device, cached across decode steps.
+        self._s_weights: BoundedLRU[tuple[str, tuple[int, ...], LensBand], torch.Tensor] = (
             BoundedLRU(FOOTPRINT_NORM_CACHE_MAX)
         )
         #: The read plane's capture buffer: the per-step reads consume its
@@ -1642,10 +1648,13 @@ class LensInstrument:
         Per layer ``u_L = K_Lᵀ h_L`` (one batched pullback over the S lens's
         ``out`` layers that ``hidden`` covers), then each probe token's
         ``z_L = u_L·ẽ_v / sqrt(u_Lᵀ Σ_E u_L)``: ``O(d²)`` per layer, no pass
-        over the vocabulary.  The value is ``mean_L z_L``; the depth summary
-        weights each layer by ``max(z_L, 0)``.  Layers come from the lens
-        read here, so a reading never pairs one lens with another's layers.
-        ``None`` when there is nothing to read.
+        over the vocabulary.  The value is ``Σ_L w_S(L) z_L / Σ_L w_S(L)``,
+        ``w_S`` the depth rule's S weight (:func:`~drowse.lens.depth.kind_weights`
+        under :attr:`band`), so a probe reads where S is the faithful lens; it
+        is 0 when no read layer has S weight.  The depth summary weights each
+        layer by ``w_S(L) max(z_L, 0)``; ``per_layer`` keeps every ``z_L``.
+        Layers come from the lens read here, so a reading never pairs one lens
+        with another's layers.  ``None`` when there is nothing to read.
         """
         names = [
             name for name, spec in probes.items()
@@ -1669,11 +1678,28 @@ class LensInstrument:
         )
         z = embeddings.z_of(u, token_ids)                               # [L, P]
         depth = runtime.depth_tensor(layers, z.device)                   # [L, 1]
-        center, spread = depth_moments_positive(z, depth)
+        weights = self._s_weight_tensor(layers, z.device)                # [L, 1]
+        weighted = weights * z
+        center, spread = depth_moments_positive(weighted, depth)
         values = torch.cat([
-            torch.stack([z.mean(dim=0), center, spread]), z,
+            torch.stack([weighted.sum(dim=0), center, spread]), z,
         ]).detach()                                                     # [3 + L, P]
         return _InputBlock(tuple(names), tuple(layers), values)
+
+    def _s_weight_tensor(self, layers: "Sequence[int]", device: torch.device) -> torch.Tensor:
+        """``[L, 1]`` fp32 ``w_S(L) / Σ w_S`` over ``layers`` (zeros when no
+        layer has S weight), built once per layer set, band and device."""
+        layer_tuple = tuple(int(layer) for layer in layers)
+        band = self.band
+
+        def build() -> torch.Tensor:
+            table = kind_weights(self.input_runtime.n_layers, band)
+            w_s = [table[layer][0] for layer in layer_tuple]
+            total = sum(w_s)
+            scaled = [w / total for w in w_s] if total > 0 else [0.0] * len(w_s)
+            return torch.tensor(scaled, dtype=torch.float32, device=device).reshape(-1, 1)
+
+        return self._s_weights.get_or_build((str(device), layer_tuple, band), build)
 
     def _input_readings(
         self,

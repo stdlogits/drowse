@@ -10,6 +10,7 @@ import pytest
 import torch
 
 from drowse import SamplingConfig
+from drowse.lens.depth import LensBand, kind_weights
 from drowse.lens.footprint import token_mask
 from drowse.lens.jlens import JacobianLens, LensNotFittedError
 from drowse.lens.key import LensKey
@@ -188,13 +189,25 @@ def test_slens_probe_reads_footprint_z(make_tiny_session: Any) -> None:
     assert reading.unit == "mean_footprint_z"
     expected = {L: _z(session, lens, L, hidden[L], a) for L in hidden}
     assert reading.per_layer == pytest.approx(expected, rel=1e-4)
-    assert reading.value == pytest.approx(sum(expected.values()) / len(expected), rel=1e-4)
+    # Regression: the value was a plain mean over every S:out layer; it is
+    # the depth rule's w_S-weighted mean, so it reads where S is faithful.
+    n = len(session.layers) - 1
+    w_s = {L: w for L, (w, _w_r) in enumerate(kind_weights(n + 1, session.lens.band))}
+    weighted = sum(w_s[L] * z for L, z in expected.items()) / sum(w_s.values())
+    assert reading.value == pytest.approx(weighted, rel=1e-4)
+    assert reading.value != pytest.approx(sum(expected.values()) / len(expected), rel=1e-3)
     depth = cast(Any, reading.depth)
     assert depth.basis == "footprint_z"
-    mass = {L: max(z, 0.0) for L, z in expected.items()}
-    n = len(session.layers) - 1
+    mass = {L: w_s[L] * max(z, 0.0) for L, z in expected.items()}
     center = sum(m * L / n for L, m in mass.items()) / sum(mass.values())
     assert depth.center == pytest.approx((center,), rel=1e-4)
+    # The band moves the weights; a band with no S weight at any read layer
+    # reads 0 and keeps every per-layer z.
+    session.lens.band = LensBand(0.0, 0.0)
+    flat = session.lens.score_probes({L: h for L, h in hidden.items() if L > 0})["slens/a"]
+    assert flat.value == 0.0
+    assert flat.per_layer == pytest.approx({L: z for L, z in expected.items() if L > 0}, rel=1e-4)
+    session.lens.band = LensBand()
 
     # Its own probe identity: the S lens, never the R one.
     session.lens.fit(_TINY_PROMPTS)

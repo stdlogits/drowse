@@ -231,8 +231,9 @@ both lenses at both places for Qwen3-8B and Gemma 4 12B (`lens fetch MODEL
 rs-r` and `rs-s`). Drowse keeps one R-family and one S-family lens selected per
 model. `jlens/<word>` steers toward saying a token and `slens/<word>` toward
 having read it; as probes, `jlens/` reads the mean readout probability and
-`slens/` the mean footprint z, and either can gate a term
-(`@when:slens/owl > 3`).
+`slens/` the footprint z averaged over the layers where the S lens is the
+faithful read (weighted by depth, early layers most), and either can gate a
+term (`@when:slens/owl > 3`).
 
 ### Sparse autoencoders
 

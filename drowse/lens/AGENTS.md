@@ -489,10 +489,13 @@ the per-layer softmax probability `p_l(v)`.
 - **`slens/` probe.** `add_probe("slens/…")` routes to the same `attach`
   (`side: input`) and builds the embedding statistics. Per layer `z_L` of the
   token (one batched pullback over the S lens's `out` layers, then
-  `TokenEmbeddings.z_of`, one host transfer); the `ScalarReading` is
-  `mean_L z_L` (unit `mean_footprint_z`), `per_layer` the `z_L`, and a depth
-  summary weighted by `max(z_L, 0)` (basis `footprint_z`). Layers come from
-  the lens the reading uses, never the registry. `probe_hash` folds in the S
+  `TokenEmbeddings.z_of`, one host transfer); the `ScalarReading` is the
+  depth rule's weighted mean `Σ_L w_S(L) z_L / Σ_L w_S(L)` (unit
+  `mean_footprint_z`; `w_S` from `depth.kind_weights` under the instrument's
+  `band`, so a probe reads where S is the faithful lens and is 0 when no read
+  layer has S weight), `per_layer` every `z_L`, and a depth summary weighted
+  by `w_S(L) max(z_L, 0)` (basis `footprint_z`). Layers come from the lens
+  the reading uses, never the registry. `probe_hash` folds in the S
   lens identity (`slens-footprint-z-v1`). It joins the final aggregate, the
   gate path and, with live readout on, the per-step readings.
 - **Gate.** `@when:jlens/<word> > x` (also `[0]` or `#<id>`) fires only for an
