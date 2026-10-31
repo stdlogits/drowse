@@ -145,7 +145,7 @@
   .sk-radio-dot.is-visible { opacity: 1; scale: 1; }
   .sk-radio-label { min-width: 0; }
 
-  @media (pointer: coarse) {
+  @media (max-width: 720px), (pointer: coarse) {
     .sk-radio { min-height: 44px; }
   }
 </style>

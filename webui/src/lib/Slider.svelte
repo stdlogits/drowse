@@ -211,7 +211,7 @@
   .sk-slider:disabled::-webkit-slider-thumb { background: var(--ink3); }
   .sk-slider:disabled::-moz-range-thumb { background: var(--ink3); }
 
-  @media (pointer: coarse) {
+  @media (max-width: 720px), (pointer: coarse) {
     .sk-slider { height: 44px; }
   }
 </style>

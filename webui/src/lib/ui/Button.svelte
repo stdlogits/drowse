@@ -102,7 +102,9 @@
   .flat, .flat.sm { padding-inline: 0; background: transparent; color: var(--ink3); }
   .flat:hover:not(:disabled) { color: var(--ink); }
 
-  @media (max-width: 720px) {
+  /* Phones and touch screens: every target 44 px, a text-only button included. */
+  @media (max-width: 720px), (pointer: coarse) {
     .sk-btn, .sm { min-height: 44px; }
+    .flat { min-width: 44px; }
   }
 </style>

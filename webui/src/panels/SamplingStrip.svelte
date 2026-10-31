@@ -265,6 +265,8 @@
 
   @media (max-width: 720px) {
     .range { grid-template-columns: 88px minmax(0, 1fr) 40px; gap: var(--s3); min-height: 44px; }
+  }
+  @media (max-width: 720px), (pointer: coarse) {
     .actions .dw-text { min-height: 44px; }
   }
 </style>

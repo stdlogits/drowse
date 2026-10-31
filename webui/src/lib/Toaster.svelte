@@ -172,12 +172,14 @@
     transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
   .dismiss:hover { background: var(--paper); color: var(--ink); }
-  .dismiss:active { scale: 0.94; }
+  .dismiss:active { scale: 0.97; }
   @media (forced-colors: active) {
     .toast { border: 1px solid CanvasText; }
   }
   @media (max-width: 720px) {
     .toaster { inset-inline: var(--s4); bottom: calc(var(--s4) + env(safe-area-inset-bottom, 0px)); width: auto; align-items: stretch; }
+  }
+  @media (max-width: 720px), (pointer: coarse) {
     .dismiss { width: 44px; height: 44px; margin-block: calc(var(--s2) * -1); }
   }
 </style>

@@ -279,7 +279,7 @@
   li.highlight { background: var(--paper); color: var(--ink); }
   li.empty { color: var(--ink3); cursor: default; }
 
-  @media (pointer: coarse) {
+  @media (max-width: 720px), (pointer: coarse) {
     .sk-combobox, input, li { min-height: 44px; }
     .caret { width: 44px; }
   }

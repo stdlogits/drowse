@@ -276,7 +276,7 @@
 
   .sk-number.is-disabled { opacity: 0.4; }
 
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (pointer: coarse) {
     .sk-number-input { min-height: 44px; padding-inline-end: var(--s3); }
     .number-rest { inset-inline-end: var(--s3); }
     .sk-number-steppers { display: none; }

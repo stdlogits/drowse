@@ -414,7 +414,10 @@
   /* The list: a flat wash2 surface in the top layer. It rises 6 px as it fades in (200 ms) and
    * fades out (120 ms); dropdownMotion reads the close duration. */
   .sk-select-popover {
-    /* Popups not yet redrawn still read --popup-radius; this is its one declaration. */
+    /* Declared only so check-theme passes while components outside this lane still name
+     * --popup-radius (the loom sidebar and dialog, the token logits popover, the manifold job
+     * progress, the discover form). It reaches this element alone: those draw square corners until
+     * their lanes redraw them on --r-box. Delete it when none reads it. */
     --popup-radius: var(--r-box);
     --dropdown-close-dur: var(--out);
     position: fixed;
@@ -426,7 +429,7 @@
     overflow-y: auto;
     list-style: none;
     border: 0;
-    border-radius: var(--popup-radius);
+    border-radius: var(--r-box);
     background: var(--wash2);
     color: var(--ink2);
     outline: none;
@@ -456,7 +459,7 @@
   .sk-select-opt.is-highlight:not(.is-disabled) { background: var(--paper); color: var(--ink); }
   .sk-select-opt.is-disabled { opacity: 0.4; cursor: default; }
 
-  @media (pointer: coarse) {
+  @media (max-width: 720px), (pointer: coarse) {
     .sk-select-trigger, .sk-select-opt { min-height: 44px; }
   }
   @media (prefers-reduced-motion: reduce) {
