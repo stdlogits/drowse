@@ -171,6 +171,36 @@ export function peakIndex(trace: readonly (number | null)[]): number {
   return best;
 }
 
+/** The side of a neuron that fired here: the sign of its trace's peak (``+`` for a silent trace).
+ *  The unit view opens on it and the room's summary reads it, so the two show one pole. */
+export function peakPole(trace: readonly (number | null)[]): "+" | "-" {
+  const at = peakIndex(trace);
+  return at >= 0 && (trace[at] ?? 0) < 0 ? "-" : "+";
+}
+
+export interface HeadRank {
+  unit: string;
+  layer: number;
+  index: number;
+  value: number;
+}
+
+/** Every head of a token's population (``heads[i][h]``, its write over its typical high write, at
+ *  layer ``layers[i]``, else ``i``) that wrote anything, the strongest first. A head's value is never
+ *  ranked among the neurons' peaks: on a model whose neurons run hotter, the top of the node holds
+ *  no head at all. */
+export function rankHeads(heads: readonly ArrayLike<number>[], layers?: readonly number[]): HeadRank[] {
+  const out: HeadRank[] = [];
+  heads.forEach((values, i) => {
+    const layer = layers?.[i] ?? i;
+    for (let index = 0; index < values.length; index++) {
+      const value = values[index];
+      if (Number.isFinite(value) && value !== 0) out.push({ unit: `head/L${layer}h${index}`, layer, index, value });
+    }
+  });
+  return out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value) || a.layer - b.layer || a.index - b.index);
+}
+
 /** A float16 little-endian base64 array (``float16-le-base64``) as numbers. */
 export function decodeFloat16(text: string): Float32Array {
   const bytes = Uint8Array.from(atob(text), c => c.charCodeAt(0));
@@ -276,20 +306,4 @@ export function parseQuery(raw: string): UnitQuery {
   if (/^(neuron|head)\//i.test(text) || /^l\s*\d+\s*[nh]\s*\d*$/i.test(text)) return { mode: "id", ref: null, text };
   const word = text.replace(/^·/, " ");
   return { mode: "word", word: raw.startsWith(" ") || text.startsWith("·") ? ` ${word.trim()}` : word };
-}
-
-// ---------------------------------------------------------------- the recipe
-
-export type UnitTerm = "plus" | "minus" | "silence";
-
-/** The default push strength: a neuron's write runs as hot as a lens atom's direction. */
-export const UNIT_PUSH_ALPHA = 0.2;
-
-/** The steering expression a unit term writes: ``0.2 neuron/L31n4410``, ``-0.2 neuron/…``,
- *  ``!neuron/…`` (exact mean-ablation). A head has no push. */
-export function unitTermExpression(id: string, term: UnitTerm, alpha = UNIT_PUSH_ALPHA): string {
-  if (term === "silence") return `!${id}`;
-  if (id.startsWith("head/")) throw new Error("a head has no push");
-  const a = Math.abs(alpha);
-  return `${term === "minus" ? "-" : ""}${a} ${id}`;
 }

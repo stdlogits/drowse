@@ -23,9 +23,10 @@ import type {
 import { chatLog, genStatus } from "./chat.svelte";
 import { sessionState } from "./session.svelte";
 import { attachProbe, detachProbe, probeRack } from "./probes.svelte";
-import { setUnitTerm, steerRack } from "./steering.svelte";
+import { patchSteerEntry, setUnitTerm, steerRack } from "./steering.svelte";
 import { pushToast } from "./toasts.svelte";
-import { labelText, type UnitTerm, UNIT_PUSH_ALPHA } from "../units";
+import { labelText } from "../units";
+import { type UnitTerm, UNIT_ABLATE_ALPHA, UNIT_PUSH_ALPHA } from "../unitTerms";
 
 export type UnitRead = NeuronReadJSON | HeadReadJSON;
 
@@ -55,8 +56,9 @@ const LIMIT = 48;
 const reads = new SvelteMap<string, Loaded<UnitRead>>();
 const activity = new SvelteMap<string, Loaded<UnitActivityJSON>>();
 const tops = new SvelteMap<string, Loaded<UnitTopJSON>>();
-/** Labels learned from reads and top hits, by unit (a neuron's + pole's, the one its ID wears). */
+/** Labels learned from reads and top hits, by unit and pole (a head's under ``+``). */
 const labels = new SvelteMap<string, string>();
+const labelKey = (id: string, pole: "+" | "-") => `${id}|${pole}`;
 
 /** Forget every read (another model's units are other units). */
 export function forgetUnits(): void {
@@ -117,14 +119,22 @@ export function requestUnitRead(id: string, hideHubs: boolean): void {
   const read = runtimeClient.instruments.unitRead;
   if (!read) return;
   load(reads, readKey(id, hideHubs), () => read(id, { k: 10, hideHubs }), (value) => {
-    const label = labelText(value.kind === "neuron" ? value.poles[0]?.label : value.label);
-    if (label) labels.set(id, label);
+    if (value.kind === "head") {
+      const label = labelText(value.label);
+      if (label) labels.set(labelKey(id, "+"), label);
+      return;
+    }
+    for (const p of value.poles) {
+      const label = labelText(p.label);
+      if (label) labels.set(labelKey(id, p.pole === "-" ? "-" : "+"), label);
+    }
   });
 }
 
-/** The catalog label a unit wears (its + pole's for a neuron), once a read or a hit carried it. */
-export function unitLabelFor(id: string): string | null {
-  return labels.get(id) ?? null;
+/** The catalog label of a unit's ``pole`` (a neuron's; a head has one), once a read or a hit carried
+ *  it. A neuron's ID wears its + pole's; a row or summary on the side that fired asks for that side. */
+export function unitLabelFor(id: string, pole: "+" | "-" = "+"): string | null {
+  return labels.get(labelKey(id, pole)) ?? null;
 }
 
 // ---------------------------------------------------------------- activity
@@ -186,7 +196,7 @@ export function requestUnitsForWord(word: string, by: "writes" | "fires" = "writ
   load(tops, topKey(word, by, k), () => top(word, { by, k }), (value) => {
     for (const hit of value.hits) {
       const label = labelText(hit.label);
-      if (label && hit.pole === "+") labels.set(hit.unit, label);
+      if (label) labels.set(labelKey(hit.unit, hit.pole === "-" ? "-" : "+"), label);
     }
   });
 }
@@ -246,7 +256,17 @@ export function toggleUnitTerm(id: string, term: UnitTerm): void {
   }
   const held = steerRack.entries.get(id);
   const strength = held?.mode === "unit" && !held.ablate ? Math.abs(held.alpha) : UNIT_PUSH_ALPHA;
-  setUnitTerm(id, term === "silence" ? { ablate: true, alpha: 1 } : { ablate: false, alpha: term === "minus" ? -strength : strength });
+  setUnitTerm(id, term === "silence" ? { ablate: true, alpha: UNIT_ABLATE_ALPHA } : { ablate: false, alpha: term === "minus" ? -strength : strength });
+}
+
+/** Switch a racked unit term between push and ablation (the term card's two buttons). Each takes
+ *  its own strength: an ablation α 1, the unit held at its neutral mean (a push's α kept would
+ *  blend away from the mean instead, and a negative one amplify), a push the default strength. A
+ *  head has no push. */
+export function setUnitOperation(id: string, ablate: boolean): void {
+  const entry = steerRack.entries.get(id);
+  if (entry?.mode !== "unit" || entry.ablate === ablate || (!ablate && id.startsWith("head/"))) return;
+  patchSteerEntry(id, { ablate, alpha: ablate ? UNIT_ABLATE_ALPHA : UNIT_PUSH_ALPHA }, ["unit"]);
 }
 
 /** Whether the unit is an attached probe (its reading rides every generation). */

@@ -183,11 +183,18 @@ try {
   assert.equal(isConversationSnapshot(unitRows, Object.keys(samplingState)), true);
   const unitPlan = buildConversationImportPlan(unitRows);
   assert.match(unitPlan.steeringExpression, /- 0\.2 neuron\/L31n4410 \+ !head\/L28h12@response/);
-  for (const [name, ablate] of [["head/L28h12", false], ["neuron/L31h4", true], ["neuron/L031n4", false], ["unit/L1n2", true]]) {
+  for (const [name, ablate, alpha] of [
+    ["head/L28h12", false, 0.2], ["neuron/L31h4", true, 0.2], ["neuron/L031n4", false, 0.2], ["unit/L1n2", true, 0.2],
+    // An ablation blends toward the neutral mean; a negative α would amplify the unit instead.
+    ["neuron/L30n637", true, -0.2], ["head/L28h12", true, -1],
+  ]) {
     const bad = structuredClone(snapshot);
-    bad.steerRack.push({ name, mode: "unit", ablate, alpha: 0.2, trigger: "BOTH", enabled: true });
-    assert.equal(isConversationSnapshot(bad, Object.keys(samplingState)), false, name);
+    bad.steerRack.push({ name, mode: "unit", ablate, alpha, trigger: "BOTH", enabled: true });
+    assert.equal(isConversationSnapshot(bad, Object.keys(samplingState)), false, `${name} ${ablate} ${alpha}`);
   }
+  const blend = structuredClone(snapshot);
+  blend.steerRack.push({ name: "neuron/L30n637", mode: "unit", ablate: true, alpha: 0.5, trigger: "BOTH", enabled: true });
+  assert.equal(isConversationSnapshot(blend, Object.keys(samplingState)), true, "a partial ablation blends");
 
   const oldVersion = structuredClone(snapshot);
   oldVersion.version = 6;

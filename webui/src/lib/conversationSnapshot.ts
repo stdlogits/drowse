@@ -1,4 +1,5 @@
 import { serializeExpression } from "./expression";
+import { unitTermProblem } from "./unitTerms";
 import type {
   LoomTreeJSON,
   ProbeRequest,
@@ -152,12 +153,11 @@ export function validateConversationSnapshot(
       continue;
     }
     if (row.mode === "unit") {
-      // A unit term: a neuron pushed (signed α) or a neuron or head ablated; a head has no push.
+      // A unit term: a neuron pushed (signed α) or a neuron or head ablated toward its neutral mean
+      // (α not negative); a head has no push.
       finite(row.alpha, `steering row ${name} alpha`);
       if (typeof row.ablate !== "boolean") invalid(`steering row ${name} ablation`);
-      const neuron = /^neuron\/L(?:0|[1-9]\d*)n(?:0|[1-9]\d*)$/u.test(name);
-      const head = /^head\/L(?:0|[1-9]\d*)h(?:0|[1-9]\d*)$/u.test(name);
-      if (!(neuron || (head && row.ablate === true))) invalid(`unit row ${name}`);
+      if (unitTermProblem(name, row as { ablate: unknown; alpha: unknown }) !== null) invalid(`unit row ${name}`);
       continue;
     }
     if (row.mode !== "subspace" && row.mode !== "manifold") invalid(`steering row ${name} mode`);

@@ -3,21 +3,19 @@
   // catalog label when the model has one, its reading token by token over the latest reply (bars in
   // its layer's colour) and the latest value, in units of its typical high firing (1 is a firing
   // as strong as its neutral top; below zero, a neuron's − pole). Choosing the row tints the reply
-  // by it and shows the unit in the Inspector; the marker detaches it.
+  // by it and shows the unit in the Inspector, whose Probing button detaches it (as a geometry
+  // probe's row leads to its inspector), so the row lines up with every other probe's.
   import { MorphText } from "@stdlogits/ledger";
   import type { ProbeRackEntry, ScalarReadingJSON, UnitsProbeInfo } from "../../lib/types";
   import Bar from "../../lib/charts/Bar.svelte";
   import Trace from "../../lib/charts/Trace.svelte";
   import { depthTint, readingText } from "../../lib/charts/depth";
-  import { detachProbe, highlightState, setHighlightTarget } from "../../lib/stores.svelte";
+  import { highlightState, setHighlightTarget } from "../../lib/stores.svelte";
   import { select } from "../../lib/stores/selection.svelte";
   import { unitLabelFor } from "../../lib/stores/units.svelte";
-  import { pushToast } from "../../lib/stores/toasts.svelte";
-  import { userFacingError } from "../../lib/runtime/userFacingError";
   import { parseProbeTarget } from "../../lib/tokens";
   import { unitTitle } from "../../lib/units";
   import InstrumentRow from "./InstrumentRow.svelte";
-  import ProbePinButton from "./ProbePinButton.svelte";
   import { replyTrace } from "./probeTrace";
 
   let { name, entry }: { name: string; entry: ProbeRackEntry } = $props();
@@ -30,20 +28,6 @@
   const tint = $derived(depthTint(latest?.depth?.center?.[0]));
   const label = $derived(unitLabelFor(info.unit));
   const isHighlight = $derived(highlightState.target !== null && parseProbeTarget(highlightState.target).base === name);
-
-  let busy = $state(false);
-  async function detach(): Promise<void> {
-    if (busy) return;
-    busy = true;
-    const probe = name;
-    try {
-      await detachProbe(probe);
-    } catch (e) {
-      pushToast(userFacingError(e, `${probe} could not be detached. Try again.`), { kind: "error" });
-    } finally {
-      busy = false;
-    }
-  }
 
   function choose(): void {
     setHighlightTarget(name);
@@ -64,9 +48,6 @@
   {/snippet}
   {#snippet value()}
     {#if reading !== null}<MorphText text={readingText(reading, { signed: info.kind === "neuron" })} />{:else}–{/if}
-  {/snippet}
-  {#snippet action()}
-    <ProbePinButton shape="square" pinned disabled={busy} onclick={() => void detach()} title="detach" ariaLabel={`Detach probe ${name}`} />
   {/snippet}
 </InstrumentRow>
 

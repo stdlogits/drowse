@@ -41,7 +41,7 @@ const firing = (rate, act_top) => ({
   neutral: { act_top, mean: 0.1, documents: 96 }, neutral_absent: null, catalog: rate === null ? null : { rate }, catalog_absent: null,
 });
 function neuronRead({ catalogued }) {
-  const label = (fires) => (catalogued ? { fires, fires_conf: 0.9, writes: "star words", credit: CREDIT, url: "https://neuron-lens.com/qwen3-8b/L31/n4410" } : null);
+  const label = (fires, url = "https://neuron-lens.com/qwen3-8b/L31/n4410") => (catalogued ? { fires, fires_conf: 0.9, writes: "star words", credit: CREDIT, url } : null);
   return {
     unit: "neuron/L31n4410", kind: "neuron", layer: 31, index: 4410, depth: 31 / 35,
     scalars: { w_norm: 0.82, cos_ab: -0.1, null_share: 0.01, mean_act: 0.1 },
@@ -56,7 +56,7 @@ function neuronRead({ catalogued }) {
         pole: "-",
         writes: place(31, "out", half("R", 0.9, "R:out", [" daylight", " sunshine"]), half("S", 0.1, "S:out", [" sun"])),
         fires_on: place(31, "mid", half("R", 0.9, "R:mid", [" sun"]), half("S", 0.1, "S:mid", [" morning"])),
-        vocab_skew: -1, vocab_kurt: 2, firing: firing(catalogued ? 0.004 : null, 2.1), label: label("daylight words"),
+        vocab_skew: -1, vocab_kurt: 2, firing: firing(catalogued ? 0.004 : null, 2.1), label: label("daylight words", "https://neuron-lens.com/qwen3-8b/L31/n4410?side=minus"),
       },
     ],
     catalog: catalogued
@@ -79,11 +79,13 @@ const headRead = {
 try {
   const { installRuntimeClient } = await server.ssrLoadModule("/src/lib/runtime/registry.ts");
   let catalogued = true;
+  let flip = false;
   const asked = [];
   const tokens = [" Above", " the", " stars", " hung", "."].map((token, raw_index) => ({ raw_index, token_id: 200 + raw_index, token }));
   installRuntimeClient({
     mode: "http",
-    sessions: {}, profiles: {}, manifolds: {}, templates: {}, tree: {}, events: {},
+    sessions: { validateSteering: async (expression) => ({ valid: true, expression, error: null }) },
+    profiles: {}, manifolds: {}, templates: {}, tree: {}, events: {},
     probes: {
       attach: async (req) => ({ family: "units", name: req.selector, unit: req.selector, kind: "neuron", layer: 31, index: 4410, layers: [31], intrinsic_dim: 1, feature_space: "units" }),
       detach: async () => ({}),
@@ -100,8 +102,10 @@ try {
         : { model_id: "HuggingFaceTB/SmolLM2-360M-Instruct", available: false, bound: false, slug: null, repo: "stdlogits/neuron-lens", revision: "r", credit: null, reason: "no neuron-lens catalog for this model", binding: null }),
       unitActivity: async (nodeId, options) => {
         asked.push(["activity", nodeId, options.top, options.units ?? null, options.rawIndex ?? null]);
+        // ``flip``: the strongest neuron fired on its − pole here.
+        const sign = flip ? -1 : 1;
         const traces = {};
-        for (const unit of options.units ?? []) traces[unit] = [0.1, 0, 3.9, 1.1, -0.3];
+        for (const unit of options.units ?? []) traces[unit] = [0.1, 0, 3.9, 1.1, -0.3].map(v => v * sign);
         const layers = Array.from({ length: 4 }, (_, layer) => ({
           layer, n_neurons: 8, n_heads: 2,
           neurons: f16(Array.from({ length: 8 }, (_, i) => (i === 3 && layer === 3 ? 3.5 : (i - 4) / 8))),
@@ -110,7 +114,7 @@ try {
         return {
           node_id: nodeId, steering: null, unit: "activation_over_scale", tokens, sink_raw_index: null,
           top: [
-            { unit: "neuron/L3n3", kind: "neuron", layer: 3, index: 3, peak: 3.9, raw_index: 2, label: catalogued ? { fires: "night-sky and starlight words", credit: CREDIT, url: "u" } : null },
+            { unit: "neuron/L3n3", kind: "neuron", layer: 3, index: 3, peak: 3.9 * sign, raw_index: 2, label: catalogued ? { fires: flip ? "daylight words" : "night-sky and starlight words", credit: CREDIT, url: "u" } : null },
             { unit: "head/L2h1", kind: "head", layer: 2, index: 1, peak: 3.1, raw_index: 2 },
             { unit: "neuron/L1n6", kind: "neuron", layer: 1, index: 6, peak: -2.2, raw_index: 4 },
           ],
@@ -125,8 +129,10 @@ try {
   const units = await server.ssrLoadModule("/src/lib/units.ts");
   const {
     parseUnit, unitTitle, lensText, orderedHalves, mergedTokens, withAgreement, unitFacts, labelText,
-    firesOn, peakIndex, decodeFloat16, decileCuts, shadeOf, strongestColumns, fieldGeometry, parseQuery, unitTermExpression,
+    firesOn, peakIndex, decodeFloat16, decileCuts, shadeOf, strongestColumns, fieldGeometry, parseQuery,
+    peakPole, rankHeads,
   } = units;
+  const { unitTermExpression, unitTermProblem } = await server.ssrLoadModule("/src/lib/unitTerms.ts");
 
   // IDs: every spelling a person types or a route names, one reference.
   for (const text of ["neuron/L31n4410", "L31 n4410", "l31n4410", "L31/n4410", " L31  n4410 "]) {
@@ -167,6 +173,16 @@ try {
   assert.equal(firesOn([0.1, 0.3, -0.5, null, 0.24]), 2);
   assert.equal(peakIndex([0.1, -4, 3.9, null]), 1);
   assert.equal(peakIndex([0, null]), -1);
+  // The side that fired: the peak's sign (the unit view and the room's summary read the same one).
+  assert.equal(peakPole([0.1, -4, 3.9, null]), "-");
+  assert.equal(peakPole([0.1, 4, -3.9]), "+");
+  assert.equal(peakPole([0, null]), "+", "a silent trace reads its + side");
+
+  // Heads rank by their own write at the token, never against the neurons' peaks; a silent head drops.
+  assert.deepEqual(rankHeads([Float32Array.from([0.5, 0]), Float32Array.from([0.25, -0.75, NaN])], [3, 5]).map(h => [h.unit, h.layer, h.index, h.value]), [
+    ["head/L5h1", 5, 1, -0.75], ["head/L3h0", 3, 0, 0.5], ["head/L5h0", 5, 0, 0.25],
+  ]);
+  assert.deepEqual(rankHeads([[1, 1]]).map(h => h.unit), ["head/L0h0", "head/L0h1"], "ties keep layer then head order");
   assert.deepEqual([...decodeFloat16(f16([1, -2, 0.5, 0, 65504, 3.5]))], [1, -2, 0.5, 0, 65504, 3.5]);
   assert.ok(Math.abs(decodeFloat16(f16([0.1]))[0] - 0.1) < 1e-3);
   const cuts = decileCuts(Float32Array.from({ length: 100 }, (_, i) => i - 50));
@@ -214,6 +230,38 @@ try {
   assert.equal(serializeExpression(new Map([["neuron/L8n3", { mode: "unit", ablate: true, alpha: 0.5, trigger: "RESPONSE", enabled: true }]])), "0.5 !neuron/L8n3@response");
   store.toggleUnitTerm("head/L28h12", "silence");
   assert.equal(steering.steerRack.entries.size, 0);
+
+  // The term card's push/ablate switch: an ablation runs at α 1 (the neutral mean), never at the
+  // push's signed α (−0.2 would amplify the unit's deviation); a push comes back at the default.
+  store.toggleUnitTerm("neuron/L30n637", "minus");
+  assert.equal(steering.currentSteeringExpression(), "-0.2 neuron/L30n637");
+  store.setUnitOperation("neuron/L30n637", true);
+  assert.deepEqual([steering.steerRack.entries.get("neuron/L30n637").ablate, steering.steerRack.entries.get("neuron/L30n637").alpha], [true, 1]);
+  assert.equal(steering.currentSteeringExpression(), "!neuron/L30n637");
+  assert.equal(store.unitTerm("neuron/L30n637"), "silence");
+  steering.patchSteerEntry("neuron/L30n637", { alpha: 0.5 }, ["unit"]);
+  store.setUnitOperation("neuron/L30n637", true);
+  assert.equal(steering.currentSteeringExpression(), "0.5 !neuron/L30n637", "ablating an ablation keeps its blend");
+  store.setUnitOperation("neuron/L30n637", false);
+  assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L30n637");
+  store.toggleUnitTerm("head/L28h12", "silence");
+  store.setUnitOperation("head/L28h12", false);
+  assert.equal(store.unitTerm("head/L28h12"), "silence", "a head has no push");
+  steering.removeSteerEntry("neuron/L30n637");
+  steering.removeSteerEntry("head/L28h12");
+  assert.equal(steering.steerRack.entries.size, 0);
+
+  // One rule for a unit row (the snapshot validator's and WebMCP's): a neuron pushed either pole or
+  // ablated, a head only ablated, an ablation's α never negative.
+  assert.equal(unitTermProblem("neuron/L31n4410", { ablate: false, alpha: -0.2 }), null);
+  assert.equal(unitTermProblem("neuron/L31n4410", { ablate: true, alpha: 1 }), null);
+  assert.equal(unitTermProblem("neuron/L31n4410", { ablate: true, alpha: 0 }), null);
+  assert.match(unitTermProblem("neuron/L31n4410", { ablate: true, alpha: -0.2 }), /must not be negative/);
+  assert.match(unitTermProblem("head/L28h12", { ablate: false, alpha: 0.2 }), /no push/);
+  assert.equal(unitTermProblem("head/L28h12", { ablate: true, alpha: 1 }), null);
+  assert.match(unitTermProblem("neuron/L031n4", { ablate: true, alpha: 1 }), /names no unit/);
+  assert.match(unitTermProblem("neuron/L3n4", { ablate: "yes", alpha: 1 }), /ablate/);
+  assert.match(unitTermProblem("neuron/L3n4", { ablate: true, alpha: Infinity }), /finite/);
 
   // Probes: a unit attaches by its reference and lists in the rack.
   const probes = await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
@@ -282,6 +330,32 @@ try {
   assert.match(html, /the 40 most active of 8 a layer/);
   assert.match(html, /L3 · 6 of 8 active here/);
   assert.match(html, /Open in workbench/);
+  let summary = html.slice(html.indexOf('aria-label="Selected unit"'));
+  assert.match(summary, /peak here <b[^>]*>3\.9<\/b>/);
+  assert.match(summary, /night-sky and starlight words/);
+  assert.match(summary, /moonlight/, "the + side's writes");
+  assert.equal(store.unitLabelFor("neuron/L3n3", "-"), "daylight words", "labels are kept per pole");
+
+  // A neuron that fired on its − pole: the summary reads that side (its writes, label, link and
+  // rate), the side the unit view opens on, and the row and the summary wear the one label.
+  flip = true;
+  store.forgetUnits();
+  await store.loadCatalog();
+  store.requestNodeActivity("n1", { top: 1024, rawIndex: 4 });
+  store.requestUnitRead("neuron/L3n3", true);
+  store.requestNodeActivity("n1", { units: ["neuron/L3n3"], top: 1 });
+  await settle();
+  html = render(UnitsRoom, {}).body;
+  summary = html.slice(html.indexOf('aria-label="Selected unit"'));
+  assert.match(summary, /peak here <b[^>]*>−3\.9<\/b>/);
+  assert.match(summary, /daylight words/);
+  assert.doesNotMatch(summary, /night-sky/);
+  assert.match(summary, /sunshine/, "the − side's writes");
+  assert.doesNotMatch(summary, /moonlight/);
+  assert.match(summary, /href="https:\/\/neuron-lens\.com\/qwen3-8b\/L31\/n4410\?side=minus"/);
+  assert.match(summary, /fires on <b[^>]*>0\.4%<\/b> of tokens/);
+  assert.doesNotMatch(html.slice(0, html.indexOf('aria-label="Selected unit"')), /night-sky/, "the row wears the − side's label");
+  flip = false;
 
   // Uncatalogued: no label, no credit, no link, no Labelled filter.
   catalogued = false;
@@ -300,7 +374,29 @@ try {
   assert.doesNotMatch(html, new RegExp(CREDIT));
   assert.ok(asked.some(([kind, , top, , raw]) => kind === "activity" && top === 1024 && raw === 4), "the atlas reads one token's population");
 
-  console.log("units: ids, reads, activity, atlas, search, recipe, probes and both catalog states");
+  // WebMCP's rack edit holds the same rule: switching a unit to ablation takes α 1 unless alpha says
+  // otherwise, and an ablation at a negative α (or a head push) is refused.
+  const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+  const { loomTree } = await server.ssrLoadModule("/src/lib/stores/loom.svelte.ts");
+  const { createWorkspaceTools } = await server.ssrLoadModule("/src/lib/webmcp/workspaceTools.ts");
+  sessionState.info = { model_id: "HuggingFaceTB/SmolLM2-360M-Instruct" };
+  loomTree.loaded = true;
+  const editRack = createWorkspaceTools().find(t => t.name === "drowse_edit_steer_rack");
+  const context = { signal: new AbortController().signal, jobs: { list: () => [] } };
+  const edit = (input) => editRack.execute({ action: "upsert", ...input }, context);
+  await edit({ selector: "neuron/L30n637", alpha: -0.2 });
+  assert.equal(steering.currentSteeringExpression(), "-0.2 neuron/L30n637");
+  await edit({ selector: "neuron/L30n637", ablate: true });
+  assert.equal(steering.currentSteeringExpression(), "!neuron/L30n637", "an ablation runs at α 1");
+  await assert.rejects(edit({ selector: "neuron/L30n637", alpha: -0.2 }), /must not be negative/);
+  await assert.rejects(edit({ selector: "neuron/L30n637", ablate: true, alpha: -0.5 }), /must not be negative/);
+  await assert.rejects(edit({ selector: "head/L28h12", ablate: false }), /no push/);
+  await edit({ selector: "neuron/L30n637", ablate: false });
+  assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L30n637", "a push comes back at the default");
+  await edit({ selector: "neuron/L30n637", ablate: true, alpha: 0.5 });
+  assert.equal(steering.currentSteeringExpression(), "0.5 !neuron/L30n637", "an explicit alpha wins");
+
+  console.log("units: ids, reads, activity, atlas, search, recipe, probes, WebMCP and both catalog states");
 } finally {
   await server.close();
 }

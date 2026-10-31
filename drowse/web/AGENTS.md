@@ -221,6 +221,7 @@ lib/highlight.ts      the one per-token highlight; tokens.ts is its store-free r
 lib/templates.ts      client mirror of the template validator
 lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
 lib/units.ts          unit IDs, reads, activity and atlas arithmetic (store-free); stores/units
+lib/unitTerms.ts      a unit's recipe terms and their one validity rule (import-free)
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
 lib/style/            drowse.css (the shell's Ledger classes), global.css, bridge.css (temporary)
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
@@ -305,13 +306,22 @@ drowse.ai too.
   concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
   keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed
   (signed α, 0.2 by default; below zero its − pole) or a neuron or head ablated (`!…`,
-  written bare at α 1). A head has no push.
+  written bare at α 1, the unit held at its neutral mean). A head has no push. Switching a
+  term between push and ablation takes that operation's own α (`setUnitOperation`), since a
+  push's α kept as an ablation's would blend away from the mean and a negative one amplify;
+  `unitTerms.ts::unitTermProblem` refuses a negative ablation α and a head push in the
+  snapshot validator and in WebMCP's rack edit alike.
 - **Units.** The unit view (selection `{ kind: "unit", id }`) and the Units room read
   through `lib/stores/units.svelte.ts`: plain getters inside `$derived`, the matching
   `request*` from an `$effect`, nothing asked while a generation runs. Both hide where
-  `unitReadsAvailable(runtimeClient)` is false (`shownRooms()` drops the room). Unit probes
-  are the `units` family: they list in the probe rack (`UnitProbeCard`) and their readings
-  merge with the other families' (`mergedReadings`).
+  `unitReadsAvailable(runtimeClient)` is false (`shownRooms()` drops the room). A neuron
+  reads one side at a time, and both views read the side that fired here (`peakPole`, the
+  sign of its trace's peak): the view's writes, label and link, the room's summary. Heads
+  rank by their own write at the atlas's token (`rankHeads` over the population), never
+  against the neurons' peaks, which on SmolLM2 hold no head. Unit probes are the `units`
+  family: they list in the probe rack (`UnitProbeCard`, a row like a geometry probe's, detached
+  from the unit view it selects) and their readings merge with the other families'
+  (`mergedReadings`).
 - **Templates.** `validateTemplateDraft` mirrors `drowse/store/templates.py`
   (`_validate_body`, `_validate_context`, `_slug_value`, `_LABEL_REGEX`) rule for rule.
   Change both together.

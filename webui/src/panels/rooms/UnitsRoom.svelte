@@ -7,6 +7,7 @@
   // its peak here, its activation token by token (a bar chooses the token the atlas reads), what it
   // writes, and the way to the workbench (which selects it) or to its Neuron Lens page.
   import { untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { Icon, MorphText, Segmented, Swap, Token, formatValue, tokenParts } from "@stdlogits/ledger";
   import UnitAtlas, { type AtlasField } from "./UnitAtlas.svelte";
   import { depthTint } from "../../lib/charts/depth";
@@ -39,6 +40,9 @@
     parseQuery,
     parseUnit,
     peakIndex,
+    peakPole,
+    poleOf,
+    rankHeads,
     strongestColumns,
     unitTitle,
     type AtlasBar,
@@ -59,6 +63,8 @@
   let shown = $state(8);
   let picks = $state(0);
   let search: HTMLInputElement | null = $state(null);
+  /** A narrow window takes the search's short placeholder. */
+  const narrow = new MediaQuery("max-width: 520px");
 
   const available = $derived(unitsAvailable());
   $effect(() => {
@@ -113,7 +119,10 @@
     const flat = new Float32Array(neurons.reduce((n, a) => n + a.length, 0));
     let at = 0;
     for (const a of neurons) { flat.set(a, at); at += a.length; }
-    return { neurons, heads, cuts: decileCuts(flat), nNeurons: sorted[0]?.n_neurons ?? 0, nHeads: sorted[0]?.n_heads ?? 0 };
+    return {
+      neurons, heads, layers: sorted.map(l => l.layer), cuts: decileCuts(flat),
+      nNeurons: sorted[0]?.n_neurons ?? 0, nHeads: sorted[0]?.n_heads ?? 0,
+    };
   });
   const nLayers = $derived(pop?.neurons.length ?? Math.max(0, ...(data?.top ?? []).map(t => t.layer + 1)));
 
@@ -146,22 +155,35 @@
   const writers = $derived(word ? unitsForWord(word.ask, "writes", 48) : null);
 
   // ---------- the rows
-  interface Row { id: string; layer: number; kind: Kind; value: number | null; label: string | null }
-  const labelOf = (id: string, label?: UnitLabelJSON | null) => labelText(label) ?? unitLabelFor(id);
-  const activeRows = $derived<Row[]>((data?.top ?? []).map(t => ({
-    id: t.unit, layer: t.layer, kind: t.kind, value: t.peak, label: labelOf(t.unit, t.label),
-  })));
-  const writerRows = $derived<Row[]>((writers?.value?.hits ?? []).map(h => ({
-    id: h.unit, layer: h.layer, kind: "neuron", value: h.score, label: labelOf(h.unit, h.label),
-  })));
+  /** A unit as a row; ``pole`` is the side the row is about (a peak's sign, a writer's pole). */
+  interface Row { id: string; layer: number; kind: Kind; value: number | null; label: string | null; pole: "+" | "-" }
+  const labelOf = (id: string, pole: "+" | "-", label?: UnitLabelJSON | null) => labelText(label) ?? unitLabelFor(id, pole);
+  const activeRows = $derived<Row[]>((data?.top ?? []).map(t => {
+    const pole = t.kind === "neuron" && t.peak < 0 ? "-" : "+";
+    return { id: t.unit, layer: t.layer, kind: t.kind, value: t.peak, label: labelOf(t.unit, pole, t.label), pole };
+  }));
+  const writerRows = $derived<Row[]>((writers?.value?.hits ?? []).map(h => {
+    const pole = h.pole === "-" ? "-" : "+";
+    return { id: h.unit, layer: h.layer, kind: "neuron", value: h.score, label: labelOf(h.unit, pole, h.label), pole };
+  }));
+  /** The heads by their write at the token the atlas reads, from its population: the node's top
+   *  ranks every unit by peak, and where neurons run hotter (SmolLM2) it holds no head at all. */
+  const headRows = $derived.by((): Row[] => {
+    if (!pop) return [];
+    const labels = new Map((data?.top ?? []).map(t => [t.unit, t.label] as const));
+    return rankHeads(pop.heads, pop.layers).map(h => ({
+      id: h.unit, layer: h.layer, kind: "head", value: h.value, label: labelOf(h.unit, "+", labels.get(h.unit)), pole: "+",
+    }));
+  });
   const rows = $derived.by((): Row[] => {
     if (q.mode === "id") {
       if (!q.ref) return [];
-      const hit = activeRows.find(r => r.id === q.ref!.id);
-      return [hit ?? { id: q.ref.id, layer: q.ref.layer, kind: q.ref.kind, value: null, label: unitLabelFor(q.ref.id) }];
+      const id = q.ref.id;
+      const hit = activeRows.find(r => r.id === id) ?? headRows.find(r => r.id === id);
+      return [hit ?? { id, layer: q.ref.layer, kind: q.ref.kind, value: null, label: unitLabelFor(id), pole: "+" }];
     }
     if (word) return kind === "neuron" ? writerRows : [];
-    const mine = activeRows.filter(r => r.kind === kind);
+    const mine = kind === "head" ? headRows : activeRows.filter(r => r.kind === "neuron");
     return filter === "labelled" ? mine.filter(r => r.label) : mine;
   });
   const rowsLoading = $derived(word ? writers?.status === "loading" || writers === null : loading?.status === "loading" && !data);
@@ -202,7 +224,7 @@
     }
     const source = word && q.mode !== "id"
       ? writerRows.map(r => ({ unit: r.id, layer: r.layer, index: parseUnit(r.id)?.index ?? 0, peak: r.value ?? 0 }))
-      : (data?.top ?? []).filter(t => t.kind === "neuron" && (filter !== "labelled" || labelOf(t.unit, t.label)));
+      : (data?.top ?? []).filter(t => t.kind === "neuron" && (filter !== "labelled" || labelOf(t.unit, t.peak < 0 ? "-" : "+", t.label)));
     return strongestColumns(source, nLayers, 40);
   });
   const rowsPerColumn = $derived(kind === "head" ? Math.max(1, pop?.nHeads ?? 1) : every ? 40 : Math.max(8, ...columns.map(col => col.length)));
@@ -254,11 +276,22 @@
   const tokens = $derived(selTrace?.tokens ?? []);
   const peakAt = $derived(trace ? peakIndex(trace) : -1);
   const peakMag = $derived(trace && peakAt >= 0 ? Math.abs(trace[peakAt] ?? 0) : 0);
-  const selLabel = $derived(selRead ? labelText(selRead.kind === "neuron" ? selRead.poles[0]?.label : selRead.label) : selected ? unitLabelFor(selected) : null);
-  const selLink = $derived(selRead ? (selRead.kind === "neuron" ? selRead.poles[0]?.label?.url ?? (selRead.catalog.bound ? selRead.catalog.url : null) : selRead.label?.url ?? null) : null);
+  /** The side of a neuron the summary reads, as the unit view opens it: the side that fired here
+   *  (its trace's peak; the row's sign while the trace loads), or, for a writer of the searched
+   *  word, the side that writes it. Its writes, label and link all come from that side. */
+  const selRow = $derived(selected ? rows.find(r => r.id === selected) ?? null : null);
+  const selPole = $derived.by((): "+" | "-" => {
+    if (selRef?.kind !== "neuron") return "+";
+    if (word && q.mode !== "id" && selRow) return selRow.pole;
+    if (trace && peakAt >= 0) return peakPole(trace);
+    return selRow?.pole ?? "+";
+  });
+  const selSide = $derived(selRead?.kind === "neuron" ? poleOf(selRead, selPole) : null);
+  const selLabel = $derived(selRead ? labelText(selRead.kind === "neuron" ? selSide?.label : selRead.label) : selected ? unitLabelFor(selected, selPole) : null);
+  const selLink = $derived(selRead ? (selRead.kind === "neuron" ? selSide?.label?.url ?? (selRead.catalog.bound ? selRead.catalog.url : null) : selRead.label?.url ?? null) : null);
   const writes = $derived.by(() => {
     if (!selRead) return null;
-    const place = selRead.kind === "neuron" ? selRead.poles[0]?.writes : selRead.copies;
+    const place = selRead.kind === "neuron" ? selSide?.writes : selRead.copies;
     if (!place) return null;
     const { primary } = orderedHalves(place);
     return { lens: lensText(primary), absent: primary.absent, tokens: primary.tokens };
@@ -270,7 +303,7 @@
       const v = selRead.firing.neutral?.write_top;
       return typeof v === "number" ? { pre: "typical write ", b: formatValue(v), post: "" } : null;
     }
-    const rate = selRead.poles[0]?.firing.rate;
+    const rate = selSide?.firing.rate;
     if (typeof rate === "number") return { pre: "fires on ", b: `${(rate * 100).toFixed(rate >= 0.1 ? 0 : 1)}%`, post: " of tokens" };
     return { pre: "write norm ", b: formatValue(selRead.scalars.w_norm), post: "" };
   });
@@ -316,7 +349,7 @@
         <Icon name="search" size={18} />
         <label class="sr-only" for="unit-q">Search units</label>
         <input id="unit-q" type="search" autocomplete="off" spellcheck="false" bind:this={search} value={query}
-          placeholder="Search a word, or an ID like L20 n344"
+          placeholder={narrow.current ? "A word, or an ID like L20 n344" : "Search a word, or an ID like L20 n344"}
           oninput={(e) => typed((e.currentTarget as HTMLInputElement).value)}
           onkeydown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape" && query) { e.preventDefault(); clear(); } }} />
         {#if query}
@@ -373,6 +406,8 @@
           <p class="meta none">No unit {committed.trim()}</p>
         {:else if word}
           <p class="meta none">No unit writes {@render ws(word.shown)}</p>
+        {:else if data}
+          <p class="meta none">{filter === "labelled" ? "No unit here has a label" : kind === "head" ? "No head wrote here" : "No neuron fired here"}</p>
         {/if}
         <div class="split">
           {#if rows.length > shown}<button type="button" class="dw-text" onclick={() => (shown += 16)}>{rows.length - shown} more</button>{/if}
@@ -483,9 +518,16 @@
   .out { display: inline-flex; align-items: center; gap: 6px; height: 36px; color: var(--ink2); font: var(--type-control); text-decoration: none; transition: color var(--fast) var(--ease); }
   .out:hover { color: var(--ink); }
 
+  /* Phone sizes and touch: every target 44 px (a token's bar is a column of the strip, so the strip
+   * grows instead), and no key hint where there is no keyboard. */
   @media (max-width: 720px), (pointer: coarse) {
     .row { height: 44px; }
     .clear { width: 44px; height: 44px; }
+    .strip { height: 48px; }
+    .split .dw-text { min-height: 44px; }
+  }
+  @media (pointer: coarse) {
+    .search kbd { display: none; }
   }
   @media (max-width: 520px) {
     .row { grid-template-columns: 80px minmax(0, 1fr) 40px 40px; gap: var(--s2); }

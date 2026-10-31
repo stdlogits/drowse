@@ -39,13 +39,13 @@
     lensText,
     orderedHalves,
     parseUnit,
-    peakIndex,
+    peakPole,
     poleOf,
     unitFacts,
     unitTitle,
     withAgreement,
-    type UnitTerm,
   } from "../../lib/units";
+  import type { UnitTerm } from "../../lib/unitTerms";
   import type { UnitCatalogBlockJSON, UnitLabelJSON, UnitPlaceJSON } from "../../lib/types";
 
   let { id }: { id: string } = $props();
@@ -112,8 +112,7 @@
   const fired = $derived(trace ? firesOn(trace.map(v => (v === null ? null : Math.max(0, v * sign)))) : 0);
   $effect(() => {
     if (chosen || isHead || !trace) return;
-    const at = peakIndex(trace);
-    if (at >= 0) pole = (trace[at] ?? 0) < 0 ? "-" : "+";
+    pole = peakPole(trace);
   });
 
   // ---------- the recipe

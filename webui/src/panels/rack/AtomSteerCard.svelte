@@ -16,6 +16,7 @@
   import type { AtomMode, AtomSteerEntry } from "../../lib/types";
   import Slider from "../../lib/Slider.svelte";
   import { ATOM_PREFIX, patchSteerEntry, removeSteerEntry } from "../../lib/stores.svelte";
+  import { setUnitOperation } from "../../lib/stores/units.svelte";
   import RackCard from "./RackCard.svelte";
   import RackMarker from "./RackMarker.svelte";
   import type { RackMarkerShape } from "./RackMarker.svelte";
@@ -45,6 +46,13 @@
 
   function cycleTrigger(): void {
     patchSteerEntry(name, { trigger: nextTrigger(entry.trigger) });
+  }
+
+  /** Push or ablate. A unit switches strength with the operation (α 1 holds it at its neutral
+   *  mean; a push comes back at the default), since its push α would amplify as an ablation. */
+  function operate(ablate: boolean): void {
+    if (mode === "unit") setUnitOperation(name, ablate);
+    else patchSteerEntry(name, { ablate }, [mode]);
   }
 </script>
 
@@ -92,13 +100,13 @@
         class:active={!entry.ablate}
         aria-pressed={!entry.ablate}
         disabled={mode === "unit" && name.startsWith("head/")}
-        onclick={() => patchSteerEntry(name, { ablate: false }, [mode])}
+        onclick={() => operate(false)}
       >push</button>
       <button
         type="button"
         class:active={entry.ablate}
         aria-pressed={entry.ablate}
-        onclick={() => patchSteerEntry(name, { ablate: true }, [mode])}
+        onclick={() => operate(true)}
       >ablate</button>
     </div>
     <div class="alpha-row">
