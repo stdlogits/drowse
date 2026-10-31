@@ -26,7 +26,7 @@ import hashlib
 import logging
 import threading
 from collections.abc import Callable, Iterable, Mapping, Sequence
-from typing import Any, Literal, Protocol, cast, overload
+from typing import Any, Literal, NamedTuple, Protocol, cast, overload
 
 import torch
 
@@ -108,6 +108,36 @@ def _out_layers(lens: Any) -> list[int]:
 
 def _spec_side(spec: Mapping[str, Any]) -> str:
     return str(spec.get("side", "output"))
+
+
+class _InputBlock(NamedTuple):
+    """``slens/`` probe readings still on the device: ``values`` is
+    ``[3 + L, P]`` (mean z, depth center, depth spread, then ``z_L`` per
+    layer) for ``names`` (columns) over ``layers`` (rows from 3)."""
+
+    names: tuple[str, ...]
+    layers: tuple[int, ...]
+    values: torch.Tensor
+
+    def readings(self, host: torch.Tensor) -> dict[str, ScalarReading]:
+        """Unpack the host copy of ``values``."""
+        out: dict[str, ScalarReading] = {}
+        for column, name in enumerate(self.names):
+            out[name] = ScalarReading(
+                value=float(host[0, column]),
+                unit=UNIT_MEAN_FOOTPRINT_Z,
+                per_layer={
+                    int(layer): float(host[3 + row, column])
+                    for row, layer in enumerate(self.layers)
+                },
+                depth=DepthSummary(
+                    center=(float(host[1, column]),),
+                    spread=(float(host[2, column]),),
+                    basis="footprint_z",
+                ),
+            )
+        return out
+
 
 class ProfileStore(Protocol):
     """The profile-registry surface the lens writes ``jlens/`` directions
@@ -398,11 +428,15 @@ class LensInstrument:
                 parse_gate_ref(key).probe in names
                 for key in request.gate_keys
             )
+            live_on = bool(request.live and self.live is not None)
             pin_demand = bool(
-                (request.live and self.live is not None)
-                or (items and (request.final_aggregate or gate_hit))
+                live_on or (items and (request.final_aggregate or gate_hit))
             )
-            input_pin = bool(input_items and (request.final_aggregate or gate_hit))
+            # ``slens/`` probes are read by the final aggregate, by gates, and
+            # by the live readout's per-step readings.
+            input_pin = bool(
+                input_items and (request.final_aggregate or gate_hit or live_on)
+            )
             input_lens = self.resident_input() if input_pin else None
             input_specs = {
                 name: {
@@ -418,21 +452,12 @@ class LensInstrument:
             # Spec layers under a pin come from the prepared identity
             # itself — the atomically consistent source for every probe
             # (the production invariant keeps registry lists identical to
-            # ``source_layers``: attach records the full fitted set and
-            # adoption rewrites every probe).  A pin-demanded lens
-            # without them is structurally broken — layers are what align
-            # captures, specs, and Jacobians — so it fails here, at the
-            # boundary, not as a mid-generation KeyError.  A vanished
-            # lens (None) pins the validated-missing state: its eviction
-            # path already zeroed the registry lists the copies reflect.
-            if pin_demand and lens is not None and not hasattr(
-                lens, "source_layers",
-            ):
-                raise RuntimeError(
-                    "LensInstrument.prepare(): the resident lens has no "
-                    "source_layers — a pin-demanded lens must carry its "
-                    "fitted layer set"
-                )
+            # the lens's ``out`` layers: attach records the full fitted set
+            # and adoption rewrites every probe).  A lens without an ``out``
+            # site (mid only) gives its probes no layers, exactly as its
+            # adoption did.  A vanished lens (None) pins the
+            # validated-missing state: its eviction path already zeroed the
+            # registry lists the copies reflect.
             if pin_demand and lens is not None:
                 layers = _out_layers(lens)
                 specs = {
@@ -526,10 +551,16 @@ class LensInstrument:
     def _measurement_specs(self) -> "dict[str, Any] | Any":
         """The spec source for measurement: a bound run's frozen binding
         (immune to concurrent spec mutation — e.g. the refresh's eviction
-        path zeroing probe layers from another thread), else the live
-        registry."""
+        path zeroing probe layers from another thread), else a copy of the
+        live registry taken under the lens-state lock."""
         run = self.current_run
-        return run.binding.specs if run.bound else self.probes
+        if run.bound:
+            return run.binding.specs
+        with self.state_lock:
+            return {
+                name: {**spec, "layers": list(spec["layers"])}
+                for name, spec in self.probes.items()
+            }
 
     def _measurement_live(self) -> "Mapping[str, Any] | None":
         """The live-readout state for measurement: a bound run's
@@ -1079,22 +1110,50 @@ class LensInstrument:
         "having read" the token there.  Like ``jlens/`` atoms it is an
         ordinary profile (it pushes, ablates, takes a ``{…}`` layer clause and
         goes through the whitener at composition).  Idempotent.
+
+        Runs in the model-exclusive section: the first S use builds the
+        embedding statistics (model work).  The footprints themselves are
+        CPU fp32 against the lens's CPU matrices, then land on the session
+        device, as ``jlens/`` directions do.  A token the S read's mask drops
+        is refused (:meth:`_input_token`).
         """
         name = f"slens/{word}"
         if name in self._registry.profiles:
             return name
-        lens = self._require_input()
-        layers = lens.layers("out")
-        token_id = self.resolve_token(word, side="input")
-        with torch.inference_mode():
-            footprint = self._token_embeddings().centred([token_id])[0]
-            directions = {
-                int(layer): lens.footprint(footprint, int(layer), "out").to(self.runtime.device)
-                for layer in layers
-            }
+        with self._exclusive(
+            "an slens/ steering atom was resolved while another model "
+            "operation is in flight; retry shortly"
+        ):
+            lens = self._require_input()
+            layers = lens.layers("out")
+            embeddings = self._token_embeddings()
+            token_id = self._input_token(word, embeddings)
+            with torch.inference_mode():
+                footprint = embeddings.centred([token_id])[0].cpu()
+                directions = {
+                    int(layer): lens.footprint(footprint, int(layer), "out").to(
+                        self.runtime.device,
+                    )
+                    for layer in layers
+                }
         self._registry.put_profile(name, directions)
         self._on_change(())
         return name
+
+    def _input_token(self, word: str, embeddings: TokenEmbeddings) -> int:
+        """The id an ``slens/<word>`` atom or probe names, refused when the S
+        read's token mask drops it: such a token never ranks in an S read, so
+        a footprint z for it measures nothing the read can show."""
+        from drowse.lens.jlens import InvalidTokenIdError
+
+        token_id = self.resolve_token(word, side="input")
+        if not bool(embeddings.keep[token_id]):
+            raise InvalidTokenIdError(
+                f"slens/{word} names token {token_id}, which the S read's token "
+                f"mask drops (special, added and byte-fallback pieces and "
+                f"embedding padding rows never rank in an S read)"
+            )
+        return token_id
 
     def _token_embeddings(self) -> TokenEmbeddings:
         """The masked embedding statistics, built once per model.
@@ -1155,6 +1214,12 @@ class LensInstrument:
             raise RequestError(
                 f"read takes a [d] vector or [n, d] rows, got shape {tuple(vector.shape)}"
             )
+        width = self._residual_width()
+        if int(vector.shape[-1]) != width:
+            raise RequestError(
+                f"read takes residual-width vectors (d = {width}), got shape "
+                f"{tuple(vector.shape)}"
+            )
         r_lens = self.resident()
         s_lens = self.resident_input()
         with self._exclusive(
@@ -1178,6 +1243,17 @@ class LensInstrument:
                 no_s_lens=self._no_input_lens(),
             )
         return reads[0] if vector.ndim == 1 else reads
+
+    def _residual_width(self) -> int:
+        """The model's residual width ``d`` (the text config's hidden size,
+        else the input embedding's width)."""
+        base = getattr(self.runtime.model, "_orig_mod", self.runtime.model)
+        config = getattr(base, "config", None)
+        text = getattr(config, "text_config", None) or config
+        hidden = getattr(text, "hidden_size", None)
+        if isinstance(hidden, int) and not isinstance(hidden, bool):
+            return hidden
+        return int(base.get_input_embeddings().weight.shape[1])
 
     def read_prompt(
         self,
@@ -1303,14 +1379,14 @@ class LensInstrument:
             # outer→leaf lock order): the lens read and the registry write
             # land in one lens-state transaction.
             with self.state_lock:
-                lens = self._require_input() if side == "input" else self._require()
-                token_id = self.resolve_token(word, side=side)
-                readout_layers = (
-                    [int(layer) for layer in lens.layers("out")] if side == "input"
-                    else [int(l) for l in lens.source_layers]
-                )
                 if side == "input":
-                    self._token_embeddings()
+                    lens = self._require_input()
+                    readout_layers = [int(layer) for layer in lens.layers("out")]
+                    token_id = self._input_token(word, self._token_embeddings())
+                else:
+                    lens = self._require()
+                    token_id = self.resolve_token(word, side=side)
+                    readout_layers = [int(l) for l in lens.source_layers]
                 runtime.transport_stack(lens, sorted(readout_layers))
                 self.probes[name] = {
                     "word": word,
@@ -1388,7 +1464,8 @@ class LensInstrument:
         pairs the prep's older lens with the new lens's layers and
         KeyErrors in the transport stack.
 
-        ``latest_layers`` — the live workspace readout's layer set plus the
+        ``latest_layers`` — the live workspace readout's layer set (plus the
+        ``slens/`` probes' band, which the live step reads) and the
         pinned probes' fitted band (full band when a finalize aggregate
         will pool it; the gated probes' band when gates are the only
         per-step consumer with final readings disabled).  ``tail_layers``
@@ -1421,6 +1498,11 @@ class LensInstrument:
         tail: set[int] = set()
         if live is not None:
             latest.update(int(layer) for layer in live["layers"])
+            # The live step also reads every ``slens/`` probe, over its own
+            # S lens's layers, not the R live selection.
+            latest.update(_band({
+                name for name, spec in probes.items() if _spec_side(spec) == "input"
+            }))
         if probes and request.final_aggregate:
             band = _band()
             latest.update(band)
@@ -1503,36 +1585,38 @@ class LensInstrument:
         ))
         return out
 
-    def _input_readings(
+    def _input_block(
         self,
         probes: "Mapping[str, Mapping[str, Any]]",
         hidden: "Mapping[int, torch.Tensor]",
         *,
         only: "set[str] | None" = None,
-    ) -> dict[str, ScalarReading]:
-        """The ``slens/`` probes' footprint-z readings from block-output rows.
+    ) -> "_InputBlock | None":
+        """The ``slens/`` probes' footprint z from block-output rows, still on
+        the device (:meth:`_input_readings` unpacks it; the live step folds it
+        into its own host transfer).
 
         Per layer ``u_L = K_Lᵀ h_L`` (one batched pullback over the S lens's
         ``out`` layers that ``hidden`` covers), then each probe token's
         ``z_L = u_L·ẽ_v / sqrt(u_Lᵀ Σ_E u_L)``: ``O(d²)`` per layer, no pass
         over the vocabulary.  The value is ``mean_L z_L``; the depth summary
-        weights each layer by ``max(z_L, 0)``.  One host transfer.  Layers
-        come from the lens read here, so a reading never pairs one lens with
-        another's layers.
+        weights each layer by ``max(z_L, 0)``.  Layers come from the lens
+        read here, so a reading never pairs one lens with another's layers.
+        ``None`` when there is nothing to read.
         """
         names = [
             name for name, spec in probes.items()
             if _spec_side(spec) == "input" and (only is None or name in only)
         ]
         if not names:
-            return {}
+            return None
         lens = self._measurement_input_lens()
         embeddings = self._embeddings
         if lens is None or embeddings is None:
-            return {}
+            return None
         layers = [layer for layer in _out_layers(lens) if layer in hidden]
         if not layers:
-            return {}
+            return None
         runtime = self.input_runtime
         stack = runtime.transport_stack(lens, layers, embeddings.device)
         rows = torch.stack([hidden[layer].reshape(-1) for layer in layers])
@@ -1543,25 +1627,58 @@ class LensInstrument:
         z = embeddings.z_of(u, token_ids)                               # [L, P]
         depth = runtime.depth_tensor(layers, z.device)                   # [L, 1]
         center, spread = depth_moments_positive(z, depth)
-        host = torch.cat([
+        values = torch.cat([
             torch.stack([z.mean(dim=0), center, spread]), z,
-        ]).detach().cpu()                                               # [3 + L, P]
-        out: dict[str, ScalarReading] = {}
-        for column, name in enumerate(names):
-            out[name] = ScalarReading(
-                value=float(host[0, column]),
-                unit=UNIT_MEAN_FOOTPRINT_Z,
-                per_layer={
-                    int(layer): float(host[3 + row, column])
-                    for row, layer in enumerate(layers)
-                },
-                depth=DepthSummary(
-                    center=(float(host[1, column]),),
-                    spread=(float(host[2, column]),),
-                    basis="footprint_z",
-                ),
-            )
-        return out
+        ]).detach()                                                     # [3 + L, P]
+        return _InputBlock(tuple(names), tuple(layers), values)
+
+    def _input_readings(
+        self,
+        probes: "Mapping[str, Mapping[str, Any]]",
+        hidden: "Mapping[int, torch.Tensor]",
+        *,
+        only: "set[str] | None" = None,
+    ) -> dict[str, ScalarReading]:
+        """The ``slens/`` probes' footprint-z readings (:meth:`_input_block`),
+        in one host transfer."""
+        block = self._input_block(probes, hidden, only=only)
+        return {} if block is None else block.readings(block.values.cpu())
+
+    def _input_stash_split(
+        self,
+        probes: "Mapping[str, Mapping[str, Any]]",
+        only: "set[str] | None",
+        step_id: int,
+    ) -> tuple[dict[str, ScalarReading], set[str]]:
+        """This forward's stashed ``slens/`` readings among the wanted probes,
+        and the wanted probes not read on this forward yet.
+
+        The stash records which probes were read (whether or not a reading
+        came out), so a display step after a gate that read a subset reads
+        only the rest, never drops it."""
+        wanted = {
+            name for name, spec in probes.items()
+            if _spec_side(spec) == "input" and (only is None or name in only)
+        }
+        stash = self.current_run.input_stash
+        if stash is None or step_id < 0 or stash.get("step") != step_id:
+            return {}, wanted
+        have = {n: r for n, r in stash["readings"].items() if n in wanted}
+        return have, wanted - stash["names"]
+
+    def _input_stash_put(
+        self, step_id: int, names: "set[str]", readings: "Mapping[str, ScalarReading]",
+    ) -> None:
+        """Record ``names`` as read on forward ``step_id`` (their readings)."""
+        if step_id < 0:
+            return
+        run = self.current_run
+        stash = run.input_stash
+        if stash is None or stash.get("step") != step_id:
+            stash = {"step": step_id, "names": set(), "readings": {}}
+            run.input_stash = stash
+        stash["names"].update(names)
+        stash["readings"].update(readings)
 
     def _input_step_readings(
         self,
@@ -1572,20 +1689,14 @@ class LensInstrument:
     ) -> dict[str, ScalarReading]:
         """``slens/`` readings for this forward, stashed by ``step_id`` so
         the display step reuses them (the same staleness rule as the R
-        family's stash)."""
-        run = self.current_run
-        stash = run.input_stash
-        if (
-            stash is not None and step_id >= 0 and stash.get("step") == step_id
-            and (only is None or set(only) <= set(stash["readings"]))
-        ):
-            readings = stash["readings"]
-            return {n: r for n, r in readings.items() if only is None or n in only}
-        latest = self._capture.latest_per_layer()
-        readings = self._input_readings(probes, latest, only=only) if latest else {}
-        if step_id >= 0:
-            run.input_stash = {"step": step_id, "readings": readings}
-        return readings
+        family's stash); probes the stash has not read yet are read now."""
+        have, missing = self._input_stash_split(probes, only, step_id)
+        if missing:
+            latest = self._capture.latest_per_layer()
+            fresh = self._input_readings(probes, latest, only=missing) if latest else {}
+            self._input_stash_put(step_id, missing, fresh)
+            have.update(fresh)
+        return have
 
     def score_probes_from_rows(
         self,
@@ -1709,8 +1820,13 @@ class LensInstrument:
         selected-token softmax columns; live display calls still calibrate
         the full matrix once for downstream card/aggregate reuse.  Empty
         when nothing is capturable yet.
+
+        ``slens/`` gates read first, from the bound specs; the R family's
+        state is resolved only when an R-family (``jlens/``) probe is
+        scored, so a generation gated only on ``slens/`` probes never
+        touches (or refreshes) the R lens per token.
         """
-        lens, all_probes = self._measurement_state()
+        specs = self._measurement_specs()
         only = None
         if gate_keys is not None:
             # ``None`` is the full-roster sentinel; an explicit empty set
@@ -1719,16 +1835,31 @@ class LensInstrument:
             only = {
                 key.split("[", 1)[0]
                 for key in gate_keys
-                if key.split("[", 1)[0] in all_probes
+                if key.split("[", 1)[0] in specs
             }
             if not only:
                 return {}
-        input_scalars = scalar_gate_keys({
-            name: reading.value
-            for name, reading in self._input_step_readings(
-                all_probes, only, step_id=step_id,
-            ).items()
-        })
+        live_display_needs_full_probs = bool(
+            self._measurement_live() is not None
+            and self.active_for_generation
+        )
+        input_names = {n for n, s in specs.items() if _spec_side(s) == "input"}
+        input_only = input_names if only is None else only & input_names
+        input_scalars: dict[str, float] = {}
+        if input_only:
+            # The live display step reads every ``slens/`` probe on this
+            # forward: read them all here once and let it reuse the stash.
+            readings = self._input_step_readings(
+                specs, None if live_display_needs_full_probs else input_only,
+                step_id=step_id,
+            )
+            input_scalars = scalar_gate_keys({
+                name: reading.value
+                for name, reading in readings.items() if name in input_only
+            })
+        if not ((set(specs) if only is None else only) - input_names):
+            return input_scalars
+        lens, all_probes = self._measurement_state()
         probes = {n: s for n, s in all_probes.items() if _spec_side(s) == "output"}
         if only is not None:
             only = {name for name in only if name in probes}
@@ -1739,10 +1870,6 @@ class LensInstrument:
         latest = self._capture.latest_per_layer()
         if not latest:
             return input_scalars
-        live_display_needs_full_probs = bool(
-            self._measurement_live() is not None
-            and self.active_for_generation
-        )
         # When the token tap will immediately need every pinned probe reading
         # for the live payload, compute that superset once in the gate
         # callback and let the display reuse it.  Gate-only calls stay on the
@@ -2135,7 +2262,11 @@ class LensInstrument:
         # may already have computed the same readings from these exact rows;
         # reuse them to avoid a second selected-token host sync on the
         # pinned+gated+live path.
-        if self._measurement_specs():
+        specs = self._measurement_specs()
+        input_have: dict[str, ScalarReading] = {}
+        input_missing: set[str] = set()
+        input_block: _InputBlock | None = None
+        if specs:
             readings_reused = False
             if (
                 stash is not None
@@ -2155,14 +2286,14 @@ class LensInstrument:
                 self.last_step_readings = self.score_probes_from_rows(
                     layers=list(layers_present), probabilities=probabilities,
                 )
-            specs = self._measurement_specs()
-            if any(_spec_side(spec) == "input" for spec in specs.values()):
-                # ``slens/`` probes ride the same step: the gate callback's
-                # footprint readings when it ran on this forward.
-                self.last_step_readings = {
-                    **(self.last_step_readings or {}),
-                    **self._input_step_readings(specs, None, step_id=step_id),
-                }
+            # ``slens/`` probes ride the same step: the gate callback's
+            # footprint readings when it ran on this forward, and the rest
+            # read here and folded into the display's one host transfer.
+            input_have, input_missing = self._input_stash_split(specs, None, step_id)
+            if input_missing:
+                latest = self._capture.latest_per_layer()
+                if latest:
+                    input_block = self._input_block(specs, latest, only=input_missing)
         else:
             self.last_step_readings = None
         # Display scores are per-layer softmax probabilities — the one
@@ -2177,15 +2308,27 @@ class LensInstrument:
             top_k=k,
             depth_tensor=depth_tensor,
         )
-        # Pack the tiny K-wide result through the shared MPS-safe helper and
-        # synchronize once.
+        # Pack the tiny K-wide result (and any ``slens/`` block) through the
+        # shared MPS-safe helper and synchronize once.
         n_layers = len(layers_present)
-        host_rows = pack_readout_rows_to_host(
-            vals,
-            idxs,
-            agg_stats,
-            agg_idxs.reshape(1, -1),
-        ).tolist()
+        readout_rows = (vals, idxs, agg_stats, agg_idxs.reshape(1, -1))
+        if input_block is None:
+            host = pack_readout_rows_to_host(*readout_rows)
+        else:
+            flat = pack_readout_rows_to_host(
+                *(row.reshape(-1) for row in readout_rows),
+                input_block.values.to(probabilities.device).reshape(-1),
+            )
+            split = (2 * n_layers + 4) * k
+            host = flat[:split].reshape(2 * n_layers + 4, k)
+            input_have.update(input_block.readings(
+                flat[split:].reshape(input_block.values.shape),
+            ))
+        if input_missing:
+            self._input_stash_put(step_id, input_missing, input_have)
+        if input_have:
+            self.last_step_readings = {**(self.last_step_readings or {}), **input_have}
+        host_rows = host.tolist()
         all_vals = host_rows[:n_layers]
         all_idxs = host_rows[n_layers:2 * n_layers]
         agg_host = host_rows[2 * n_layers:]

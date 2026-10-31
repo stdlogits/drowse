@@ -19,7 +19,9 @@ V, D = 12, 5
 
 
 class _Tok:
-    """A tokenizer whose id 3 is special, id 7 a byte-fallback piece, and
+    """A tokenizer whose id 3 is special, 9 an added special token, 4 an
+    added control token not marked special, 7 a partial UTF-8 byte, 2 the
+    sentencepiece byte piece ``<0x41>`` (which decodes to plain ``A``), and
     whose vocabulary stops two rows short of the embedding."""
 
     all_special_ids = [3]
@@ -29,7 +31,10 @@ class _Tok:
         return V - 2
 
     def batch_decode(self, rows: list[list[int]]) -> list[str]:
-        return ["�" if row == [7] else f"t{row[0]}" for row in rows]
+        return ["�" if row == [7] else "A" if row == [2] else f"t{row[0]}" for row in rows]
+
+    def convert_ids_to_tokens(self, ids: list[int]) -> list[str]:
+        return ["<0x41>" if i == 2 else "<0xE2>" if i == 7 else f"t{i}" for i in ids]
 
 
 def _weight(seed: int = 0) -> torch.Tensor:
@@ -37,11 +42,28 @@ def _weight(seed: int = 0) -> torch.Tensor:
     return torch.randn(V, D, generator=gen, dtype=torch.float64)
 
 
-def test_token_mask_drops_special_byte_fallback_and_padding_rows() -> None:
+def test_token_mask_drops_special_added_byte_fallback_and_padding_rows() -> None:
+    """Regression: ASCII byte pieces (``<0x00>``..``<0x7F>``, half of Gemma
+    4's byte fallback) decode to valid characters, so only their spelling
+    marks them; added control tokens not marked special (Qwen3's
+    ``<think>``) are dropped with the special ones."""
     keep = token_mask(_Tok(), V)
     assert keep.tolist() == [
-        True, True, True, False, True, True, True, False, True, False, False, False,
+        True, True, False, False, False, True, True, False, True, False, False, False,
     ]
+
+
+def test_token_mask_without_a_spelling_falls_back_to_decoding() -> None:
+    class _Bare:
+        all_special_ids: list[int] = []
+
+        def __len__(self) -> int:
+            return 3
+
+        def decode(self, ids: list[int]) -> str:
+            return "�" if ids == [1] else "x"
+
+    assert token_mask(_Bare(), 4).tolist() == [True, False, True, False]
 
 
 def test_embedding_statistics_are_the_masked_scaled_moments() -> None:

@@ -19,22 +19,32 @@ per-vector affine of the raw score, whose top-k is the raw read's.  ``Σ_E``
 makes a one-token read (a probe, a gate) cost ``O(d²)`` per layer instead of a
 pass over the vocabulary.
 
-**The token mask** drops special tokens, byte-fallback pieces (a token that
-decodes alone to U+FFFD: a partial UTF-8 sequence or a ``<0x..>`` byte piece,
-out of distribution on its own and on top of many early reads) and embedding
-rows past the tokenizer (padding).  Masked tokens never rank and do not enter
-the mean or ``Σ_E``.
+**The token mask** is decided by the tokenizer alone.  It drops special
+tokens, every added token (special or not: chat and tool control pieces such
+as Qwen3's ``<think>``, ``<tool_call>`` and ``<|fim_*|>``, Gemma's reserved
+``<unusedN>``), byte-fallback pieces (a vocabulary piece spelled ``<0xNN>``,
+including the ASCII ones that decode to a control character, and any token
+that decodes alone to U+FFFD, a partial UTF-8 sequence; out of distribution
+on their own and on top of many early reads) and embedding rows past the
+tokenizer (padding).  Masked tokens never rank and do not enter the mean or
+``Σ_E``.
 
 Relation to neuron-lens (``scripts/08_reads.py``, ``neuron_lens/catalog.py``):
 the centred embedding and the read are the same (``s_tops`` over ``emb −
 emb.mean(0)`` with Gemma's ``× √d``), so top-k matches its raw ``read_S`` /
-``write_S``.  Three differences: its kept set also drops tokens seen fewer than
-five times in its activation corpora (a lens corpus is too small for that, so
-drowse masks by the tokenizer alone); it reports the raw score of a unit
-covector where drowse reports the vocabulary z (same order, a scale that is
-comparable across vectors and layers); and its ``_z`` reads are
-layer-contrastive (z across a layer's neurons), which needs a population of
-vectors, not one.  It scores in fp16; drowse in fp32.
+``write_S`` wherever both keep a token.  The differences:
+
+- Its kept set is the tokens seen at least five times in its activation
+  corpora, which drops control, byte and reserved pieces by never seeing
+  them.  A lens corpus is too small for a count, so drowse masks by the
+  tokenizer: the two sets differ on rare base-vocabulary tokens (drowse keeps
+  them) and on added tokens a corpus does contain (drowse drops them all,
+  Gemma 2's added whitespace runs among them).
+- It reports the raw score of a unit covector where drowse reports the
+  vocabulary z (same order, a scale comparable across vectors and layers).
+- Its ``_z`` reads are layer-contrastive (z across a layer's neurons), which
+  needs a population of vectors, not one.
+- It scores in fp16; drowse in fp32.
 
 Torch only: the instrument builds :class:`TokenEmbeddings` once per model and
 every S read, probe, gate, steering atom and the ``tokens-in`` dictionary use
@@ -43,6 +53,7 @@ it.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
@@ -56,15 +67,21 @@ VOCAB_CHUNK = 8192
 #: ``z = 0`` everywhere rather than NaN.
 _MIN_VARIANCE = 1e-30
 REPLACEMENT_CHARACTER = "�"
+#: A sentencepiece byte-fallback piece as the vocabulary spells it.
+_BYTE_PIECE = re.compile(r"<0x[0-9A-Fa-f]{2}>")
 
 
 def token_mask(tokenizer: Any, rows: int) -> torch.Tensor:
     """``[rows]`` bool: the tokens an S read ranks.
 
-    Drops the tokenizer's special ids (``all_special_ids`` and added tokens
-    marked special), every id that decodes alone to a string containing
-    U+FFFD (byte-fallback pieces), and embedding rows at or past the
-    tokenizer's length (padding rows a model reserves beyond its vocabulary).
+    Drops the tokenizer's special ids (``all_special_ids``), every added
+    token (``added_tokens_decoder``, special or not: control and reserved
+    pieces such as Qwen3's ``<think>``/``<tool_call>`` and Gemma's
+    ``<unusedN>``), byte-fallback pieces (a vocabulary piece spelled
+    ``<0xNN>``, whatever it decodes to, and any id that decodes alone to a
+    string containing U+FFFD, a partial UTF-8 sequence), and embedding rows
+    at or past the tokenizer's length (padding rows a model reserves beyond
+    its vocabulary).
     """
     size = rows
     try:
@@ -73,21 +90,25 @@ def token_mask(tokenizer: Any, rows: int) -> torch.Tensor:
         pass
     keep = torch.zeros(rows, dtype=torch.bool)
     keep[:size] = True
-    special = set(int(i) for i in getattr(tokenizer, "all_special_ids", ()) or ())
-    for token_id, added in (getattr(tokenizer, "added_tokens_decoder", None) or {}).items():
-        if getattr(added, "special", False):
-            special.add(int(token_id))
-    for token_id in special:
+    dropped = set(int(i) for i in getattr(tokenizer, "all_special_ids", ()) or ())
+    dropped.update(
+        int(i) for i in (getattr(tokenizer, "added_tokens_decoder", None) or {})
+    )
+    for token_id in dropped:
         if 0 <= token_id < rows:
             keep[token_id] = False
-    batch_decode: Any = getattr(tokenizer, "batch_decode", None)
     ids = list(range(size))
+    batch_decode: Any = getattr(tokenizer, "batch_decode", None)
     pieces: list[Any] = (
         list(batch_decode([[i] for i in ids])) if batch_decode is not None
         else [tokenizer.decode([i]) for i in ids]
     )
-    for token_id, piece in zip(ids, pieces, strict=True):
-        if REPLACEMENT_CHARACTER in str(piece):
+    to_tokens: Any = getattr(tokenizer, "convert_ids_to_tokens", None)
+    spelled: list[Any] = list(to_tokens(ids)) if to_tokens is not None else [None] * size
+    for token_id, piece, raw in zip(ids, pieces, spelled, strict=True):
+        if REPLACEMENT_CHARACTER in str(piece) or (
+            isinstance(raw, str) and _BYTE_PIECE.fullmatch(raw)
+        ):
             keep[token_id] = False
     return keep
 
