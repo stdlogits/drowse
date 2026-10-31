@@ -1987,7 +1987,7 @@
   .loom-top, .loom-actions, .filter-bar, .search-feedback, .loom-status, .loom-map-bar { flex: none; min-width: 0; }
   .loom-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); margin-top: calc(var(--s2) * -1); }
   .loom-actions .dw-text { font: var(--type-meta); }
-  .weave-host { display: flex; flex: 1; min-height: 0; min-width: 0; }
+  .weave-host { display: flex; flex: 1; min-height: 0; min-width: 0; container: loom / inline-size; }
   .weave-host[hidden] { display: none; }
 
   /* ---------- search */
@@ -2133,6 +2133,10 @@
     .loom-actions .dw-text { min-height: 44px; }
   }
   @media (max-width: 720px) {
+    /* One row of actions that scrolls sideways, as the view tabs do. */
+    .loom-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-inline: contain; mask-image: linear-gradient(to right, var(--ink) calc(100% - 24px), transparent); padding-right: var(--s5); }
+    .loom-actions::-webkit-scrollbar { display: none; }
+    .loom-actions .dw-text { flex: none; white-space: nowrap; }
     .loom-map-summary { display: none; }
     .loom-map-bar { justify-content: flex-end; }
     .tree-scroll { min-height: min(96px, 25dvh); }

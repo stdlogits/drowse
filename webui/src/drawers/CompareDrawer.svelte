@@ -152,9 +152,10 @@
 <aside class="drawer" aria-label="Pairwise compare">
   <header class="drawer-header">
     <div class="title">
-      <h2 class="dw-title">{data ? `${conceptA} and ${conceptB}` : "Compare by layer"}</h2>
+      <h2 class="dw-title">Compare by layer</h2>
       <div class="dw-facts">
         {#if data}
+          <span><b>{conceptA}</b> × <b>{conceptB}</b></span>
           <span><b>{layersA.length}</b> × <b>{layersB.length}</b> layers</span>
           <span>{data.model ?? "-"}</span>
         {:else}

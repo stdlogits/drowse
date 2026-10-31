@@ -250,10 +250,18 @@
   footer { gap: var(--s2) var(--s4); padding-top: var(--s1); }
   footer .dw-text { font: var(--type-meta); }
   .error { color: var(--ink); }
-  @media (max-width: 960px), (max-height: 700px) {
+  /* One column when the page region is narrow (the loom names its host ``loom``) or the window short. */
+  @container loom (max-width: 640px) {
     .weave { display: block; overflow-y: auto; }
     section { overflow: visible; }
     section + section { margin-top: var(--s5); }
+  }
+  @media (max-height: 700px) {
+    .weave { display: block; overflow-y: auto; }
+    section { overflow: visible; }
+    section + section { margin-top: var(--s5); }
+  }
+  @media (max-width: 720px) {
     textarea { font-size: 16px; }
   }
   @media (pointer: coarse) {
