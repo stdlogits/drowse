@@ -16,11 +16,13 @@ difference-of-means steering vector is the 2-node flat case and a monopolar
 concept the 1-node case; `personas` is a 107-node flat fan, `emotions` a
 20-node affect manifold, `months` an authored periodic ring. Every steering
 term (vectors, poles, `~`/`|` projections, `!` ablations, `%` manifold
-positions, J-lens and SAE atoms) lowers at generation time to one per-layer
-injection whose semantics are `geometry/inject.py::subspace_inject`.
-Coefficients are per call; the model is never mutated. Three read families
+positions, J-lens, SAE and neuron atoms) lowers at generation time to one
+per-layer injection whose semantics are `geometry/inject.py::subspace_inject`;
+the one exception is a unit mean-ablation (`!neuron/…`, `!head/…`), which
+rewrites a projection's input (`UnitOp`) instead of the residual.
+Coefficients are per call; the model is never mutated. Four read families
 measure the same forward: geometry probes (the whitened `Monitor`), the
-Jacobian lens and SAEs.
+Jacobian lens, SAEs and units (MLP neurons and attention heads).
 
 Read `ARCHITECTURE.md` before touching the engine: it is the cross-cutting
 design. Every package has its own `AGENTS.md`, auto-loaded when you work in
@@ -128,7 +130,7 @@ no code reads a session private (`session._x`, `sess._x`, `<x>.session._x`,
 | 4 | `store/` | manifold folders and schema, selectors and the bare-atom ladder, templates, bundled materialization, archive, install, Hub, GGUF export, neutral/alignment caches | `drowse/store/AGENTS.md` |
 | 5 | `steering.grammar`, `.terms`, `.triggers` | the expression language and its IR | `drowse/steering/AGENTS.md` |
 | 6 | `readout/` | instrument contract, read vocabulary, `Monitor`/`GeometryInstrument`, capture planner and buffers, roster, measurement envelope | `drowse/readout/AGENTS.md` |
-| 7 | `lens/`, `sae/` | the Jacobian lens and SAE families: sources, fits, runtimes, instruments | `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md` |
+| 7 | `lens/`, `sae/`, `units/` | the Jacobian lens, SAE and units families: sources, fits, runtimes, unit statistics and tap, instruments | `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md`, `drowse/units/AGENTS.md` |
 | 8 | `steering.composer`, `.hooks` | scopes, resolution, composition, lowering, gains, hooks | `drowse/steering/AGENTS.md` |
 | 9 | `generation/` | decode loop and sampler, rendering, prefix cache, compile routing, `ReadPlane`, results, completion scoring | `drowse/generation/AGENTS.md` |
 | 10 | `fit/` | the one extraction pipeline, corpora, capture, publish, preflight, neutral compute, bake, transfer, naturalness | `drowse/fit/AGENTS.md` |
@@ -140,7 +142,8 @@ Two placements are easy to get wrong. `store` sits below the grammar because
 `parse_expr` resolves bare atoms against installed manifolds
 (`store.selectors`). `steering` spans two layers: the grammar, IR and triggers
 sit low, while the composer and hooks sit above `readout` (gate references)
-and `lens`/`sae`; a lower layer that must refuse work under steering takes
+and `lens`/`sae`/`units` (unit sites for ablation); a lower layer that must
+refuse work under steering takes
 `SteeringComposer.assert_unsteered` as an injected callable. A new subpackage
 needs a `LAYERS` entry.
 
@@ -201,7 +204,8 @@ family.
 **Persisted formats are exact.** Readers accept only the current version and
 never migrate (a derived cache recomputes instead): `manifold.json` v10,
 `template.json` v2, `.drowse` v1, loom `tree_format` 2 with token sidecar 2,
-transcripts v2, lens format v7, neutral cache v4.
+transcripts v2, lens format v7, neutral cache v5 (activations plus the unit
+statistics).
 `MANIFOLD_FIT_POLICY_VERSION` (`geometry/manifold.py`) stamps every fit, and
 bumping it makes every fitted tensor refuse to load. Every `SamplingConfig`
 field is persisted in recipes and required on read, so adding one breaks saved

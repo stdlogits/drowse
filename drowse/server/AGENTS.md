@@ -246,6 +246,7 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   | geometry | 404 | 404 | yes | 404 |
   | lens | yes | `fetch`, `fit` | yes | yes |
   | sae | yes | `fetch`, `train` | yes | 409: loading weights is the `fetch` preparation |
+  | units | 404 | 404 | yes | 404 |
 
   `POST live` forwards extras to `instrument.set_live`, whose `TypeError` is
   the one rejection rule (400); `top_k` is refused for every family because

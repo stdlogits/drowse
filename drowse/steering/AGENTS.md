@@ -13,7 +13,7 @@ injected, where, when, and how strongly.
 | `terms.py` | `Steering` (frozen IR), `AlphaEntry`, `SteeringStackEntry`, `term_entry` / `entry_trigger` / `entry_coeff` |
 | `triggers.py` | `Trigger` + presets, `ProbeGate`, `TriggerContext` |
 | `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries), `SteeringScope`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
-| `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
+| `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `UnitTerm` / `UnitOp` / `UnitHook` (unit ablation), `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
 
 Layering (`tests/invariants/test_layering.py`): `grammar`/`terms`/`triggers`
 sit above `store` (parsing resolves bare atoms against installed manifolds via
@@ -97,8 +97,8 @@ that never fires.
 | `α x` | `ManifoldTerm` via the bare-atom ladder, else `α` / `(α, Trigger)` under `x` | push |
 | `α a~b` / `α a\|b` | `ProjectedTerm` under `a~b` / `a\|b` | Mahalanobis LEACE `project_profile`: keep / remove the component of `a` along `b`, then push |
 | `α !x` | `AblationTerm` under `!x` | `h' = h − α(h·d̂ − μ·d̂)d̂`; bare `!x` is α = 1 |
-| `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's write at its layer; the sign of α picks the pole (units lane) |
-| `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | the unit's activation (a neuron's `act`, a head's `z_h`) replaced by its neutral mean, blended by α, as a unit hook (units lane); never a residual direction ablation |
+| `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's `+`-pole write at its layer (a one-layer profile, folded and pushed like any vector); a negative α pushes along the `−` pole's |
+| `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | a `UnitOp` pre-hook on the down / output projection: the unit's activation (a neuron's `act`, a head's `z_h`) becomes `(1 − α)·x + α·mean`, its neutral mean; never a residual direction ablation |
 | `along[,onto] m%pos` | `ManifoldTerm` under `m%pos` | affine fit: push fragment; curved fit: own term |
 | any of these but a unit atom `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`honest{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
 
@@ -145,7 +145,7 @@ as `default/emotions` is gated as `default/emotions@happy`).
 
 | Shape | Channel (`readout.types`) | Produced by |
 |---|---|---|
-| `p`, `a.b`, `p[i]` | `Axis(i)`; bare = axis 0 | geometry (one key per coord axis, domain-frame); `jlens/<w>` / `jlens/#id` (mean fitted-layer probability); `sae/<id>` (normalized strength). Lens and SAE emit axis 0 only; a higher index validates but never fires. |
+| `p`, `a.b`, `p[i]` | `Axis(i)`; bare = axis 0 | geometry (one key per coord axis, domain-frame); `jlens/<w>` / `jlens/#id` (mean fitted-layer probability); `sae/<id>` (normalized strength); `neuron/L8n344` (activation over its pole's neutral `act_top`, signed), `head/L20h17` (write norm over its `act_top`). Lens and SAE emit axis 0 only; a higher index validates but never fires. A unit gate needs no attached probe. |
 | `p:fraction` | `Fraction` | geometry: share of the centered activation in the subspace, [0, 1] |
 | `p:membership` | `Membership` | geometry: tube-fit density, [0, 1] |
 | `p@label` | `Distance` | geometry: negated distance in typical label spacings (larger = closer); only for nodes in the reading's `nearest` list; `neutral` names the frame anchor |
@@ -160,7 +160,9 @@ first decode step). Validation happens at generation preflight in
 `ReadPlane.resolve_gates` (`generation/read_plane.py`): a gate naming a probe
 attached to the lens or SAE family on a channel that family cannot produce
 raises `UnsupportedProbeChannelError` (400); geometry accepts every channel;
-a gate naming no attached probe is silently inactive.
+a gate on a unit reads it whether or not a unit probe is attached, and a unit
+outside the model is a `UnitIndexError` (400) there; any other gate naming no
+attached probe is silently inactive.
 
 ### Round trip
 
@@ -202,9 +204,11 @@ and is an interface change for drowse.ai.
   `neuron`, `head`) name instrument units: the name is kept verbatim and
   case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are the
   exception, canonicalized as above), takes no `:variant` (not even `:raw`),
-  and skips every manifold tier. The session wires resolvers for `jlens` and
-  `sae` (`ArtifactRegistry.set_atom_resolver`); a `slens` or `neuron` push
-  parses but raises `ProfileNotRegisteredError` when steered.
+  and skips every manifold tier. The session wires resolvers for `jlens`,
+  `sae` and `neuron` (`ArtifactRegistry.set_atom_resolver`; `neuron` is
+  `units.instrument.UnitsInstrument.register_direction`, which checks the unit
+  against the model: a 400 at `open_scope`); a `slens` push parses but raises
+  `ProfileNotRegisteredError` when steered.
 - **Variants**: `raw` (default), `sae` / `sae-<release>`, `role` /
   `role-<id>` (role-augmented fit; its role becomes the scope's assistant
   label), `from` / `from-<src>` (cross-model transfer). There is no `pca`
@@ -240,9 +244,10 @@ Keys carry `<ns>/` only when typed and `:<variant>` only when not `raw`.
 ## Composition (`composer.py`)
 
 `SteeringComposer` reaches the session only through its constructor
-arguments: the `ArtifactSource` and `NeutralSource` protocols (the session's
-`ArtifactRegistry` and `NeutralBaseline`), the manager, the exclusive
-generation lock, the event bus, and two callbacks.
+arguments: the `ArtifactSource`, `NeutralSource` and `UnitSource` protocols
+(the session's `ArtifactRegistry`, `NeutralBaseline` and
+`units.runtime.UnitsRuntime`), the manager, the exclusive generation lock, the
+event bus, and two callbacks.
 
 **Resolution.** `open_scope(value)` parses (with `profile_names`), then
 `resolve()` concretizes and loads every artifact: `concretize_key` pins a bare
@@ -281,7 +286,7 @@ layer (`WhitenerError` otherwise; there is no Euclidean path).
 | `(α, trigger)` vector | profile → `fold_directions_to_subspace` (neutral-anchored rank-1 ray, + pole at `‖d_L‖`) → `affine_manifold_push(folded, "+")`, coefficient α |
 | `ProjectedTerm` | `project_profile(base, onto, op, whitener=…)`, memoized on the identities of base, onto and whitener under the clause-free key (one projection serves every clause) and never registered → folded and pushed like a vector |
 | `AblationTerm` | target profile's per-layer direction(s) → ablate fragment with its coefficient |
-| `UnitAblationTerm` | not wired yet: `resolve` passes it through (nothing to load) and `compose` raises `SteeringCompositionError` (422, "unit ablation is not wired yet"), so the error surfaces on `__enter__` |
+| `UnitAblationTerm` | `resolve` checks the unit against the model (`UnitIndexError` 400 before the scope); `compose` takes its `UnitSite` (module, coordinate span, neutral mean) from `UnitSource.site` and registers `SteeringPlan.add_unit_ablation(…, coeff, trigger)`; it joins no affine group. The plan cache records the neutral unit statistics it read. Without unit statistics: `UnitsUnavailableError` (422); on a model `BlockSpec` refuses: `UnsupportedBlockError` (422) |
 | affine `ManifoldTerm` | `affine_manifold_push(manifold, position)`, coefficient `along` (`onto` is vacuous and dropped) |
 | curved `ManifoldTerm` | `SteeringPlan.add_manifold(…, layers=…)` (its own term) |
 
@@ -405,21 +410,39 @@ seeds at the origin with `_MANIFOLD_COLD_GN_STEPS = 4`. The last position's
 foot carries from prefill into decode; `reset_manifold_feet()` cold-starts
 every generation.
 
+**Unit ablation.** `SteeringPlan.add_unit_ablation` records a `UnitTerm`
+(module, coordinate span `[start, stop)` of its input, width, neutral mean,
+coefficient, trigger); `lower_units(device, dtype)` (memoized) groups terms by
+module and trigger into one `UnitOp` each: full-width fp32 constants `keep`
+(1, and `1 − α` on the units' coordinates) and `bias` (0, and `α·mean`),
+composed in registration order when two terms share a span, cast once to the
+activation dtype. `UnitOp.apply` is `x.mul_(keep).add_(bias)` on the
+projection's input: two elementwise ops, no gather, no allocation, no host
+sync, every position the forward carries (the whole prompt in a prefill). A
+`UnitHook` is a forward pre-hook on the down or output projection; one
+always-active group makes it static (no `TriggerContext` read), otherwise it
+walks its groups like a `SteeringHook`. Unit terms make `static_offsets()`
+`None`: the compiled graph was not traced with a module pre-hook.
+
 `SteeringManager.install(plan, …)`: when the session adopted compiled offset
 buffers (`install_persistent_offset_hooks` runs before `torch.compile` on
 CUDA/MPS; `adopt_compiled_offsets`) and `plan.static_offsets()` returns a map
-(no curved term, every group `Trigger.BOTH`, every layer a pure push), it
-writes the buffers in place (`copy_`; reassigning would change identity and
-force a retrace; untouched layers are zeroed), attaches no transient hook and
-sets `uses_compiled_offsets`. Otherwise it zeroes the buffers and attaches or
-re-arms one transient `SteeringHook` per steered layer. Lowering and
-validation run before any state changes, so a raising install keeps the
-previous plan; `clear_all()` is the inverse, and an empty stack always
-clears. Routing predicates for `session/engine.py`: `all_fast_path()` (no
-transient hook: unsteered or on offsets, so the compiled graph is valid) and
-`static_steerable()` (hooks attached, every one static, so StaticCache stays
-eligible). On a compiled session any transient hook routes to the eager
-original module.
+(no curved term, no unit term, every group `Trigger.BOTH`, every layer a pure
+push), it writes the buffers in place (`copy_`; reassigning would change
+identity and force a retrace; untouched layers are zeroed), attaches no
+transient hook and sets `uses_compiled_offsets`. Otherwise it zeroes the
+buffers and attaches or re-arms one transient `SteeringHook` per steered layer
+and one `UnitHook` per module carrying unit ablations (`unit_hooks`, keyed by
+module id). Lowering and validation run before any state changes, so a
+raising install keeps the previous plan; `clear_all()` is the inverse, and an
+empty stack always clears. Routing predicates for `session/engine.py`:
+`all_fast_path()` (no transient hook, unit hooks included: unsteered or on
+offsets, so the compiled graph is valid) and `static_steerable()` (hooks
+attached, every layer hook and unit hook static, so StaticCache stays
+eligible). On a compiled session any transient hook, a unit hook or the units
+read tap included, routes to the eager original module: a unit ablation never
+rides the compiled graph (`tests/units/test_unit_steering.py` pins the
+predicates).
 
 `TriggerContext` is `SteeringManager.ctx`. `generation/decode.py::generate_steered`
 sets `is_prefill`, `thinking` and `gen_step` before each forward and replaces
@@ -445,4 +468,5 @@ compiled/eager parity (`test_subspace_steering.py`), `AffineOp` against
 (`test_manifold_steering.py`), layer clauses through composition: coverage,
 ablation exactness, shares over the selection, 422s, curved restriction,
 compiled/eager parity and plan-cache keying (`test_layer_scoped_steering.py`).
-Kernel math lives in `tests/geometry/`.
+Unit ablation and neuron pushes against hand-patched forwards:
+`tests/units/test_unit_steering.py`. Kernel math lives in `tests/geometry/`.

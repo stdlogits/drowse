@@ -200,6 +200,8 @@ class UnitsInstrument:
         self._has_direction = has_direction
         #: Attached unit probes: name -> {unit, kind, layer, index}.
         self.probes: dict[str, dict[str, Any]] = {}
+        # Each probe's neutral scale at attach (its digest's unit identity).
+        self._scales: dict[str, tuple[float, ...]] = {}
         self._live = True
         self.state_lock = threading.RLock()
         self.current_run = UnitsRun(self, InstrumentBinding(family=self.family))
@@ -222,10 +224,13 @@ class UnitsInstrument:
             "add_probe called while another model operation is in flight; retry shortly"
         ):
             self.runtime.check(ref)
-            self.runtime.stats()
+            scale = self._scale(self.runtime.stats(), ref)
             name = as_name if as_name is not None else ref.qualified
             with self.state_lock:
                 self.probes[name] = _spec(ref)
+                self._scales[name] = tuple(
+                    round(float(v), 9) for v in scale.reshape(-1).tolist()
+                )
         return name
 
     def try_detach(self, name: str) -> bool:
@@ -233,6 +238,7 @@ class UnitsInstrument:
             if name not in self.probes:
                 return False
             del self.probes[name]
+            self._scales.pop(name, None)
             return True
 
     def specs(self) -> dict[str, dict[str, Any]]:
@@ -245,17 +251,16 @@ class UnitsInstrument:
             return list(self.probes)
 
     def probe_hash(self, name: str) -> str | None:
-        """The unit plus the neutral scale that sets its reading's unit."""
+        """The unit plus the neutral scale that sets its reading's unit (taken
+        at attach, so a digest never needs the exclusive section)."""
         with self.state_lock:
             spec = self.probes.get(name)
             if spec is None:
                 return None
-            spec = dict(spec)
-        ref = _ref(spec)
-        scale = self._scale(self.runtime.stats(), ref)
+            unit = str(spec["unit"])
+            scale = list(self._scales.get(name, ()))
         return hashlib.sha256(repr((
-            "units-readout-v1", self._model_id, ref.qualified,
-            [round(float(v), 9) for v in scale.reshape(-1).tolist()],
+            "units-readout-v1", self._model_id, unit, scale,
         )).encode("utf-8")).hexdigest()
 
     def validate_gate(self, ref: GateRef) -> None:
@@ -381,6 +386,13 @@ class UnitsInstrument:
     def close_run(self) -> None:
         self.current_run.close()
         self.current_run = UnitsRun(self, InstrumentBinding(family=self.family))
+
+    def close(self) -> None:
+        """Session teardown: close the run (its hooks leave) and drop the roster."""
+        self.close_run()
+        with self.state_lock:
+            self.probes.clear()
+            self._scales.clear()
 
     @property
     def hooks_attached(self) -> bool:

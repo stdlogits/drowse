@@ -323,12 +323,22 @@ Both use `base/shards.py`: immutable per-layer generations behind an atomic JSON
 pointer, `fit_lock` single-flighting the expensive transaction. Readers never
 mutate; the next writer collects old generations once the new pointer is durable.
 
-- **`neutral`** (format 4, capture version 1): `[N, D]` fp32 per layer, the single
+- **`neutral`** (format 5, capture version 1): `[N, D]` fp32 per layer, the single
   per-model neutral artifact. Probe-centering means are its `X.mean(0)` and the
   whitener is built from it (no `layer_means` cache). fp32 because late gemma-3
-  layers exceed the fp16 max (65504) and bf16 loses input precision. Identity
-  binds `capture_sha256`, `model_fingerprint`, `model_source_fingerprint` and the
-  layer set. `load_neutral_whitener` is the one offline whitener loader
+  layers exceed the fp16 max (65504) and bf16 loses input precision. Each
+  layer's shard also holds that block's unit statistics as `<name>_<L>` fp32
+  tensors (`neuron_mean`, `neuron_scale`, `head_mean`, `head_scale`; meaning in
+  `drowse/units/AGENTS.md`), and the sidecar's exact `units` block is
+  `{available: true, n_documents, schema: {L: {name: shape}}}` or `{available:
+  false, reason}` (a model the block description refuses: its cache is
+  otherwise complete). The store validates the tensors generically (names,
+  shapes, dtype, finiteness); `load_neutral_cache` returns `NeutralCache
+  (activations, units: NeutralUnits, sidecar)` from one digest-checked read,
+  `load_validated_neutral_cache` the activations only. Identity binds
+  `capture_sha256`, `model_fingerprint`, `model_source_fingerprint` and the
+  layer set. A v4 cache is not migrated: the next load recomputes it.
+  `load_neutral_whitener` is the one offline whitener loader
   (`manifold compare`, offline bake): it never loads a model and raises
   `WhitenerError` with a populate hint. Capture on a miss is `fit/neutral.py`.
 - **`alignment`** (format 5): `models/<safe_tgt>/alignments/<safe_src>.json` over

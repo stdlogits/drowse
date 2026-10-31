@@ -29,7 +29,8 @@ Wired here, documented with their own package: `SteeringComposer`, `ReadPlane`
 (`generation/read_plane.py`), `PromptRenderer`, `CompiledRuntime`,
 `ChoiceScorer`, `CorpusGenerator`, `TokenReplayer` (`loom/replay.py`),
 `JointLogprobReplayer`, `Monitor` / `GeometryInstrument` / `ProbeRoster`,
-`LensInstrument`, `SaeInstrument` / `SaeRuntime`.
+`LensInstrument`, `SaeInstrument` / `SaeRuntime`, `UnitsInstrument` /
+`UnitsRuntime`.
 
 ## Construction
 
@@ -225,12 +226,17 @@ stale fit is `ManifoldNotRegisteredError` (404, refit hint); a bare name fitted
 in two namespaces is `AmbiguousSelectorError`. Admitted manifolds are promoted
 to fp32 on the model device. `concretize_key` pins a bare `:sae` / `:role` /
 `:from` variant to the unique fitted tensor. `ensure_profile_registered(name)`
-tries an in-memory profile, then a reserved-namespace atom resolver (only
-`jlens` and `sae` are installed; `slens`/`neuron`/`head` raise "reserved and not
-steerable yet"), then a fitted 2-node `pca` manifold folded to one direction.
+tries an in-memory profile, then a reserved-namespace atom resolver (`jlens`,
+`sae` and `neuron` are installed, the last registering a neuron's write at its
+layer; `slens`/`head` raise "reserved and not steerable yet"), then a fitted
+2-node `pca` manifold folded to one direction.
 
-**Neutral baseline** (`neutral.py`). One load of the fp32 neutral-activation
-cache yields both the means (`X.mean(0)`) and the whitener. `ensure()` is
+**Neutral baseline** (`neutral.py`). One load of the fp32 neutral cache
+(`fit/neutral.py::load_or_compute_neutral_cache`) yields the means
+(`X.mean(0)`), the whitener and the resident `UnitStats` (`unit_stats`, or
+`units_unavailable` with the reason). `session._require_unit_stats` is the
+units runtime's source: it ensures the baseline and raises
+`UnitsUnavailableError` (422) without statistics. `ensure()` is
 unguarded, for callers already holding the lock (composition, generation
 preflight, construction); `session.layer_means` / `session.whitener` are the
 guarded getters. A failed load leaves the means empty (`layer_means` raises
@@ -265,14 +271,20 @@ next steer or attach loads from disk.
 
 ## Reads
 
-`session.instruments` maps `geometry` / `lens` / `sae` to the
+`session.instruments` maps `geometry` / `lens` / `sae` / `units` to the
 `readout.protocol.Instrument` implementations (also `session.geometry` /
-`.lens` / `.sae`); the server's `{family}` routes iterate and validate against
-it. `ProbeRoster`, `ReadPlane` and `TokenTap` name the three families
-explicitly, so a fourth family touches them too.
+`.lens` / `.sae` / `.units`); the server's `{family}` routes iterate and
+validate against it. `ProbeRoster`, `ReadPlane`, `FinalReads` and `TokenTap`
+name the families explicitly, so a new family touches them too. The units
+family (`units/`, `drowse/units/AGENTS.md`) is wired over a `UnitsRuntime`
+that the composer shares for unit ablation; `ConsumerPlan.units` ticks unit
+probes per token (loom row or live scores, behind `session.units` live), and
+`ReadPlane.transient_hooks` (capture or the units tap) is the compiled-clean
+routing gate. `generate_batch` with unit probes and readings runs serially.
 
 `add_probe(selector, *, as_name=None, top_n=3)` routes through `ProbeRoster`:
-`jlens/…` → lens, `sae/…` → SAE, anything else → geometry. Geometry resolution
+`jlens/…` → lens, `sae/…` → SAE, `neuron/…`/`head/…` → units, anything else →
+geometry. Geometry resolution
 (`_resolve_probe_manifold`) tries a registered profile (folded to a 1-node ray),
 then a fitted manifold on disk, and as a last resort **extracts** the bare
 concept (generates a corpus and fits it under `local/`). Lens/SAE detaches are

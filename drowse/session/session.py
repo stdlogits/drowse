@@ -1786,8 +1786,7 @@ class DrowseSession:
         self._sae_instrument.probes.clear()
         self._sae_instrument.live = None
         self._sae_instrument.runtime.close()
-        self._units_instrument.close_run()
-        self._units_instrument.probes.clear()
+        self._units_instrument.close()
         self._geometry_instrument.clear()
 
         # The artifact registry, its derived caches, the neutral baseline.
