@@ -90,22 +90,20 @@ export function entropyScore(
   return (1 - Math.exp(-entropy)) * HIGHLIGHT_SAT;
 }
 
-/** Which constant-hue ramp a tint reads in.  ``signed`` is the probe
- *  ramp (green +pole ↔ red −pole); ``surprise`` shares the chat accent
- *  with the J-lens vocabulary-distribution readouts. */
+/** Which ramp a tint reads in.  ``signed`` is the probe ramp (the depth
+ *  tint for the + pole, faint ink for the − pole); ``surprise`` and ``sae``
+ *  read in the depth tint. */
 export type TintHue = "signed" | "surprise" | "sae";
 
-/* Ramp poles (tokens.css: --highlight-pos / --highlight-neg /
- * CSS variables as the single palette source, and the alpha ceiling.  v2
- * tints are constant-hue ALPHA ramps: tint strength = opacity, hue =
- * meaning, so text contrast stays put and the poles are OKLCH-matched
- * in perceived lightness (the old ramp swept luminance through opaque
- * green, which wobbled legibility with the score). */
-const TINT_POS = "var(--accent-green)";
-const TINT_NEG = "var(--accent-red)";
+/* Ramp poles and the ceiling. A tint is Ledger's: the depth accent (or, for
+ * a signed reading's negative pole, ink) mixed with transparent in oklch,
+ * its strength the mix, up to the 22% Ledger gives the token a unit fired
+ * on. The text keeps its contrast at every strength. */
+const TINT_POS = "var(--tint)";
+const TINT_NEG = "var(--ink)";
 const TINT_SURPRISE = "var(--tint)";
 const TINT_SAE = "var(--tint)";
-const TINT_MAX_ALPHA = 0.62;
+export const TINT_MAX_ALPHA = 0.22;
 
 /** Map a probe score to a CSS color background (stronger score =
  * more opaque tint of a constant hue).  Returns ``"transparent"`` when
@@ -120,8 +118,8 @@ const TINT_MAX_ALPHA = 0.62;
  * token.  A degenerate (0 / non-finite) scale falls back to the fixed
  * cutoff rather than dividing by zero.
  *
- * ``hue`` picks the ramp: ``signed`` (default — green/red poles),
- * ``surprise`` (unsigned logit/J-lens accent), or ``sae`` (unsigned gold).
+ * ``hue`` picks the ramp: ``signed`` (default: tint for +, faint ink for −),
+ * ``surprise`` (unsigned logit/J-lens), or ``sae`` (unsigned SAE).
  * J-LENS and metadata-backed SAE probes pass scale=1; metadata-less SAE
  * probes pass their shared raw-activation denominator.  Either way the
  * readout strength saturates on the same unit interval as surprise. */
@@ -143,7 +141,7 @@ export function scoreToRgb(
         : t > 0
           ? TINT_POS
           : TINT_NEG;
-  return `color-mix(in srgb, ${color} ${amount}%, transparent)`;
+  return `color-mix(in oklch, ${color} ${amount}%, transparent)`;
 }
 
 /** Color family for a selected transcript-highlight channel. */

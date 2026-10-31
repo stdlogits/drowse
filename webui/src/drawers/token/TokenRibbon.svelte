@@ -68,7 +68,7 @@
         type="button"
         class="rtok"
         class:current={i === index}
-        style={highlightStyleString(tok)}
+        style={i === index ? "" : highlightStyleString(tok)}
         tabindex="-1"
         aria-current={i === index}
         {...{ "aria-description": (`token ${i + 1} / ${tokens.length}`) }}
@@ -134,10 +134,10 @@
   .rtok:hover {
     color: var(--fg);
   }
+  /* The token in view is marked as Ledger marks a selected token: ink, with the paper on it. */
   .rtok.current {
-    color: var(--fg-strong);
-    outline: 1px solid var(--accent);
-    outline-offset: -1px;
+    background: var(--ink);
+    color: var(--paper);
   }
   .more {
     color: var(--fg-muted);

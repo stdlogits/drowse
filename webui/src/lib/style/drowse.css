@@ -23,13 +23,14 @@
 /* ---------- the workbench: Thread | Page | Inspector on paper, wrapping at narrow widths */
 
 .dw-main { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s7); padding: var(--s4) var(--s6) var(--s8); }
-.dw-thread { flex: 0 1 232px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
+.dw-thread { flex: 0 1 200px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
 .dw-page { flex: 999 1 520px; min-width: 0; max-width: 720px; display: grid; gap: var(--s6); }
-.dw-insp { flex: 1 1 400px; max-width: 520px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s7); align-content: start; }
+.dw-insp { flex: 1 1 360px; max-width: 520px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s7); align-content: start; }
 
 /* ---------- the thread: the loom as the path you are on */
 
-.dw-thread-name { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
+.dw-thread-name { min-width: 0; color: var(--ink); font: var(--type-control); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.dw-sec-head > .meta { flex: none; white-space: nowrap; }
 .dw-nodes { display: grid; gap: 2px; }
 .dw-nodeRow { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: var(--s2); align-items: start; width: 100%; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-box); background: transparent; color: var(--ink2); font: var(--type-small); text-align: left; cursor: pointer; transition: background-color var(--fast) var(--ease); }
 .dw-nodeRow:hover { background: var(--wash); }
@@ -47,6 +48,10 @@
 .dw-user { justify-self: end; max-width: 88%; margin: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dw-said { margin: 0; color: var(--ink); font: var(--type-body); line-height: 32px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dw-under { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); color: var(--ink3); font: var(--type-meta); }
+/* The tint key: the swatch and what the words are coloured by. */
+.dw-tintkey { position: relative; display: inline-flex; align-items: center; gap: var(--s2); padding: 0; border: 0; background: transparent; color: var(--ink2); font: var(--type-meta); cursor: pointer; transition: color var(--fast) var(--ease); }
+.dw-tintkey:hover, .dw-tintkey[aria-expanded="true"] { color: var(--ink); }
+.dw-swatch { flex: none; width: 24px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, color-mix(in oklch, var(--tint) 5%, transparent), color-mix(in oklch, var(--tint) 22%, transparent)); }
 
 /* ---------- the recipe: steering terms as chips, right above the composer */
 
@@ -114,4 +119,13 @@
 @media (max-width: 720px) {
   .dw-top, .dw-main, .dw-room { padding-left: var(--s4); padding-right: var(--s4); }
   .dw-main { gap: var(--s6); }
+
+  /* Phone sizes (the Phone canvas): every target 44 px. A small text button keeps a 44 px target
+   * without growing its row. */
+  .dw-top button.icon, .dw-crumbs button.icon { width: 44px; height: 44px; }
+  .dw-quiet, .dw-term, .dw-add, .dw-model, .dw-button { height: 44px; }
+  .dw-term .dw-alpha { height: 36px; }
+  .dw-sampling { min-height: 44px; }
+  .dw-crumbs button:not(.icon), .dw-compose .dw-text, .dw-tintkey { position: relative; }
+  .dw-crumbs button:not(.icon)::after, .dw-compose .dw-text::after, .dw-tintkey::after { content: ""; position: absolute; inset: -14px -8px; }
 }

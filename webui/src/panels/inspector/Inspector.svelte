@@ -8,6 +8,7 @@
   import TermView from "./TermView.svelte";
   import { clearSelection, selection } from "../../lib/stores/selection.svelte";
   import { steerRack } from "../../lib/stores/steering.svelte";
+  import { workbenchUi } from "../../lib/stores/workbench.svelte";
 
   let { sheet = false, onclose }: { sheet?: boolean; onclose?: () => void } = $props();
 
@@ -25,6 +26,12 @@
   function close(): void {
     if (onclose) onclose(); else clearSelection();
   }
+
+  /** Back to the instruments. In the phone's sheet the sheet stays up to show them. */
+  function toInstruments(): void {
+    if (sheet) workbenchUi.sheet = true;
+    clearSelection();
+  }
 </script>
 
 <div class="inspector" class:sheet>
@@ -32,7 +39,7 @@
     {#if current.kind === "none"}
       <span class="dw-here">Instruments</span>
     {:else}
-      <button type="button" onclick={clearSelection}>Instruments</button><span aria-hidden="true">›</span><span class="dw-here">{here}</span>
+      <button type="button" onclick={toInstruments}>Instruments</button><span aria-hidden="true">›</span><span class="dw-here">{here}</span>
     {/if}
     {#if current.kind !== "none" || sheet}
       <span class="dw-crumbs-end"><IconButton icon="close" label="Close" onclick={close} /></span>

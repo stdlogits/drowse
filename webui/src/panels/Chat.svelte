@@ -14,7 +14,6 @@
   });
   import { MorphText } from "@stdlogits/ledger";
   import { createTokenViewCache } from "../lib/runtime/tokenViews";
-  import { tokenInspectorUi } from "../lib/stores/drawers.svelte";
   import { Icon } from "@stdlogits/ledger";
   import { Expander } from "@stdlogits/ledger";
   import RecipeBar from "./RecipeBar.svelte";
@@ -50,7 +49,6 @@
   import StatusFooter from "./StatusFooter.svelte";
   import PendingBubbles from "./PendingBubbles.svelte";
   import RawBuffer from "./RawBuffer.svelte";
-  import TokenLogitsPopover from "../lib/ui/TokenLogitsPopover.svelte";
   import {
     autoRegenState,
     abState,
@@ -206,6 +204,8 @@
 
   // The reading tools (word colours, automatic comparison) fold under the composer row.
   let readingOpen = $state(false);
+  // On a phone the composer's extras (who writes, reasoning, colours, clear) fold behind More.
+  let extrasOpen = $state(false);
   const modelShort = $derived(sessionState.info?.model_id.split("/").at(-1) ?? "drowse");
   /** A sampling value as the line shows it: the user's, else the model's default. */
   function shown(value: number | null | undefined): string {
@@ -226,6 +226,42 @@
     }
     void tick().then(() => document.getElementById("instrument-sampling")?.scrollIntoView({ block: "start", behavior: "smooth" }));
   }
+
+  /** A seat reads You and the model's short name; a role label the user set reads as itself. */
+  function seatLabel(turn: ChatTurn): string {
+    const label = roleDisplayLabel(turn.role, turn.roleLabel);
+    if (turn.role === "user" && label === defaultUserLabel) return "You";
+    if (turn.role === "assistant" && label === defaultAssistantLabel) return modelShort;
+    return label;
+  }
+
+  /** What the words are coloured by, for the key under a reply (the swatch and its name). */
+  const tintKey = $derived.by(() => {
+    const target = highlightState.target;
+    if (!target) return null;
+    const label = highlightOptions.find((option) => option.value === target)?.label ?? target;
+    const second = highlightState.compareTwo ? highlightState.compareTarget : null;
+    if (!second) return label;
+    return `${label} and ${compareOptions.find((option) => option.value === second)?.label ?? second}`;
+  });
+
+  // A selected token stays in view: on a phone the sheet rises under it and shrinks the log. Out of
+  // view, the log stops following the reply's end (which would scroll it away again) and brings
+  // the token in.
+  $effect(() => {
+    if (selection.current.kind !== "token") return;
+    const delay = phone && !reducedMotion() ? GLIDE + 40 : 0;
+    const timer = setTimeout(() => {
+      const token = chatRef?.querySelector<HTMLElement>(".tok.sel");
+      if (!token || !logRef) return;
+      const view = logRef.getBoundingClientRect();
+      const at = token.getBoundingClientRect();
+      if (at.top >= view.top && at.bottom <= view.bottom) return;
+      pauseAutoScroll();
+      token.scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
+    }, delay);
+    return () => clearTimeout(timer);
+  });
 
   function isSelectedToken(turnIdx: number, tokenIdx: number, thinking: boolean): boolean {
     const current = selection.current;
@@ -455,10 +491,11 @@
     !loomTree.loaded || !rolesValid || (!hasText && generatedRole === null),
   );
 
-  const inputPlaceholder = $derived(`Write as ${authoredLabel}…`);
-  const sendLabel = $derived(
-    appendSelected ? "Add message" : hasText ? "Send" : "Generate reply",
+  const inputPlaceholder = $derived(
+    authoredRole === "user" && authoredLabel === defaultUserLabel ? `Message ${modelShort}` : `Write as ${authoredLabel}…`,
   );
+  // One short label, so the compose row stays one line; the tip says what an empty send does.
+  const sendLabel = $derived(appendSelected ? "Add" : "Send");
 
   function doSend(): void {
     const text = hasText ? input : "";
@@ -1037,9 +1074,6 @@
    * starting at the first non-whitespace token. */
   const visibleResponseTokens = createTokenViewCache<TokenScore>();
 
-  let tokenPopup = $state<{
-    token: TokenScore; anchor: HTMLElement; turnIdx: number; tokenIdx: number; isThinking: boolean;
-  } | null>(null);
   const tokenFocusIndices = new SvelteMap<string, number>();
 
   function tokenClicked(
@@ -1052,12 +1086,7 @@
     const turn = chatLog.turns[turnIdx];
     const token = (isThinking ? turn?.thinkingTokens : turn?.tokens)?.[tokenIdx];
     if (!token) return;
-    if (tokenInspectorUi.docked) {
-      tokenPopup = null;
-      openDrawer("token_drilldown", { turnIdx, tokenIdx, isThinking });
-      return;
-    }
-    tokenPopup = { token, anchor: ev.currentTarget as HTMLElement, turnIdx, tokenIdx, isThinking };
+    openDrawer("token_drilldown", { turnIdx, tokenIdx, isThinking });
   }
 
   function tokenKeydown(ev: KeyboardEvent, turnIdx: number, tokenIdx: number, isThinking = false): void {
@@ -1196,7 +1225,7 @@
                 {@render bubble(turn.abPair, turnIdx, true)}
               {:else}
                 <div class="dw-turn" aria-hidden="true">
-                  <span class="dw-seat">{roleDisplayLabel(turn.role, turn.roleLabel)}</span>
+                  <span class="dw-seat">{seatLabel(turn)}</span>
                   <span class="meta">{abState.pendingTurnIdx === turnIdx ? "Writing the comparison…" : "Not compared"}</span>
                 </div>
               {/if}
@@ -1307,12 +1336,16 @@
         dir="auto"
         onkeydown={onKeydown}
         placeholder={inputPlaceholder}
-        rows="2"
+        rows={phone ? 1 : 2}
         aria-label={`Compose as ${authoredLabel}`}
       ></textarea>
       <div class="dw-compose-row">
         <button type="button" class="dw-sampling" onclick={openSampling} data-tip="Sampling">{samplingSummary}</button>
-        <span class="extras">
+        {#if phone}
+          <button type="button" class="dw-text small more" aria-expanded={extrasOpen} aria-controls="composer-extras"
+            onclick={() => (extrasOpen = !extrasOpen)}>More</button>
+        {/if}
+        <span class="extras" id="composer-extras" class:folded={phone && !extrasOpen}>
         <button type="button" class="dw-text small turn-plan-summary" aria-expanded={rolePlanOpen} aria-controls="turn-role-controls"
           onclick={() => setRolePlanOpen(!rolePlanOpen)} data-tip="Who writes the next turn">{rolePlanSummary}</button>
         {#if thinkingInputSupported}
@@ -1340,7 +1373,7 @@
           <button type="button" class="dw-quiet" onclick={sendStop} data-tip="Escape stops the reply">Stop</button>
         {/if}
         <button type="submit" class="dw-button" disabled={primaryDisabled}
-          data-tip={appendSelected ? "Enter adds your message only" : "Enter sends and generates a reply"}>
+          data-tip={appendSelected ? "Enter adds your message only" : hasText ? "Enter sends and generates a reply" : "Generates the next reply"}>
           <MorphText text={sendLabel} numbers={false} />
         </button>
       </div>
@@ -1349,16 +1382,6 @@
   {/if}
 </div>
 
-{#if tokenPopup}
-  {@const popup = tokenPopup}
-  {#key popup.anchor}
-    <TokenLogitsPopover token={popup.token} anchor={popup.anchor}
-      isCurrent={anchor => tokenPopup?.anchor === anchor}
-      source={chatLog.turns[popup.turnIdx]?.generated ? "Model token" : "User text · recorded"}
-      onclose={() => tokenPopup = null}
-      ondetails={() => openDrawer("token_drilldown", { turnIdx: popup.turnIdx, tokenIdx: popup.tokenIdx, isThinking: popup.isThinking, initialTab: "logits" })} />
-  {/key}
-{/if}
 </div>
 
 {#snippet bubble(turn: ChatTurn, turnIdx: number, isShadow: boolean)}
@@ -1372,7 +1395,7 @@
   {@const generating = genStatus.active && (isShadow ? abState.pendingTurnIdx === turnIdx : !abState.processingAb && chatLog.pendingIndex === turnIdx)}
   {@const user = turn.role === "user"}
   <div class="dw-turn msg" class:user class:shadow={isShadow} class:historical={turnIdx < chatLog.turns.length - 8} in:rise>
-    <span class="dw-seat" class:end={user}>{roleDisplayLabel(turn.role, turn.roleLabel)}</span>
+    <span class="dw-seat" class:end={user}>{seatLabel(turn)}</span>
 
     {#if (turn.thinkingTokens?.length ?? 0) > 0 || turn.thinking}
       <div class="thinking-block">
@@ -1383,13 +1406,15 @@
         {#if !turnCollapsed(turnIdx, turn)}
           <div class="thinking-body" dir="auto" transition:expand>
             {#each turn.thinkingTokens ?? [] as tok, tokenIdx (tokenIdx)}
+              {@const tint = highlightStyleString(tok)}
+              {@const chosen = isSelectedToken(turnIdx, tokenIdx, true)}
               <span
                 class="tok"
-                class:sel={isSelectedToken(turnIdx, tokenIdx, true)}
+                class:sel={chosen}
                 use:arrivals.reveal={genStatus.active ? tok : null}
                 data-cursor="inspect"
-                class:tinted={highlightState.target !== null}
-                style={highlightStyleString(tok)}
+                class:tinted={tint !== ""}
+                style={chosen ? "" : tint}
                 onpointerenter={() => beginTokenHover(tok, turn.nodeId)}
                 onpointerleave={endTokenHover}
                 onfocus={() => { tokenFocusIndices.set(`${turn.nodeId ?? turnIdx}:thinking`, tokenIdx); beginTokenHover(tok, turn.nodeId); }}
@@ -1398,7 +1423,7 @@
                 onkeydown={(ev) => tokenKeydown(ev, turnIdx, tokenIdx, true)}
                 role="button"
                 tabindex={tokenIdx === (tokenFocusIndices.get(`${turn.nodeId ?? turnIdx}:thinking`) ?? 0) ? 0 : -1}
-                aria-haspopup="dialog"
+                aria-pressed={chosen}
                 aria-label={`Inspect token ${tok.text.trim() || "whitespace"}`}
               >{tok.text}</span>
             {/each}
@@ -1410,13 +1435,15 @@
     <div class={user ? "dw-user" : "dw-said"} dir="auto">
       {#if (turn.tokens?.length ?? 0) > 0}
         {#each visibleResponseTokens(turn.tokens ?? []) as { tok, originalIdx }, visibleIdx (originalIdx)}
+          {@const tint = highlightStyleString(tok)}
+          {@const chosen = isSelectedToken(turnIdx, originalIdx, false)}
           <span
             class="tok"
-            class:sel={isSelectedToken(turnIdx, originalIdx, false)}
+            class:sel={chosen}
             use:arrivals.reveal={genStatus.active ? tok : null}
             data-cursor="inspect"
-            class:tinted={highlightState.target !== null}
-            style={highlightStyleString(tok)}
+            class:tinted={tint !== ""}
+            style={chosen ? "" : tint}
             onpointerenter={() => beginTokenHover(tok, turn.nodeId)}
             onpointerleave={endTokenHover}
             onfocus={() => { tokenFocusIndices.set(`${turn.nodeId ?? turnIdx}:response`, originalIdx); beginTokenHover(tok, turn.nodeId); }}
@@ -1425,7 +1452,7 @@
             onkeydown={(ev) => tokenKeydown(ev, turnIdx, originalIdx)}
             role="button"
             tabindex={(tokenFocusIndices.has(`${turn.nodeId ?? turnIdx}:response`) ? tokenFocusIndices.get(`${turn.nodeId ?? turnIdx}:response`) === originalIdx : visibleIdx === 0) ? 0 : -1}
-            aria-haspopup="dialog"
+            aria-pressed={chosen}
             aria-label={`Inspect token ${tok.text.trim() || "whitespace"}`}
           >{tok.text}</span>
         {/each}
@@ -1445,6 +1472,10 @@
       {/if}
       {#if turn.generated && turn.finishReason != null && turn.appliedSteering !== undefined}
         <span data-tip={turn.appliedSteering ?? "No steering"}>{turn.appliedSteering ? "steered" : "unsteered"}</span>
+      {/if}
+      {#if tintKey && turn.generated && (turn.tokens?.length ?? 0) > 0}
+        <button type="button" class="dw-tintkey" aria-expanded={readingOpen} aria-controls="chat-reading-tools"
+          onclick={() => (readingOpen = !readingOpen)} data-tip="What the words are coloured by"><span class="dw-swatch" aria-hidden="true"></span>{tintKey}</button>
       {/if}
       {#if turn.nodeId}
         <button type="button" class="dw-text small" onclick={() => regenMessage(turn)}
@@ -1497,7 +1528,7 @@
    * highlight's own fill rides its inline style. */
   .tok { border-radius: 4px; cursor: pointer; transition: background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease), color var(--fast) var(--ease); }
   .tok:not(.tinted):hover { background: var(--wash2); box-shadow: 0 0 0 2px var(--wash2); }
-  .tok.sel, .tok.sel:hover { background: var(--ink) !important; color: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
+  .tok.sel, .tok.sel:hover { background: var(--ink); color: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
   .tok:focus-visible { outline-offset: 1px; }
 
   .thinking-block { display: grid; gap: var(--s2); min-width: 0; }
@@ -1541,10 +1572,13 @@
     .dock { padding: var(--s2) var(--s4) var(--s4); }
     .turn-plan { grid-template-columns: minmax(0, 1fr); }
     .dw-compose { gap: var(--s1); padding: var(--s2) var(--s2) var(--s2) var(--s4); }
-    .dw-compose-row { min-height: 44px; flex-wrap: wrap; gap: var(--s1) var(--s3); }
-    .dw-compose-row .dw-sampling { flex: 1 1 0; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-right: 0; }
+    .dw-compose .input { min-height: 32px; }
+    .dw-compose-row { min-height: 44px; flex-wrap: wrap; gap: 0 var(--s3); }
+    .dw-compose-row .dw-sampling { flex: 1 1 0; min-width: 0; min-height: 44px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-right: 0; }
+    .more { flex: none; min-height: 44px; }
     .extras { order: 3; display: flex; flex: 1 0 100%; gap: var(--s4); overflow-x: auto; scrollbar-width: none; }
-    .extras > * { flex: none; }
+    .extras.folded { display: none; }
+    .extras > * { flex: none; min-height: 44px; }
     .extras .turn-plan-summary { max-width: none; }
     .dw-compose .dw-button, .dw-compose .dw-quiet { height: 44px; }
   }

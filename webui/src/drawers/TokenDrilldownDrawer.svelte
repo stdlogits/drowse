@@ -467,14 +467,12 @@
     value: DrilldownTab;
     label: string;
     meta?: string;
-    color?: string;
     title: string;
   }>>(() => [
     {
       value: "geometry",
       label: "geometry",
       meta: readoutBadge(geometryReadout, capturedGeometryData, geometrySteered, data => Object.keys(data.readings).length),
-      color: "var(--fg-dim)",
       title: "activation geometry",
     },
     {
@@ -487,14 +485,12 @@
       value: "sae",
       label: "sae",
       meta: readoutBadge(saeReadout, capturedSaeData, saeSteered, data => data.features.length),
-      color: "var(--tint)",
       title: "sparse features",
     },
     {
       value: "lens",
       label: "j-lens",
       meta: readoutBadge(lensReadout, capturedLensData, lensSteered, data => data.layers.length),
-      color: "var(--tint)",
       title: "workspace readout",
     },
   ]);

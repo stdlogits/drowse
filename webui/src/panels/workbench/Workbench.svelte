@@ -1,9 +1,11 @@
 <script lang="ts">
   // The workbench: three regions on paper, Thread | Page | Inspector, as the ratified canvas draws
-  // them (Main, Instruments). They wrap at narrower widths; on a wide screen each scrolls on its
-  // own. On a phone it is one column (Phone): the thread folds into a row over the conversation,
-  // the inspector rises as a sheet between the conversation and the composer, and the composer
-  // folds away while the sheet is pulled up.
+  // them (Main, Instruments). Wide (1240 px and up) they sit side by side and each scrolls on its
+  // own. Narrower, the thread folds into a row over the page and the Inspector keeps its column
+  // beside the page, so a selection always shows. On a phone it is one column (Phone): the thread
+  // folds into a row over the conversation, the inspector rises as a sheet between the conversation
+  // and the composer, and the composer folds away while the sheet is pulled up.
+  import { untrack } from "svelte";
   import { Icon, IconButton } from "@stdlogits/ledger";
   import Chat from "../Chat.svelte";
   import LoomSidebar from "../loom/LoomSidebar.svelte";
@@ -17,12 +19,14 @@
 
   let threadOpen = $state(false);
   const loomPage = $derived(workbenchUi.page === "loom");
-  const sheetShown = $derived(selection.current.kind !== "none" || workbenchUi.sheet);
+  // The loom page takes the phone's whole column, so the sheet waits until the conversation is back.
+  const sheetShown = $derived(!loomPage && (selection.current.kind !== "none" || workbenchUi.sheet));
   const LOOM_VIEWS: Record<string, string> = { weave: "Weave", map: "Map", path: "Path", options: "Next options", saved: "Starred" };
 
   $effect(() => {
-    // A fresh selection on the phone rises at the peek height.
-    if (selection.current.kind === "none") workbenchUi.sheetOpen = false;
+    // A fresh selection on the phone rises at the peek height. Clearing the selection to show the
+    // instruments in the sheet (the sampling line, the crumb) keeps the sheet where it was asked.
+    if (selection.current.kind === "none" && !untrack(() => workbenchUi.sheet)) workbenchUi.sheetOpen = false;
   });
 
   function closeSheet(): void {
@@ -32,16 +36,14 @@
   }
 </script>
 
-<div class="workbench" class:phone class:sheet-up={phone && sheetShown && workbenchUi.sheetOpen}>
+<div class="workbench" class:phone class:sheet-shown={phone && sheetShown} class:sheet-up={phone && sheetShown && workbenchUi.sheetOpen}>
   <div class="dw-main">
-    {#if phone}
-      <div class="thread-fold">
-        <button type="button" class="fold" aria-expanded={threadOpen} aria-controls="workbench-thread" onclick={() => (threadOpen = !threadOpen)}>
-          <span>Thread</span><span class="chev" class:open={threadOpen}><Icon name="down" /></span>
-        </button>
-      </div>
-    {/if}
-    <aside class="dw-thread" id="workbench-thread" aria-label="Thread" hidden={phone && !threadOpen}>
+    <div class="thread-fold">
+      <button type="button" class="fold" aria-expanded={threadOpen} aria-controls="workbench-thread" onclick={() => (threadOpen = !threadOpen)}>
+        <span>Thread</span><span class="chev" class:open={threadOpen}><Icon name="down" /></span>
+      </button>
+    </div>
+    <aside class="dw-thread" class:folded={!threadOpen} id="workbench-thread" aria-label="Thread">
       <Thread />
     </aside>
 
@@ -81,19 +83,40 @@
   /* Positioned, so absolutely placed copies (screen-reader text) inside a scrolling region clip with it. */
   .workbench { position: relative; min-width: 0; }
   .dw-thread, .dw-page, .dw-insp { position: relative; }
-  .dw-thread[hidden], .loom[hidden], .conversation[hidden] { display: none; }
+  .loom[hidden], .conversation[hidden] { display: none; }
   .dw-page { align-content: start; height: calc(100dvh - var(--top-h, 68px) - var(--s4)); min-height: 420px; }
   .dw-page { display: flex; flex-direction: column; gap: var(--s4); }
   .conversation, .loom { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
   .loom-crumbs { flex: none; }
 
   /* Wide: the three regions side by side, each scrolling on its own under the header. */
-  @media (min-width: 1312px) {
+  @media (min-width: 1240px) {
     .workbench:not(.phone) { height: calc(100dvh - var(--top-h, 68px)); overflow: hidden; }
     .workbench:not(.phone) .dw-main { height: 100%; flex-wrap: nowrap; align-items: stretch; padding-bottom: 0; }
+    .workbench:not(.phone) .thread-fold { display: none; }
     .workbench:not(.phone) .dw-thread,
     .workbench:not(.phone) .dw-insp { overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s8); align-content: start; scrollbar-width: thin; }
     .workbench:not(.phone) .dw-page { height: auto; padding-bottom: var(--s5); }
+  }
+
+  /* Between the phone and wide: Page | Inspector, the thread folded over the page, each column
+   * scrolling on its own, so whatever is selected shows beside the conversation. */
+  @media (max-width: 1239.98px) {
+    .workbench:not(.phone) { height: calc(100dvh - var(--top-h, 68px)); overflow: hidden; }
+    .workbench:not(.phone) .dw-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(300px, 42%, 400px);
+      grid-template-rows: auto auto minmax(0, 1fr);
+      align-items: stretch;
+      gap: 0 var(--s6);
+      height: 100%;
+      padding-bottom: 0;
+    }
+    .workbench:not(.phone) .thread-fold { grid-column: 1; grid-row: 1; }
+    .workbench:not(.phone) .dw-thread { grid-column: 1; grid-row: 2; max-height: 40dvh; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s3); }
+    .workbench:not(.phone) .dw-thread.folded { display: none; }
+    .workbench:not(.phone) .dw-page { grid-column: 1; grid-row: 3; height: auto; min-height: 0; max-width: 720px; padding-bottom: var(--s5); }
+    .workbench:not(.phone) .dw-insp { grid-column: 2; grid-row: 1 / -1; max-width: none; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s8); scrollbar-width: thin; }
   }
 
   /* The phone: one column under the header; the conversation, then the sheet, then the composer. */
@@ -101,7 +124,8 @@
   .phone .dw-main { display: flex; flex-direction: column; flex-wrap: nowrap; align-items: stretch; gap: 0; height: 100%; padding: 0; }
   .phone .thread-fold { flex: none; padding: 0 var(--s4); }
   .phone .dw-thread { flex: none; max-height: 40dvh; overflow-y: auto; padding: 0 var(--s4) var(--s3); }
-  .phone .dw-page, .phone .conversation { display: contents; }
+  .phone .dw-thread.folded { display: none; }
+  .phone .dw-page, .phone .conversation:not([hidden]) { display: contents; }
   .phone .loom { flex: 1 1 0; min-height: 0; overflow: auto; padding: 0 var(--s4); }
   .phone .loom-crumbs { padding: 0 var(--s4); }
   .phone :global(.chat-panel), .phone :global(.chat) { display: contents; }
@@ -109,15 +133,19 @@
   .phone .sheet { order: 2; }
   .phone :global(.chat .dock) { order: 3; }
   .phone.sheet-up :global(.chat .dock) { display: none; }
+  /* While the sheet is up, the dock keeps the recipe and the composer and drops the status line. */
+  .phone.sheet-shown :global(.chat .dock .status-footer) { display: none; }
   .fold { display: inline-flex; align-items: center; gap: var(--s2); height: 44px; padding: 0; border: 0; background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease); }
   .fold:hover, .fold[aria-expanded="true"] { color: var(--ink); }
   .chev { display: grid; transition: rotate var(--glide) var(--ease); }
   .chev.open { rotate: 180deg; }
 
+  /* The sheet shrinks rather than overflow when the thread or the dock leave it less room. */
   .sheet {
     position: relative;
     z-index: 2;
-    flex: none;
+    flex: 0 1 auto;
+    min-height: 0;
     display: flex;
     flex-direction: column;
     height: min(380px, 40dvh);

@@ -6,7 +6,6 @@
 
   import { MorphText } from "@stdlogits/ledger";
   import { Expander } from "@stdlogits/ledger";
-  import { IconButton } from "@stdlogits/ledger";
   // Per-probe inspector — subsumes the layer-norms view for probes and adds a
   // rank-aware geometry plot in the whitened (Mahalanobis) frame:
   //
@@ -28,7 +27,6 @@
   // row, the share bars, and the plot's node centroids via ``--geom-node``.
 
   import { probeRack } from "../lib/stores.svelte";
-  import { clearSelection } from "../lib/stores/selection.svelte";
   import { apiProbes } from "../lib/runtime/services";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
   import { userFacingError } from "../lib/runtime/userFacingError";
@@ -49,7 +47,8 @@
   import type { ProbeGeometryResponse, ProbeLayerGeometry } from "../lib/types";
 
   // Shown in the Inspector when a probe is selected (``openDrawer("probe_inspector", { name })``).
-  let { params: input, onclose }: { params?: unknown; onclose?: () => void } = $props();
+  // Hosted only by the selection: the Inspector's crumbs carry the close.
+  let { params: input }: { params?: unknown; onclose?: () => void } = $props();
   const params = $derived(input as { name?: string } | null);
   const probeName = $derived(params?.name ?? "");
   const displayName = $derived(probeName.split("/").pop() ?? probeName);
@@ -335,10 +334,6 @@
     return point.slice(0, 3).map((value) => value.toFixed(3)).join(", ");
   }
 
-  function onClose(): void {
-    if (onclose) onclose(); else clearSelection();
-  }
-
   const rankLabel = $derived.by(() => {
     const r = activeGeom?.rank ?? 0;
     if (r <= 1) return "line · rank 1";
@@ -388,7 +383,6 @@
         {/if}
       </div>
     </div>
-    <IconButton icon="close" label="Close" onclick={onClose} />
   </header>
 
   {#if !probeName}
@@ -652,7 +646,7 @@
     position: absolute;
     top: var(--space-3);
     left: var(--space-4);
-    color: color-mix(in srgb, var(--family) 80%, var(--fg));
+    color: var(--ink);
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     font-variant-numeric: tabular-nums;
@@ -684,7 +678,7 @@
   .trail-hint {
     bottom: var(--space-3);
     left: var(--space-4);
-    color: var(--accent-green);
+    color: var(--ink);
     font-family: var(--font-mono);
     font-variant-numeric: tabular-nums;
   }
@@ -756,10 +750,10 @@
   }
   .row.active {
     background: var(--glass-strong);
-    border-color: color-mix(in srgb, var(--family) 25%, var(--glass-line));
+    border-color: color-mix(in oklch, var(--family) 25%, var(--glass-line));
   }
   .row.active .lyr {
-    color: color-mix(in srgb, var(--family) 85%, var(--fg));
+    color: var(--ink);
   }
   .lyr {
     color: var(--fg-muted);
