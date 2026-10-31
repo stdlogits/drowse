@@ -288,7 +288,7 @@ rejects `baked`, fewer than 3 nodes, and `--compare-linear` without a single
   distributions along its text, scored per step as the Bhattacharyya distance
   to the nearest manifold point (low = natural).
 - **`compare_linear`.** Also scores the node-0→position chord, steered as
-  profile `__manifold_linear_baseline__`.
+  profile `manifold_linear_chord` with the term's coefficient and layer clause.
 
 ## Fit behavior notes
 

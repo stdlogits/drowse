@@ -322,6 +322,19 @@ def preflight(
     return folder
 
 
+#: The registry name of the straight-chord profile ``compare_linear`` steers.
+#: It must lex as an identifier, since the comparison runs through the grammar.
+LINEAR_CHORD_PROFILE = "manifold_linear_chord"
+
+
+def _linear_chord_steering(term: "ManifoldTerm") -> str:
+    """The expression that steers the chord like ``term``: its coefficient and
+    its layer clause, so both runs act on the same layers."""
+    from drowse.steering.grammar import format_layer_clause
+
+    return f"{term.coeff:g} {LINEAR_CHORD_PROFILE}{format_layer_clause(term.layers)}"
+
+
 def _single_manifold_term(steering: str) -> "ManifoldTerm":
     from drowse.steering.grammar import ManifoldTerm, parse_expr
 
@@ -446,15 +459,13 @@ def evaluate(
             L: act.manifold_point(L, position) - act.manifold_point(L, start)
             for L in act.layer_indices
         }
-        session.registry.put_profile("__manifold_linear_baseline__", Profile(chord))
+        session.registry.put_profile(LINEAR_CHORD_PROFILE, Profile(chord))
         shown = (
             linear_term.position if isinstance(linear_term.position, str)
             else ",".join(f"{c:g}" for c in position)
         )
         scores.append(_score(
-            "linear-chord",
-            f"{linear_term.coeff:g} __manifold_linear_baseline__",
-            f"chord@{shown}",
+            "linear-chord", _linear_chord_steering(linear_term), f"chord@{shown}",
         ))
     return NaturalnessReport(prompt=prompt, scores=tuple(scores))
 
