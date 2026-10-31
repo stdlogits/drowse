@@ -56,6 +56,22 @@ class _Module:
     norm_col: int | None
 
 
+@dataclass(frozen=True, eq=False)
+class _HeadGroup:
+    """The heads of one ``head_dim`` in a tap: their positions in
+    :attr:`UnitTap.names`, ring columns ``[k, head_dim]``, write grams
+    ``[k, head_dim, head_dim]``, scales, and sandwich-norm columns (``-1``
+    for a head without one)."""
+
+    pos: torch.Tensor
+    cols: torch.Tensor
+    gram: torch.Tensor
+    scale: torch.Tensor
+    norm_col: torch.Tensor
+    norm_dim: torch.Tensor
+    norm_eps: torch.Tensor
+
+
 class UnitTap:
     """Hooks + device ring for one bound run's units (see the module doc)."""
 
@@ -130,7 +146,6 @@ class UnitTap:
         neurons = [i for i, u in enumerate(units) if u.site.kind == "neuron"]
         heads = [i for i, u in enumerate(units) if u.site.kind == "head"]
         self._neuron_pos = torch.tensor(neurons, dtype=torch.long, device=device)
-        self._head_pos = torch.tensor(heads, dtype=torch.long, device=device)
         self._n_units = len(units)
         self._neuron_cols = torch.tensor(
             [unit_cols[i][0] for i in neurons], dtype=torch.long, device=device,
@@ -139,37 +154,51 @@ class UnitTap:
         pair = torch.stack(scales) if scales else torch.zeros(0, 2)
         self._neuron_plus = pair[:, 0].to(device=device, dtype=torch.float32)
         self._neuron_minus = pair[:, 1].to(device=device, dtype=torch.float32)
-        if heads:
-            hd = units[heads[0]].site.stop - units[heads[0]].site.start
-            same = all(
-                units[i].site.stop - units[i].site.start == hd for i in heads
-            )
-            if not same:
-                raise ValueError("heads of different sizes in one tap")
-            self._head_cols = torch.stack([
-                torch.arange(unit_cols[i][0], unit_cols[i][1]) for i in heads
-            ]).to(device)
-            grams = []
-            for i in heads:
-                m = head_write_matrix(units[i].block, units[i].site.ref.index)
-                grams.append(m.T @ m)
-            self._head_gram = torch.stack(grams).to(device=device, dtype=torch.float32)
-            self._head_scale = torch.stack([
-                units[i].scale.reshape(()).clamp_min(SCALE_FLOOR) for i in heads
-            ]).to(device=device, dtype=torch.float32)
-            norm_index: list[int] = []
-            norm_dim: list[float] = []
-            norm_eps: list[float] = []
-            for i in heads:
-                col = unit_norm[i]
-                out_norm = units[i].block.attn_out_norm
-                norm_index.append(-1 if col is None else int(col))
-                norm_dim.append(float(units[i].block.d_model))
-                norm_eps.append(0.0 if out_norm is None else float(out_norm.eps))
-            self._head_norm_col = torch.tensor(norm_index, dtype=torch.long, device=device)
-            self._head_norm_dim = torch.tensor(norm_dim, dtype=torch.float32, device=device)
-            self._head_norm_eps = torch.tensor(norm_eps, dtype=torch.float32, device=device)
-        self._has_heads = bool(heads)
+        # Heads read in one group per head width: a model may mix sizes
+        # (Gemma 4's sliding and global layers), and each group's write norm
+        # is one batched quadratic form ``zᵀ G z`` over its own ``head_dim``.
+        by_width: dict[int, list[int]] = {}
+        for i in heads:
+            by_width.setdefault(units[i].site.stop - units[i].site.start, []).append(i)
+        self._head_groups = [
+            self._head_group(units, members, unit_cols, unit_norm)
+            for members in by_width.values()
+        ]
+
+    def _head_group(
+        self,
+        units: Sequence[TapUnit],
+        members: list[int],
+        unit_cols: dict[int, tuple[int, int]],
+        unit_norm: dict[int, int | None],
+    ) -> "_HeadGroup":
+        device = self._device
+        grams = []
+        for i in members:
+            m = head_write_matrix(units[i].block, units[i].site.ref.index)
+            grams.append(m.T @ m)
+        norm_index: list[int] = []
+        norm_dim: list[float] = []
+        norm_eps: list[float] = []
+        for i in members:
+            col = unit_norm[i]
+            out_norm = units[i].block.attn_out_norm
+            norm_index.append(-1 if col is None else int(col))
+            norm_dim.append(float(units[i].block.d_model))
+            norm_eps.append(0.0 if out_norm is None else float(out_norm.eps))
+        return _HeadGroup(
+            pos=torch.tensor(members, dtype=torch.long, device=device),
+            cols=torch.stack([
+                torch.arange(unit_cols[i][0], unit_cols[i][1]) for i in members
+            ]).to(device),
+            gram=torch.stack(grams).to(device=device, dtype=torch.float32),
+            scale=torch.stack([
+                units[i].scale.reshape(()).clamp_min(SCALE_FLOOR) for i in members
+            ]).to(device=device, dtype=torch.float32),
+            norm_col=torch.tensor(norm_index, dtype=torch.long, device=device),
+            norm_dim=torch.tensor(norm_dim, dtype=torch.float32, device=device),
+            norm_eps=torch.tensor(norm_eps, dtype=torch.float32, device=device),
+        )
 
     # ------------------------------------------------------------- hooks
 
@@ -270,16 +299,16 @@ class UnitTap:
             scale = torch.where(act >= 0, self._neuron_plus, self._neuron_minus)
             values.index_copy_(0, self._neuron_pos, act / scale)
             raw.index_copy_(0, self._neuron_pos, act)
-        if self._has_heads:
-            z = row[self._head_cols]
+        for group in self._head_groups:
+            z = row[group.cols]
             norm = torch.einsum(
-                "ki,kij,kj->k", z, self._head_gram, z,
+                "ki,kij,kj->k", z, group.gram, z,
             ).clamp_min(0.0).sqrt()
-            out_norm = self.norms[slot].index_select(0, self._head_norm_col.clamp_min(0))
-            r = torch.rsqrt(out_norm.square() / self._head_norm_dim + self._head_norm_eps)
-            norm = torch.where(self._head_norm_col >= 0, norm * r, norm)
-            values.index_copy_(0, self._head_pos, norm / self._head_scale)
-            raw.index_copy_(0, self._head_pos, norm)
+            out_norm = self.norms[slot].index_select(0, group.norm_col.clamp_min(0))
+            r = torch.rsqrt(out_norm.square() / group.norm_dim + group.norm_eps)
+            norm = torch.where(group.norm_col >= 0, norm * r, norm)
+            values.index_copy_(0, group.pos, norm / group.scale)
+            raw.index_copy_(0, group.pos, norm)
         return values, raw
 
     def latest(self) -> int | None:

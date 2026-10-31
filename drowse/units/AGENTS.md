@@ -99,7 +99,8 @@ that runs last in a forward advances the count. The ring is `AGG_TAIL_DEPTH`
 forwards deep. The hooks come off with the residual capture when decode ends
 (`ReadPlane.end` → `end_capture`), so nothing after the last decode forward
 moves the ring. `values_at(fwd)` computes the values after the forward, as one
-fp32 vector; the run moves it to the host once per step (stashed by `step_id`,
+fp32 vector (heads in one batched `zᵀ G z` per `head_dim`, since a model may
+mix sizes: Gemma 4's sliding and global layers); the run moves it to the host once per step (stashed by `step_id`,
 so the gate callback and the token tap share it) and once for the aggregate.
 
 **Reads.** `UnitsRun.gate_scalars` (the gate callback), `step_readings` (the
@@ -142,8 +143,9 @@ every family's roster).
 
 `tests/units/`: `test_unit_stats.py` (the accumulator against a hand
 computation on llama and Gemma 3, the cache, the unavailable path, v4
-recompute), `test_unit_probes.py` (the tap by hand, probes through a real
-tiny session, gates with and without an attached probe, replay, refusals,
+recompute), `test_unit_probes.py` (the tap by hand on llama, Gemma 3 and
+Gemma 4's mixed head widths, probes through a real tiny session and a tiny
+Gemma 4 one, gates with and without an attached probe, replay, refusals,
 the HTTP family block, the probe routes and the compat extension),
 `test_unit_steering.py` (ablation against a hand-patched forward to 1e-5,
 partial coefficients, heads, triggers and gates,
