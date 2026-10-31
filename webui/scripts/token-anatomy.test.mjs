@@ -49,7 +49,9 @@ try {
   const absentOnly = read(3, 0, [score(5, " sea", 4.7)], []);
   absentOnly.r.absent = "the R lens stops at L2";
   assert.equal(a.pickCell(absentOnly).absent, "the R lens stops at L2");
+  assert.equal(a.pickCell(absentOnly).absentFamily, "R");
   assert.equal(a.pickCell(absentOnly).tokens.length, 0);
+  assert.equal(early.absentFamily, null);
 
   assert.equal(a.lensTag(read(0, 1, [], [])), "S");
   assert.equal(a.lensTag(read(1, 0.6, [], [])), "S R");
@@ -74,6 +76,24 @@ try {
   assert.equal(a.anatomyLead(layers, stars), 2);
   assert.equal(a.anatomyLead(layers.slice(0, 2), stars), null);
 
+  // An absent cell's tip says where the family reads instead of the engine's layer list.
+  const raw = "layer 3 not in fitted R:out lens layers [0, 1, 2]..[0, 1, 2]";
+  lastAbsent.r.absent = raw;
+  const sLate = read(0, 1, [], [score(9, " the", 0.3)]);
+  sLate.s.absent = "layer 0 not in fitted S:out lens layers [1]..[1]";
+  const covered = [layer(0, sLate), ...layers.slice(1)];
+  const coverage = a.lensCoverage(covered);
+  assert.deepEqual(coverage.get("reads_as:R"), [0, 1, 2]);
+  assert.deepEqual(coverage.get("reads_as:S"), [1, 2, 3]);
+  assert.deepEqual(coverage.get("steering:R"), [], "no steering read anywhere");
+  assert.equal(a.pickCell(lastAbsent).absent, raw, "the cell keeps the engine's reason");
+  assert.equal(a.absentTip(coverage, "reads_as", "R", 3), "The R lens stops at L2");
+  assert.equal(a.absentTip(coverage, "reads_as", "S", 0), "The S lens starts at L1");
+  const gappy = new Map([["reads_as:R", [0, 2]], ["attention:R", []], ["reads_as:S", []], ["attention:S", []]]);
+  assert.equal(a.absentTip(gappy, "reads_as", "R", 1), "The R lens skips L1");
+  assert.equal(a.absentTip(gappy, "attention", "R", 1), "The R lens does not read attention");
+  assert.equal(a.absentTip(gappy, "reads_as", "S", 1), "No S lens is selected");
+
   // Pushed units: ids as the data writes them, a neuron's pole from its layer's row.
   assert.equal(a.unitShort("neuron/L31n4410"), "L31 n4410");
   assert.equal(a.unitShort("head/L28h12"), "L28 h12");
@@ -92,13 +112,16 @@ try {
   assert.equal(a.formatContribution(12.6), "+13");
 
   // Heat rows: the sink only counts as itself; the strongest places with a neighbour each, the
-  // query at the end, gaps elided; tints capped at 22.
+  // query at the end, gaps elided; the tint is Ledger's 9% for an attended token at its strongest
+  // (22% is a unit's firing), graded below it.
   const context = ["<s>", "Above", " the", " black", " water", ",", " and", " the"];
   const weights = [0.6, 0.02, 0.01, 0.15, 0.1, 0.01, 0.01, 0.1];
   const heat = a.heatRow(weights, context);
   assert.equal(heat.sink, 0.6);
   assert.deepEqual(heat.pieces.map(p => p.text), ["…", " the", " black", " water", ",", " and", " the"]);
-  assert.equal(Math.max(...heat.pieces.map(p => p.tint)), 22);
+  assert.equal(a.HEAT_CAP, 9);
+  assert.equal(Math.max(...heat.pieces.map(p => p.tint)), 9);
+  assert.equal(heat.pieces.find(p => p.text === " water").tint, 6, "graded: two thirds of the peak");
   assert.equal(heat.pieces.at(-1).here, true);
   const gapped = a.heatRow([0.5, 0.3, 0, 0, 0, 0, 0, 0.2], context, { keep: 1 });
   assert.deepEqual(gapped.pieces.map(p => p.text), ["Above", " the", "…", " and", " the"]);

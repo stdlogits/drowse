@@ -11,9 +11,11 @@
   import ReadingWait from "./ReadingWait.svelte";
   import { depthTint, foldedLayers, formatP } from "./layers";
   import {
+    absentTip,
     anatomyByDepth,
     anatomyLead,
     columnRead,
+    lensCoverage,
     formatContribution,
     halfValue,
     layerUnits,
@@ -67,6 +69,8 @@
   const nextGroup = $derived(groups[(groups.indexOf(current) + 1) % groups.length]);
   const groupLabel: Record<Group, string> = { read: "Reads as", added: "Attention and MLP", steering: "Steering" };
   const grid = $derived(`var(--lnum) repeat(${shownColumns.length}, minmax(0, 1fr))`);
+  /** Where each family reads, for a short reason on a cell it does not reach. */
+  const coverage = $derived(lensCoverage(layers));
 
   let all = $state(false);
   const shown = $derived(all ? new Set(layers.map(row => row.layer)) : foldedLayers(layers.map(row => row.layer), lead));
@@ -115,7 +119,7 @@
     {:else}
       {@const cell = pickCell(read)}
       {#if cell.absent !== null}
-        <span class="chip none" data-tip={cell.absent}>–</span>
+        <span class="chip none" data-tip={cell.absentFamily ? absentTip(coverage, column, cell.absentFamily, row.layer) : cell.absent}>–</span>
       {:else}
         {#each cell.tokens as item, i (i)}
           {@const parts = tokenParts(item.token)}
@@ -124,6 +128,10 @@
       {/if}
     {/if}
   </span>
+{/snippet}
+
+{#snippet foldToggle()}
+  <button type="button" class="dw-text" onclick={() => (all = !all)}>{all ? "Every third layer" : `All ${layers.length} layers`}</button>
 {/snippet}
 
 {#snippet unitRow(unit: string, kind: "neuron" | "head", layer: number, contribution: number, share: number, pole: "+" | "-" | null, activation: number | null)}
@@ -165,11 +173,15 @@
   <section class="dw-sec" aria-label="Layer by layer">
     <div class="dw-sec-head">
       <span class="head">Layer by layer</span>
-      <span class="ctl">
-        {#if !wide}<button type="button" class="dw-text" onclick={() => (group = nextGroup)}>{groupLabel[nextGroup]}</button>{/if}
-        {#if folds}<button type="button" class="dw-text" onclick={() => (all = !all)}>{all ? "Every third layer" : `All ${layers.length} layers`}</button>{/if}
-      </span>
+      {#if wide && folds}<span class="ctl">{@render foldToggle()}</span>{/if}
     </div>
+    {#if !wide}
+      <!-- Narrow, the column switch and the fold get a row of their own (the Phone canvas). -->
+      <div class="tctl">
+        <button type="button" class="dw-text" onclick={() => (group = nextGroup)}>{groupLabel[nextGroup]}</button>
+        {#if folds}{@render foldToggle()}{/if}
+      </div>
+    {/if}
     <div class="layers" bind:clientWidth={tableWidth} style:--cols={grid}>
       <div class="lrow is-head" aria-hidden="true"><span></span>{#each shownColumns as column (column)}<span>{NAMES[column]}</span>{/each}</div>
       {#each layers as row (row.layer)}
@@ -198,7 +210,7 @@
                             {/each}
                           </div>
                         {:else if half.weight > 0 && half.absent}
-                          <span class="meta">{half.absent}</span>
+                          <span class="meta">{absentTip(coverage, column, half.family, row.layer)}</span>
                         {/if}
                       {/each}
                     </div>
@@ -266,6 +278,7 @@
   .ends { display: flex; justify-content: space-between; }
 
   .ctl { display: flex; flex: none; gap: var(--s4); }
+  .tctl { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); }
 
   /* The layer table: a label column (the layer, its dot on the ramp, the lens mark), then a cell per
    * column. The rows are buttons: a click opens the layer below its row. */
@@ -361,7 +374,7 @@
   .uval { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
 
   /* Where a head reads from: its ID, then its strongest places in the context, the heat as a tint
-   * (Ledger's cap, 22%), the query position in ink, the rest elided. */
+   * up to Ledger's 9% for a token a head attended to, the query position in ink, the rest elided. */
   .heat { display: grid; gap: var(--s2); }
   .hrow { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: var(--s3); align-items: baseline; padding: 0 var(--s3); }
   .hid { padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; transition: color var(--fast) var(--ease); }
@@ -372,6 +385,24 @@
   .ht.here { color: var(--ink); }
   .gap { color: var(--ink3); }
 
+  /* A narrow view (the phone, a 300 px Inspector): a unit's label takes a line of its own under the
+   * ID, the meter and the value (the Phone canvas's unit row), and the rows sit closer to the edge. */
+  @container token (max-width: 380px) {
+    .unit, .unit.bare {
+      grid-template-columns: minmax(0, 1fr) 48px 40px;
+      grid-template-areas: "id meter val" "label label label";
+      gap: 0 var(--s3);
+      padding: var(--s1) var(--s2);
+    }
+    .unit .uid { grid-area: id; }
+    .unit .umeter { grid-area: meter; }
+    .unit .uval { grid-area: val; }
+    .unit .ulabel { grid-area: label; }
+    .unit.bare .umeter { max-width: none; }
+    .detail .units { margin: 0 calc(-1 * var(--s2)); }
+    .hrow { padding: 0 var(--s2); }
+  }
+
   /* Full width against the Inspector's scroll edge: the ring sits inside. */
   .lrow:focus-visible, .unit:focus-visible { outline-offset: -2px; }
   @media (max-width: 720px) {
@@ -380,6 +411,7 @@
     .unit { min-height: 48px; }
     .ctl .dw-text { position: relative; }
     .ctl .dw-text::after { content: ""; position: absolute; inset: -14px -8px; }
+    .tctl .dw-text { min-height: 44px; }
     .hid { position: relative; }
     .hid::after { content: ""; position: absolute; inset: -12px -8px; }
   }

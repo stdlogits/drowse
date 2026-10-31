@@ -30,8 +30,10 @@ export interface AnatomyCell {
   tokens: CellToken[];
   /** Both halves read the same top token (the 14% agreement tint). */
   agree: boolean;
-  /** Why nothing is shown (both halves absent, or the only weighted one). */
+  /** Why nothing is shown (both halves absent, or the only weighted one): the engine's reason. */
   absent: string | null;
+  /** The family whose absence the cell shows (the heavier half's first), for `absentTip`. */
+  absentFamily: "R" | "S" | null;
 }
 
 function present(half: FamilyReadDict): boolean {
@@ -62,17 +64,50 @@ export function pickCell(read: LensReadDict): AnatomyCell {
     const top = half.tokens[0];
     return { id: top.token_id, token: top.token, family: half.family, faint, tip: `${lensName(half)} · ${halfValue(half, top)}` };
   };
+  const shown = { agree: false, absent: null, absentFamily: null };
   if (present(heavy)) {
     const first = tokenOf(heavy, false);
-    if (!lightWeighted || !present(light)) return { tokens: [first], agree: false, absent: null };
+    if (!lightWeighted || !present(light)) return { ...shown, tokens: [first] };
     const second = tokenOf(light, true);
     if (second.id === first.id) {
-      return { tokens: [{ ...first, tip: `${first.tip} · ${second.tip}` }], agree: true, absent: null };
+      return { ...shown, tokens: [{ ...first, tip: `${first.tip} · ${second.tip}` }], agree: true };
     }
-    return { tokens: [first, second], agree: false, absent: null };
+    return { ...shown, tokens: [first, second] };
   }
-  if (lightWeighted && present(light)) return { tokens: [tokenOf(light, true)], agree: false, absent: null };
-  return { tokens: [], agree: false, absent: heavy.absent ?? light.absent ?? "No read here" };
+  if (lightWeighted && present(light)) return { ...shown, tokens: [tokenOf(light, true)] };
+  const why = heavy.absent !== null ? heavy : light.absent !== null ? light : null;
+  return { tokens: [], agree: false, absent: why?.absent ?? "No read here", absentFamily: why?.family ?? null };
+}
+
+/** The layers at which each column's family came back (not absent), keyed `column:family`. */
+export function lensCoverage(layers: readonly AnatomyLayer[]): Map<string, number[]> {
+  const out = new Map<string, number[]>();
+  for (const column of ["reads_as", "attention", "mlp", "steering"] as const) {
+    for (const family of ["R", "S"] as const) {
+      out.set(`${column}:${family}`, layers.filter(row => {
+        const read = columnRead(row, column);
+        return read !== null && (family === "R" ? read.r : read.s).absent === null;
+      }).map(row => row.layer));
+    }
+  }
+  return out;
+}
+
+/** A short reason for a family's absent half at a layer, from where that family does read (the
+ *  engine's reason names the fitted layer list): the lens stops early, starts late, skips the
+ *  layer, does not read the column's site, or is not selected. */
+export function absentTip(coverage: ReadonlyMap<string, number[]>, column: AnatomyColumn, family: "R" | "S", layer: number): string {
+  const here = coverage.get(`${column}:${family}`) ?? [];
+  if (here.length === 0) {
+    const anywhere = [...coverage].some(([key, read]) => key.endsWith(`:${family}`) && read.length > 0);
+    if (!anywhere) return `No ${family} lens is selected`;
+    return column === "attention" ? `The ${family} lens does not read attention` : `The ${family} lens does not read here`;
+  }
+  const first = here[0];
+  const last = here[here.length - 1];
+  if (layer > last) return `The ${family} lens stops at L${last}`;
+  if (layer < first) return `The ${family} lens starts at L${first}`;
+  return `The ${family} lens skips L${layer}`;
 }
 
 /** The row's lens mark: S or R outside the band, both (heavier first) inside it. */
@@ -183,11 +218,15 @@ export function formatContribution(value: number): string {
   return `${value < 0 ? "−" : "+"}${text}`;
 }
 
+/** A token a head attended to, at its strongest: Ledger's 9% (22% marks the token a unit fired on,
+ *  14% a token two reads agree on). */
+export const HEAT_CAP = 9;
+
 export interface HeatPiece {
   /** The context position, or -1 for an elision. */
   pos: number;
   text: string;
-  /** The tint, 0–22 (Ledger's cap): the weight over the row's largest past the sink. */
+  /** The tint, 0 to `HEAT_CAP` percent: the weight over the row's largest past the sink. */
   tint: number;
   weight: number;
   /** The producing position (the query the head reads from). */
@@ -224,7 +263,7 @@ export function heatRow(
   for (const j of order) {
     if (j > prev + 1) pieces.push({ pos: -1, text: "…", tint: 0, weight: 0, here: false });
     const share = peak > 0 ? weights[j] / peak : 0;
-    pieces.push({ pos: j, text: context[j], tint: Math.round(22 * share), weight: weights[j], here: j === query });
+    pieces.push({ pos: j, text: context[j], tint: Math.round(HEAT_CAP * share * 10) / 10, weight: weights[j], here: j === query });
     prev = j;
   }
   return { pieces, sink };
