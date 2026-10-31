@@ -1,27 +1,19 @@
 <script lang="ts" generics="T extends string | number">
-  import { MorphText } from "@stdlogits/ledger";
-  import { Icon } from "@stdlogits/ledger";
-  // Themed single-select dropdown — replacement for native `<select>`
-  // across the webui.  Built to match the flat-dark aesthetic in
-  // ``tokens.css``: same border / radius / focus ring as `.input`,
-  // popover laid on the highest surface tier (``--surface-hi``),
-  // accent-tinted active row, no native chrome anywhere.
+  import { Icon, MorphText } from "@stdlogits/ledger";
+  // The one single-select, in place of a native ``<select>``: a wash field whose list opens as a
+  // flat wash2 surface (no line, no shadow), rows that step to paper under the pointer, and a check
+  // beside the chosen one.
   //
   // Behaviour mirrors a native single-select listbox:
   //
-  //   * click button → popover opens; click button again or outside →
-  //     closes.  Esc closes.
-  //   * ↑ / ↓ move the highlight, Enter / Space commit, Home / End
-  //     jump to first / last.
-  //   * type any character → first-letter typeahead (alpha-num only),
-  //     buffer flushes after 600ms idle.
-  //   * the listbox lives in the browser top layer, so scrollable racks
-  //     cannot clip it; fixed placement flips and clamps to the viewport.
+  //   * click the field → the list opens; click it again or outside → it closes.  Esc closes.
+  //   * ↑ / ↓ move the highlight, Enter / Space commit, Home / End jump to first / last.
+  //   * type any character → first-letter typeahead (alpha-num only), flushed after 600 ms idle.
+  //   * the list lives in the browser top layer, so scrolling racks cannot clip it; fixed
+  //     placement flips and clamps to the viewport.
   //
-  // The component is generic over value type: ``T extends string |
-  // number``.  Options are declarative via the ``options`` prop —
-  // ``{ value, label, disabled? }`` — so callsite replacement is
-  // mechanical from ``<option value=…>…</option>``.
+  // Generic over the value type (``T extends string | number``); options are declarative
+  // (``{ value, label, disabled? }``).
 
   import { onMount, tick } from "svelte";
   import { dropdownMotion } from "./dropdownMotion.svelte";
@@ -306,7 +298,7 @@
   <button
     bind:this={trigger}
     type="button"
-    class="sk-select-trigger field-focus"
+    class="sk-select-trigger"
     {disabled}
     {...{ "aria-description": (title) }}
     aria-haspopup="listbox"
@@ -360,7 +352,8 @@
           }}
           onkeydown={onListKeydown}
         >
-          {opt.label}
+          <span class="sk-select-text">{opt.label}</span>
+          {#if i === currentIndex}<span class="sk-select-check" aria-hidden="true"><Icon name="check" /></span>{/if}
         </li>
       {/each}
     </ul>
@@ -376,46 +369,31 @@
     max-width: 100%;
   }
 
+  /* A wash field, like every text field: no line, the ring on keyboard focus only. */
   .sk-select-trigger {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    min-height: var(--control-target);
+    gap: var(--s2);
     width: 100%;
     min-width: 0;
     max-width: 100%;
-    box-sizing: border-box;
-    gap: var(--control-label-gap);
-    padding: var(--space-3) var(--space-4);
-    /* Borderless input: recessed well fill is the "pick here" affordance;
-     * the ring appears on focus only. */
-    background: var(--control-sheen), var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
+    min-height: 36px;
+    padding: 0 var(--s2) 0 var(--s3);
+    border: 0;
+    border-radius: var(--r-col);
+    background: var(--wash);
+    color: var(--ink);
+    font: var(--type-small);
     text-align: start;
     cursor: pointer;
-    box-shadow: var(--shadow-well);
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out);
+    transition: background-color var(--fast) var(--ease);
   }
-  .sk-select-trigger:hover:not(:disabled) {
-    background: var(--control-sheen), var(--surface-hi);
-    box-shadow: var(--shadow-control-hover);
-  }
-  .sk-select.is-open .sk-select-trigger {
-    background: var(--control-sheen), var(--surface-hi);
-  }
-  .sk-select-trigger:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-  .sk-select-trigger[data-invalid] { border-color: var(--accent-red); }
+  .sk-select-trigger:hover:not(:disabled),
+  .sk-select.is-open .sk-select-trigger { background: var(--wash2); }
+  .sk-select-trigger:disabled { opacity: 0.4; cursor: default; }
+  /* Ledger has no red: an invalid field darkens toward ink, and the form says why below it. */
+  .sk-select-trigger[data-invalid] { background: color-mix(in oklab, var(--ink) 9%, var(--wash)); }
 
   .sk-select-label {
     flex: 1 1 0;
@@ -424,61 +402,64 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .sk-select-label.is-placeholder {
-    color: var(--fg-muted);
-  }
+  .sk-select-label.is-placeholder { color: var(--ink3); }
   .sk-select-caret {
-    flex: 0 0 auto;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    transition: transform var(--dur-fast) var(--ease-out);
+    display: grid;
+    flex: none;
+    color: var(--ink3);
+    transition: rotate var(--glide) var(--ease), color var(--fast) var(--ease);
   }
-  .sk-select.is-open .sk-select-caret {
-    transform: rotate(180deg);
-    color: var(--accent);
-  }
+  .sk-select.is-open .sk-select-caret { rotate: 180deg; color: var(--ink); }
 
+  /* The list: a flat wash2 surface in the top layer. It rises 6 px as it fades in (200 ms) and
+   * fades out (120 ms); dropdownMotion reads the close duration. */
   .sk-select-popover {
-    --popup-radius: var(--radius-lg);
+    /* Popups not yet redrawn still read --popup-radius; this is its one declaration. */
+    --popup-radius: var(--r-box);
+    --dropdown-close-dur: var(--out);
     position: fixed;
     inset: auto;
-    margin: 0;
-    padding: var(--space-2);
-    list-style: none;
-    background: var(--surface-sheen), var(--popup-bg);
-    border: 1px solid var(--popup-border);
-    border-radius: var(--popup-radius);
+    z-index: 60;
     box-sizing: border-box;
+    margin: 0;
+    padding: var(--s1);
     overflow-y: auto;
-    z-index: var(--z-modal);
+    list-style: none;
+    border: 0;
+    border-radius: var(--popup-radius);
+    background: var(--wash2);
+    color: var(--ink2);
     outline: none;
+    opacity: 0;
+    translate: 0 6px;
+    transition: opacity var(--in) var(--ease), translate var(--in) var(--ease);
   }
+  .sk-select-popover[data-origin="bottom-left"] { translate: 0 -6px; }
+  .sk-select-popover.is-open { opacity: 1; translate: 0 0; }
+  .sk-select-popover.is-closing { opacity: 0; translate: 0 0; transition-duration: var(--out); }
   .sk-select-opt {
     display: flex;
     align-items: center;
-    min-height: var(--control-option);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-sm);
-    color: var(--fg-strong);
-    cursor: pointer;
-    font-size: var(--text-sm);
-    line-height: 1.45;
-    white-space: normal;
+    gap: var(--s2);
+    min-height: 40px;
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-col);
+    color: var(--ink2);
+    font: var(--type-control);
     overflow-wrap: anywhere;
+    cursor: pointer;
+    transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease);
   }
-  .sk-select-opt.is-highlight:not(.is-disabled) {
-    background: var(--control-sheen), var(--bg-hover);
-    color: var(--fg);
+  .sk-select-text { flex: 1 1 auto; min-width: 0; }
+  .sk-select-check { display: grid; flex: none; }
+  .sk-select-opt.is-active { color: var(--ink); }
+  .sk-select-opt.is-highlight:not(.is-disabled) { background: var(--paper); color: var(--ink); }
+  .sk-select-opt.is-disabled { opacity: 0.4; cursor: default; }
+
+  @media (pointer: coarse) {
+    .sk-select-trigger, .sk-select-opt { min-height: 44px; }
   }
-  .sk-select-opt.is-active {
-    background: var(--control-sheen), var(--accent-subtle);
-    color: var(--fg);
-  }
-  .sk-select-opt.is-active.is-highlight {
-    background: var(--control-sheen), var(--accent-strong);
-  }
-  .sk-select-opt.is-disabled {
-    color: var(--fg-muted);
-    cursor: not-allowed;
+  @media (prefers-reduced-motion: reduce) {
+    .sk-select-popover, .sk-select-popover[data-origin="bottom-left"] { translate: none; }
   }
 </style>

@@ -1,11 +1,7 @@
 <script lang="ts" generics="T extends string | number">
-  // Themed radio button.  Used singly (one ``<Radio />`` per option,
-  // sharing a ``group`` binding) or via the matching ``RadioGroup``
-  // wrapper.  Same primitives as ``Checkbox`` — square turned circular,
-  // ✓ glyph swapped for a centred dot.
-  //
-  // The component is generic over value type so callsites can keep
-  // strongly-typed enums.
+  // One radio of a group: one ``<Radio />`` per option, sharing a ``group`` binding inside a
+  // ``role="radiogroup"`` (arrow keys move through it). Generic over the value type so callers
+  // keep their enums.
 
   interface Props {
     /** This radio's value — committed into ``group`` on click. */
@@ -98,80 +94,58 @@
 </button>
 
 <style>
+  /* Drawn like Ledger's Switch: a wash2 disc that fills with ink when chosen, a paper dot swelling
+   * in at its centre (240 ms); the label steps from ink2 to ink. */
   .sk-radio {
     display: inline-flex;
     align-items: center;
-    gap: var(--space-3);
-    min-height: var(--control-target);
-    padding-block: 0;
-    padding-inline: 0 var(--space-2);
-    background: transparent;
+    gap: var(--s2);
+    min-height: 36px;
+    padding: 0 var(--s2) 0 0;
     border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--fg);
+    border-radius: var(--r-col);
+    background: transparent;
+    color: var(--ink2);
+    font: var(--type-control);
+    text-align: start;
     cursor: pointer;
-    transition: scale var(--dur-fast) var(--ease-out);
+    transition: color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
-  .sk-radio:active:not(:disabled) { scale: var(--press-scale); }
+  .sk-radio:active:not(:disabled) { scale: 0.97; }
+  .sk-radio.is-selected { color: var(--ink); }
+  .sk-radio.is-disabled { opacity: 0.4; cursor: default; }
+  @media (hover: hover) { .sk-radio:hover:not(.is-disabled) { color: var(--ink); } }
   .sk-radio-control {
-    flex: 0 0 var(--control-target);
-    width: var(--control-target);
-    height: var(--control-target);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
+    display: inline-grid;
+    flex: none;
+    place-items: center;
+    width: 20px;
+    height: 20px;
   }
   .sk-radio-box {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 14px;
-    height: 14px;
-    box-sizing: border-box;
-    background: var(--bg-elev);
-    border: 1px solid var(--glass-line);
+    display: grid;
+    place-items: center;
+    width: 16px;
+    height: 16px;
     border-radius: 50%;
-    transition: background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out);
+    background: var(--wash2);
+    transition: background-color var(--glide) var(--ease);
   }
-  .sk-radio:hover:not(.is-disabled) .sk-radio-box {
-    border-color: var(--accent-strong);
-  }
-  .sk-radio:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .sk-radio.is-selected .sk-radio-box {
-    border-color: var(--accent);
-  }
-  .sk-radio.is-disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-
+  .sk-radio.is-selected .sk-radio-box { background: var(--ink); }
   .sk-radio-dot {
     width: 6px;
     height: 6px;
     border-radius: 50%;
-    background: var(--accent);
-    pointer-events: none;
+    background: var(--paper);
     opacity: 0;
     scale: 0.25;
-    filter: blur(4px);
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      opacity var(--dur-slow) cubic-bezier(0.2, 0, 0, 1),
-      scale var(--dur-slow) cubic-bezier(0.2, 0, 0, 1),
-      filter var(--dur-slow) cubic-bezier(0.2, 0, 0, 1);
+    pointer-events: none;
+    transition: opacity var(--glide) var(--ease), scale var(--glide) var(--ease);
   }
-  .sk-radio-dot.is-visible {
-    opacity: 1;
-    scale: 1;
-    filter: blur(0);
-  }
+  .sk-radio-dot.is-visible { opacity: 1; scale: 1; }
+  .sk-radio-label { min-width: 0; }
 
-  .sk-radio-label {
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
+  @media (pointer: coarse) {
+    .sk-radio { min-height: 44px; }
   }
 </style>
