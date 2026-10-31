@@ -27,7 +27,9 @@ If `dist/index.html` is missing, mounting raises `WebUINotBuilt` (500).
 The shell is public and holds no data. `server/security.py` authenticates only the API
 prefixes, sets CSP and anti-framing headers on every response, and marks API responses
 `no-store`. The CSP's `script-src 'self'` bans inline scripts, which is why the theme
-bootstrap is the separate file `public/theme-init.js`. Its `connect-src` allows only self,
+bootstrap is the separate file `/theme-preflight.js`: Ledger's pre-paint script, which
+`vite.config.ts` serves in dev and writes into the build straight from `@stdlogits/ledger`
+(index.html loads it with `data-ledger-theme-key="drowse.theme"`). Its `connect-src` allows only self,
 `https://www.neuronpedia.org` (SAE descriptions) and `https://drowse.ai/api/contact`, so
 any new third-party fetch needs a CSP entry.
 
@@ -46,10 +48,10 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
   or the npm deps. CI's `webui` job runs `npm ci`, `check` and `build`, then fails on any
   `git status` entry under `dist/`, untracked files included. `emptyOutDir` wipes `dist/`
   on every build, so never put files there by hand.
-- `webui/public/` also holds drowse.ai's brand set.
-  `scripts/dashboard-assets.mjs::shipsInDashboard` allowlists what ships here. That
-  excludes `social/`, and from `icons/` it ships only `tab-home.png`,
-  `apple-touch-icon.png` and each tab state's frame-0 light/dark raster.
+- `webui/public/` also holds drowse.ai's brand set (`social/`, `icons/`, the favicons and
+  the Fluent licence). `scripts/dashboard-assets.mjs::shipsInDashboard` keeps all of it out
+  of the dashboard, whose tab icon is the static drowse mark (`drowse-mark-{light,dark}.svg`:
+  a tile on the depth ramp, a paper-coloured closed eye).
   `scripts/check-build-isolation.mjs` fails the build on hosted leaks (`sw.js`,
   `manifest.webmanifest`, `_headers`, wasm, MLC/WebLLM files, non-allowlisted public
   files, a PWA bootstrap), a missing allowlisted icon or SAE description index, or an
@@ -61,9 +63,17 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
   `scripts/check_package_isolation.py check`. The wheel's dashboard files must equal the
   sdist's and the source tree's.
 - `npm run check` runs `svelte-check`, `check-theme.mjs` (every referenced CSS custom
-  property must be declared), `check-runtime-boundary.mjs`, the `test:*` node suites and
+  property must be declared, here or in `@stdlogits/ledger`), `check-ledger.mjs` (the Ledger
+  ratchet, below), `check-runtime-boundary.mjs`, the `test:*` node suites and
   `check-test-coverage.mjs`. The last requires every `scripts/*.test.mjs` to be reachable
   from `check`, so a new test file needs a line in `package.json`.
+- `check-ledger.mjs` counts, per file, the uses of the bridge's old token names
+  (`lib/style/bridge.css`) and the departures from Ledger (borders, shadows other than the
+  tip's `--float` or a marked token's 2px same-colour spread, monospace, capitals,
+  letter-spaced text, easing off the one curve, colours outside the tokens), and fails if any
+  count differs from `webui/ledger-ratchet.json`. A count that rises fails; one that falls
+  asks for `node scripts/check-ledger.mjs --write`, which lowers the ratchet and never raises
+  it. `--cut` (the 6.0 cut) requires every count at zero and the bridge deleted.
 
 ## Generated REST types (`lib/types.gen.ts`)
 
@@ -180,15 +190,18 @@ catalog/download/worker half of `runtime/contracts.ts`, and the hosted session s
 **`lib/brandMigration.ts` stays.** drowse.ai users still hold browser data under the
 earlier names `polythetic` and `saklas`: localStorage keys, IndexedDB databases, the OPFS
 root, and record fields such as `saklas_version`. The module migrates that data
-opportunistically and never blocks the current store. `public/theme-init.js`,
+opportunistically and never blocks the current store. `lib/theme.ts` (the stored theme),
 `lib/chatBackup.ts` and `runtime/localData.ts` recognize the old names for the same reason.
 
 ## Source layout (`webui/src/`)
 
 ```
-main.ts / App.svelte  runtime install + mount / workspace views and drawer host
-panels/               Chat, RawBuffer, ControlsPanel → InspectorPanel (subspace / manifold /
-                      sae / lens), RecipeBar, SamplingStrip, CommandPalette; loom/, rack/
+main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
+panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread
+panels/inspector/     Inspector (by selection), Instruments, TermView
+panels/rooms/         RoomSections (Manifolds, Model), LensRoom, UnitsRoom
+panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
+                      ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
 lib/api.ts            HTTP + SSE + WS client (imported only by runtime/http-client.ts)
 lib/runtime/          RuntimeClient contract, registry, HTTP impl, errors, capability gating
@@ -199,14 +212,28 @@ lib/highlight.ts      the one per-token highlight; tokens.ts is its store-free r
 lib/templates.ts      client mirror of the template validator
 lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
-lib/style/tokens.css  design-token source of truth; lib/ui/ holds shared primitives
+lib/style/            drowse.css (the shell's Ledger classes), global.css, bridge.css (temporary)
+lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
 ```
+
+The design is Ledger, from the package `@stdlogits/ledger` (pinned as a git dependency at a
+tag; its `DESIGN.md` is the design, and it supplies the tokens, the Wix Madefor faces, motion,
+the tip, the theme and the pieces: Segmented, Tabs, Switch, IconButton, Icon, Expander, Meter,
+Token, Context, Swap, MorphText, ThemeButton). Use a piece rather than drawing a look-alike;
+the dev server leaves the package out of dependency optimization (`optimizeDeps.exclude`)
+because it ships TypeScript sources.
 
 ## State
 
 `lib/stores/` holds one `$state` slice per concern. `lib/stores.svelte.ts` re-exports the
-slices that stream, loom, chat and instruments share. Narrower slices (`appearance`,
-`manifoldJobs`, `preparations`, …) are imported directly.
+slices that stream, loom, chat and instruments share. Narrower slices (`selection`,
+`rooms`, `workbench`, `manifoldJobs`, `preparations`, …) are imported directly.
+
+The shell's own state is three small slices. `rooms.svelte.ts` is the route (`#/lens`,
+`#/manifolds/packs`): the room, its section and in-memory params for the tool it hosts.
+`selection.svelte.ts` is what the Inspector shows (none, token, probe, term, unit).
+`workbench.svelte.ts` is what the Page region shows (the conversation or the loom) and the
+phone's sheet.
 
 Slices import each other directly, never through the barrel. The import graph has cycles
 (loom ↔ ws, chat ↔ pending). These are safe only because every cross-slice reference sits
@@ -227,7 +254,14 @@ The registry is `drawers/index.ts::DRAWERS: Record<DrawerName, DrawerEntry>`. Ea
 has a lazy `load()` (rendered by `DrawerOutlet` and cached after the first open), optional
 fixed `params` (how one `RackDrawer` serves both `subspace` and `manifolds`), `narrow`,
 and either a `launcher` or `launcher: null` with a `via` string naming the surface that
-opens it. `RAIL_CATEGORIES` (the All tools list) is derived from the launchers.
+opens it. `RAIL_CATEGORIES` (the command palette's tools) is derived from the launchers.
+
+`openDrawer(name, params)` (`lib/stores/drawers.svelte.ts`) is the one entry point, and where
+a tool opens depends on what it is. `token_drilldown` and `probe_inspector` are selections,
+shown in the workbench's Inspector. The tools a room hosts (`ROOM_SECTIONS` in
+`lib/stores/rooms.svelte.ts`: the manifold builder, packs, merge, template lab and roles in
+Manifolds; health, the local runtime and API access in Model) go to their room and section,
+where their close returns to the workbench. Everything else opens as a dialog over the page.
 
 To add a drawer, add its name to `DrawerName` in `lib/types.ts` and add three rows: one in
 `DRAWERS`, one in `DRAWER_REQUIREMENTS`, and its WebMCP coverage entry in
@@ -265,18 +299,20 @@ drowse.ai too.
   (written by `ConversationAutosave` while no generation runs) and the backup files
   (`lib/chatBackup.ts`). localStorage holds presentation preferences only, via
   `safeLocalStorage*`.
-- **Visual.** Hue is meaning: subspace and chrome are achromatic, manifold violet, SAE
-  gold, J-lens and surprise blue, live/positive green, error/negative red. Roles carry no
-  hue, tint strength is opacity, and values use `--font-mono`. Shared chrome lives in
-  `lib/ui/`; never restyle it per feature.
+- **Visual.** Ledger: flat and borderless (fills only: paper, wash, wash2), the one shadow
+  under the tip, Wix Madefor only with tabular numbers, no capitals, one easing curve.
+  Colour is depth: the one accent is `--tint`, a layer's place on the `--deep` → `--late`
+  ramp, and it only fills; signed negatives are ink at low alpha, interaction is ink. The
+  components not yet redrawn read old token names through `lib/style/bridge.css`, which the
+  ratchet counts down.
 
 ## Testing
 
 The node suites load modules through Vite SSR (`ssrLoadModule`) with a stub
-`installRuntimeClient`. `saeDescriptions.ts`, `tokens.ts`, `appearance.ts` and
-`chatAccent.ts` are also imported by plain Node (here or in drowse.ai), so they must not
-use extensionless value imports. `tests/web/test_web.py` covers the mount: files served as
-files, the 404 for a missing icon, the SPA fallback, traversal, a public shell under an
+`installRuntimeClient`. `saeDescriptions.ts` and `tokens.ts` are also imported by plain
+Node (here or in drowse.ai), so they must not use extensionless value imports.
+`tests/web/test_web.py` covers the mount: files served as files (the marks, the theme
+preflight), the 404 for a missing asset, the SPA fallback, traversal, a public shell under an
 API key, `web=False`, and an empty dist. `tests/invariants/test_webui_types_parity.py`
 gates the generated types, and `test_layering` places `web` in the top layer.
 

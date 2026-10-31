@@ -27,7 +27,7 @@ npm run build
 git diff --exit-code ../drowse/web/dist
 ```
 
-`npm run check` runs Svelte/TypeScript checks and the theme-token validator.
+`npm run check` runs Svelte/TypeScript checks, the theme-token validator and the Ledger ratchet.
 `npm run build` wipes and regenerates the committed production bundle. CI repeats
 both commands and fails if the rebuilt bundle differs.
 
@@ -113,20 +113,20 @@ route inventory into this file.
 
 1. Add `src/drawers/FooDrawer.svelte` and accept `params: unknown` through
    `$props()`.
-2. Add its name to `DrawerName` in `lib/types.ts` and to `NARROW_DRAWERS` in
-   `App.svelte` if it is a form or picker.
-3. Export it from `drawers/index.ts` and add the host branch in `App.svelte`.
-4. Add a command-palette entry in `lib/commands.ts` or an inline launcher owned by
-   the relevant panel.
-5. Run the check/build sequence above and commit the regenerated bundle.
+2. Add its name to `DrawerName` in `lib/types.ts` and its rows in `drawers/index.ts`
+   (`narrow` for a form or picker; a `launcher` puts it in the command palette),
+   `runtime/ui-capabilities.ts` and `lib/webmcp/catalogue.ts`.
+3. If a room hosts it, add it to `ROOM_SECTIONS` in `lib/stores/rooms.svelte.ts`;
+   otherwise it opens as a dialog.
+4. Run the check/build sequence above and commit the regenerated bundle.
 
 ## Visual system
 
-The dashboard ships paired light and dark themes. Hue identifies data space:
-subspace/chrome is achromatic, manifold violet, SAE gold, J-lens and surprise
-blue, live/positive green, and error/negative red. Roles do not carry hue.
-Gradients encode depth or time only when direction is the data; shared chrome
-uses depth/focus shadows, not decorative top-light or glow treatments. The
-source of truth is `src/lib/style/tokens.css`; `src/lib/style/fonts.css`
-self-hosts Wix Madefor for interface and reading text, with Martian Mono for
-data.
+The dashboard is drawn in Ledger, the Standard Logits design language, from the
+`@stdlogits/ledger` package (its `DESIGN.md` is the design): white paper, two
+washes, three inks, one accent, no lines. The theme is auto (the system's look),
+light or dark, behind one theme button. The accent is depth, the ramp from
+`--deep` to `--late`, and it only fills. Wix Madefor is the only face, with
+tabular numbers. `src/lib/style/drowse.css` holds the shell's classes;
+`src/lib/style/bridge.css` maps the old token names the not-yet-redrawn
+components read onto Ledger values until the ratchet reaches zero.
