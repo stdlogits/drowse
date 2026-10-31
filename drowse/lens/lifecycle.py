@@ -1,11 +1,14 @@
-"""The J-lens fit lifecycle: a pure planner and the executor that runs it.
+"""The lens fit lifecycle: a pure planner and the executor that runs it.
 
-A fit has four outcomes, decided from metadata alone:
+A fit names a kind and, per site (``out``, ``mid``), its layers.  It has
+four outcomes, decided from metadata alone:
 
 - ``noop``: the durable artifact already covers this corpus and every
-  requested layer.  Nothing is fitted; a crash-left checkpoint is reaped.
-- ``topup``: the durable artifact covers the corpus but misses layers.  Only
-  the missing layers are fitted (resuming their own checkpoint) and unioned in.
+  requested site and layer.  Nothing is fitted; a crash-left checkpoint is
+  reaped.
+- ``topup``: the durable artifact covers the corpus but misses layers at
+  some site.  Only those are fitted (resuming their own checkpoint) and
+  unioned in.
 - ``resume``: a matching durable artifact or checkpoint over a prefix of the
   corpus is the starting point; the remainder is fitted and merged.
 - ``fresh``: nothing reusable (or ``force``); fit from prompt zero.
@@ -23,9 +26,8 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-import torch
 
 from drowse.lens.jlens import (
     DEFAULT_CHECKPOINT_EVERY,
@@ -36,21 +38,27 @@ from drowse.lens.jlens import (
     JacobianLensCancelled,
     JacobianLensError,
 )
-from drowse.lens.key import FITTABLE_KINDS
-from drowse.model.layers import LayerSelector, resolve_layer_selector
+from drowse.lens.key import FITTABLE_KINDS, LENS_SITES, LensKey, site_layers
+from drowse.model.layers import LayerSelector
 from drowse.lens.store import (
     LensProvenance,
     lens_estimator_policy,
     lens_identity,
     lens_layers,
+    lens_split_half,
 )
 from drowse.errors import RequestError
+
+if TYPE_CHECKING:
+    from drowse.lens.fit import LensFit, LensSums
 
 #: The corpus identity a fit records: sha256 of the consumed token-id rows.
 CORPUS_HASH_KIND = "token_ids_v1"
 
 FitAction = Literal["noop", "topup", "resume", "fresh"]
 DurableUse = Literal["none", "resident", "full", "selective"]
+#: ``{site: sorted layers}``: what a fit, an artifact or a resident lens covers.
+SiteLayers = Mapping[str, tuple[int, ...]]
 
 
 def raw_corpus_sha256(prompts: Sequence[str]) -> str:
@@ -118,13 +126,80 @@ def tokenize_lens_corpus(
     )
 
 
-def resolve_fit_sources(selector: LayerSelector, *, n_layers: int) -> list[int]:
-    """The sorted source layers a fit covers: every layer below the final
-    one by default, or a subset (``workspace``, an index list)."""
-    pool = range(n_layers - 1)
-    return sorted(set(resolve_layer_selector(
-        selector, pool, n_layers=n_layers, allow_sample=False,
-    )))
+def resolve_fit_layers(
+    selector: LayerSelector,
+    *,
+    kind: str,
+    n_layers: int,
+    sites: Sequence[str] = LENS_SITES,
+) -> dict[str, tuple[int, ...]]:
+    """The ``{site: sorted layers}`` a fit of ``kind`` covers.
+
+    Each site draws from its own pool (:func:`~drowse.lens.key.site_layers`:
+    the output kinds' ``out`` stops below the last block).  ``None``/``all``
+    is the whole pool, ``workspace`` its 40–90% band, an index list the
+    listed layers each site holds.  ``sample`` is refused (it is a readout
+    mode, not a wall-time lever); so is a layer outside the model, a layer
+    no requested site holds, or a site left with no layer.
+    """
+    from drowse.model.arch import workspace_layer_indices
+
+    chosen = [site for site in LENS_SITES if site in set(sites)]
+    if not chosen or len(chosen) != len(tuple(sites)):
+        raise RequestError(
+            f"sites must be a non-empty subset of {', '.join(LENS_SITES)}, got {list(sites)}"
+        )
+    LensKey(kind)
+    explicit: list[int] | None = None
+    if isinstance(selector, str) and selector.lower() not in ("all", "workspace"):
+        raise RequestError(
+            f"lens fit layers must be all, workspace or an index list, not {selector!r}"
+        )
+    if selector is not None and not isinstance(selector, str):
+        explicit = sorted({int(layer) for layer in selector})
+        outside = [layer for layer in explicit if not 0 <= layer < n_layers]
+        if outside or not explicit:
+            raise RequestError(
+                f"lens fit layers must lie in [0, {n_layers}); got {list(selector)}"
+            )
+    out: dict[str, tuple[int, ...]] = {}
+    for site in chosen:
+        pool = site_layers(kind, site, n_layers)
+        if explicit is not None:
+            held = set(pool)
+            wanted = [layer for layer in explicit if layer in held]
+        elif isinstance(selector, str) and selector.lower() == "workspace":
+            wanted = workspace_layer_indices(pool, n_layers)
+        else:
+            wanted = pool
+        if not wanted:
+            raise RequestError(
+                f"no requested layer is a {kind}:{site} layer (it holds 0..{len(pool) - 1}"
+                + ("; the last block is the output kinds' target" if len(pool) < n_layers else "")
+                + ")"
+            )
+        out[site] = tuple(sorted(wanted))
+    if explicit is not None:
+        covered = {layer for layers in out.values() for layer in layers}
+        orphans = [layer for layer in explicit if layer not in covered]
+        if orphans:
+            raise RequestError(
+                f"layers {orphans} belong to no requested {kind} site "
+                f"({', '.join(chosen)}): the last block is the output kinds' "
+                "target, a layer only their mid site holds"
+            )
+    return out
+
+
+def _site_layers_of(sidecar: Mapping[str, Any]) -> dict[str, frozenset[int]]:
+    sites = sidecar.get("sites")
+    if not isinstance(sites, Mapping):
+        return {}
+    return {site: frozenset(lens_layers(sidecar, site)) for site in sites}
+
+
+def _covers(have: Mapping[str, frozenset[int]], want: SiteLayers) -> bool:
+    return all(set(layers) <= have.get(site, frozenset()) for site, layers in want.items())
 
 
 @dataclass(frozen=True)
@@ -133,7 +208,7 @@ class LensFitIdentity:
 
     kind: str
     corpus: LensFitCorpus
-    sources: tuple[int, ...]
+    layers: SiteLayers
     seq_len: int
     model_fingerprint: str
     policy: Mapping[str, Any]
@@ -152,9 +227,10 @@ class LensFitIdentity:
         )
 
     def checkpoint_matches(
-        self, sidecar: Mapping[str, Any] | None, layers: Sequence[int],
+        self, sidecar: Mapping[str, Any] | None, layers: SiteLayers,
     ) -> bool:
-        """A checkpoint over this corpus (or a prefix of it) for ``layers``."""
+        """A checkpoint over this corpus (or a prefix of it) for exactly
+        ``layers`` (``{site: layers}``)."""
         if sidecar is None:
             return False
         progress = int(sidecar["n_prompts"])
@@ -167,7 +243,9 @@ class LensFitIdentity:
             corpus_matches
             and progress > 0
             and self._semantics_match(sidecar)
-            and lens_layers(sidecar) == list(layers)
+            and _site_layers_of(sidecar) == {
+                site: frozenset(wanted) for site, wanted in layers.items()
+            }
         )
 
     def durable_matches(self, sidecar: Mapping[str, Any] | None) -> bool:
@@ -187,7 +265,7 @@ class ResidentLens:
     """What the planner needs to know about the session's resident lens."""
 
     n_prompts: int
-    layers: frozenset[int]
+    layers: Mapping[str, frozenset[int]]
     identity: str | None
 
 
@@ -205,7 +283,8 @@ class LensFitPlan:
     action: FitAction
     durable: DurableUse = "none"
     checkpoint: bool = False
-    missing: tuple[int, ...] = ()
+    #: ``{site: layers}`` a ``topup`` fits (only sites with missing layers).
+    missing: SiteLayers = field(default_factory=dict)
 
 
 def plan_lens_fit(
@@ -224,55 +303,61 @@ def plan_lens_fit(
     """
     if force:
         return LensFitPlan("fresh")
-    sources = set(identity.sources)
+    requested = identity.layers
     n_usable = identity.corpus.n_usable
-    checkpoint_ok = identity.checkpoint_matches(checkpoint, identity.sources)
+    checkpoint_ok = identity.checkpoint_matches(checkpoint, requested)
     checkpoint_n = int(checkpoint["n_prompts"]) if checkpoint_ok and checkpoint else -1
     if durable is not None and identity.durable_matches(durable):
         saved_n = int(durable.get("n_prompts", 0))
-        durable_layers = set(lens_layers(durable))
-        extra = durable_layers - sources
+        durable_layers = _site_layers_of(durable)
+        extra = {
+            site: sorted(layers - set(requested.get(site, ())))
+            for site, layers in durable_layers.items()
+            if layers - set(requested.get(site, ()))
+        }
         if saved_n < n_usable and extra:
             raise JacobianLensError(
-                "cannot extend only a subset of an existing "
-                f"J-lens: durable layers {sorted(durable_layers)} "
-                f"include unrequested layers {sorted(extra)}. "
-                "Request the full durable layer set to extend "
-                "its corpus, or pass force=True to explicitly "
-                "replace it with the requested subset."
+                f"cannot extend only a subset of an existing {identity.kind} lens: "
+                f"it holds layers the request omits ({extra}). Request every "
+                "site and layer it holds to extend its corpus, or pass "
+                "force=True to replace it with the requested subset."
             )
         if checkpoint_ok and checkpoint_n > saved_n:
             # The checkpoint is farther ahead than the durable artifact.
             return LensFitPlan("resume", checkpoint=True)
+        covers = _covers(durable_layers, requested)
         resident_ok = bool(
             resident is not None
             and resident.n_prompts == saved_n
             # A resident stamped with the durable pointer must represent
             # that whole artifact, not a subset view from an earlier call.
-            and resident.layers == durable_layers
-            and resident.layers >= sources
+            and dict(resident.layers) == durable_layers
+            and covers
             and resident.identity == lens_identity(durable)
         )
         if saved_n >= n_usable:
-            if durable_layers >= sources:
+            if covers:
                 return LensFitPlan(
                     "noop", durable="resident" if resident_ok else "selective",
                 )
-            missing = tuple(sorted(sources - durable_layers))
+            missing = {
+                site: tuple(sorted(set(layers) - durable_layers.get(site, frozenset())))
+                for site, layers in requested.items()
+                if set(layers) - durable_layers.get(site, frozenset())
+            }
             return LensFitPlan(
                 "topup",
                 durable="full",
                 missing=missing,
                 checkpoint=identity.checkpoint_matches(checkpoint, missing),
             )
-        if durable_layers >= sources:
+        if covers:
             return LensFitPlan(
                 "resume", durable="resident" if resident_ok else "full",
             )
     if checkpoint_ok:
         return LensFitPlan("resume", checkpoint=True)
     return LensFitPlan("fresh")
-
 
 
 def _holds_artifact(lens: JacobianLens, sidecar: Mapping[str, Any]) -> bool:
@@ -288,22 +373,21 @@ def _holds_artifact(lens: JacobianLens, sidecar: Mapping[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 def fit_covers_layers(
-    sidecar: Mapping[str, Any], requested: LayerSelector,
+    sidecar: Mapping[str, Any],
+    requested: LayerSelector,
+    *,
+    sites: Sequence[str] = LENS_SITES,
 ) -> bool:
-    """Whether a fitted sidecar's source layers cover a fit request."""
-    fitted = set(lens_layers(sidecar))
-    if not fitted:
-        return False
-    if not isinstance(requested, (str, type(None))):
-        return fitted >= {int(layer) for layer in requested}
+    """Whether a fitted sidecar covers a fit request at every requested site."""
     n_layers = sidecar.get("model_layer_count")
-    if not isinstance(n_layers, int) or n_layers < 2:
+    kind = sidecar.get("kind")
+    if not isinstance(n_layers, int) or n_layers < 1 or kind not in FITTABLE_KINDS:
         return False
     try:
-        wanted = resolve_fit_sources(requested, n_layers=n_layers)
-    except ValueError:
+        wanted = resolve_fit_layers(requested, kind=str(kind), n_layers=n_layers, sites=sites)
+    except (ValueError, RequestError):
         return False
-    return fitted >= set(wanted)
+    return _covers(_site_layers_of(sidecar), wanted)
 
 
 def loaded_source_fingerprint(model: Any) -> str | None:
@@ -319,6 +403,7 @@ def prove_lens_fit_noop(
     name: str,
     *,
     requested: LayerSelector,
+    sites: Sequence[str] = LENS_SITES,
     seq_len: int | None,
     source_fingerprint: Callable[[], str | None],
     docs: Sequence[str] | None = None,
@@ -350,7 +435,7 @@ def prove_lens_fit_noop(
             return None
         if (
             sidecar.get("seq_len") != (seq_len or DEFAULT_SEQ_LEN)
-            or not fit_covers_layers(sidecar, requested)
+            or not fit_covers_layers(sidecar, requested, sites=sites)
         ):
             return None
         if docs is not None:
@@ -381,7 +466,6 @@ def prove_lens_fit_noop(
 # ---------------------------------------------------------------------------
 # Executor
 # ---------------------------------------------------------------------------
-
 #: A live-readout configuration: ``(layers, uses_all_layers)``.
 LiveConfig = tuple[list[int], bool]
 
@@ -409,18 +493,44 @@ class LensResidency(Protocol):
     ) -> JacobianLens: ...
 
 
+class _NoResidency:
+    """The residency of a side nothing holds resident (input kinds): a fit
+    publishes and selects, and adopts nothing."""
+
+    resident_lens: JacobianLens | None = None
+    resident_identity: str | None = None
+
+    def live_config(self) -> LiveConfig | None:
+        return None
+
+    def evict(self) -> None:
+        return None
+
+    def adopt(
+        self,
+        lens: JacobianLens,
+        sidecar: Mapping[str, Any] | None,
+        *,
+        live: LiveConfig | None = None,
+        restore_live: bool = False,
+    ) -> JacobianLens:
+        del sidecar, live, restore_live
+        return lens
+
+
 @dataclass(frozen=True)
 class LensFitRequest:
     """The knobs of one fit call, validated."""
 
-    kind: str = "J"
+    kind: str = "R"
     corpus_spec: str = "custom"
-    source_layers: LayerSelector = None
+    layers: LayerSelector = None
+    sites: tuple[str, ...] = LENS_SITES
     dim_batch: int = DEFAULT_DIM_BATCH
-    prompt_batch: int | None = None
     seq_len: int = DEFAULT_SEQ_LEN
     force: bool = False
     checkpoint_every: int = DEFAULT_CHECKPOINT_EVERY
+    split_half: bool = True
 
     def __post_init__(self) -> None:
         if self.kind not in FITTABLE_KINDS:
@@ -428,10 +538,19 @@ class LensFitRequest:
                 f"lens kind must be one of {', '.join(FITTABLE_KINDS)}, "
                 f"got {self.kind!r}"
             )
+        sites = tuple(self.sites)
+        if not sites or len(set(sites)) != len(sites) or set(sites) - set(LENS_SITES):
+            raise RequestError(
+                f"sites must be a non-empty subset of {', '.join(LENS_SITES)}, got {list(sites)}"
+            )
+        object.__setattr__(self, "sites", tuple(s for s in LENS_SITES if s in sites))
+        if isinstance(self.layers, str) and self.layers.lower() == "sample":
+            raise RequestError(
+                "layers 'sample' is a readout mode, not a fit lever; use "
+                "'workspace' or an index list"
+            )
         if self.dim_batch <= 0:
             raise RequestError("dim_batch must be > 0")
-        if self.prompt_batch is not None and self.prompt_batch <= 0:
-            raise RequestError("prompt_batch must be > 0")
         if self.seq_len <= 0:
             raise RequestError("seq_len must be > 0")
         if self.checkpoint_every <= 0:
@@ -441,8 +560,10 @@ class LensFitRequest:
 class LensFitter:
     """Runs a planned fit against the store and the resident lens.
 
-    The caller holds the fit lock and the model-exclusive guard; the
-    estimator runs forward *and backward* passes through the model.
+    The caller holds the fit lock and the model-exclusive guard, unsteered:
+    the fit verifies the model's block description and runs transport
+    passes through it.  ``residency`` is the output side's resident lens; an
+    input-kind fit adopts nothing.
     """
 
     def __init__(
@@ -475,13 +596,18 @@ class LensFitter:
             load_local_lens_sidecar,
             remove_lens_checkpoint,
         )
-        from drowse.model.arch import get_layers
+        from drowse.model.blocks import verify_model_spec
         from drowse.model.fingerprint import loaded_model_fingerprint
 
         if cancel_event is not None and cancel_event.is_set():
-            raise JacobianLensCancelled("Jacobian-lens fit cancelled before start")
+            raise JacobianLensCancelled("lens fit cancelled before start")
         model = getattr(self._model, "_orig_mod", self._model)
-        fit_layers = list(get_layers(model))
+        # Refuse an undescribable block before any work, and hold every block
+        # to its description once (the maps are written from it).
+        spec = verify_model_spec(model)
+        layers = resolve_fit_layers(
+            request.layers, kind=request.kind, n_layers=spec.n_layers, sites=request.sites,
+        )
         corpus = tokenize_lens_corpus(self._tokenizer, prompts, seq_len=request.seq_len)
         if corpus.n_usable < corpus.raw_count and on_progress is not None:
             on_progress(
@@ -490,21 +616,22 @@ class LensFitter:
             )
         if not corpus.n_usable:
             raise JacobianLensError(
-                "no usable prompts: the Jacobian estimator needs prompts "
+                "no usable prompts: the lens estimator needs prompts "
                 f"longer than {SKIP_FIRST_POSITIONS + 1} tokens"
             )
         identity = LensFitIdentity(
             kind=request.kind,
             corpus=corpus,
-            sources=tuple(resolve_fit_sources(
-                request.source_layers, n_layers=len(fit_layers),
-            )),
+            layers=layers,
             seq_len=request.seq_len,
             model_fingerprint=loaded_model_fingerprint(model, self._model_id),
             policy=lens_estimator_policy(request.kind),
         )
+        residency = (
+            self._residency if LensKey(request.kind).side == "output" else _NoResidency()
+        )
         run = _FitRun(
-            self, model, fit_layers, identity, request,
+            self, model, spec, identity, request, residency,
             on_progress=on_progress, cancel_event=cancel_event,
         )
         name = identity.name
@@ -517,6 +644,14 @@ class LensFitter:
         )
 
 
+def _merge_split_half(*parts: Mapping[str, Mapping[int, float]]) -> dict[str, dict[int, float]]:
+    out: dict[str, dict[int, float]] = {}
+    for part in parts:
+        for site, values in part.items():
+            out.setdefault(site, {}).update(values)
+    return out
+
+
 class _FitRun:
     """One fit call's executor state (the early-eviction live snapshot)."""
 
@@ -524,18 +659,19 @@ class _FitRun:
         self,
         fitter: LensFitter,
         model: Any,
-        fit_layers: list[Any],
+        spec: Any,
         identity: LensFitIdentity,
         request: LensFitRequest,
+        residency: LensResidency,
         *,
         on_progress: Callable[[str], None] | None,
         cancel_event: Any | None,
     ) -> None:
         self.model_id = fitter._model_id
         self.tokenizer = fitter._tokenizer
-        self.residency = fitter._residency
+        self.residency = residency
         self.model = model
-        self.fit_layers = fit_layers
+        self.spec = spec
         self.identity = identity
         self.request = request
         self.on_progress = on_progress
@@ -563,10 +699,25 @@ class _FitRun:
             raw_corpus_sha256=corpus.raw_sha256,
             raw_prompt_count=corpus.raw_count,
             usable_prompt_count=corpus.n_usable,
-            model_layer_count=len(self.fit_layers),
+            model_layer_count=int(self.spec.n_layers),
             model_fingerprint=self.identity.model_fingerprint,
             model_source_fingerprint=loaded_source_fingerprint(self.model),
         )
+
+    def adopt(
+        self,
+        lens: JacobianLens,
+        sidecar: Mapping[str, Any] | None,
+        *,
+        live: LiveConfig | None = None,
+        restore_live: bool = False,
+    ) -> JacobianLens:
+        """Make ``lens`` resident; a lens without the ``out`` site, which
+        the resident readout reads, leaves nothing resident instead."""
+        if "out" not in lens.sites:
+            self.residency.evict()
+            return lens
+        return self.residency.adopt(lens, sidecar, live=live, restore_live=restore_live)
 
     def resident_view(self) -> ResidentLens | None:
         lens = self.residency.resident_lens
@@ -574,7 +725,7 @@ class _FitRun:
             return None
         return ResidentLens(
             n_prompts=lens.n_prompts,
-            layers=frozenset(int(layer) for layer in lens.source_layers),
+            layers={site: frozenset(lens.layers(site)) for site in lens.sites},
             identity=self.residency.resident_identity,
         )
 
@@ -590,44 +741,47 @@ class _FitRun:
     def estimate(
         self,
         prompts: Sequence[str],
-        sources: Sequence[int],
+        layers: SiteLayers,
         *,
         start: int,
-        initial: JacobianLens | None,
-        save_accumulator: Callable[[Mapping[int, torch.Tensor], int, int], None],
-    ) -> JacobianLens:
-        from drowse.lens.fit import fit_jacobian_lens
+        initial: "LensSums | None",
+        proof_out: list[Any] | None = None,
+    ) -> "LensFit":
+        from drowse.lens.fit import fit_lens
 
         request = self.request
-        return fit_jacobian_lens(
-            self.model, self.tokenizer, list(prompts), self.fit_layers,
+        return fit_lens(
+            self.model, self.tokenizer, list(prompts),
             kind=request.kind,
-            source_layers=list(sources),
+            layers={site: list(wanted) for site, wanted in layers.items()},
             dim_batch=request.dim_batch,
-            prompt_batch=request.prompt_batch,
             max_seq_len=request.seq_len,
-            checkpoint_accumulator_cb=save_accumulator,
+            split_half=request.split_half,
+            on_checkpoint=self.checkpoint_writer(proof_out),
             checkpoint_every=request.checkpoint_every,
             on_progress=self.on_progress,
             progress_base=start,
             input_id_rows=self.identity.corpus.id_rows(start),
             cancel_event=self.cancel_event,
-            initial_lens=initial,
+            initial=initial,
+            spec=self.spec,
         )
 
     def checkpoint_writer(
         self, proof_out: list[Any] | None = None,
-    ) -> Callable[[Mapping[int, torch.Tensor], int, int], None]:
+    ) -> "Callable[[LensSums], None]":
         from drowse.lens.store import save_lens_checkpoint
 
-        def save(sums: Mapping[int, torch.Tensor], completed: int, d_model: int) -> None:
+        def save(sums: "LensSums") -> None:
             # The estimator owns the sums; any resume prefix is already
             # folded in.
             out: list[Any] | None = None if proof_out is None else []
             save_lens_checkpoint(
-                {"out": sums}, completed, d_model, self.model_id, self.provenance(),
+                sums.total, sums.n_prompts, sums.d_model, self.model_id, self.provenance(),
                 kind=self.request.kind,
-                consumed_prefix_sha256=self.identity.corpus.prefix_sha256(completed),
+                consumed_prefix_sha256=self.identity.corpus.prefix_sha256(sums.n_prompts),
+                odd_sums=sums.odd,
+                split_half=sums.split_half(),
                 _proof_out=out,
             )
             if proof_out is not None:
@@ -636,6 +790,19 @@ class _FitRun:
                 proof_out[:] = out or [None]
 
         return save
+
+    def resume_base(
+        self, lens: JacobianLens, sidecar: Mapping[str, Any] | None,
+    ) -> "LensSums":
+        """The estimator's accumulator from an averaged base lens (taken over
+        in place) and, from a checkpoint, its odd-half means."""
+        from drowse.lens.fit import LensSums
+        from drowse.lens.store import load_lens_checkpoint_odd
+
+        odd = None
+        if sidecar is not None and self.request.split_half:
+            odd = load_lens_checkpoint_odd(self.model_id, self.identity.name, sidecar)
+        return LensSums.from_means(lens, odd)
 
     def obtain_durable(
         self, use: DurableUse, sidecar: Mapping[str, Any],
@@ -646,14 +813,11 @@ class _FitRun:
         if use == "resident":
             lens = self.residency.resident_lens
             return None if lens is None else (lens, sidecar, None)
-        loaded = _load_lens_verified(
+        return _load_lens_verified(
             self.model_id,
             name=self.identity.name,
-            requested_layers=(
-                {"out": set(self.identity.sources)} if use == "selective" else None
-            ),
+            requested_layers=dict(self.identity.layers) if use == "selective" else None,
         )
-        return loaded
 
     # -- execution -----------------------------------------------------------
 
@@ -684,20 +848,21 @@ class _FitRun:
                 assert existing is not None
                 return self.topup(plan, *existing)
             base: JacobianLens | None = None
+            base_sidecar: Mapping[str, Any] | None = None
             if existing is not None:
-                base = existing[0].select_layers({"out": self.identity.sources})
+                base = existing[0].select_layers(self.identity.layers)
             elif plan.checkpoint:
                 self.evict_early()
                 loaded = load_lens_checkpoint(self.model_id, self.identity.name)
                 if loaded is None:
                     checkpoint = None
                     continue
-                base = loaded[0]
+                base, base_sidecar = loaded
                 self.note(f"resuming from checkpoint at {base.n_prompts} prompts")
             # Drop the source containers so an all-layer durable lens does
             # not keep unrequested matrices alive beside the selected base.
             existing = None
-            return self.resume(base)
+            return self.resume(base, base_sidecar)
 
     def noop(
         self, lens: JacobianLens, sidecar: Mapping[str, Any],
@@ -709,9 +874,9 @@ class _FitRun:
         # leaves a second full shard set; reap it only when the final
         # artifact proves it is not farther ahead or different.
         remove_subsumed_lens_checkpoint(self.model_id, name=self.identity.name)
-        selected = lens.select_layers({"out": self.identity.sources})
+        selected = lens.select_layers(self.identity.layers)
         if _holds_artifact(lens, sidecar):
-            self.residency.adopt(lens, sidecar)
+            self.adopt(lens, sidecar)
         else:
             # A selective no-op is a return view, not the complete artifact
             # its sidecar names: never stamp it with the durable identity.
@@ -732,44 +897,51 @@ class _FitRun:
             save_lens,
         )
 
-        del sidecar
-        missing = list(plan.missing)
+        missing = dict(plan.missing)
         self.note(
-            "reusing existing fitted layers; fitting missing "
-            f"J-lens layers {missing}"
+            f"reusing existing fitted layers; fitting missing {self.request.kind} "
+            f"layers {', '.join(f'{site} {list(layers)}' for site, layers in missing.items())}"
         )
-        partial: JacobianLens | None = None
+        kept = {site: lens_split_half(sidecar, site) for site in lens.sites}
+        partial = None
         if plan.checkpoint:
             loaded = load_lens_checkpoint(self.model_id, self.identity.name)
-            if loaded is not None and loaded[0].source_layers == missing:
-                partial = loaded[0]
+            if loaded is not None and {
+                site: tuple(loaded[0].layers(site)) for site in loaded[0].sites
+            } == {site: tuple(layers) for site, layers in missing.items()}:
+                partial = loaded
                 self.note(
-                    f"resuming missing-layer checkpoint at {partial.n_prompts} prompts"
+                    f"resuming missing-layer checkpoint at {loaded[0].n_prompts} prompts"
                 )
-        start = partial.n_prompts if partial is not None else 0
+        start = partial[0].n_prompts if partial is not None else 0
         prompts = self.identity.corpus.prompts[start:]
         if prompts:
             fitted = self.estimate(
-                prompts, missing, start=start, initial=partial,
-                save_accumulator=self.checkpoint_writer(),
+                prompts, missing, start=start,
+                initial=None if partial is None else self.resume_base(*partial),
             )
+            fitted_lens, fitted_split = fitted.lens, fitted.split_half
         else:
             assert partial is not None
-            fitted = partial
-        merged = JacobianLens.union_layers([lens, fitted])
+            fitted_lens = partial[0]
+            fitted_split = {
+                site: lens_split_half(partial[1], site) for site in fitted_lens.sites
+            }
+        merged = JacobianLens.union_layers([lens, fitted_lens])
         save_lens(
             merged, self.model_id, self.provenance(),
-            reuse_layers=set(lens.source_layers),
+            reuse_layers={layer for site in lens.sites for layer in lens.layers(site)},
+            split_half=_merge_split_half(kept, fitted_split),
             _verified_reuse_proof=proof,
         )
         remove_lens_checkpoint(self.model_id, self.identity.name)
-        selected = merged.select_layers({"out": self.identity.sources})
-        self.residency.adopt(
-            merged, load_local_lens_sidecar(self.model_id, self.identity.name),
-        )
+        selected = merged.select_layers(self.identity.layers)
+        self.adopt(merged, load_local_lens_sidecar(self.model_id, self.identity.name))
         return selected
 
-    def resume(self, base: JacobianLens | None) -> JacobianLens:
+    def resume(
+        self, base: JacobianLens | None, base_sidecar: Mapping[str, Any] | None,
+    ) -> JacobianLens:
         from drowse.lens.store import (
             load_local_lens,
             load_local_lens_sidecar,
@@ -784,23 +956,25 @@ class _FitRun:
         if base is not None:
             self.note(f"resuming from {start} prompts ({len(prompts)} remaining)")
 
-        def publish(lens: JacobianLens) -> JacobianLens:
-            save_lens(lens, self.model_id, self.provenance())
+        def publish(lens: JacobianLens, split_half: Mapping[str, Mapping[int, float]]) -> JacobianLens:
+            save_lens(lens, self.model_id, self.provenance(), split_half=split_half)
             remove_lens_checkpoint(self.model_id, name)
             return lens
 
         def restore(live: LiveConfig | None) -> None:
             restored = load_local_lens(self.model_id, name)
             if restored is not None:
-                self.residency.adopt(
-                    restored[0], restored[1], live=live, restore_live=True,
-                )
+                self.adopt(restored[0], restored[1], live=live, restore_live=True)
 
         if base is not None and not prompts:
             # The base already covers every usable document: publish it.
             try:
-                publish(base)
-                return self.residency.adopt(
+                kept = (
+                    {} if base_sidecar is None
+                    else {site: lens_split_half(base_sidecar, site) for site in base.sites}
+                )
+                publish(base, kept)
+                return self.adopt(
                     base, load_local_lens_sidecar(self.model_id, name),
                     live=self.evicted_live, restore_live=self.evicted_early,
                 )
@@ -820,10 +994,13 @@ class _FitRun:
             self.residency.evict()
         proof_out: list[Any] = []
         try:
-            merged = self.estimate(
-                prompts, self.identity.sources, start=start, initial=base,
-                save_accumulator=self.checkpoint_writer(proof_out),
+            initial = None if base is None else self.resume_base(base, base_sidecar)
+            base = None
+            fitted = self.estimate(
+                prompts, self.identity.layers, start=start, initial=initial,
+                proof_out=proof_out,
             )
+            merged = fitted.lens
             corpus = self.identity.corpus
             if proof_out and promote_lens_checkpoint(
                 self.model_id,
@@ -839,11 +1016,9 @@ class _FitRun:
             ):
                 sidecar = load_local_lens_sidecar(self.model_id, name)
             else:
-                merged = publish(merged)
+                merged = publish(merged, fitted.split_half)
                 sidecar = load_local_lens_sidecar(self.model_id, name)
-            return self.residency.adopt(
-                merged, sidecar, live=resume_live, restore_live=True,
-            )
+            return self.adopt(merged, sidecar, live=resume_live, restore_live=True)
         except BaseException:
             if had_resident:
                 restore(resume_live)
@@ -860,11 +1035,12 @@ __all__ = [
     "LensResidency",
     "LiveConfig",
     "ResidentLens",
+    "SiteLayers",
     "fit_covers_layers",
     "loaded_source_fingerprint",
     "plan_lens_fit",
     "prove_lens_fit_noop",
     "raw_corpus_sha256",
-    "resolve_fit_sources",
+    "resolve_fit_layers",
     "tokenize_lens_corpus",
 ]

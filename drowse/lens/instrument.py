@@ -657,28 +657,30 @@ class LensInstrument:
         self,
         prompts: Sequence[str],
         *,
-        kind: str = "J",
+        kind: str = "R",
+        sites: Sequence[str] = ("out", "mid"),
         corpus_spec: str = "custom",
-        source_layers: LayerSelector = None,
+        layers: LayerSelector = None,
         dim_batch: int | None = None,
-        prompt_batch: int | None = None,
         seq_len: int | None = None,
         force: bool = False,
         checkpoint_every: int | None = None,
+        split_half: bool = True,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: Any | None = None,
     ) -> Any:
-        """Fit (or resume) this model's ``kind`` lens and make it resident.
+        """Fit (or resume) this model's ``kind`` lens at ``sites``.
 
-        ``kind="J"`` is the standard J-lens at ``local:j``; ``kind="R"`` the
-        RelP R-lens at ``local:r`` (the same estimator through the
-        LRP-modified backward graph).  Resume is the default: a matching
-        durable artifact or checkpoint over a prefix of this corpus is
-        extended; ``force`` restarts from zero.  ``source_layers`` is
-        ``None``/``"all"`` (every layer below the final one),
-        ``"workspace"``, or an index list.  Runs the only backward passes in
-        drowse, under the fit lock and the model-exclusive guard.  Returns
-        the fitted lens restricted to the requested layers.
+        One transport estimator fits every kind: ``R`` (RelP, the default)
+        and ``J`` (standard) read what an activation makes the model say,
+        ``S`` (RelP) and ``K`` (standard) what put it there; each lands at
+        ``local:<kind>``.  ``sites`` is ``out``, ``mid`` or both (default).
+        Resume is the default: a matching durable artifact or checkpoint over
+        a prefix of this corpus is extended; ``force`` restarts from zero.
+        ``layers`` is ``None``/``"all"``, ``"workspace"`` or an index list,
+        resolved per site.  Runs under the fit lock and the model-exclusive
+        guard, unsteered; an output-kind fit becomes resident.  Returns the
+        fitted lens restricted to the requested sites and layers.
         """
         from drowse.lens.jlens import (
             DEFAULT_CHECKPOINT_EVERY,
@@ -690,19 +692,20 @@ class LensInstrument:
 
         request = LensFitRequest(
             kind=kind,
+            sites=tuple(sites),
             corpus_spec=corpus_spec,
-            source_layers=source_layers,
+            layers=layers,
             dim_batch=dim_batch or DEFAULT_DIM_BATCH,
-            prompt_batch=prompt_batch,
             seq_len=seq_len or DEFAULT_SEQ_LEN,
             force=force,
             checkpoint_every=checkpoint_every or DEFAULT_CHECKPOINT_EVERY,
+            split_half=split_half,
         )
         name = request.kind.lower()
         with lens_fit_lock(self.model_id, name):
             cleanup_lens_artifacts(self.model_id, name)
             if cancel_event is not None and cancel_event.is_set():
-                raise JacobianLensCancelled("Jacobian-lens fit cancelled before start")
+                raise JacobianLensCancelled("lens fit cancelled before start")
             with self._exclusive(
                 "session.lens.fit called while another model use is in flight",
                 phase_msg="session.lens.fit called while a generation is in flight",
@@ -717,9 +720,10 @@ class LensInstrument:
         self,
         prompt_count: int,
         *,
-        kind: str = "J",
+        kind: str = "R",
+        sites: Sequence[str] = ("out", "mid"),
         corpus_spec: str,
-        source_layers: LayerSelector = None,
+        layers: LayerSelector = None,
         seq_len: int | None = None,
     ) -> Mapping[str, Any] | None:
         """Prove :meth:`fit` over the first ``prompt_count`` documents of the
@@ -731,11 +735,12 @@ class LensInstrument:
         from drowse.lens.lifecycle import prove_lens_fit_noop
 
         request = LensFitRequest(
-            kind=kind, corpus_spec=corpus_spec, source_layers=source_layers,
+            kind=kind, sites=tuple(sites), corpus_spec=corpus_spec, layers=layers,
         )
         return prove_lens_fit_noop(
             self.model_id, request.kind.lower(),
-            requested=request.source_layers,
+            requested=request.layers,
+            sites=request.sites,
             seq_len=seq_len,
             source_fingerprint=self._fitter.source_fingerprint,
             corpus_spec=request.corpus_spec,
