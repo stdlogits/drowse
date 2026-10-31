@@ -31,23 +31,12 @@
     inline-size: 18px;
     block-size: 18px;
     flex: 0 0 18px;
-    font-family: var(--font-mono);
-    font-size: var(--text-marker);
-    font-variant-numeric: tabular-nums;
-    font-weight: var(--weight-medium);
-    line-height: 1;
+    font: 500 12px/1 var(--text);
     text-align: center;
   }
-  /* Optical, not layout, compensation: all four shapes keep the same
-     18px hit/alignment box while their visible ink reads equally large. */
-  .diamond {
-    font-size: var(--text-marker-diamond);
-  }
-  .square {
-    font-size: var(--text-marker-square);
-  }
+  /* Optical, not layout, compensation: the four shapes keep one 18 px box while their visible
+     ink reads equally large. */
   .triangle {
-    font-size: var(--text-marker-triangle);
     transform: translateY(-0.25px);
   }
 </style>

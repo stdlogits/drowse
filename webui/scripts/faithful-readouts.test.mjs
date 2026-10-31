@@ -194,6 +194,62 @@ try {
   readout.data.token_text = "word";
   assert.doesNotMatch(render(LensTab, { props }).body, /class="badge"[^>]*>generated/);
 
+  // A probe's trace is the latest generated reply's token rows (what the reply is tinted by), so it
+  // covers the whole reply and survives a reload; its layers follow the token asked for.
+  const { chatLog } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
+  const { replyTrace, replyLayers } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
+  chatLog.turns = [
+    { role: "assistant", text: "older", generated: true, tokens: [{ text: "a", probes: { calm: 9 } }] },
+    { role: "user", text: "hi", tokens: [{ text: "hi", probes: { calm: 7 } }] },
+    { role: "assistant", text: "abc", generated: true, tokens: [
+      { text: "a", probes: { calm: 0.5 }, perLayerScores: { 3: { calm: 0.2 }, 7: { calm: -0.4, other: 1 } } },
+      { text: "b", coordsByProbe: { calm: [-0.25, 1] } },
+      { text: "c", probes: { calm: NaN }, perLayerScores: { 3: { calm: 0.9 } } },
+    ] },
+  ];
+  assert.deepEqual(replyTrace("calm"), [0.5, -0.25, null], "the latest reply only, coordinates first, non-finite as gaps");
+  assert.deepEqual(replyTrace("calm[1]"), [null, 1, null], "an axis target reads that coordinate");
+  assert.equal(replyTrace("absent"), null, "a reply without the probe gives no trace");
+  assert.deepEqual(replyLayers("calm"), { 3: 0.9 }, "layers default to the last token");
+  assert.deepEqual(replyLayers("calm", 0), { 3: 0.2, 7: -0.4 });
+  assert.equal(replyLayers("calm", 1), null);
+
+  // A curved probe reads the share on its surface: its trace and layers come from each token's
+  // geometry reading, never from the rows' axis-0 views (which would draw a coordinate against the
+  // share's 0..1 scale). A token without that reading is a gap; an axis target still reads its axis.
+  const { readsShare } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
+  const geometry = (fraction, perLayer) => ({ version: 1, scope: "token", provenance: "captured", instruments: {
+    geometry: { readings: { "default/months": { fraction, fraction_per_layer: perLayer, coords: [2.64, -1], nearest: [], residual: 0, coords_per_layer: {}, residual_per_layer: {} } } },
+  } });
+  chatLog.turns = [
+    { role: "assistant", text: "abc", generated: true, tokens: [
+      { text: "a", probes: { "default/months": 2.64 }, coordsByProbe: { "default/months": [2.64, -1] },
+        perLayerScores: { 3: { "default/months": 2.1 } }, measurements: geometry(0.39, { 3: 0.2, 7: 0.41 }) },
+      { text: "b", probes: { "default/months": 1.5 } },
+      { text: "c", probes: { "default/months": 3 }, measurements: geometry(0.5, { 3: 0.25 }) },
+    ] },
+  ];
+  assert.deepEqual(replyTrace("default/months", { share: true }), [0.39, null, 0.5], "a curved probe's trace is its share, token by token");
+  assert.deepEqual(replyTrace("default/months"), [2.64, 1.5, 3], "without share the trace reads axis 0");
+  assert.deepEqual(replyTrace("default/months[1]", { share: true }), [-1, null, null], "an axis target reads that axis even on a curved probe");
+  assert.deepEqual(replyLayers("default/months", 0, { share: true }), { 3: 0.2, 7: 0.41 }, "a curved probe's layers are its share by layer");
+  assert.deepEqual(replyLayers("default/months", 0), { 3: 2.1 });
+  assert.equal(replyLayers("default/months", 1, { share: true }), null, "a token without a geometry reading keeps no share");
+  chatLog.turns = [{ role: "assistant", text: "b", generated: true, tokens: [{ text: "b", probes: { "default/months": 1.5 } }] }];
+  assert.equal(replyTrace("default/months", { share: true }), null, "with no per-token share the row falls back to its live buffer");
+  assert.equal(readsShare({ family: "geometry", is_affine: false }), true);
+  assert.equal(readsShare({ family: "geometry", is_affine: true }), false);
+  assert.equal(readsShare({ family: "lens" }), false);
+  chatLog.turns = [];
+
+  // A probe's title is its ID as its row writes it.
+  const { probeTitle } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
+  assert.deepEqual(probeTitle({ family: "sae", feature_id: 7 }, "sae/7", 20), { lead: false, text: "L20 f7" });
+  assert.deepEqual(probeTitle({ family: "sae", feature_id: 7 }, "sae/7"), { lead: false, text: "f7" }, "no resident layer, no L");
+  assert.deepEqual(probeTitle({ family: "lens", word: "sea" }, "jlens/sea"), { lead: false, text: "sea" });
+  assert.deepEqual(probeTitle({ family: "lens", word: " sea" }, "jlens/ sea"), { lead: true, text: "sea" }, "a word start is marked, not spelled");
+  assert.deepEqual(probeTitle({ family: "geometry" }, "default/confident.uncertain"), { lead: false, text: "confident.uncertain" });
+
   const { default: JLensProbeCard } = await server.ssrLoadModule("/src/panels/rack/JLensProbeCard.svelte");
   const { default: SaeProbeCard } = await server.ssrLoadModule("/src/panels/rack/SaeProbeCard.svelte");
   const card = { token: "word", probeName: "custom lens alias", strength: null,

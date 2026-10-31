@@ -4,34 +4,39 @@
   import { ToolError } from "../lib/webmcp/types";
   import { onMount as onInterfaceMount } from "svelte";
 
-  import { MorphText } from "@stdlogits/ledger";
-  import { Expander } from "@stdlogits/ledger";
-  // Per-probe inspector — subsumes the layer-norms view for probes and adds a
-  // rank-aware geometry plot in the whitened (Mahalanobis) frame:
+  import { Expander, MorphText } from "@stdlogits/ledger";
+  // A selected probe, in the Inspector (``openDrawer("probe_inspector", { name })``; the crumbs
+  // carry the close). Its name and facts; its reading token by token (a scrubbable trace) and layer
+  // by layer (a bar per layer in that layer's colour); for a geometry probe, where it sits (the
+  // subspace share, the nearest node, one signed meter per coordinate, poles on a concept axis),
+  // and its geometry in the whitened (Mahalanobis) frame:
   //
   //   rank 1   -> a line: poles + neutral + live point
   //   rank 2   -> a 2D scatter of node centroids (+ curve overlay if 1-D)
-  //   rank 3+  -> a drag-orbit 3D scatter on the top-3 subspace PCs
-  //              (+ curve / wireframe-surface overlay)
+  //   rank 3+  -> a drag-orbit 3D scatter on the top-3 subspace PCs (+ curve / surface overlay)
   //
-  // A layer scrubber drives which fitted layer is shown; geometry is fetched
-  // once (all layers) and reprojected client-side on scrub.  The live hidden-
-  // state point + a fading trajectory trail ride the probe's per-token
-  // ``subspace_coords_per_layer`` (gated on by ``persist_subspace_coords`` while
-  // this drawer is open), stored across all layers so scrubbing is a pure read.
-  //
-  // v2 sheet interior: the drawer host paints the sheet (glass hairline,
-  // radius, --bg-alt fill) so the root here is transparent.  The probe's
-  // FAMILY hue (flat = subspace white, curved = manifold violet — the same
-  // is_affine split the racks use) accents the header dot, the active layer
-  // row, the share bars, and the plot's node centroids via ``--geom-node``.
+  // The share-by-layer bars (or, on a touch screen, the layer stepper beside them) choose the plotted
+  // layer; geometry is fetched once (all layers) and reprojected client-side. The live point and its trail ride the probe's per-token
+  // ``subspace_coords_per_layer``, stored across all layers so changing layer is a pure read.
+  // Everything draws at the probe's depth on the ramp (--tint), which only fills.
 
-  import { probeRack } from "../lib/stores.svelte";
+  import {
+    detachProbe,
+    highlightState,
+    instrumentFamily,
+    probeRack,
+    setHighlightTarget,
+  } from "../lib/stores.svelte";
+  import { clearSelection } from "../lib/stores/selection.svelte";
+  import { pushToast } from "../lib/stores/toasts.svelte";
   import { apiProbes } from "../lib/runtime/services";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import Bar from "../lib/charts/Bar.svelte";
+  import Trace from "../lib/charts/Trace.svelte";
+  import TraceDetail from "../lib/charts/TraceDetail.svelte";
   import { chartValue } from "../lib/charts/chartValues";
+  import { depthTint, layerDepth, peakLayer, readingText } from "../lib/charts/depth";
   import {
     renderProbeGeometry,
     orbitDrag,
@@ -44,15 +49,34 @@
     scaleFromPinch,
     type GesturePoint,
   } from "../lib/pointerGesture";
-  import type { ProbeGeometryResponse, ProbeLayerGeometry } from "../lib/types";
+  import { nodeCoordExtent, parseProbeTarget } from "../lib/tokens";
+  import { polesOf } from "../lib/concepts";
+  import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
+  import { probeTitle } from "../panels/rack/probeRows";
+  import { readsShare, replyLayers, replyTrace } from "../panels/rack/probeTrace";
+  import type {
+    GeometryProbeInfo,
+    ProbeGeometryResponse,
+    ProbeLayerGeometry,
+    ProbeReadingJSON,
+    ScalarReadingJSON,
+  } from "../lib/types";
 
-  // Shown in the Inspector when a probe is selected (``openDrawer("probe_inspector", { name })``).
-  // Hosted only by the selection: the Inspector's crumbs carry the close.
   let { params: input }: { params?: unknown; onclose?: () => void } = $props();
   const params = $derived(input as { name?: string } | null);
   const probeName = $derived(params?.name ?? "");
-  const displayName = $derived(probeName.split("/").pop() ?? probeName);
   const entry = $derived(probeRack.entries.get(probeName) ?? null);
+  const info = $derived(entry?.info ?? null);
+  /** The resident SAE's hook layer (the layer a feature's ID carries, as its row writes it). */
+  const saeLayer = $derived.by((): number | null => {
+    const live = instrumentFamily("sae")?.live;
+    return live && "layer" in live ? live.layer : null;
+  });
+  /** The probe's ID as its row writes it: ``L20 f7``, a lens word, a geometry probe's name. */
+  const title = $derived(probeTitle(info, probeName, saeLayer));
+  const displayName = $derived(title.text);
+  const geometric = $derived(info?.family === "geometry");
+  const geo = $derived(geometric ? (info as GeometryProbeInfo) : null);
   const liveTrailAvailability = runtimeOperationAvailability(
     "probe_subspace_trails",
   );
@@ -69,16 +93,82 @@
   let plotTitle = $state("Hover a node to see its whitened coordinates");
   let loadEpoch = 0;
 
-  /** Family hue — the rack's flat/curved split (hue = which space). */
-  const familyHue = $derived(
-    geom?.is_affine === false
-      ? "var(--tint)"
-      : "var(--ink2)",
+  // ---------- the reading ----------
+  const latest = $derived((entry?.aggregate ?? entry?.reading ?? null) as ProbeReadingJSON | ScalarReadingJSON | null);
+  const geoReading = $derived(geometric ? (latest as ProbeReadingJSON | null) : null);
+  const scalarReading = $derived(geometric ? null : (latest as ScalarReadingJSON | null));
+  const sparkline = $derived(entry?.sparkline ?? []);
+  const affine = $derived(geo?.is_affine ?? false);
+  /** A curved probe reads the share on its surface: its trace, its layers and "reads" all follow it. */
+  const share = $derived(readsShare(info));
+  /** The latest reply token by token, else the live buffer (the same primary reading). */
+  const tokenTrace = $derived((probeName ? replyTrace(probeName, { share }) : null) ?? sparkline);
+  /** The token the By-token scrubber rests on (null: the latest). */
+  let pickedToken = $state<number | null>(null);
+  /** By layer: the picked token's per-layer reading from the reply, else the live latest. */
+  const perLayer = $derived.by((): Record<string, number> => {
+    const live = entry?.perLayer ?? {};
+    if (pickedToken === null && Object.keys(live).length > 0) return live;
+    return (probeName ? replyLayers(probeName, pickedToken, { share }) : null) ?? live;
+  });
+  const layerKeys = $derived(Object.keys(perLayer).map(Number).filter(Number.isFinite).sort((a, b) => a - b));
+  const deepest = $derived(Math.max(0, ...(geo?.layers ?? []), ...layerKeys));
+  const peak = $derived(peakLayer(perLayer));
+  const depthCom = $derived(geoReading?.depth_com?.[0] ?? scalarReading?.depth?.center?.[0] ?? null);
+  const depthSpread = $derived(geoReading?.depth_spread?.[0] ?? scalarReading?.depth?.spread?.[0] ?? null);
+  const isHighlight = $derived(
+    highlightState.target !== null && parseProbeTarget(highlightState.target).base === probeName,
   );
+  const percent = $derived(info?.family === "lens");
+  const value = $derived.by((): number | null => {
+    if (!entry) return null;
+    if (latest !== null || sparkline.length > 0) return entry.current;
+    return entry.savedAggregate ?? null;
+  });
+
+  // Geometry: the subspace share, the nearest node, one signed meter per coordinate.
+  const fraction = $derived(geoReading?.fraction ?? entry?.savedFraction ?? null);
+  const coordVec = $derived(
+    geoReading?.coords ?? entry?.savedCoordinates ?? (affine && entry?.savedAggregate != null ? [entry.savedAggregate] : []),
+  );
+  const nDim = $derived(geo ? (geo.intrinsic_dim > 0 ? geo.intrinsic_dim : coordVec.length) : 0);
+  const axes = $derived(
+    Array.from({ length: nDim }, (_, i) => ({ i, value: coordVec[i] ?? 0, scale: nodeCoordExtent(geo?.node_coords, i) })),
+  );
+  const poles = $derived(polesOf(geo?.manifold || probeName));
+  const showPoles = $derived(affine && nDim === 1 && (geo?.node_count ?? 0) <= 2);
+  const nearest = $derived(entry?.nearest?.[0] ?? null);
+  const residual = $derived((entry?.aggregate as ProbeReadingJSON | null)?.residual ?? null);
+  const showMiniMap = $derived.by(() => {
+    if (!geo || geo.intrinsic_dim !== 2) return false;
+    const d = geo.domain as { type?: string };
+    return d?.type === "box" && !!geo.node_coords && geo.node_coords.length > 0;
+  });
+  const layerScale = $derived(affine ? nodeCoordExtent(geo?.node_coords, 0) : percent ? Math.max(...Object.values(perLayer), 1e-12) : 1);
+
+  function toggleHighlight(): void {
+    setHighlightTarget(isHighlight ? null : probeName);
+  }
+
+  let removing = $state(false);
+  async function remove(): Promise<void> {
+    if (removing || !probeName) return;
+    removing = true;
+    const name = probeName;
+    try {
+      await detachProbe(name);
+      pushToast(`${geometric ? "detached" : "unpinned"} ${name}`, { kind: "info" });
+      clearSelection();
+    } catch (e) {
+      pushToast(userFacingError(e, `Unable to remove ${name}. Try again.`), { kind: "error", ttlMs: null });
+    } finally {
+      removing = false;
+    }
+  }
 
   // --- load geometry on probe change ---
   async function load(name: string, epoch: number): Promise<void> {
-    if (!name) {
+    if (!name || !geometric) {
       if (epoch === loadEpoch) {
         geom = null;
         loading = false;
@@ -124,7 +214,7 @@
     };
   });
 
-  // sorted layer list (ascending) for the share strip
+  // sorted layer list (ascending) for the share bars
   const layerList = $derived.by<ProbeLayerGeometry[]>(() =>
     geom ? Object.values(geom.layers).sort((a, b) => a.layer - b.layer) : [],
   );
@@ -133,9 +223,21 @@
       ? (geom.layers[String(selectedLayer)] ?? null)
       : null,
   );
+  const selectedIndex = $derived(layerList.findIndex((l) => l.layer === selectedLayer));
+  /** Step the plotted layer (the touch screen's way to choose one; a bar is a few pixels wide). */
+  function stepLayer(by: number): void {
+    const next = layerList[Math.max(0, Math.min(layerList.length - 1, selectedIndex + by))];
+    if (next) selectedLayer = next.layer;
+  }
   const maxShare = $derived(
     layerList.reduce((m, l) => Math.max(m, Math.abs(l.mahalanobis_share)), 0),
   );
+  const geomDeepest = $derived(Math.max(deepest, ...layerList.map((l) => l.layer)));
+  const bestShareLayer = $derived(
+    layerList.reduce<ProbeLayerGeometry | null>((best, l) => (best === null || Math.abs(l.mahalanobis_share) > Math.abs(best.mahalanobis_share) ? l : best), null)?.layer ?? null,
+  );
+  /** The probe's place on the ramp: its measured depth, else the layer its fit carries most. */
+  const tint = $derived(depthTint(depthCom ?? (bestShareLayer === null ? null : layerDepth(bestShareLayer, geomDeepest))));
 
   // --- live point + trail for the selected layer (reprojected client-side) ---
   const layerKey = $derived(selectedLayer !== null ? String(selectedLayer) : "");
@@ -305,9 +407,7 @@
     }
     if (dragPointerId === ev.pointerId) dragPointerId = null;
   }
-  // Scroll wheel = intentional zoom (the rotation-driven zoom artifact is
-  // gone; this is the only zoom path now).  Multiplicative so each notch is a
-  // constant ratio; clamped to a sane window.
+  // Scroll wheel = intentional zoom.  Multiplicative so each notch is a constant ratio; clamped.
   function onWheel(ev: WheelEvent): void {
     if (!canOrbit) return;
     ev.preventDefault();
@@ -335,14 +435,11 @@
   }
 
   const rankLabel = $derived.by(() => {
-    const r = activeGeom?.rank ?? 0;
-    if (r <= 1) return "line · rank 1";
-    if (r === 2) return "2D scatter · rank 2";
-    return `3D PCA scatter · rank ${r}`;
+    const r = activeGeom?.rank ?? geo?.intrinsic_dim ?? 0;
+    if (r <= 1) return "a line";
+    if (r === 2) return "a plane";
+    return `rank ${r}`;
   });
-  const intrinsicLabel = $derived(
-    activeGeom ? `intrinsic dim ${activeGeom.intrinsic_dim}` : "",
-  );
 
   onInterfaceMount(() => registerInterfaceController("probe_geometry", {
     schema: geometryViewSchema,
@@ -361,443 +458,214 @@
   }));
 </script>
 
-
-<aside class="drawer" style:--family={familyHue} aria-label="Probe inspector">
-  <header class="drawer-header">
-    <div class="title">
-      <h2 class="eyebrow">Reading details</h2>
-      <div class="name-row">
-        {#if probeName}
-          <span class="family-dot" aria-hidden="true"></span>
-          <code class="name" {...{ "aria-description": (probeName) }}>{displayName}</code>
-          {#if geom}
-            <span class="meta">{rankLabel} · {intrinsicLabel}</span>
-            {#if !geom.rank_uniform}
-              <span class="warn" {...{ "aria-description": "rank varies by layer" }}>
-                rank varies by layer
-              </span>
-            {/if}
-          {/if}
-        {:else}
-          <span class="meta">No reading selected</span>
-        {/if}
+<div class="probe" style:--tint={tint ?? undefined} aria-label="Probe inspector">
+  {#if !probeName || !entry}
+    <p class="meta">This probe is no longer attached.</p>
+  {:else}
+    <div class="dw-sec">
+      <h2 class="dw-title" data-tip={probeName}>{#if title.lead}<span class="dw-ws">·</span>{/if}{displayName}</h2>
+      <div class="dw-facts">
+        {#if value !== null}<span>reads <b><MorphText text={readingText(value, { signed: affine, percent })} /></b></span>{/if}
+        {#if geo}<span>{affine ? "flat" : "curved"}, {rankLabel}</span>{/if}
+        {#if depthCom !== null}<span>depth <b>{depthCom.toFixed(2)}</b>{depthSpread === null ? "" : ` ± ${depthSpread.toFixed(2)}`}</span>{/if}
+        {#if !affine && residual !== null && Number.isFinite(residual)}<span>residual <b>{residual.toFixed(2)}</b></span>{/if}
+        {#if geom && !geom.rank_uniform}<span>rank varies by layer</span>{/if}
+      </div>
+      <div class="dw-row">
+        <button type="button" class="dw-quiet" aria-pressed={isHighlight} onclick={toggleHighlight}>{isHighlight ? "Tinting the reply" : "Tint the reply"}</button>
+        <button type="button" class="dw-quiet" disabled={removing} onclick={() => void remove()}>{geometric ? "Detach" : "Unpin"}</button>
       </div>
     </div>
-  </header>
 
-  {#if !probeName}
-    <div class="body"><div class="empty">Select a saved reading to see how it is measured.</div></div>
-  {:else if loading}
-    <div class="body" aria-busy="true"><div class="empty loading-pulse loading-placeholder" role="status">Loading probe geometry…</div></div>
-  {:else if error}
-    <div class="body"><div class="empty err" role="alert">Probe geometry failed: {error}</div></div>
-  {:else if !geom || !activeGeom || layerList.length === 0}
-    <div class="body"><div class="empty">This probe has no fitted geometry.</div></div>
-  {:else}
-    <div class="body">
-      <div class="bars-col">
-        <div class="section-label">layers · ‖share‖</div>
-        <div class="bars">
-          {#each layerList as l (l.layer)}
-            <button
-              type="button"
-              class="row"
-              class:active={l.layer === selectedLayer}
-              aria-pressed={l.layer === selectedLayer}
-              {...{ "aria-description": (`L${l.layer} · share ${chartValue(l.mahalanobis_share)} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of largest layer`) }}
-              onclick={() => (selectedLayer = l.layer)}
-            >
-              <span class="lyr">L{l.layer}</span>
-              <Bar
-                value={l.mahalanobis_share}
-                max={maxShare || 1}
-                width={200}
-                height={8}
-                color="var(--family)"
-                title={`Share ${chartValue(l.mahalanobis_share)} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of largest layer`}
-              />
-              <span class="val">{l.mahalanobis_share.toFixed(3)}</span>
-            </button>
-          {/each}
+    <section class="dw-sec">
+      <div class="dw-sec-head"><span class="head">By token</span></div>
+      {#if tokenTrace.length > 1}
+        <TraceDetail points={tokenTrace} percentage={percent} signed={affine} onpick={(i) => (pickedToken = i)} />
+      {:else}
+        <p class="meta">No reading yet.</p>
+      {/if}
+    </section>
+
+    {#if layerKeys.length > 1}
+      <section class="dw-sec">
+        <div class="dw-sec-head"><span class="head">By layer</span><span class="meta">{pickedToken === null ? "" : `token ${pickedToken + 1} · `}{peak === null ? "" : `peaks at L${peak}`}</span></div>
+        <div class="depth">
+          <Trace values={layerKeys.map((l) => perLayer[String(l)])} limit={0} height={56} scale={layerScale}
+            colors={layerKeys.map((l) => depthTint(layerDepth(l, deepest)))} cursor={peak === null ? null : layerKeys.indexOf(peak)}
+            label={`${displayName} by layer`} />
+          <div class="ends"><span>L{layerKeys[0]}</span><span>L{layerKeys[layerKeys.length - 1]}</span></div>
         </div>
-      </div>
+      </section>
+    {/if}
 
-      <div class="plot-col">
-        <div class="plot-wrap" class:orbit={canOrbit}>
-          <canvas
-            bind:this={canvasEl}
-            class="plot"
-            {...{ "aria-description": (plotTitle) }}
-            aria-label={`Whitened geometry for ${displayName}, layer ${selectedLayer}`}
-            aria-describedby="probe-geometry-summary"
-            data-orbit-zoom={orbit.zoom.toFixed(2)}
-            onpointerdown={onPointerDown}
-            onpointermove={onPointerMove}
-            onpointerup={onPointerUp}
-            onpointercancel={onPointerUp}
-            onlostpointercapture={onPointerUp}
-            onwheel={onWheel}
-          >Whitened geometry for {displayName}, layer {selectedLayer}.</canvas>
-          <span class="layer-chip"><MorphText text={`L${selectedLayer} · share ${activeGeom.mahalanobis_share.toFixed(3)}`} /></span>
-          {#if canOrbit}
-            <span class="orbit-hint">drag · scroll or pinch</span>
-            <div class="plot-controls" aria-label="Geometry view controls">
-              <button type="button" aria-label="Rotate geometry left" onclick={() => rotateBy(-18, 0)}>left</button>
-              <button type="button" aria-label="Rotate geometry right" onclick={() => rotateBy(18, 0)}>right</button>
-              <button type="button" aria-label="Rotate geometry up" onclick={() => rotateBy(0, -18)}>up</button>
-              <button type="button" aria-label="Rotate geometry down" onclick={() => rotateBy(0, 18)}>down</button>
-              <button type="button" aria-label="Zoom geometry out" onclick={() => zoomBy(0.8)}>−</button>
-              <button type="button" aria-label="Zoom geometry in" onclick={() => zoomBy(1.25)}>+</button>
-              <button type="button" onclick={resetView}>reset</button>
+    {#if geo}
+      <section class="dw-sec">
+        <div class="dw-sec-head"><span class="head">Where it sits</span>{#if nearest}<span class="meta">nearest {nearest[0]}{#if Number.isFinite(nearest[1])}, {nearest[1].toFixed(2)} away{/if}</span>{/if}</div>
+        <div class="coords">
+          {#if fraction !== null}
+            <div class="coord" data-tip="The share of the centred activation in this subspace (0 to 1, not a confidence)">
+              <span class="cl">in subspace</span><Bar value={fraction} max={1} width={200} height={4} percentage /><span class="cv">{fraction.toFixed(2)}</span>
             </div>
           {/if}
-          {#if trailPoints.length > 0}
-            <span class="trail-hint"><MorphText text={`${trailPoints.length} trail pts`} /></span>
-          {:else if !liveTrailAvailability.available}
-            <span class="live-hint" {...{ "aria-description": (liveTrailAvailability.reason ?? undefined) }}>
-              live trail unavailable here
-            </span>
-          {:else}
-            <span class="live-hint">run for live trail</span>
-          {/if}
+          {#each axes as ax (ax.i)}
+            <div class="coord">
+              <span class="cl">{showPoles ? (poles.negative ?? "") : `axis ${ax.i}`}</span>
+              <Bar value={ax.value} max={ax.scale} width={200} height={4} bipolar />
+              <span class="cv">{readingText(ax.value, { signed: true })}</span>
+              {#if showPoles}<span class="pole">{poles.positive}</span>{/if}
+            </div>
+          {/each}
         </div>
-        <p class="coordinate-summary" id="probe-geometry-summary">
-          Neutral [{formatPoint(activeGeom.neutral_white)}]; live point [<MorphText text={formatPoint(livePoint)} identity={selectedLayer} />];
-          {activeGeom.node_white.length} node {activeGeom.node_white.length === 1 ? "centroid" : "centroids"}.
-        </p>
-        <div class="geometry-summary"><Expander label="Geometry coordinates">
-          <p>
-            Layer {selectedLayer}; rank {activeGeom.rank}; neutral [{formatPoint(activeGeom.neutral_white)}];
-            live point [<MorphText text={formatPoint(livePoint)} identity={selectedLayer} />]. Coordinates show the first three whitened dimensions.
-          </p>
-          <ul>
-            {#each activeGeom.node_white as point, index (index)}
-              <li>{geom.node_labels[index] ?? `node ${index + 1}`}: [{formatPoint(point)}]</li>
-            {/each}
-          </ul>
-        </Expander></div>
-        {#if !liveTrailAvailability.available}
-          <p class="capability-note" role="note">
-            {liveTrailAvailability.reason}. The fitted geometry remains available.
-          </p>
+        {#if showMiniMap}
+          <div class="map"><ManifoldMiniMap info={geo} trajectory={entry.trajectory ?? []} settled={(entry.aggregate as ProbeReadingJSON | null)?.coords ?? null} /></div>
         {/if}
-      </div>
-    </div>
-  {/if}
+      </section>
 
-</aside>
+      <section class="dw-sec">
+        <div class="dw-sec-head"><span class="head">Geometry</span>{#if activeGeom}<span class="meta"><MorphText text={`L${selectedLayer} · share ${activeGeom.mahalanobis_share.toFixed(3)}`} /></span>{/if}</div>
+        {#if loading}
+          <div class="well" aria-busy="true" role="status"><span class="sr-only">Loading probe geometry…</span></div>
+        {:else if error}
+          <p class="meta" role="alert">Probe geometry failed: {error}</p>
+        {:else if !geom || !activeGeom || layerList.length === 0}
+          <p class="meta">This probe has no fitted geometry.</p>
+        {:else}
+          <div class="shares" role="group" aria-label="Share by layer: choose the layer to plot">
+            {#each layerList as l (l.layer)}
+              <button
+                type="button"
+                class="share"
+                aria-pressed={l.layer === selectedLayer}
+                style:--tint={depthTint(layerDepth(l.layer, geomDeepest))}
+                data-tip={`L${l.layer} · share ${chartValue(l.mahalanobis_share)} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of the largest`}
+                aria-label={`Layer ${l.layer}, share ${l.mahalanobis_share.toFixed(3)}`}
+                onclick={() => (selectedLayer = l.layer)}
+              ><i style:height={`${Math.max(6, maxShare > 0 ? (Math.abs(l.mahalanobis_share) / maxShare) * 100 : 0)}%`}></i></button>
+            {/each}
+          </div>
+          <div class="ends"><span>L{layerList[0].layer}</span><span>L{layerList[layerList.length - 1].layer}</span></div>
+          <div class="step" role="group" aria-label="Plotted layer">
+            <button type="button" class="dw-text" disabled={selectedIndex <= 0} onclick={() => stepLayer(-1)} aria-label="Plot the layer before">earlier</button>
+            <span class="meta"><MorphText text={`L${selectedLayer}`} /></span>
+            <button type="button" class="dw-text" disabled={selectedIndex >= layerList.length - 1} onclick={() => stepLayer(1)} aria-label="Plot the layer after">later</button>
+          </div>
+
+          <div class="well" class:orbit={canOrbit}>
+            <canvas
+              bind:this={canvasEl}
+              class="plot"
+              {...{ "aria-description": (plotTitle) }}
+              aria-label={`Whitened geometry for ${displayName}, layer ${selectedLayer}`}
+              aria-describedby="probe-geometry-summary"
+              data-orbit-zoom={orbit.zoom.toFixed(2)}
+              onpointerdown={onPointerDown}
+              onpointermove={onPointerMove}
+              onpointerup={onPointerUp}
+              onpointercancel={onPointerUp}
+              onlostpointercapture={onPointerUp}
+              onwheel={onWheel}
+            >Whitened geometry for {displayName}, layer {selectedLayer}.</canvas>
+          </div>
+          <div class="plot-foot">
+            {#if trailPoints.length > 0}
+              <span class="meta"><MorphText text={`${trailPoints.length} trail points`} /></span>
+            {:else if !liveTrailAvailability.available}
+              <span class="meta" {...{ "aria-description": (liveTrailAvailability.reason ?? undefined) }}>live trail unavailable here</span>
+            {/if}
+            {#if canOrbit}
+              <span class="meta">drag · scroll or pinch</span>
+              <span class="plot-controls" role="group" aria-label="Geometry view controls">
+                <button type="button" class="dw-text" aria-label="Rotate geometry left" onclick={() => rotateBy(-18, 0)}>left</button>
+                <button type="button" class="dw-text" aria-label="Rotate geometry right" onclick={() => rotateBy(18, 0)}>right</button>
+                <button type="button" class="dw-text" aria-label="Rotate geometry up" onclick={() => rotateBy(0, -18)}>up</button>
+                <button type="button" class="dw-text" aria-label="Rotate geometry down" onclick={() => rotateBy(0, 18)}>down</button>
+                <button type="button" class="dw-text" aria-label="Zoom geometry out" onclick={() => zoomBy(0.8)}>−</button>
+                <button type="button" class="dw-text" aria-label="Zoom geometry in" onclick={() => zoomBy(1.25)}>+</button>
+                <button type="button" class="dw-text" onclick={resetView}>reset</button>
+              </span>
+            {/if}
+          </div>
+          <p class="sr-only" id="probe-geometry-summary">
+            Neutral [{formatPoint(activeGeom.neutral_white)}]; live point [{formatPoint(livePoint)}];
+            {activeGeom.node_white.length} node {activeGeom.node_white.length === 1 ? "centroid" : "centroids"}.
+          </p>
+          <Expander label="Coordinates">
+            <ul class="points">
+              <li><span>neutral</span><span>{formatPoint(activeGeom.neutral_white)}</span></li>
+              <li><span>live</span><span><MorphText text={formatPoint(livePoint)} identity={selectedLayer} /></span></li>
+              {#each activeGeom.node_white as point, index (index)}
+                <li><span>{geom.node_labels[index] ?? `node ${index + 1}`}</span><span>{formatPoint(point)}</span></li>
+              {/each}
+            </ul>
+          </Expander>
+          {#if !liveTrailAvailability.available}
+            <p class="meta" role="note">{liveTrailAvailability.reason}. The fitted geometry remains available.</p>
+          {/if}
+        {/if}
+      </section>
+    {/if}
+  {/if}
+</div>
 
 <style>
-  /* v2 sheet interior — the host paints the sheet surface, so the root
-   * stays transparent and chrome speaks sans (data stays mono). */
-  .drawer {
-    container: probe-inspector / inline-size;
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
-  }
-  .drawer-header {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .eyebrow {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-  }
-  .name-row {
-    display: flex;
-    align-items: baseline;
-    gap: var(--space-3);
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-  .family-dot {
-    align-self: center;
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    background: var(--family);
-    flex: none;
-  }
-  .name {
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .meta {
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    white-space: nowrap;
-  }
-  .warn {
-    color: var(--accent-yellow);
-    font-size: var(--text-xs);
+  .probe { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; }
+
+  /* A reading over depth: one flat bar per layer in its own depth colour. */
+  .depth { display: grid; gap: var(--s1); }
+  .ends { display: flex; justify-content: space-between; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+
+  /* Signed meters, one per coordinate: a label, the meter, the value (and a concept's positive pole). */
+  .coords { display: grid; gap: var(--s2); }
+  .coord { display: grid; grid-template-columns: 88px minmax(0, 1fr) 48px; gap: var(--s3); align-items: center; min-height: 28px; }
+  .coord:has(.pole) { grid-template-columns: 88px minmax(0, 1fr) 48px 88px; }
+  .coord :global(.bar) { width: 100%; }
+  .cl { overflow: hidden; color: var(--ink2); font: var(--type-small); text-align: right; white-space: nowrap; text-overflow: ellipsis; }
+  .cv { color: var(--ink); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
+  .pole { overflow: hidden; color: var(--ink); font: var(--type-small); white-space: nowrap; text-overflow: ellipsis; }
+  .map { display: flex; justify-content: center; padding: var(--s4); border-radius: var(--r-box); background: var(--wash); }
+
+  /* The share by layer: each bar a button that plots its layer. */
+  .shares { display: flex; align-items: flex-end; gap: 2px; height: 56px; }
+  .share { position: relative; display: flex; align-items: flex-end; flex: 1 1 0; min-width: 2px; height: 100%; padding: 0; border: 0; border-radius: 2px; background: transparent; cursor: pointer; }
+  .share i { display: block; width: 100%; border-radius: 2px; background: var(--tint); opacity: 0.4; transition: opacity var(--fast) var(--ease), height var(--glide) var(--ease); }
+  .share:hover i { opacity: 0.7; }
+  .share[aria-pressed="true"] i { opacity: 1; }
+  /* On a touch screen a bar is a few pixels wide, so a stepper chooses the layer instead. */
+  .step { display: none; align-items: center; justify-content: space-between; gap: var(--s3); }
+  .step .dw-text { min-height: 44px; padding: 0 var(--s2); }
+  @media (max-width: 720px), (pointer: coarse) {
+    .step { display: flex; }
   }
 
-  .body {
-    flex: 1 1 auto;
-    overflow: hidden;
-    min-height: 0;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: row;
-    gap: var(--space-6);
-  }
-  .bars-col {
-    flex: 0 0 15rem;
-    min-height: 0;
-    overflow-y: auto;
-    scrollbar-gutter: stable;
-  }
-  .plot-col {
-    flex: 1 1 auto;
-    min-width: 0;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    overflow-y: auto;
-  }
-  .geometry-summary {
-    margin-top: var(--space-3);
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .capability-note {
-    margin: var(--space-3) 0 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-  }
-  .coordinate-summary {
-    margin: var(--space-3) 0 0;
-    color: var(--fg-muted);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-  }
-  .geometry-summary p,
-  .geometry-summary ul {
-    margin: var(--space-2) 0 0;
-  }
-  .geometry-summary ul {
-    max-height: 9rem;
-    overflow: auto;
-    padding-inline-start: var(--space-5);
-    font-family: var(--font-mono);
-  }
-  .empty {
-    color: var(--fg-muted);
-    padding: var(--space-6) 0;
-  }
-  .empty.err {
-    color: var(--accent-red);
-  }
-
-  /* The plot well stays quiet so its geometry carries the information. */
-  .plot-wrap {
+  /* The plot: a square wash the geometry draws on. */
+  .well {
     position: relative;
-    flex: 0 0 auto;
     width: 100%;
     aspect-ratio: 1;
-    border-radius: var(--radius-lg);
-    background: var(--bg-deep);
-    box-shadow: var(--shadow-rack);
+    border-radius: var(--r-box);
+    background: var(--wash);
     overflow: hidden;
-    /* Palette hooks read by the canvas renderer (hue ontology). */
-    --geom-node: var(--family);
-    --geom-neutral: var(--fg-subtle);
+    /* Read by the canvas renderer: nodes at the probe's depth, neutral in faint ink. */
+    --geom-node: var(--tint);
+    --geom-neutral: var(--ink3);
   }
-  .plot-wrap.orbit .plot {
-    cursor: grab;
-    touch-action: none;
-  }
-  .plot-wrap.orbit .plot:active {
-    cursor: grabbing;
-  }
-  .plot {
-    position: absolute;
-    inset: 0;
-    display: block;
-    width: 100%;
-    height: 100%;
-  }
-  .layer-chip {
-    position: absolute;
-    top: var(--space-3);
-    left: var(--space-4);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-    background: var(--glass);
-    border: 1px solid transparent;
-    border-radius: var(--radius-pill);
-    padding: var(--space-xs) var(--space-4);
-    pointer-events: none;
-  }
-  .orbit-hint,
-  .live-hint,
-  .trail-hint {
-    position: absolute;
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-    pointer-events: none;
-  }
-  .orbit-hint {
-    top: var(--space-3);
-    inset-inline-end: var(--space-4);
-  }
-  .live-hint {
-    bottom: var(--space-3);
-    left: 0;
-    right: 0;
-    text-align: center;
-    font-style: italic;
-  }
-  .trail-hint {
-    bottom: var(--space-3);
-    left: var(--space-4);
-    color: var(--ink);
-    font-family: var(--font-mono);
-    font-variant-numeric: tabular-nums;
-  }
-  .plot-controls {
-    position: absolute;
-    inset-inline-end: var(--space-3);
-    bottom: var(--space-3);
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: flex-end;
-    gap: var(--space-1);
-    max-width: 20rem;
-  }
-  .plot-controls button {
-    min-width: var(--control-target);
-    min-height: var(--control-target);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius);
-    background: var(--glass-strong);
-    color: var(--fg);
-    cursor: pointer;
-    font: inherit;
-    padding: var(--space-1) var(--space-3);
-  }
-  .plot-controls button:active {
-    transform: scale(var(--press-scale));
-  }
+  /* On the phone's sheet (itself a wash) the plot and the map step up to wash2. */
+  :global(.sheet) .well, :global(.sheet) .map { background: var(--wash2); }
+  .well.orbit .plot { cursor: grab; touch-action: none; }
+  .well.orbit .plot:active { cursor: grabbing; }
+  .plot { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+  .plot-foot { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); }
+  .plot-controls { display: flex; flex-wrap: wrap; gap: var(--s3); margin-left: auto; }
+  .plot-controls button { font: var(--type-meta); }
 
-  .section-label {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin-bottom: var(--space-3);
-    padding-inline: var(--space-3);
-  }
-  .bars {
-    display: flex;
-    flex-direction: column;
-    gap: var(--data-mark-gap);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 3ch minmax(0, 1fr) 6ch;
-    align-items: center;
-    gap: var(--space-3);
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    cursor: pointer;
-    text-align: start;
-    color: inherit;
-    font: inherit;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out);
-  }
-  .row :global(.bar) {
-    width: 100%;
-    min-width: 0;
-    max-width: 100%;
-  }
-  .row:hover {
-    background: var(--bg-hover);
-  }
-  .row.active {
-    background: var(--glass-strong);
-    border-color: color-mix(in oklch, var(--family) 25%, var(--glass-line));
-  }
-  .row.active .lyr {
-    color: var(--ink);
-  }
-  .lyr {
-    color: var(--fg-muted);
-    text-align: end;
-    font-variant-numeric: tabular-nums;
-    flex: 0 0 auto;
-  }
-  .val {
-    color: var(--fg-dim);
-    text-align: end;
-    font-variant-numeric: tabular-nums;
-    flex: 0 0 auto;
-  }
+  .points { display: grid; gap: 2px; color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .points li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s3); }
+  .points li span:first-child { overflow: hidden; color: var(--ink); white-space: nowrap; text-overflow: ellipsis; }
 
-  @container probe-inspector (max-width: 44rem) {
-    .drawer-header {
-      gap: var(--space-3);
-    }
-    .name-row {
-      flex-wrap: wrap;
-      gap: var(--space-2) var(--space-3);
-    }
-    .body {
-      flex-direction: column;
-      gap: var(--space-4);
-      overflow-y: auto;
-    }
-    .bars-col {
-      flex: 0 0 auto;
-      max-height: 11rem;
-      padding-inline-end: 0;
-    }
-    .row {
-      min-height: var(--control-target);
-      gap: var(--space-2);
-    }
-    .plot-col {
-      flex: 0 0 auto;
-      overflow: visible;
-    }
-    .plot-controls {
-      inset-inline-start: var(--space-3);
-      max-width: none;
-    }
+  @media (max-width: 720px) {
+    .coord { grid-template-columns: 64px minmax(0, 1fr) 44px; }
+    .coord:has(.pole) { grid-template-columns: 64px minmax(0, 1fr) 44px 64px; }
+    .plot-controls { gap: 0; }
+    .plot-controls button { min-width: 44px; min-height: 44px; }
   }
-
 </style>

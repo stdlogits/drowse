@@ -1,9 +1,20 @@
 <script lang="ts">
+  // A reading token by token, large: the bars, the reading under a cursor, and a scrubber. Moving
+  // the scrubber pauses the trace where it is; Follow latest lets it run again. The reading is
+  // written as everywhere else a reading shows (``readingText``: two decimals, a true minus).
   import Slider from "../Slider.svelte";
   import { MorphText } from "@stdlogits/ledger";
-  import Sparkline from "./Sparkline.svelte";
-  import { chartValue } from "./chartValues";
-  let { points, percentage = false }: { points: (number | null)[]; percentage?: boolean } = $props();
+  import Trace from "./Trace.svelte";
+  import { readingText } from "./depth";
+  let { points, percentage = false, signed = false, height = 56, onpick }: {
+    points: (number | null)[];
+    percentage?: boolean;
+    /** A signed reading (a flat probe's coordinate) shows its plus sign. */
+    signed?: boolean;
+    height?: number;
+    /** The token the scrubber rests on, or null while it follows the latest. */
+    onpick?: (index: number | null) => void;
+  } = $props();
   let index = $state<number | null>(null);
   let paused = $state<(number | null)[] | null>(null);
   const displayPoints = $derived(paused ?? points);
@@ -12,25 +23,24 @@
 </script>
 
 {#if displayPoints.length > 1}
-  <details class="trace-detail">
-    <summary>Inspect trace</summary>
-    <div class="trace-plot">
-      <Sparkline points={displayPoints} width={280} height={72} cap={Infinity} {percentage} />
-      <span class="trace-cursor" style:left={`${selected / (displayPoints.length - 1) * 100}%`} aria-hidden="true"></span>
+  <div class="trace-detail">
+    <Trace values={displayPoints} limit={0} {height} cursor={paused ? selected : null}
+      label={`Reading by token, ${displayPoints.length} tokens`} />
+    <Slider value={selected} min={0} max={displayPoints.length - 1} step={1} ariaLabel="Trace sample" displayValue={`token ${selected + 1}`} oninput={v => { paused ??= points.slice(); index = v; onpick?.(v); }} />
+    <div class="readout">
+      <span><MorphText text={`token ${selected + 1} of ${displayPoints.length}`} /></span>
+      <b><MorphText text={readingText(value, { signed, percent: percentage })} /></b>
+      {#if paused}<button type="button" class="dw-text follow" onclick={() => { index = null; paused = null; onpick?.(null); }}>Follow latest</button>{/if}
     </div>
-    <div class="trace-readout"><span class="trace-mode">{paused ? "Paused trace" : "Live trace"}</span> <MorphText text={`Sample ${selected + 1} / ${displayPoints.length}`} /> · <MorphText text={value == null ? "Unavailable" : chartValue(value, percentage)} /></div>
-    <Slider value={selected} min={0} max={displayPoints.length - 1} step={1} ariaLabel="Trace sample" displayValue={`Sample ${selected + 1}`} oninput={v => { paused ??= points.slice(); index = v; }} />
-    <button type="button" onclick={() => { index = null; paused = null; }}>Follow latest</button>
-  </details>
+  </div>
 {/if}
 
 <style>
-  .trace-mode { display: block; color: var(--fg-muted); font-family: var(--font-ui); }
-  .trace-detail { min-width: 0; color: var(--fg-dim); font-size: var(--text-xs); }
-  summary { cursor: pointer; min-height: 44px; align-content: center; }
-  .trace-plot { position: relative; margin: var(--space-2) var(--space-xs); }
-  .trace-plot :global(svg) { width: 100%; height: 72px; }
-  .trace-cursor { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent); }
-  .trace-readout { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
-  button { min-height: 44px; border: 0; background: transparent; color: var(--accent); cursor: pointer; }
+  .trace-detail { display: grid; gap: var(--s2); min-width: 0; }
+  .readout { display: flex; align-items: baseline; gap: var(--s3); min-height: 20px; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+  .readout b { color: var(--ink); font-weight: 500; }
+  .follow { margin-left: auto; font: var(--type-meta); }
+  @media (max-width: 720px) {
+    .follow { min-height: 44px; }
+  }
 </style>

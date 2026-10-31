@@ -257,7 +257,7 @@
   .train-line,
   .train-progress {
     display: flex;
-    gap: var(--space-2);
+    gap: var(--s2);
   }
   .train-progress {
     flex-direction: column;
@@ -269,24 +269,21 @@
     align-items: center;
     justify-content: space-between;
   }
-  .work-status,
-  .train-count {
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-  }
   .work-status {
     overflow: hidden;
     margin: 0;
-    color: var(--fg-dim);
+    color: var(--ink2);
+    font: var(--type-small);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .train-count {
     flex: 0 0 auto;
-    color: var(--fg-muted);
+    color: var(--ink3);
+    font: var(--type-meta);
     font-variant-numeric: tabular-nums;
   }
-  .hint { margin: 0; color: var(--fg-muted); font-size: var(--text-sm); }
-  .train-warning { color: var(--accent-yellow); }
-  .load-error { color: var(--accent-red); }
+  .hint { margin: 0; color: var(--ink3); font: var(--type-small); }
+  .train-warning { color: var(--ink); }
+  .load-error { color: var(--ink); }
 </style>

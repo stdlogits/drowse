@@ -64,9 +64,8 @@ interface Palette {
   accent: string;
   purple: string;
   bg: string;
-  /** Node centroids — the probe's FAMILY hue (subspace white / manifold
-   *  violet), supplied by the host via ``--geom-node`` so the plot obeys
-   *  the hue ontology instead of hardcoding a color. */
+  /** Node centroids: the probe's depth colour, supplied by the host via
+   *  ``--geom-node`` so the plot draws on the ramp instead of a fixed colour. */
   node: string;
   /** Neutral anchor — hollow grey ring (achromatic: neutral is the
    *  absence of concept, so it carries no hue). */
@@ -84,23 +83,23 @@ function readPalette(el: HTMLElement): Palette {
     return got || fallback;
   };
   return {
-    fg: v("--fg-strong"),
-    fgDim: v("--fg-dim"),
-    muted: v("--fg-muted"),
-    border: v("--glass-line"),
-    accent: v("--accent"),
+    fg: v("--ink"),
+    fgDim: v("--ink2"),
+    muted: v("--ink3"),
+    border: v("--wash2"),
+    accent: v("--ink"),
     purple: v("--tint"),
-    bg: v("--bg-deep"),
+    bg: v("--wash"),
     node: v("--geom-node", v("--tint")),
-    neutral: v("--geom-neutral", v("--fg-subtle")),
+    neutral: v("--geom-neutral", v("--ink3")),
     live: v("--tint"),
-    light: v("--accent-light"),
+    light: v("--paper"),
   };
 }
 
-/** Canvas font strings match the data voice used by the surrounding UI. */
-const FONT_LABEL = '560 10px "Martian Mono", ui-monospace, monospace';
-const FONT_AXIS = '560 9px "Martian Mono", ui-monospace, monospace';
+/** Canvas font strings: Ledger's one family, at the meta weight. */
+const FONT_LABEL = '500 11px "Wix Madefor Text", system-ui, sans-serif';
+const FONT_AXIS = '500 10px "Wix Madefor Text", system-ui, sans-serif';
 
 const PAD = 28;
 

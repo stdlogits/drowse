@@ -28,10 +28,12 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) max-content;
     align-items: center;
-    gap: var(--space-2) var(--space-3);
-    padding-block: var(--space-2);
+    gap: var(--s1) var(--s3);
+    padding-block: var(--s1);
     min-width: 0;
-    min-height: var(--control-target);
+    color: var(--ink2);
+    font: var(--type-small);
+    font-variant-numeric: tabular-nums;
   }
   .label,
   .middle {
@@ -40,6 +42,7 @@
   }
   .middle { text-align: end; }
   .value {
+    color: var(--ink);
     text-align: end;
     overflow-wrap: normal;
     white-space: nowrap;
@@ -48,7 +51,6 @@
     min-width: 0;
     grid-column: 1 / -1;
     grid-row: 2;
-    padding-block: var(--space-1);
   }
   .label :global(*), .middle :global(*) {
     white-space: normal;
@@ -58,7 +60,7 @@
   }
   .bar :global(.bar) {
     width: 100%;
-    height: var(--data-bar-height);
+    height: 4px;
     display: block;
   }
 </style>

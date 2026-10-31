@@ -20,7 +20,49 @@ try {
   assert.equal(barTooltip(1, 0), "1 · scale unavailable");
   assert.equal(chartValue(0.000001, true), "<0.01%");
 
+  // The depth ramp and the trace mark's arithmetic.
+  const { depthTint, layerDepth, peakLayer, traceBars, readingText, bucketed } = await server.ssrLoadModule("/src/lib/charts/depth.ts");
+  assert.deepEqual(bucketed([1, -3, null, 2, NaN], 3), { values: [-3, 2, null], size: 2 }, "a folded bar keeps its largest magnitude, sign and all");
+  assert.deepEqual(bucketed([1, null], 4), { values: [1, null], size: 1 });
+  assert.equal(depthTint(0), "color-mix(in oklch, var(--deep) 100%, var(--late))");
+  assert.equal(depthTint(1), "color-mix(in oklch, var(--deep) 0%, var(--late))");
+  assert.equal(depthTint(0.25), "color-mix(in oklch, var(--deep) 75%, var(--late))");
+  assert.equal(depthTint(2), depthTint(1), "a depth past the last layer clamps");
+  assert.equal(depthTint(null), null, "no depth keeps the inherited tint");
+  assert.equal(depthTint(NaN), null);
+  assert.equal(layerDepth(6, 24), 0.25);
+  assert.equal(layerDepth(3, 0), null, "a single layer has no depth to place");
+  assert.equal(peakLayer({ 2: 0.1, 10: -0.9, 5: 0.4, x: 9 }), 10, "the peak is by magnitude, ignoring non-layer keys");
+  assert.equal(peakLayer({}), null);
+  const bars = traceBars([0.5, -1, null, 0, NaN], { scale: 1 });
+  assert.deepEqual(bars.map((b) => b.height), [50, 100, 0, 0, 0]);
+  assert.deepEqual(bars.map((b) => b.negative), [false, true, false, false, false]);
+  assert.deepEqual(bars.map((b) => b.missing), [false, false, true, false, true]);
+  assert.equal(traceBars([0.001, 1]).at(0).height, 8, "a nonzero reading keeps a sliver so it never reads as missing");
+  assert.equal(traceBars([1, 2, 4]).at(-1).height, 100, "without a scale the largest shown fills");
+  assert.equal(traceBars(Array.from({ length: 60 }, (_, i) => i), { limit: 32 }).length, 32, "only the most recent readings show");
+  assert.equal(traceBars([1, 2, 3], { limit: 0 }).length, 3, "limit 0 shows them all");
+  assert.equal(readingText(-0.5), "−0.50");
+  assert.equal(readingText(0.5, { signed: true }), "+0.50");
+  assert.equal(readingText(-0.001), "0.00", "a reading that rounds to zero drops its sign");
+  assert.equal(readingText(0.2345, { percent: true }), "23%");
+  assert.equal(readingText(0.0004, { percent: true }), "<0.1%");
+  assert.equal(readingText(null), "–");
+
   const { render } = await server.ssrLoadModule("svelte/server");
+  const { default: Trace } = await server.ssrLoadModule("/src/lib/charts/Trace.svelte");
+  const trace = render(Trace, { props: { values: [0.5, -0.25, null], scale: 0.5, label: "probe by token", colors: ["var(--deep)", null, null] } }).body;
+  assert.match(trace, /aria-label="probe by token"/);
+  assert.match(trace, /height: 100%; background: var\(--deep\)/, "a bar takes the colour it is given");
+  assert.match(trace, /class="[^"]*\bneg"[^>]*style="height: 50%;"/, "a negative bar keeps faint ink, not a depth colour");
+  assert.match(trace, /class="[^"]*\bmissing"/);
+  // The By-token readout writes a reading as the rows and the facts do: two decimals, a true minus.
+  const { default: TraceDetail } = await server.ssrLoadModule("/src/lib/charts/TraceDetail.svelte");
+  const detail = render(TraceDetail, { props: { points: [0.5, -6.808], signed: true } }).body;
+  assert.match(detail, /−6\.81/, "a true minus and two decimals");
+  assert.doesNotMatch(detail, /-6\.808/);
+  assert.match(detail, /aria-valuetext="token 2"/, "the scrubber names the token, as its readout does");
+  assert.match(render(TraceDetail, { props: { points: [0.1, 0.5], signed: true } }).body, /\+0\.50/);
   const { default: Bar } = await server.ssrLoadModule("/src/lib/charts/Bar.svelte");
   const negative = render(Bar, { props: { value: -0.5, max: 1, bipolar: true } }).body;
   assert.match(negative, /left: 25%; width: 25%/);
