@@ -60,7 +60,7 @@ from drowse.readout.types import (
     reading_axis0,
 )
 
-MEASUREMENTS_VERSION = 1
+MEASUREMENTS_VERSION = 2
 
 MeasurementScope = Literal["token", "aggregate", "replay"]
 MeasurementProvenance = Literal["captured", "replayed"]

@@ -598,7 +598,7 @@ def test_shared_loom_operation_transcript_matches_python_source_of_truth(
 
 MEASUREMENTS = (
     GOLDENS
-    / "measurement-envelope-v1.json"
+    / "measurement-envelope-v2.json"
 )
 
 def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:

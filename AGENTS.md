@@ -204,9 +204,9 @@ family.
 
 **Persisted formats are exact.** Readers accept only the current version and
 never migrate (a derived cache recomputes instead): `manifold.json` v10,
-`template.json` v2, `.drowse` v1, loom `tree_format` 2 with token sidecar 2,
-transcripts v2, lens format v7, neutral cache v5 (activations plus the unit
-statistics).
+`template.json` v2, `.drowse` v1, loom `tree_format` 2 with token sidecar 3
+(token rows carry measurement envelope v2), transcripts v2, lens format v7,
+neutral cache v5 (activations plus the unit statistics).
 `MANIFOLD_FIT_POLICY_VERSION` (`geometry/manifold.py`) stamps every fit, and
 bumping it makes every fitted tensor refuse to load. Every `SamplingConfig`
 field is persisted in recipes and required on read, so adding one breaks saved

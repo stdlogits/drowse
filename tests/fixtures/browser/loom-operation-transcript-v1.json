@@ -83,7 +83,7 @@
             "probes": {"local/calm.alert": 0.8},
             "per_layer_scores": {"9": {"local/calm.alert": 0.8}},
             "measurements": {
-              "version": 1,
+              "version": 2,
               "scope": "token",
               "provenance": "captured",
               "instruments": {},
@@ -140,7 +140,7 @@
       {"op": "reset", "rev": 9, "added": ["reset-root"], "removed": ["root-1", "user-1", "assistant-1"], "updated": [], "active_node_id": "reset-root"}
     ],
     "preservedMeasurementsBeforeReset": {
-      "version": 1,
+      "version": 2,
       "scope": "token",
       "provenance": "captured",
       "instruments": {},

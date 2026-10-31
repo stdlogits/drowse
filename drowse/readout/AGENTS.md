@@ -313,7 +313,9 @@ keeps the last family written).
 
 The one wire record for token frames (`scope="token"`), final aggregates
 (`"aggregate"`) and replays (`"replay"`, `provenance="replayed"`);
-`MEASUREMENTS_VERSION = 1`. Build rules: `None` when nothing was measured; a
+`MEASUREMENTS_VERSION = 2` (v2: the lens binding's per-family `sources` and
+the `units` channel; the loom refuses persisted rows of another version).
+Build rules: `None` when nothing was measured; a
 family channel exists only when it has readings or a readout; lens/SAE channels
 always carry `binding`, geometry only when the caller passes one (replay). The
 SAE binding is `{source, steering, layer}`; the lens channel carries two lens
@@ -337,7 +339,7 @@ only when it carries that family's readings.
 Wire drift is a test failure: `tests/readout/test_measurements_envelope.py`
 pins key sets for every scope; `tests/browser/test_browser_parity.py` compares
 against the hand-maintained golden
-`tests/fixtures/browser/measurement-envelope-v1.json`, which the drowse.ai
+`tests/fixtures/browser/measurement-envelope-v2.json`, which the drowse.ai
 runtime replays (change both together); the TypedDicts feed
 `scripts/generate_webui_types.py`, gated by
 `tests/invariants/test_webui_types_parity.py`.

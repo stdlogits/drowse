@@ -1225,6 +1225,49 @@ def test_sidecar_preserves_explicit_null_raw_token_ids(tmp_path: Path):
     assert LoomTree.load(path).nodes[node.id].raw_token_ids is None
 
 
+def test_load_refuses_a_previous_token_sidecar_format(tmp_path: Path):
+    """5.x sidecars (format 2) carry measurement envelope v1 rows, whose lens
+    binding has another shape; the reader takes only the current format."""
+    tree = _seed_tree()
+    node = tree.nodes[tree.active_node_id]
+    node.tokens = [{"token_id": 7, "text": "x"}]
+    path = tmp_path / "tree.json"
+    tree.save(path)
+    sidecar = tmp_path / "tree.tokens.json.gz"
+    with gzip.open(sidecar, "rt", encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["token_sidecar_format"] == 3
+    payload["token_sidecar_format"] = 2
+    with gzip.open(sidecar, "wt", encoding="utf-8") as f:
+        json.dump(payload, f)
+    with pytest.raises(LoomTreeError, match="unsupported token_sidecar_format 2"):
+        LoomTree.load(path)
+
+
+@pytest.mark.parametrize("field", ["tokens", "thinking_tokens"])
+def test_node_reader_refuses_rows_of_another_measurement_version(field: str):
+    from drowse.readout.measurements import MEASUREMENTS_VERSION
+
+    tree = _seed_tree()
+    raw = tree.to_dict(include_tokens=True)
+    node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token",
+        "provenance": "captured", "instruments": {},
+    }
+    node[field] = [{"token_id": 7, "text": "x", "measurements": envelope}]
+    node["raw_token_ids"] = [7]
+    assert LoomTree.from_dict(raw).nodes[tree.active_node_id].to_dict(
+        include_tokens=True,
+    )[field][0]["measurements"] == envelope
+    envelope["version"] = 1
+    with pytest.raises(LoomTreeError, match="measurements version 1"):
+        LoomTree.from_dict(raw)
+    node[field] = [{"token_id": 7, "text": "x", "measurements": "v1"}]
+    with pytest.raises(LoomTreeError, match="'measurements' must be an object"):
+        LoomTree.from_dict(raw)
+
+
 def test_sidecar_token_rows_are_type_checked_by_the_node_reader(tmp_path: Path):
     tree = _seed_tree()
     node = tree.nodes[tree.active_node_id]

@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "tolerance": 0.000001,
   "steering": "0.4 local/calm.alert",
   "layerMap": [4, 9],
@@ -65,7 +65,7 @@
     "scale": 0.5
   },
   "expected": {
-    "version": 1,
+    "version": 2,
     "scope": "token",
     "provenance": "captured",
     "instruments": {

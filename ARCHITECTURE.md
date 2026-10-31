@@ -545,7 +545,7 @@ Bindings record source and steering context, so a historical row stays
 interpretable after the active lens or SAE changes; the lens binding names a
 source per lens family (`sources.R`, `sources.S`) that produced the row. The shape is pinned by
 `tests/readout/test_measurements_envelope.py` and the browser golden
-`measurement-envelope-v1.json`.
+`measurement-envelope-v2.json`.
 
 ### 7.5 Replay and token drilldown
 
@@ -696,7 +696,7 @@ references are:
 | affine lowering and the kernel | `steering/hooks.py`, `geometry/inject.py` | `affine-*-lowering-v1.json`, `post-block-rank-one-v2.json` |
 | curved kernel, SAE and J-lens directions, gates | `geometry/inject.py`, `sae/backend.py`, `lens/jlens.py`, `steering/triggers.py` | `structured-program-parity-v1.json` |
 | Fisher fit, DLS, topology and RBF | `geometry/subspace.py`, `fit/capture.py::compute_dls_axes`, `geometry/topology.py`, `geometry/rbf.py` | `affine-fisher-fit-v1.json`, `dls-axes-v1.json`, `topology-rbf-parity-v1.json`, `topology-adversarial-v1.csv` |
-| measurement envelope | `readout/measurements.py` | `measurement-envelope-v1.json` |
+| measurement envelope | `readout/measurements.py` | `measurement-envelope-v2.json` |
 | loom ops and events | `loom/tree.py`, `loom/ops.py` | `loom-operation-transcript-v1.json` |
 | generation-settings composition | `loom/recipe.py::compose_call` | (ported, no golden) |
 | tree filter | `loom/filter.py` | (ported, no golden) |

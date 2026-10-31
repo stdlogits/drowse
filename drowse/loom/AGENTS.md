@@ -99,11 +99,14 @@ its session lock).
 
 ## Persistence
 
-`tree_format` 2 and `token_sidecar_format` 2 are required exactly. Readers are
+`tree_format` 2 and `token_sidecar_format` 3 are required exactly. Readers are
 strict (`errors.require_fields`: every written field required, unknown keys
 rejected) and never migrate. `from_dict` also checks structure (`children_of`
 matches node ids, one agreeing parent, all reachable from a parentless
-`system` root, no cycles, all three token fields or none).
+`system` root, no cycles, all three token fields or none) and refuses a token
+row whose `measurements` envelope is not `MEASUREMENTS_VERSION` (2): rows
+arrive through the sidecar and inline through `PUT /tree` (the dashboard's
+restore), and a 5.x row's lens binding has another shape.
 
 `to_dict()` omits token payloads; `GET /tree` sends `include_tokens=True` and
 `PUT /tree` reads it back. `save` writes the JSON atomically after a gzip
@@ -331,7 +334,7 @@ The browser edition (`stdlogits/drowse.ai`) ports the tree ops,
 `tests/fixtures/browser/loom-operation-transcript-v1.json` (checked by
 `tests/browser/test_browser_parity.py`) pins a shared script's events (`op`,
 `rev`, ids, `active_node_id`) and final tree; token rows carry the envelope
-pinned by `measurement-envelope-v1.json`. Changing an event, the recipe, node
+pinned by `measurement-envelope-v2.json`. Changing an event, the recipe, node
 or tree JSON, the composition rule or the filter grammar is an interface
 change there.
 

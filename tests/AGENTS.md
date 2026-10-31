@@ -196,7 +196,7 @@ files from it, so their paths are part of its interface:
 - Add a case to `browser_steering_expression.json` only once drowse.ai's
   TypeScript parser agrees: both sides run the same table.
 - The measurement envelope wire shape is part of the same seam
-  (`measurement-envelope-v1.json`, plus the exact key sets in
+  (`measurement-envelope-v2.json`, plus the exact key sets in
   `tests/readout/test_measurements_envelope.py`).
 
 ## Invariant tests

@@ -92,6 +92,46 @@ class TestTreeGet:
         assert restored.status_code == 400
         assert "does not match loaded model" in str(restored.json())
 
+    def test_full_tree_restore_refuses_a_previous_measurement_envelope(
+        self, session_and_client: Any,
+    ):
+        """Regression: the lens binding went from ``{source}`` to
+        ``{sources}`` with the envelope still at version 1, so a 5.x
+        dashboard save restored cleanly and the token drawer threw on its
+        lens rows.  The restore now refuses another envelope version."""
+        from drowse.readout.measurements import MEASUREMENTS_VERSION
+
+        session, client = session_and_client
+        user_id = session.tree.add_user_turn("saved branch")
+        assistant_id = session.tree.begin_assistant(user_id)
+        session.tree.finalize_assistant(assistant_id, text="saved reply")
+        saved = client.get("/drowse/v1/sessions/default/tree").json()
+        node = next(n for n in saved["nodes"] if n["id"] == assistant_id)
+        row = {
+            "token_id": 7, "text": "x",
+            "measurements": {
+                "version": 1, "scope": "token", "provenance": "captured",
+                "instruments": {"lens": {
+                    "binding": {"source": "local:r", "steering": None},
+                    "readings": {},
+                }},
+            },
+        }
+        node["tokens"] = [row]
+        node["thinking_tokens"] = None
+        node["raw_token_ids"] = [7]
+        refused = client.put("/drowse/v1/sessions/default/tree", json={"tree": saved})
+        assert refused.status_code == 400
+        assert "measurements version 1" in str(refused.json())
+        assert not session.tree.nodes[assistant_id].tokens  # the live tree is kept
+
+        row["measurements"]["version"] = MEASUREMENTS_VERSION
+        row["measurements"]["instruments"]["lens"]["binding"] = {
+            "sources": {"R": "local:r"}, "steering": None,
+        }
+        accepted = client.put("/drowse/v1/sessions/default/tree", json={"tree": saved})
+        assert accepted.status_code == 200
+
     def test_full_tree_restore_emits_snapshot_barrier(self, session_and_client: Any):
         session, client = session_and_client
         saved = client.get("/drowse/v1/sessions/default/tree").json()

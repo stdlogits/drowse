@@ -50,6 +50,7 @@ from drowse.loom.errors import (
 )
 from drowse.loom.recipe import CastMember, Recipe
 from drowse.model.role_templates import InvalidRoleError, validate_role
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 
 # ---------------------------------------------------------------------------
 # ulid — tiny inline implementation
@@ -108,6 +109,29 @@ Role = Literal["user", "assistant", "system"]
 
 def _copy_list(value: list[Any] | None) -> list[Any] | None:
     return list(value) if value is not None else None
+
+
+def _check_row_measurements(rows: list[Any] | None) -> None:
+    """Refuse token rows whose measurement envelope is another version.
+
+    Rows reach a tree through the token sidecar and through ``PUT /tree``
+    (the dashboard's restore, which carries them inline); an envelope of
+    another version has another wire shape, so it is refused rather than
+    handed to a reader that expects this one.
+    """
+    for row in rows or ():
+        if not isinstance(row, dict):
+            raise LoomTreeError("loom token rows must be objects")
+        envelope = row.get("measurements")
+        if envelope is None:
+            continue
+        if not isinstance(envelope, dict):
+            raise LoomTreeError("token row field 'measurements' must be an object or null")
+        if envelope.get("version") != MEASUREMENTS_VERSION:
+            raise LoomTreeError(
+                f"unsupported token measurements version {envelope.get('version')!r} "
+                f"(this build reads {MEASUREMENTS_VERSION})"
+            )
 
 
 @dataclass
@@ -268,6 +292,8 @@ class LoomNode:
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a list or null"
                 )
+        for field_name in ("tokens", "thinking_tokens"):
+            _check_row_measurements(data.get(field_name))
         raw_token_ids = data.get("raw_token_ids")
         if raw_token_ids is not None and any(
             not isinstance(token_id, int) or isinstance(token_id, bool)
@@ -309,7 +335,7 @@ class LoomNode:
 TREE_FORMAT_VERSION = 2
 _TREE_MAX_LOAD_BYTES = 64 * 1024 * 1024
 _TOKEN_SIDECAR_MAX_LOAD_BYTES = 256 * 1024 * 1024
-TOKEN_SIDECAR_FORMAT_VERSION = 2
+TOKEN_SIDECAR_FORMAT_VERSION = 3
 
 
 class LoomTree:
