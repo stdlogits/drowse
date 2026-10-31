@@ -15,13 +15,13 @@
     "tintText": "text coloured by the depth accent (--tint, --deep, --late or a bridge name for them)"
   },
   "totals": {
-    "bridge": 3895,
-    "border": 162,
+    "bridge": 3297,
+    "border": 127,
     "outline": 0,
-    "shadow": 72,
-    "mono": 152,
-    "uppercase": 42,
-    "tracking": 38,
+    "shadow": 70,
+    "mono": 128,
+    "uppercase": 35,
+    "tracking": 32,
     "easing": 12,
     "loop": 0,
     "colour": 2,
@@ -83,21 +83,6 @@
       "mono": 1,
       "easing": 5
     },
-    "src/drawers/ManifoldBuilderDrawer.svelte": {
-      "bridge": 14
-    },
-    "src/drawers/ManifoldMergeDrawer.svelte": {
-      "bridge": 65,
-      "border": 4,
-      "mono": 4
-    },
-    "src/drawers/ManifoldPacksDrawer.svelte": {
-      "bridge": 109,
-      "border": 9,
-      "mono": 5,
-      "uppercase": 2,
-      "tracking": 2
-    },
     "src/drawers/NodeCompareDrawer.svelte": {
       "bridge": 151,
       "shadow": 2,
@@ -134,18 +119,6 @@
       "shadow": 1,
       "mono": 2
     },
-    "src/drawers/SystemPromptDrawer.svelte": {
-      "bridge": 43,
-      "border": 4
-    },
-    "src/drawers/TemplateLabDrawer.svelte": {
-      "bridge": 104,
-      "border": 3,
-      "shadow": 1,
-      "mono": 5,
-      "uppercase": 3,
-      "tracking": 3
-    },
     "src/drawers/TokenDrilldownDrawer.svelte": {
       "bridge": 144,
       "border": 5,
@@ -159,26 +132,6 @@
     },
     "src/drawers/UnavailableRuntimeDrawer.svelte": {
       "bridge": 9
-    },
-    "src/drawers/manifold/AuthoredForm.svelte": {
-      "bridge": 4,
-      "border": 1
-    },
-    "src/drawers/manifold/DiscoverForm.svelte": {
-      "bridge": 40,
-      "border": 3
-    },
-    "src/drawers/manifold/TemplatedForm.svelte": {
-      "bridge": 4,
-      "border": 1
-    },
-    "src/drawers/manifold/form.css": {
-      "bridge": 120,
-      "border": 7,
-      "shadow": 1,
-      "mono": 6,
-      "uppercase": 2,
-      "tracking": 1
     },
     "src/drawers/token/DetailCardHeader.svelte": {
       "bridge": 13,
@@ -275,12 +228,6 @@
       "border": 2,
       "mono": 1
     },
-    "src/lib/builder/AdvancedSection.svelte": {
-      "bridge": 2
-    },
-    "src/lib/builder/ValidationBlock.svelte": {
-      "bridge": 11
-    },
     "src/lib/charts/Bar.svelte": {
       "bridge": 11,
       "border": 1,
@@ -301,11 +248,6 @@
     "src/lib/charts/probeGeometry.ts": {
       "mono": 6
     },
-    "src/lib/manifolds/DiagnosticsPanel.svelte": {
-      "bridge": 33,
-      "border": 2,
-      "mono": 2
-    },
     "src/lib/ui/BaseModelTag.svelte": {
       "bridge": 9,
       "mono": 1
@@ -325,15 +267,8 @@
     "src/lib/ui/ConversationAutosave.svelte": {
       "bridge": 5
     },
-    "src/lib/ui/ManifoldJobProgress.svelte": {
-      "bridge": 17,
-      "mono": 1
-    },
     "src/lib/ui/ResetSettings.svelte": {
       "bridge": 7
-    },
-    "src/lib/ui/TemplatePreview.svelte": {
-      "bridge": 9
     },
     "src/lib/ui/TokenLogitsPopover.svelte": {
       "bridge": 26,
@@ -401,14 +336,6 @@
     "src/panels/loom/LoomWeave.svelte": {
       "bridge": 49,
       "border": 8
-    },
-    "src/panels/manifold/ManifoldMiniMap.svelte": {
-      "bridge": 16,
-      "border": 1,
-      "mono": 1
-    },
-    "src/panels/manifold/XYPad.svelte": {
-      "bridge": 7
     },
     "src/panels/rack/AtomSteerCard.svelte": {
       "bridge": 53,

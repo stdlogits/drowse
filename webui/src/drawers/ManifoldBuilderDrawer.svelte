@@ -29,7 +29,9 @@
   //
   // The shared field/step/node styling lives in ``manifold/form.css``,
   // scoped under the ``.mb-form`` class on the body below, so the three
-  // forms read as one surface without each carrying a copy.
+  // forms read as one surface without each carrying a copy. In the
+  // Manifolds room the room draws the title and the way back; as a
+  // dialog (drowse.ai's shell) the tool draws its own head.
 
   import { IconButton } from "@stdlogits/ledger";
   import { untrack } from "svelte";
@@ -44,6 +46,7 @@
   import "./manifold/form.css";
 
   let { params }: { params?: unknown } = $props();
+  const embedded = $derived((params as { embedded?: unknown } | null)?.embedded === true);
   const returnToToken = $derived((params as { returnToToken?: unknown } | null)?.returnToToken);
 
   type AuthoringMode = "authored" | "discover" | "templated";
@@ -84,67 +87,68 @@
   }));
 </script>
 
-<section class="drawer-shell" aria-label="Build manifold">
-  <header class="header">
-    <h2 class="title">Create a concept or scale</h2>
-    <IconButton icon="close" label="Close" onclick={cancel} />
-  </header>
+<section class="mf-tool" class:dialog={!embedded} aria-label="Build manifold">
+  {#if !embedded}
+    <header class="mf-head">
+      <h2 class="dw-title">Create a concept or scale</h2>
+      <IconButton icon="close" label="Close" onclick={cancel} />
+    </header>
+  {/if}
 
-  <div class="body mb-form">
+  <div class="mb-form">
     <div class="mode" inert={busy}><Segmented
       value={authoringMode}
       onchange={(mode) => (authoringMode = mode)}
       options={[
-        { value: "discover", label: "Generate examples" },
-        { value: "templated", label: "Use a template" },
-        { value: "authored", label: "Use your examples" },
+        { value: "discover", label: "Generate examples", hint: "Name two or more contrasting concepts; drowse writes the examples and fits a direction" },
+        { value: "templated", label: "Use a template", hint: "A template's possible answers (days, months, directions) become the examples" },
+        { value: "authored", label: "Use your examples", hint: "Your own labelled statements, on coordinates you place or a layout drowse finds" },
       ]}
       label="Authoring mode"
     /></div>
 
-    <p class="intro">{authoringMode === "discover" ? "Describe at least two contrasting concepts, such as pirate and assistant. Drowse generates examples and learns a direction you can measure or steer."
-      : authoringMode === "templated" ? "Use a prompt template for categories such as days, months, or directions. Its possible answers become the examples."
-      : "Supply your own labeled examples. Choose coordinates for a scale, or let Drowse find the layout."}</p>
-
-    <!-- identity — shared by all three paths -->
-    <div class="grid2">
+    <section class="step" aria-label="Name">
+      <h3 class="step-title"><span class="n">1</span>Name</h3>
+      <div class="grid2">
+        <label class="field">
+          <span class="label">Folder</span>
+          <input
+            type="text"
+            class="input"
+            bind:value={identity.namespace}
+            placeholder="local"
+            autocomplete="off"
+            spellcheck="false"
+            disabled={busy}
+          />
+        </label>
+        <label class="field">
+          <span class="label">Name</span>
+          <input
+            type="text"
+            class="input"
+            data-identity="name"
+            bind:value={identity.name}
+            required
+            placeholder="pirate"
+            autocomplete="off"
+            spellcheck="false"
+            disabled={busy}
+          />
+        </label>
+      </div>
       <label class="field">
-        <span class="label">Folder</span>
+        <span class="label">Description</span>
         <input
           type="text"
           class="input"
-          bind:value={identity.namespace}
-          placeholder="local"
+          bind:value={identity.description}
+          placeholder="What it measures"
           autocomplete="off"
-          spellcheck="false"
           disabled={busy}
         />
       </label>
-      <label class="field">
-        <span class="label">Name (required)</span>
-        <input
-          type="text"
-          class="input"
-          bind:value={identity.name}
-          required
-          placeholder="e.g. pirate"
-          autocomplete="off"
-          spellcheck="false"
-          disabled={busy}
-        />
-      </label>
-    </div>
-    <label class="field">
-      <span class="label">Description (optional)</span>
-      <input
-        type="text"
-        class="input"
-        bind:value={identity.description}
-        placeholder="What should this concept or scale measure?"
-        autocomplete="off"
-        disabled={busy}
-      />
-    </label>
+    </section>
 
     {#each visited as mode (mode)}
       <div class="authoring-form" hidden={authoringMode !== mode} inert={authoringMode !== mode}>
@@ -157,40 +161,7 @@
 </section>
 
 <style>
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text-base);
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-sm);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    margin: 0;
-    min-width: 0;
-    text-wrap: balance;
-    color: var(--accent);
-    letter-spacing: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-  .body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-height: 0;
-  }
-  .intro { margin: 0; color: var(--fg-dim); line-height: 1.5; font-size: var(--text-sm); text-wrap: pretty; }
+  .mode { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .mode::-webkit-scrollbar { display: none; }
   .authoring-form[hidden] { display: none; }
 </style>
