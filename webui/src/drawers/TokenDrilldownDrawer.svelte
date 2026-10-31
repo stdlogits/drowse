@@ -220,7 +220,7 @@
   const recipeSteering = $derived(loomNode?.recipe?.steering ?? inspected?.appliedSteering ?? null);
   function fmtSetting(value: number | null | undefined): string {
     if (value == null || !Number.isFinite(value)) return "–";
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    return String(Number(value.toFixed(2)));
   }
   /** The sampling this token was drawn with, as the composer's sampling line writes it. */
   const recipeLine = $derived.by<string>(() => {
@@ -281,8 +281,7 @@
     if ((mobile || docked) && !inspectorEl?.contains(ev.target as Node)) return;
     if (ev.key === "Escape") {
       ev.preventDefault();
-      if (branchOpen) branchOpen = false;
-      else if (!docked || mobile) closeDetails();
+      if (!docked || mobile) closeDetails();
       return;
     }
     const t = ev.target as HTMLElement | null;
@@ -582,13 +581,13 @@
       {/if}
       {#if context.length > 1}
         <!-- Mouse targets only (the arrow keys walk the same tokens), so focus stays on the view. -->
-        <p class="ctx" aria-hidden="true">{#each context as item (item.i)}<button type="button" class="ctok" class:here={item.i === effCursor.tokenIdx} tabindex="-1" onclick={() => { if (effCursor) cursor = { ...effCursor, tokenIdx: item.i }; }}>{item.text}</button>{/each}</p>
+        <p class="ctx" aria-hidden="true">{#each context as item (item.i)}{#if item.i === effCursor.tokenIdx && item.text.startsWith(" ")}{" "}{/if}<button type="button" class="ctok" class:here={item.i === effCursor.tokenIdx} tabindex="-1" onclick={() => { if (effCursor) cursor = { ...effCursor, tokenIdx: item.i }; }}>{item.i === effCursor.tokenIdx && item.text.startsWith(" ") ? item.text.slice(1) : item.text}</button>{/each}</p>
       {/if}
       <Alternatives {token} canBranch={canBranch} busy={branching} onbranch={(id) => void branchWith(id)} />
     </section>
 
     {#if showSteering}
-      <div class="dw-row">
+      <div class="dw-row readings-switch">
         <Segmented label="Readings" value={steeredAll ? "steered" : "unsteered"} onchange={setSteered}
           options={[{ value: "steered", label: "Steered", hint: recipeSteering ?? undefined }, { value: "unsteered", label: "Unsteered", hint: "Replayed without the steering" }]} />
       </div>
@@ -612,7 +611,9 @@
       {#if branchOpen}
         <form class="branch" transition:expand onsubmit={(event) => { event.preventDefault(); void startBranch(); }}>
           <label class="sr-only" for="token-branch-text">Branch with</label>
-          <input id="token-branch-text" bind:this={branchInput} bind:value={branchText} autocomplete="off" spellcheck="true" />
+          <!-- Escape here closes the field, before the window's Escape would close the token. -->
+          <input id="token-branch-text" bind:this={branchInput} bind:value={branchText} autocomplete="off" spellcheck="true"
+            onkeydown={(event) => { if (event.key === "Escape") { event.preventDefault(); branchOpen = false; branchError = null; } }} />
           <button type="submit" class="dw-button" disabled={!canBranch || branching || branchText.length === 0}><MorphText text={branching ? "Starting…" : "Branch"} numbers={false} /></button>
           <button type="button" class="dw-text" onclick={() => { branchOpen = false; branchError = null; }}>Cancel</button>
         </form>
@@ -643,7 +644,10 @@
   .token.mobile { --token-fill: var(--wash2); gap: var(--s6); }
   .token:focus { outline: none; }
   .top { gap: var(--s4); }
-  .part { display: grid; min-width: 0; }
+  .part { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s7); min-width: 0; }
+  .mobile .part { gap: var(--s6); }
+  /* The switch heads the readings below it. */
+  .readings-switch { margin-bottom: calc(-1 * var(--s4)); }
 
   .title-row { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
   .title-row .dw-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: pre; text-overflow: ellipsis; cursor: help; }

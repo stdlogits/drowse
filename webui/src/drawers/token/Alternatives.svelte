@@ -53,7 +53,7 @@
     {#each rows as row, i (row.id)}
       <div class="alt rise" class:chosen={row.chosen} role="listitem" style:--i={i}>
         <span class="tok" data-tip={nearCertain ? `${row.tip} · after the sampler, not a measure of factual accuracy` : row.tip}><span class="ws">{row.parts.lead ? "·" : ""}</span>{row.parts.empty ? "∅" : row.parts.text}</span>
-        <Meter value={row.p / top} label={`p ${formatP(row.p)}`} width={64} />
+        <Meter value={row.p / top} label={`p ${formatP(row.p)}`} width={96} />
         <span class="p">{formatP(row.p)}</span>
         {#if !row.chosen && forkAvailable}
           <button type="button" class="dw-text branch" disabled={!canBranch || busy}
@@ -73,10 +73,10 @@
 {/if}
 
 <style>
-  .alts { display: grid; gap: 2px; margin: 0 calc(-1 * var(--s3)); }
+  .alts { display: grid; gap: 2px; }
   .alt {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 64px 48px 56px;
+    grid-template-columns: minmax(0, 1fr) 96px 48px 56px;
     gap: var(--s3);
     align-items: center;
     min-height: 36px;
@@ -104,6 +104,8 @@
   .ws { color: var(--ink3); }
   .ws:empty { display: none; }
   .p { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
+  /* The meter takes its column's width (the piece sets a fixed one inline). */
+  .alt > :global(.meter) { width: 100% !important; }
   .branch { justify-self: end; font: var(--type-meta); }
   /* With a pointer, a row's branch shows on the row it is about. */
   @media (hover: hover) {

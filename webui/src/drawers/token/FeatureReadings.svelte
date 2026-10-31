@@ -174,7 +174,7 @@
 <style>
   .tools { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
   .tools input { flex: 1 1 auto; min-width: 0; background: var(--token-fill); }
-  .rows { display: grid; gap: 2px; margin: 0 calc(-1 * var(--s3)); }
+  .rows { display: grid; gap: 2px; }
   .item { display: grid; min-width: 0; }
   .row {
     display: grid;
@@ -207,7 +207,7 @@
   @media (max-width: 720px) {
     .row { grid-template-columns: minmax(0, 1fr) 48px 40px; grid-template-areas: "id meter val" "label label label"; min-height: 48px; row-gap: 2px; }
     .uid { grid-area: id; }
-    .row > :global(.meter) { grid-area: meter; }
+    .row > :global(.meter) { grid-area: meter; width: 100% !important; }
     .val { grid-area: val; }
     .label { grid-area: label; }
     .tools input { min-height: 44px; }

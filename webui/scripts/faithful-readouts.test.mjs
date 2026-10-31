@@ -203,7 +203,8 @@ try {
   assert.match(lensHtml, /in 0\/1 layers/, "a whitespace variant is not the aggregate token's layer probability");
   assert.match(lensHtml, /Reads as/);
   assert.doesNotMatch(lensHtml, /Attention added|MLP added/, "the anatomy's other columns wait for their data");
-  assert.match(lensHtml, /below the top 1/, "a layer without the token is unmeasured, not zero");
+  assert.match(lensHtml, /below every layer's top 1/, "a token no layer ranked is unmeasured, not zero, and draws no depth");
+  assert.doesNotMatch(lensHtml, /class="bars/);
   const unfitted = render(LensReading, { props: {
     readout: { ...readout, data: null, origin: null }, tokenText: " word", jlensFitted: false, hasReplayContext: true, modelId: "org/fixture", replayAvailable: true,
   } }).body;

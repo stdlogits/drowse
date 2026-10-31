@@ -810,6 +810,8 @@
   .edit-actions.shown { opacity: 1; visibility: visible; transition: opacity var(--fast) var(--ease); }
   .generation-actions { margin-left: auto; }
   @media (max-width: 720px) {
+    /* The phone's 16 px gutter, as the conversation's log and dock keep it. */
+    .raw-buffer { padding: var(--s4) var(--s4) var(--s2); }
     .surface, .buffer-text, .color-mirror, .inspect { font-size: 16px; }
     .actions .dw-text { min-height: 44px; }
   }

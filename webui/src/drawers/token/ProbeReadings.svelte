@@ -216,7 +216,7 @@
 </section>
 
 <style>
-  .rows { display: grid; gap: 2px; margin: 0 calc(-1 * var(--s3)); }
+  .rows { display: grid; gap: 2px; }
   .item { display: grid; min-width: 0; }
   .row {
     display: grid;
@@ -242,7 +242,7 @@
   .n1 { overflow: hidden; color: var(--ink); font: var(--type-control); text-overflow: ellipsis; }
   .val { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
 
-  .trace { display: flex; align-items: flex-end; gap: 2px; height: 24px; min-width: 0; }
+  .trace { display: flex; align-items: flex-end; gap: 1px; height: 24px; min-width: 0; }
   .trace .bar { flex: 1 1 0; min-width: 0; min-height: 2px; border-radius: 1px; background: var(--tint); }
   .trace .bar.neg { background: var(--ink3); opacity: 0.45; }
   .trace.pickable { height: 40px; }
@@ -267,8 +267,8 @@
   .facts { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); }
   .facts b { color: var(--ink); font-weight: 500; }
   @media (max-width: 720px) {
-    .row { grid-template-columns: minmax(0, 1fr) 72px 48px; gap: var(--s3); }
-    .kv { grid-template-columns: minmax(0, 1fr) 72px 56px; gap: var(--s3); }
+    .row { grid-template-columns: minmax(0, 1fr) 88px 48px; gap: var(--s3); }
+    .kv { grid-template-columns: minmax(0, 1fr) 88px 56px; gap: var(--s3); }
     .trace button.bar { min-height: 44px; }
   }
 </style>

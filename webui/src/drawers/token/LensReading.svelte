@@ -26,15 +26,21 @@
   const layers = $derived(data?.layers ?? []);
   const tokenId = $derived(data && data.token_id >= 0 ? data.token_id : null);
   const last = $derived(lastLayer(layers));
+  const width = $derived(Math.max(0, ...layers.map(row => row.tokens.length)));
   const lead = $derived(leadLayer(layers, tokenId));
   const byDepth = $derived(chosenByDepth(layers, tokenId));
   const peak = $derived(Math.max(1e-9, ...byDepth.map(row => row.p ?? 0)));
   const named = $derived(tokenParts(tokenText));
+  /** No layer ranked the token within its top-k: there is nothing to draw over depth. */
+  const unmeasured = $derived(byDepth.every(row => row.p === null));
+  const depthNote = $derived([
+    unmeasured ? `below every layer's top ${width}` : lead !== null ? `leads from L${lead}` : "",
+    readout.origin === "replayed" ? "replayed" : "",
+  ].filter(Boolean).join(" · "));
 
   let all = $state(false);
   const shown = $derived(all ? new Set(layers.map(row => row.layer)) : foldedLayers(layers.map(row => row.layer), lead));
   const folds = $derived(shown.size < layers.length || all);
-  const width = $derived(Math.max(0, ...layers.map(row => row.tokens.length)));
   let open = $state<number | null>(null);
   $effect(() => { void data; open = null; });
 
@@ -66,8 +72,9 @@
   <section class="dw-sec" aria-label="By depth">
     <div class="dw-sec-head">
       <span class="head"><span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text} by depth</span>
-      <span class="meta">{#if lead !== null}leads from L{lead}{/if}{#if readout.origin === "replayed"}{lead !== null ? " · " : ""}replayed{/if}</span>
+      <span class="meta">{depthNote}</span>
     </div>
+    {#if !unmeasured}
     <div class="depth">
       <div class="bars" role="img" aria-label={`Probability of ${named.text || "the token"} by layer`}>
         {#each byDepth as row (row.layer)}
@@ -79,6 +86,7 @@
       </div>
       <div class="ends meta"><span>L{layers[0]?.layer ?? 0}</span><span>L{last}</span></div>
     </div>
+    {/if}
   </section>
 
   <section class="dw-sec" aria-label="Layer by layer">
@@ -139,7 +147,7 @@
   .bars > i.none { background: var(--token-fill); opacity: 1; }
   .ends { display: flex; justify-content: space-between; }
 
-  .layers { display: grid; gap: 2px; margin: 0 calc(-1 * var(--s2)); }
+  .layers { display: grid; gap: 2px; }
   .lrow {
     display: grid;
     grid-template-columns: 56px minmax(0, 1fr);

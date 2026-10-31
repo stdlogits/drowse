@@ -111,7 +111,8 @@
     <h2 id={`${uid}-title`}><span class="ws">{title.lead ? "·" : ""}</span>{title.empty ? "∅" : title.text}</h2>
     <IconButton icon="close" label="Close token probabilities" onclick={() => close()} />
   </header>
-  <p class="meta">{source} · sampled probabilities, not raw logits{#if contextChanged} · recorded before your edit, with the original text before it{/if}</p>
+  <p class="meta">{source} · sampled probabilities, not raw logits</p>
+  {#if contextChanged}<p class="meta">Recorded before your edit, with the original text before it</p>{/if}
   {#if rows.length}
     <table aria-label="Recorded token probabilities">
       <thead class="sr-only"><tr><th scope="col">Token</th><th scope="col">Probability</th></tr></thead>
