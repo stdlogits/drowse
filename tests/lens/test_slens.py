@@ -245,13 +245,13 @@ def test_slens_gate_scalars_and_the_step_stash(make_tiny_session: Any) -> None:
     gen = torch.Generator().manual_seed(5)
     harness.capture = FakeCapture({L: torch.randn(d, generator=gen) for L in range(len(session.layers))})
     calls: list[int] = []
-    original = harness.lens._input_readings
+    original = harness.lens._input_block
 
     def counting(*args: Any, **kwargs: Any) -> Any:
         calls.append(1)
         return original(*args, **kwargs)
 
-    harness.lens._input_readings = counting  # type: ignore[method-assign]
+    harness.lens._input_block = counting  # type: ignore[method-assign]
     scalars = harness.lens.gate_scalars({"slens/a"}, step_id=3)
     assert set(scalars) == {"slens/a", "slens/a[0]"}
     assert scalars["slens/a"] == scalars["slens/a[0]"]
@@ -423,15 +423,50 @@ def _harness(session: Any) -> LensHarness:
 
 
 def _counting_input_reads(harness: LensHarness) -> list[set[str] | None]:
+    """Count the ``slens/`` footprint reads (the device block every read
+    path builds, gate and display alike), by the probes each one read."""
     calls: list[set[str] | None] = []
-    original = harness.lens._input_readings
+    original = harness.lens._input_block
 
     def counting(*args: Any, only: Any = None, **kwargs: Any) -> Any:
         calls.append(None if only is None else set(only))
         return original(*args, only=only, **kwargs)
 
-    harness.lens._input_readings = counting  # type: ignore[method-assign]
+    harness.lens._input_block = counting  # type: ignore[method-assign]
     return calls
+
+
+def test_a_gate_on_both_families_makes_one_host_transfer(
+    make_tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a gate callback reading jlens/ and slens/ probes made two
+    device→host transfers per decoded token, because the R gate helper packed
+    its own.  Both families' rows now ride one transfer."""
+    session = make_tiny_session(warm=False)
+    session.lens.fit(_TINY_PROMPTS, sites=("out",))
+    _install_s_lens(session)
+    harness = _harness(session)
+    harness.lens.attach("slens/a")
+    harness.lens.attach("jlens/a")
+    keys = {"slens/a", "jlens/a"}
+    warm = harness.lens.gate_scalars(keys, step_id=1)  # builds the cached stacks
+    transfers = 0
+    original = torch.Tensor.cpu
+
+    def counting(self: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor:
+        nonlocal transfers
+        transfers += 1
+        return original(self, *args, **kwargs)
+
+    with monkeypatch.context() as patched:
+        patched.setattr(torch.Tensor, "cpu", counting)
+        scalars = harness.lens.gate_scalars(keys, step_id=2)
+    assert transfers == 1
+    assert scalars == warm and {"slens/a", "jlens/a"} <= set(scalars)
+    # The same values the separate reads give.
+    reading = harness.lens.score_probes(harness.capture.latest_per_layer())
+    assert scalars["slens/a"] == pytest.approx(reading["slens/a"].value)
+    assert scalars["jlens/a"] == pytest.approx(reading["jlens/a"].value)
 
 
 def _count_sidecar_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:

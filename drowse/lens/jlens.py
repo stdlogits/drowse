@@ -687,6 +687,70 @@ def _token_id_tensor(
     return ids
 
 
+def _token_rows_from_probability_columns(
+    p: torch.Tensor,
+    depths: "Sequence[float]",
+    *,
+    depth_tensor: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Device ``[3 + L, K]``: strength, depth center, spread, then ``p_l``,
+    for selected token probability columns ``p`` ``[L, K]``."""
+    _check_rows(p, depths, "token readout stats")
+    strength = p.mean(dim=0)                                    # [K]
+    d = _depth_column(
+        depths,
+        device=p.device,
+        rows=int(p.shape[0]),
+        depth_tensor=depth_tensor,
+    )                                                           # [L, 1]
+    com, spread = _depth_moments(p, d)
+    return torch.cat([torch.stack([strength, com, spread]), p], dim=0)
+
+
+def token_readout_rows(
+    rows: torch.Tensor,
+    depths: "Sequence[float]",
+    token_ids: "Sequence[int]",
+    *,
+    from_logits: bool,
+    token_ids_tensor: torch.Tensor | None = None,
+    depth_tensor: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """:func:`token_readout_stats` (``from_logits``) or
+    :func:`token_readout_stats_from_probabilities` before the host transfer:
+    the device ``[3 + L, K]`` rows (strength, depth center, spread, then
+    ``p_l``), so a caller can fold them into its one transfer and unpack
+    the host copy with :func:`unpack_token_readout_rows`."""
+    _check_rows(rows, depths, "token readout stats")
+    if from_logits:
+        p = _token_probability_columns_from_logits(
+            rows, token_ids, token_ids_tensor=token_ids_tensor,
+        )
+    else:
+        p = rows.index_select(-1, _token_id_tensor(
+            token_ids, device=rows.device, token_ids_tensor=token_ids_tensor,
+        ))
+    return _token_rows_from_probability_columns(p, depths, depth_tensor=depth_tensor)
+
+
+def unpack_token_readout_rows(
+    host: torch.Tensor,
+) -> list[tuple[float, float, float, list[float]]]:
+    """``(strength, com, spread, per_layer)`` per column of a host copy of
+    :func:`token_readout_rows`."""
+    n_layers = int(host.shape[0]) - 3
+    out: list[tuple[float, float, float, list[float]]] = []
+    for j in range(int(host.shape[1])):
+        per_layer = [float(host[3 + l, j]) for l in range(n_layers)]
+        out.append(
+            (
+                float(host[0, j]), float(host[1, j]), float(host[2, j]),
+                per_layer,
+            )
+        )
+    return out
+
+
 def _token_readout_stats_from_probability_columns(
     p: torch.Tensor,
     depths: "Sequence[float]",
@@ -697,29 +761,11 @@ def _token_readout_stats_from_probability_columns(
     _check_rows(p, depths, "token readout stats")
     if p.shape[1] == 0:
         return []
-    strength = p.mean(dim=0)                                    # [K]
-    d = _depth_column(
-        depths,
-        device=p.device,
-        rows=int(p.shape[0]),
-        depth_tensor=depth_tensor,
-    )                                                           # [L, 1]
-    com, spread = _depth_moments(p, d)
     # one batched host transfer: 3 aggregate rows + the per-layer block
-    host = torch.cat(
-        [torch.stack([strength, com, spread]), p], dim=0,
+    host = _token_rows_from_probability_columns(
+        p, depths, depth_tensor=depth_tensor,
     ).cpu()                                                     # [3+L, K]
-    n_layers = int(p.shape[0])
-    out: list[tuple[float, float, float, list[float]]] = []
-    for j in range(int(p.shape[1])):
-        per_layer = [float(host[3 + l, j]) for l in range(n_layers)]
-        out.append(
-            (
-                float(host[0, j]), float(host[1, j]), float(host[2, j]),
-                per_layer,
-            )
-        )
-    return out
+    return unpack_token_readout_rows(host)
 
 
 def token_readout_stats(

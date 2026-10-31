@@ -1072,7 +1072,7 @@ def test_live_lens_step_normalizes_once_across_all_consumers(
     calls = 0
     stat_calls = 0
     original = jlens_module.readout_probabilities
-    original_stats = jlens_module.token_readout_stats_from_probabilities
+    original_stats = jlens_module.token_readout_rows
 
     def counting_probabilities(logits: torch.Tensor) -> torch.Tensor:
         nonlocal calls
@@ -1089,7 +1089,7 @@ def test_live_lens_step_normalizes_once_across_all_consumers(
     )
     monkeypatch.setattr(
         jlens_module,
-        "token_readout_stats_from_probabilities",
+        "token_readout_rows",
         counting_stats,
     )
 

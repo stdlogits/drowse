@@ -58,9 +58,9 @@ from drowse.lens.jlens import (
     pack_readout_rows_to_host,
     readout_probabilities,
     resolve_token_atom,
-    token_readout_stats,
-    token_readout_stats_from_probabilities,
+    token_readout_rows,
     transport_rows,
+    unpack_token_readout_rows,
 )
 from drowse.base.exclusive import ExclusiveGuard
 from drowse.base.lru import BoundedLRU
@@ -138,6 +138,60 @@ class _InputBlock(NamedTuple):
                 ),
             )
         return out
+
+
+class _OutputBlock(NamedTuple):
+    """``jlens/`` probe readings still on the device: ``values`` is
+    ``[3 + L, P]`` (:func:`~drowse.lens.jlens.token_readout_rows`: mean
+    probability, depth center, spread, then ``p_l`` per layer) for ``names``
+    (columns) over ``layers`` (rows from 3)."""
+
+    names: tuple[str, ...]
+    layers: tuple[int, ...]
+    values: torch.Tensor
+
+    def readings(self, host: torch.Tensor) -> dict[str, ScalarReading]:
+        """Unpack the host copy of ``values``."""
+        out: dict[str, ScalarReading] = {}
+        stats = unpack_token_readout_rows(host)
+        for name, (strength, com, spread, per_layer) in zip(self.names, stats):
+            out[name] = ScalarReading(
+                value=float(strength),
+                unit=UNIT_MEAN_TOKEN_PROBABILITY,
+                per_layer={
+                    int(l): float(p_l) for l, p_l in zip(self.layers, per_layer)
+                },
+                depth=DepthSummary(
+                    center=(float(com),),
+                    spread=(float(spread),),
+                    basis="readout_probability_mass",
+                ),
+            )
+        return out
+
+
+def _host_readings(
+    *blocks: "_OutputBlock | _InputBlock | None",
+) -> list[dict[str, ScalarReading]]:
+    """Every block's readings through ONE device→host transfer (the blocks
+    pack into one flat fp32 row on the first block's device)."""
+    present = [block for block in blocks if block is not None]
+    if not present:
+        return [{} for _ in blocks]
+    device = present[0].values.device
+    flat = pack_readout_rows_to_host(
+        *(block.values.to(device).reshape(-1) for block in present),
+    )
+    out: list[dict[str, ScalarReading]] = []
+    offset = 0
+    for block in blocks:
+        if block is None:
+            out.append({})
+            continue
+        size = int(block.values.numel())
+        out.append(block.readings(flat[offset:offset + size].reshape(block.values.shape)))
+        offset += size
+    return out
 
 
 class ProfileStore(Protocol):
@@ -1868,46 +1922,38 @@ class LensInstrument:
         nearest, residual, assignment or membership to report, and shipping
         those as constants is measurement-shaped noise.
         """
+        block = self._output_block(
+            probes, layers, logits=logits, probabilities=probabilities, only=only,
+        )
+        return {} if block is None else block.readings(block.values.cpu())
+
+    def _output_block(
+        self,
+        probes: "Mapping[str, Mapping[str, Any]]",
+        layers: "Sequence[int]",
+        *,
+        logits: torch.Tensor | None = None,
+        probabilities: torch.Tensor | None = None,
+        only: "set[str] | None" = None,
+    ) -> "_OutputBlock | None":
+        """:meth:`_readings_from_rows` before its host transfer: the probes'
+        statistics still on the device (``None`` when none is wanted)."""
         runtime = self.runtime
         names = [
             name for name in probes
             if only is None or name in only
         ]
         if not names:
-            return {}
+            return None
         token_ids = [probes[n]["token_id"] for n in names]
-        rows = probabilities if probabilities is not None else logits
-        row_device = cast(torch.Tensor, rows).device
-        token_ids_tensor = runtime.long_tensor(token_ids, row_device)
-        depth_tensor = runtime.depth_tensor(layers, row_device)
-        depths = runtime.depths(layers)
-        if probabilities is not None:
-            stats = token_readout_stats_from_probabilities(
-                probabilities, depths, token_ids,
-                token_ids_tensor=token_ids_tensor,
-                depth_tensor=depth_tensor,
-            )
-        else:
-            stats = token_readout_stats(
-                cast(torch.Tensor, logits), depths, token_ids,
-                token_ids_tensor=token_ids_tensor,
-                depth_tensor=depth_tensor,
-            )
-        out: dict[str, ScalarReading] = {}
-        for name, (strength, com, spread, per_layer) in zip(names, stats):
-            out[name] = ScalarReading(
-                value=float(strength),
-                unit=UNIT_MEAN_TOKEN_PROBABILITY,
-                per_layer={
-                    int(l): float(p_l) for l, p_l in zip(layers, per_layer)
-                },
-                depth=DepthSummary(
-                    center=(float(com),),
-                    spread=(float(spread),),
-                    basis="readout_probability_mass",
-                ),
-            )
-        return out
+        rows = cast(torch.Tensor, probabilities if probabilities is not None else logits)
+        values = token_readout_rows(
+            rows, runtime.depths(layers), token_ids,
+            from_logits=probabilities is None,
+            token_ids_tensor=runtime.long_tensor(token_ids, rows.device),
+            depth_tensor=runtime.depth_tensor(layers, rows.device),
+        )
+        return _OutputBlock(tuple(names), tuple(int(l) for l in layers), values)
 
     def gate_scalars(
         self, gate_keys: "set[str] | None" = None, *, step_id: int = -1,
@@ -1950,31 +1996,74 @@ class LensInstrument:
         )
         input_names = {n for n, s in specs.items() if _spec_side(s) == "input"}
         input_only = input_names if only is None else only & input_names
-        input_scalars: dict[str, float] = {}
+        # ``slens/`` probes: the stash's readings from this forward, and the
+        # device block of the rest.  The live display step reads every
+        # ``slens/`` probe on this forward, so read them all here once and
+        # let it reuse the stash.
+        input_have: dict[str, ScalarReading] = {}
+        input_missing: set[str] = set()
+        input_block: _InputBlock | None = None
         if input_only:
-            # The live display step reads every ``slens/`` probe on this
-            # forward: read them all here once and let it reuse the stash.
-            readings = self._input_step_readings(
-                specs, None if live_display_needs_full_probs else input_only,
-                step_id=step_id,
+            input_have, input_missing = self._input_stash_split(
+                specs, None if live_display_needs_full_probs else input_only, step_id,
             )
-            input_scalars = scalar_gate_keys({
+            if input_missing:
+                latest = self._capture.latest_per_layer()
+                if latest:
+                    input_block = self._input_block(specs, latest, only=input_missing)
+        output_block: _OutputBlock | None = None
+        output_only: set[str] | None = None
+        if (set(specs) if only is None else only) - input_names:
+            gate = self._output_gate_block(
+                only, live_display_needs_full_probs, step_id=step_id,
+            )
+            if gate is not None:
+                output_block, output_only = gate
+        # One device→host transfer for both families' rows.
+        output_readings, fresh = _host_readings(output_block, input_block)
+        if input_missing:
+            self._input_stash_put(step_id, input_missing, fresh)
+            input_have.update(fresh)
+        if output_block is not None and live_display_needs_full_probs:
+            live_stash = cast("dict[str, Any]", self.step_stash)
+            live_stash["readings"] = output_readings
+            live_stash["readings_layers"] = output_block.layers
+            live_stash["readings_step"] = step_id
+            self.last_step_readings = output_readings
+        return {
+            **scalar_gate_keys({
                 name: reading.value
-                for name, reading in readings.items() if name in input_only
-            })
-        if not ((set(specs) if only is None else only) - input_names):
-            return input_scalars
+                for name, reading in input_have.items() if name in input_only
+            }),
+            **scalar_gate_keys({
+                name: reading.value
+                for name, reading in output_readings.items()
+                if output_only is None or name in output_only
+            }),
+        }
+
+    def _output_gate_block(
+        self,
+        only: "set[str] | None",
+        live_display_needs_full_probs: bool,
+        *,
+        step_id: int,
+    ) -> "tuple[_OutputBlock, set[str] | None] | None":
+        """The gate's ``jlens/`` half: this forward's lens rows (stashed for
+        the display step, full probabilities when the live display will
+        want them) and the probes' device block, with the gated subset.
+        ``None`` when no R-family probe can be read on this forward."""
         lens, all_probes = self._measurement_state()
         probes = {n: s for n, s in all_probes.items() if _spec_side(s) == "output"}
         if only is not None:
             only = {name for name in only if name in probes}
             if not only:
-                return input_scalars
+                return None
         if not probes or lens is None:
-            return input_scalars
+            return None
         latest = self._capture.latest_per_layer()
         if not latest:
-            return input_scalars
+            return None
         # When the token tap will immediately need every pinned probe reading
         # for the live payload, compute that superset once in the gate
         # callback and let the display reuse it.  Gate-only calls stay on the
@@ -1986,47 +2075,32 @@ class LensInstrument:
                 readout_layers.update(spec["layers"])
         layers = sorted(l for l in readout_layers if l in latest)
         if not layers:
-            return input_scalars
-
+            return None
         logits = self.runtime.logits_rows(
             lens, [(l, latest[l]) for l in layers],
         )
         probabilities = None
         if live_display_needs_full_probs:
             probabilities = readout_probabilities(logits)
-            live_stash: dict[str, Any] = {
+            self.step_stash = {
                 "layers": tuple(layers),
                 "logits": logits,
                 "probabilities": probabilities,
                 "step": step_id,
             }
-            self.step_stash = live_stash
         else:
             self.step_stash = {
                 "layers": tuple(layers),
                 "logits": logits,
                 "step": step_id,
             }
-        if probabilities is not None:
-            readings = self.score_probes_from_rows(
-                layers=layers,
-                probabilities=probabilities,
-                only=probe_read_only,
-            )
-            live_stash = cast("dict[str, Any]", self.step_stash)
-            live_stash["readings"] = readings
-            live_stash["readings_layers"] = tuple(layers)
-            live_stash["readings_step"] = step_id
-            self.last_step_readings = readings
-        else:
-            readings = self.score_probes_from_rows(
-                layers=layers, logits=logits, only=probe_read_only,
-            )
-        return {**input_scalars, **scalar_gate_keys({
-            name: reading.value
-            for name, reading in readings.items()
-            if only is None or name in only
-        })}
+        block = self._output_block(
+            probes, layers,
+            logits=None if probabilities is not None else logits,
+            probabilities=probabilities,
+            only=probe_read_only,
+        )
+        return None if block is None else (block, only)
 
     def score_aggregate(
         self, generated_ids: list[int], pooled: dict[int, torch.Tensor],

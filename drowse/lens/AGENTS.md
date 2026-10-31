@@ -510,9 +510,12 @@ the per-layer softmax probability `p_l(v)`.
   are stashed by `step_id` on the run (`input_stash`, which records the probes
   read on that forward), so the display step reads only the probes the gate
   did not, and with live readout on the gate reads them all. An `slens/`-only
-  gate never resolves the R family. The live step folds any `slens/` block it
-  reads into its own packed host transfer; a gate callback that reads both
-  families pays two (the R gate stats transfer inside their own helper).
+  gate never resolves the R family. Both read paths build each family's
+  probe rows on the device first (`_OutputBlock` from
+  `jlens.token_readout_rows`, `_InputBlock`) and transfer once: a gate
+  callback reading `jlens/` and `slens/` probes packs both blocks into one
+  host copy (`_host_readings`), and the live step folds any `slens/` block it
+  reads into its own packed transfer.
 
 ## Live readout, replay, decomposition
 
