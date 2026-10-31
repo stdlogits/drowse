@@ -559,6 +559,7 @@ def test_remote_serve_honors_key_precedence_and_transport_limit(monkeypatch: pyt
     monkeypatch.setenv("DROWSE_API_KEY", "env-secret")
     install_fake_session(monkeypatch)
     monkeypatch.setattr(serve, "enable_live_lens", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serve, "select_s_lens", lambda *args, **kwargs: None)
     monkeypatch.setattr(server, "create_app", lambda *args, **kwargs: captured.update(kwargs))
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: captured.update(kwargs))
     argv = ["serve", "model", "--host", "0.0.0.0", "--no-web"]

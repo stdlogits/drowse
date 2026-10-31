@@ -160,13 +160,13 @@ checked against the sidecar, and only a 2-node affine fit folds.
 ## `serve` startup
 
 Bind check → `effective_config(yaml_vectors=True)` → model check → parse `-S` →
-`open_session(roster=True)` → `enable_live_lens` → `preflight_steering` →
+`open_session(roster=True)` → `enable_live_lens` → `select_s_lens` → `preflight_steering` →
 `create_app` → `warm_up` (`--compile` only) → `enable_live_sae` (not with
 `--no-web`) → `uvicorn.run`. Lens, SAE and warm-up failures are narrated and
 never block startup.
 
-- The live lens precedes the preflight because `jlens/<word>` atoms resolve
-  against the selected lens source. `preflight_steering` enters and leaves
+- The lens sources precede the preflight because `jlens/<word>` and
+  `slens/<word>` atoms resolve against the selected sources. `preflight_steering` enters and leaves
   `session.steering(expr)` once — resolving and loading every atom as a request
   would, authoring nothing; a missing concept exits 1 with an `extract` hint.
 - Live lens: a selected output-side source (`lens use`) is never rewritten
@@ -174,6 +174,13 @@ never block startup.
   output-side sources in `lens.sources.lens_source_preference_key` order and the
   first compatible one stays selected in `active.json` (the lens runtime has no
   in-memory selection); if none fits, the trial selection is cleared.
+- S lens (`select_s_lens`): the same policy for the S family, with
+  `session.lens.has_compatible_input()` (checks the weights, pages nothing in)
+  as the validation. A selected S-family source is never rewritten
+  (incompatible → a `lens use` hint); with none selected, serve tries prepared
+  S-family sources that hold `out` (`slens/` atoms and probes read it) in
+  preference order and keeps the first compatible one. There is no live S
+  readout to turn on.
 - Live SAE: the active source, then other prepared ones (local first), then
   `best_sae_release` (official `google/` repo, Neuronpedia-labelled, `canonical`,
   curated base over its `-all` sibling, name). `--no-web` skips this discovery

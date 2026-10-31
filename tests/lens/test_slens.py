@@ -109,6 +109,20 @@ def test_slens_atom_needs_an_s_lens_with_an_out_site(make_tiny_session: Any) -> 
         session.add_probe("slens/a")
 
 
+def test_has_compatible_input_checks_without_paging_in(make_tiny_session: Any) -> None:
+    """The S family's twin of ``has_compatible`` (serve's startup check):
+    the active source is validated against the weights, never loaded."""
+    from drowse.lens.sources import LENS_SOURCES
+
+    session = make_tiny_session(warm=False)
+    assert not session.lens.has_compatible_input()
+    _install_s_lens(session)
+    assert session.lens.has_compatible_input()
+    assert session.lens.input_runtime.lens is None
+    LENS_SOURCES.clear_if_active(session.model_id, LENS_SOURCES.parse("local:s"))
+    assert not session.lens.has_compatible_input()
+
+
 def test_switching_the_s_source_drops_slens_directions_only(make_tiny_session: Any) -> None:
     session = make_tiny_session(warm=False)
     session.lens.fit(_TINY_PROMPTS)

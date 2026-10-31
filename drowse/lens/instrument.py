@@ -728,6 +728,18 @@ class LensInstrument:
                 return run.lens is not None
             return self._refresh(load=False)
 
+    def has_compatible_input(self) -> bool:
+        """Whether the active S-family source matches the loaded weights.
+
+        :meth:`has_compatible`'s twin: a lens that is not resident yet is
+        only checked, never paged in.
+        """
+        with self.state_lock:
+            run = self.current_run
+            if run.input_pinned:
+                return run.input_lens is not None
+            return self._refresh(load=False, side="input")
+
     def _side_runtime(self, side: str) -> LensRuntime:
         return self.input_runtime if side == "input" else self.runtime
 

@@ -234,8 +234,9 @@ provider name, and carries one or both sites.
 - Default order (`lens_source_preference_key`): the R family first (`rs-r`,
   `workspace-r`, `neuronpedia`, `workspace-j`, `local:r`, `local:j`, tagged
   fits), then the S family (`rs-s`, `local:s`, `local:k`, tagged fits).
-  Listings and serve's auto-selection (`cli/verbs/serve.py::enable_live_lens`,
-  R family only) use it. `list_lens_sources` rows carry `lens` (kind),
+  Listings and serve's auto-selection (`cli/verbs/serve.py::enable_live_lens`
+  for the R family, `select_s_lens` for the S family, which skips sources
+  without `out`) use it. `list_lens_sources` rows carry `lens` (kind),
   `family` (`R` or `S`; `output`/`input` is the internal slot name, never
   shown) and `sites`. Selecting an S-family source over the server checks that
   it loads for these weights (409 otherwise), as the R family's live enable

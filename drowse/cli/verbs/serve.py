@@ -123,6 +123,59 @@ def enable_live_lens(session: Any) -> bool:
         return False
 
 
+def select_s_lens(session: Any) -> bool:
+    """Select the S-family lens ``slens/`` atoms, probes and reads use.
+
+    :func:`enable_live_lens`'s policy for the other family (there is no live
+    S readout to turn on):
+
+    - **An S-family source is selected** (``lens use``): never rewritten.
+      Compatible with the loaded weights → reported; incompatible → a
+      ``lens use`` hint, and ``slens/`` stays unavailable.
+    - **Nothing is selected**: serve adopts the best compatible prepared
+      S-family source that holds the ``out`` site (``slens/`` atoms and
+      probes read it), in
+      :func:`~drowse.lens.sources.lens_source_preference_key` order, and the
+      adoption persists.  No compatible source → the trial selection is
+      cleared.
+    """
+    try:
+        from drowse.lens.key import LensKey
+        from drowse.lens.sources import LENS_SOURCES, list_lens_sources
+
+        model_id = session.model_id
+        active = LENS_SOURCES.active(model_id, "input")
+        if active is not None:
+            label = LENS_SOURCES.format(active)
+            if not session.lens.has_compatible_input():
+                note(
+                    f"S-lens: the active source {label} does not match the "
+                    f"loaded weights (`drowse lens use {model_id} <source>` "
+                    f"to switch)"
+                )
+                return False
+            note(f"S-lens: {label}")
+            return True
+        for row in list_lens_sources(model_id):
+            if LensKey(str(row["lens"])).side != "input" or "out" not in row["sites"]:
+                continue
+            try:
+                session.lens.select_source(str(row["source"]))
+                compatible = session.lens.has_compatible_input()
+            except Exception:  # noqa: BLE001 — try the next prepared source
+                continue
+            if compatible:
+                note(f"S-lens: {row['source']}")
+                return True
+        tried = LENS_SOURCES.active(model_id, "input")
+        if tried is not None:
+            LENS_SOURCES.clear_if_active(model_id, tried)
+        return False
+    except Exception as e:  # noqa: BLE001 — never block serve startup
+        note(f"S-lens: selection failed ({e})")
+        return False
+
+
 def best_sae_release(rows: Sequence[dict[str, Any]]) -> str | None:
     """The strongest provider default for the dashboard runtime.
 
@@ -217,9 +270,10 @@ def run(args: argparse.Namespace) -> None:
     check_steering(args.steer)
 
     with open_session(args, roster=True) as session:
-        # The lens source first: ``jlens/<word>`` atoms in the default
-        # steering resolve against it.
+        # The lens sources first: ``jlens/<word>`` and ``slens/<word>``
+        # atoms in the default steering resolve against them.
         enable_live_lens(session)
+        select_s_lens(session)
         steering = (
             preflight_steering(session, args.steer, args.model)
             if args.steer else None
