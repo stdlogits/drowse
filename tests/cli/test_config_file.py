@@ -255,8 +255,12 @@ def test_reserved_readout_atoms_are_never_hf_coordinates(
         raise AssertionError("reserved atom treated as an HF coordinate")
 
     monkeypatch.setattr("drowse.store.install.install_manifold", fail_install)
-    atom = f"{namespace}/123" if namespace == "sae" else f"{namespace}/orange"
-    assert cfg.ensure_vectors_installed(f"0.3 {atom}", strict=True) == []
+    term = {
+        "sae": "0.3 sae/123",
+        "neuron": "0.3 neuron/L1n2",
+        "head": "!head/L1h2",  # a head has no push, only an ablation
+    }.get(namespace, f"0.3 {namespace}/orange")
+    assert cfg.ensure_vectors_installed(term, strict=True) == []
 
 
 def test_dry_run_reports_without_installing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

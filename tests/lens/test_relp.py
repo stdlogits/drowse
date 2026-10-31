@@ -513,7 +513,7 @@ def test_lens_writers_bind_the_r_name_to_the_r_kind() -> None:
         save_lens(relp, _DENSE_MODEL_ID, prov, name="j")
     with pytest.raises(ValueError, match="local:r"):
         save_lens_checkpoint(
-            {0: torch.eye(DENSE_D)}, 1, DENSE_D, _DENSE_MODEL_ID, prov,
+            {"out": {0: torch.eye(DENSE_D)}}, 1, DENSE_D, _DENSE_MODEL_ID, prov,
             kind="J", name="r", consumed_prefix_sha256="1" * 64,
         )
 
