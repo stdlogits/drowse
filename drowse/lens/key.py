@@ -35,14 +35,19 @@ LENS_SITES = ("out", "mid")
 LENS_SIDES = ("output", "input")
 #: Kinds the transport estimator fits: all four, at either or both sites.
 FITTABLE_KINDS = LENS_KINDS
-#: Documents a local fit averages over unless asked otherwise.  At 25
-#: FineWeb-Edu documents on SmolLM2-360M the split-half difference was large:
-#: the R-lens's ``out`` site ranged from 0.04 (last layers) to 0.45 (early
-#: layers), median 0.27; the S-lens's from 0.12 to 0.37, median 0.18, at 110
-#: to 136 s per kind on MPS.  64 documents split into even 32/32 halves and,
-#: since the difference is averaging noise (1/sqrt n), should land near 0.6x
-#: those values for about 2.5x the wall time.  The research lenses of record
-#: used 1,000.
+#: Documents a local fit averages over unless asked otherwise.  Measured on
+#: SmolLM2-360M (FineWeb-Edu, MPS, both sites, 2026-10-31), the split-half
+#: difference per layer at the ``out`` site:
+#:
+#: - 64 documents (even 32/32 halves): the R-lens 0.02 to 0.28, median 0.17
+#:   (``mid`` 0.02 to 0.27, median 0.17), in 330 s; the S-lens 0.06 to 0.22,
+#:   median 0.12 (``mid`` 0.01 to 0.16, median 0.12), in 342 s.
+#: - 25 documents: the R-lens 0.04 to 0.45, median 0.27; the S-lens 0.12 to
+#:   0.37, median 0.18, in 110 to 136 s.
+#:
+#: So 64 documents cut the medians to 0.62x (R) and 0.65x (S) of 25's, close
+#: to the 1/sqrt(n) averaging-noise estimate of 0.63x, for 2.5 to 3x the
+#: wall time.  The research lenses of record used 1,000.
 DEFAULT_FIT_DOCUMENTS = 64
 
 #: A local lens directory: the kind's letter, optionally ``-<tag>``
