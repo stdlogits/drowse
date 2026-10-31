@@ -205,10 +205,10 @@ and is an interface change for drowse.ai.
   case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are the
   exception, canonicalized as above), takes no `:variant` (not even `:raw`),
   and skips every manifold tier. The session wires resolvers for `jlens`,
+  `slens` (the S lens's input-side direction, `register_input_direction`),
   `sae` and `neuron` (`ArtifactRegistry.set_atom_resolver`; `neuron` is
   `units.instrument.UnitsInstrument.register_direction`, which checks the unit
-  against the model: a 400 at `open_scope`); a `slens` push parses but raises
-  `ProfileNotRegisteredError` when steered.
+  against the model: a 400 at `open_scope`).
 - **Variants**: `raw` (default), `sae` / `sae-<release>`, `role` /
   `role-<id>` (role-augmented fit; its role becomes the scope's assistant
   label), `from` / `from-<src>` (cross-model transfer). There is no `pca`

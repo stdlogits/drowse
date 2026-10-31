@@ -2,7 +2,7 @@
 //
 // A steering vector is the K=2 flat case of a manifold, so every term is a
 // position on a fitted geometry — one ``entries`` map of tagged
-// ``SteerEntry`` (``mode: "subspace" | "manifold" | "jlens" | "sae" | "unit"``), one
+// ``SteerEntry`` (``mode: "subspace" | "manifold" | "jlens" | "slens" | "sae" | "unit"``), one
 // card, and one serializer.  Subspace (flat) terms share the rack-level
 // ``subspaceAlong`` master (the merged affine subspace slides once);
 // manifold (curved) terms keep their per-card along/onto; the two
@@ -255,7 +255,7 @@ export function addSubspaceToRack(name: string, variant: Variant = "raw"): void 
  *  their own layer and take no clause. */
 export function setSteerLayers(name: string, layers: LayerScope): void {
   const scope = Array.isArray(layers) ? [...layers] : layers;
-  patchSteerEntry(name, { layers: scope }, ["subspace", "manifold", "jlens", "sae"]);
+  patchSteerEntry(name, { layers: scope }, ["subspace", "manifold", "jlens", "slens", "sae"]);
 }
 
 /** Take any term off the rack.  Never deletes the server-side artifact. */
@@ -357,6 +357,7 @@ export const ATOM_DEFAULT_ALPHA = 0.3;
  *  steering grammar. */
 export const ATOM_PREFIX: Record<AtomMode, string> = {
   jlens: "jlens/",
+  slens: "slens/",
   sae: "sae/",
 };
 
@@ -382,6 +383,14 @@ export function addJLensToRack(word: string): void {
   const bare = word.trim().replace(/^jlens\//, "");
   if (!bare) return;
   addAtomToRack("jlens", bare);
+}
+
+/** Add an S-lens token steering chip (``α slens/<word>``): toward having read the word, where
+ *  ``jlens/`` pushes toward saying it.  Accepts a bare word or a full ``slens/…`` atom. */
+export function addSLensToRack(word: string): void {
+  const bare = word.trim().replace(/^slens\//, "");
+  if (!bare) return;
+  addAtomToRack("slens", bare);
 }
 
 /** Add a resident-SAE decoder-row steering chip (``α sae/<id>``). */

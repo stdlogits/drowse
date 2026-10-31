@@ -69,6 +69,7 @@ export function layersProbe(name: string, entry: SteerEntry, scoped: boolean): s
     case "manifold":
       return formatTerm(name, { ...entry, trigger, blend: 1, onto: 0, layers: scoped ? entry.layers : null }, 1);
     case "jlens":
+    case "slens":
     case "sae":
       return formatTerm(name, { ...entry, trigger, alpha: 1, layers: scoped ? entry.layers : null }, 1);
     case "unit":

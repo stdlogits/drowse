@@ -154,12 +154,13 @@ export function validateConversationSnapshot(
       continue;
     }
     layerScope(row.layers, `steering row ${name} layers`);
-    if (row.mode === "jlens" || row.mode === "sae") {
+    if (row.mode === "jlens" || row.mode === "slens" || row.mode === "sae") {
       finite(row.alpha, `steering row ${name} alpha`);
       if (row.ablate !== undefined && typeof row.ablate !== "boolean") {
         invalid(`steering row ${name} ablation`);
       }
       if (row.mode === "jlens" && !name.startsWith("jlens/")) invalid(`J-lens row ${name}`);
+      if (row.mode === "slens" && !name.startsWith("slens/")) invalid(`S-lens row ${name}`);
       if (row.mode === "sae" && !/^sae\/(?:0|[1-9]\d*)$/u.test(name)) invalid(`SAE row ${name}`);
       continue;
     }
@@ -239,7 +240,7 @@ export function buildConversationImportPlan(
   for (const { name, ...entry } of snapshot.steerRack) {
     const cloned = structuredClone(entry) as SteerEntry;
     cloned.trigger = STORED_TRIGGER_ALIASES[cloned.trigger] ?? cloned.trigger;
-    if (cloned.mode === "subspace" || cloned.mode === "jlens" || cloned.mode === "sae" || cloned.mode === "unit") {
+    if (cloned.mode === "subspace" || cloned.mode === "jlens" || cloned.mode === "slens" || cloned.mode === "sae" || cloned.mode === "unit") {
       cloned.ablate = cloned.ablate === true;
     }
     steerEntries.set(name, cloned);

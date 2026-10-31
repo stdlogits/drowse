@@ -27,6 +27,7 @@
 
 import type {
   JLensSteerEntry,
+  SLensSteerEntry,
   SaeSteerEntry,
   ManifoldSteerEntry,
   SteerEntry,
@@ -73,13 +74,14 @@ export function serializeExpression(
 
 /** The order families emit in: flat terms first (they share one slide), then the atoms, units
  *  and curved terms. */
-const TERM_ORDER: readonly SteerEntry["mode"][] = ["subspace", "jlens", "sae", "unit", "manifold"];
+const TERM_ORDER: readonly SteerEntry["mode"][] = ["subspace", "jlens", "slens", "sae", "unit", "manifold"];
 
 /** Render one rack entry as its own term (whatever ``enabled`` says). */
 export function formatTerm(name: string, entry: SteerEntry, subspaceAlong: number): string {
   switch (entry.mode) {
     case "subspace": return formatSubspaceTerm(name, entry, subspaceAlong);
-    case "jlens": return formatJLensTerm(name, entry);
+    case "jlens":
+    case "slens": return formatJLensTerm(name, entry);
     case "sae": return formatSaeTerm(name, entry);
     case "unit": return formatUnitTerm(name, entry);
     case "manifold": return formatManifoldTerm(name, entry);
@@ -137,11 +139,12 @@ function formatTriggerSuffix(trigger: Trigger): string {
   return kw ? `@${kw}` : "";
 }
 
-/** Render one J-lens token term — the plain atom ``<alpha> jlens/<word>``
- *  plus an optional ``@trigger``.  The rack key is the full atom (the
- *  engine resolves it through ``lens.register_direction``); per-chip
+/** Render one lens token term — the plain atom ``<alpha> jlens/<word>``
+ *  (or ``slens/<word>``) plus its clause and an optional ``@trigger``.  The
+ *  rack key is the full atom (the engine resolves it through the lens's
+ *  ``register_direction`` / ``register_input_direction``); per-chip
  *  ``alpha`` because lens atoms run hotter than concept vectors. */
-export function formatJLensTerm(name: string, entry: JLensSteerEntry): string {
+export function formatJLensTerm(name: string, entry: JLensSteerEntry | SLensSteerEntry): string {
   return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
 }
 

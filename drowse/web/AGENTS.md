@@ -326,7 +326,9 @@ drowse.ai too.
 - **Rack families.** `fitKind.ts::fitGeometry` (`resolved_fit_mode ?? fit_mode`) maps
   `pca`/`baked` to subspace, `spectral`/`authored` to manifold, and an unfitted `auto` to
   unresolved. Subspace terms share one `subspaceAlong` because the composer merges them
-  into one affine subspace that slides once. J-lens and SAE atoms carry their own α
+  into one affine subspace that slides once. Lens token atoms (`jlens/<word>`, toward saying
+  it; `slens/<word>`, toward having read it, from the Lens panel's Steer and As read) and SAE
+  atoms carry their own α
   (`ATOM_DEFAULT_ALPHA = 0.3`): a single token or feature direction runs hotter than a
   concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
   keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed

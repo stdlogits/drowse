@@ -3,18 +3,20 @@
   // on, three depths show what the lens reads there (the top words at an early, a middle and a late
   // layer), then the words it reads most strongly across the fitted layers, pinned ones (persistent
   // ``jlens/<word>`` probes, gate-able) with the rest, in one sort. One field takes a word to watch
-  // (pin) or to steer toward (an ``α jlens/<word>`` term in the recipe, edited from its chip). While
-  // a token is hovered, everything here reads that token.
+  // (pin) or to steer by: toward saying it (an ``α jlens/<word>`` term) or toward having read it
+  // (``α slens/<word>``, the S lens's direction), each edited from its chip. While a token is
+  // hovered, everything here reads that token.
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Switch, Token, ease, reducedMotion } from "@stdlogits/ledger";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
   import { mergeInstrumentProbeRows } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
   import { depthTint, layerDepth } from "../lib/charts/depth";
-  import { apiInstruments, describeError } from "../lib/runtime/services";
+  import { apiInstruments, apiSessions, describeError } from "../lib/runtime/services";
   import { goto } from "../lib/stores/rooms.svelte";
   import {
     addJLensToRack,
+    addSLensToRack,
     activeProbeNames,
     attachProbe,
     lensState,
@@ -170,17 +172,24 @@
     if ((await pinWord(submitted)) && word === submitted) word = "";
   }
 
-  async function steer(): Promise<void> {
+  /** Steer by the word: toward saying it (``jlens/``) or toward having read it (``slens/``, which
+   *  needs an S lens; the server's validation says when there is none). */
+  async function steer(ns: "jlens" | "slens"): Promise<void> {
     const submitted = word;
     const bare = bareWord(submitted);
     if (!bare || busy) return;
     busy = true;
     try {
       const validated = await apiInstruments.validateLensToken(bare);
-      addJLensToRack(validated.word);
+      if (ns === "jlens") addJLensToRack(validated.word);
+      else {
+        const check = await apiSessions.validateSteering(`0.3 slens/${validated.word}@response`);
+        if (!check.valid) throw new Error(check.error ?? `slens/${validated.word} does not resolve`);
+        addSLensToRack(validated.word);
+      }
       if (word === submitted) word = "";
     } catch (e) {
-      pushToast(`Couldn't steer toward jlens/${bare}: ${describeError(e)}`, { kind: "error" });
+      pushToast(`Couldn't steer by ${ns}/${bare}: ${describeError(e)}`, { kind: "error" });
     } finally {
       busy = false;
     }
@@ -239,7 +248,8 @@
       <label class="sr-only" for="lens-word">A word</label>
       <input id="lens-word" type="text" placeholder="A word" autocomplete="off" spellcheck="false" bind:value={word} />
       <button type="submit" class="dw-text" disabled={busy || !word.trim()}>Watch</button>
-      <button type="button" class="dw-text" disabled={busy || !word.trim()} onclick={() => void steer()}>Steer</button>
+      <button type="button" class="dw-text" disabled={busy || !word.trim()} data-tip="Toward saying it (jlens/)" onclick={() => void steer("jlens")}>Steer</button>
+      <button type="button" class="dw-text" disabled={busy || !word.trim()} data-tip="Toward having read it (slens/)" onclick={() => void steer("slens")}>As read</button>
       {#if words.length > 1}
         <button type="button" class="dw-text sort" onclick={() => setLensWorkspaceSortMode(nextSort)}
           aria-label={`Sorted by ${lensState.workspaceSortMode}. Sort by ${nextSort}`}>by <MorphText text={lensState.workspaceSortMode} /></button>

@@ -273,5 +273,25 @@ try {
     [{ name: "neuron/L1h3", mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true }, "a neuron named as a head"],
     [{ name: "neuron/L1n3", mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true, layers: [1] }, "a unit with a clause"],
   ]) assert.throws(() => ok([row]), TypeError, why);
-  console.log("Term editor: the layer clause, unit terms, where a term acts, the chips' words and the snapshot rows passed");
+  // ---- an S-lens token term: toward having read the word, the jlens term's twin
+  const read = { mode: "slens", ablate: false, alpha: 0.3, trigger: "RESPONSE", enabled: true, layers: [2, 3, 4] };
+  assert.equal(formatTerm("slens/Paris", read, 0.5), "0.3 slens/Paris{2-4}@response", "an slens term takes a clause like a jlens one");
+  assert.equal(serializeExpression(new Map([
+    ["sae/7", { mode: "sae", ablate: false, alpha: 0.3, trigger: "BOTH", enabled: true }],
+    ["slens/Paris", read],
+    ["jlens/storm", { mode: "jlens", ablate: false, alpha: 0.3, trigger: "BOTH", enabled: true }],
+  ]), 0.5), "0.3 jlens/storm + 0.3 slens/Paris{2-4}@response + 0.3 sae/7", "lens tokens emit together, said before read");
+  assert.equal(terms.termTitle("slens/Paris", read), "Paris");
+  assert.equal(terms.termSource("slens/Paris", read), "lens token, as read");
+  assert.ok(terms.canRemove("slens/Paris", read, null));
+  assert.equal(layersProbe("slens/Paris", read, true), "1 slens/Paris{2-4}@response");
+  const { addSLensToRack } = steering;
+  addSLensToRack("slens/Paris");
+  setSteerLayers("slens/Paris", [3]);
+  assert.equal(currentSteeringExpression(), "0.3 slens/Paris{3}");
+  removeSteerEntry("slens/Paris");
+  ok([{ name: "slens/Paris", ...read }]);
+  assert.throws(() => ok([{ name: "jlens/Paris", ...read }]), TypeError, "an slens row names an slens atom");
+
+  console.log("Term editor: the layer clause, unit terms, slens terms, where a term acts, the chips' words and the snapshot rows passed");
 } finally { await server.close(); }

@@ -85,7 +85,7 @@
     const value = Math.round(Math.min(dial.max, Math.max(dial.min, raw)) * 100) / 100;
     if (entry.mode === "subspace") setSubspaceAlong(value);
     else if (entry.mode === "manifold") patchSteerEntry(name, { blend: value }, ["manifold"]);
-    else patchSteerEntry(name, { alpha: value }, ["jlens", "sae", "unit"]);
+    else patchSteerEntry(name, { alpha: value }, ["jlens", "slens", "sae", "unit"]);
   }
 
   /** The range's track: filled from zero to the thumb, in the term's colour (ink, faint, below
@@ -136,7 +136,7 @@
     if (remove === removal) return;
     if (entry.mode === "subspace") patchSteerEntry(name, { ablate: remove }, ["subspace"]);
     else if (entry.mode === "unit") setUnitOperation(name, remove);
-    else patchSteerEntry(name, { ablate: remove, alpha: remove ? 1 : ATOM_DEFAULT_ALPHA }, ["jlens", "sae"]);
+    else patchSteerEntry(name, { ablate: remove, alpha: remove ? 1 : ATOM_DEFAULT_ALPHA }, ["jlens", "slens", "sae"]);
   }
 
   // ---------- when

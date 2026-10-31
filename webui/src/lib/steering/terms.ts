@@ -49,7 +49,7 @@ export function bareName(name: string): string {
 /** Whether a term removes what it names rather than pushing toward it. */
 export function removes(name: string, entry: SteerEntry): boolean {
   if (entry.mode === "unit") return entry.ablate;
-  return (entry.mode === "subspace" || entry.mode === "jlens" || entry.mode === "sae") && entry.ablate;
+  return (entry.mode === "subspace" || entry.mode === "jlens" || entry.mode === "slens" || entry.mode === "sae") && entry.ablate;
 }
 
 /** The term's name as its chip and its editor show it. */
@@ -58,6 +58,7 @@ export function termTitle(name: string, entry: SteerEntry): string {
     case "subspace": return entry.ablate ? bareName(name) : entry.label ?? bareName(name);
     case "manifold": return entry.label ?? entry.coords.map(c => coefficientText(c)).join(", ");
     case "jlens": return name.slice("jlens/".length);
+    case "slens": return name.slice("slens/".length);
     case "sae": return `feature ${name.slice("sae/".length)}`;
     case "unit": return unitTitle(name);
   }
@@ -69,6 +70,7 @@ export function termSource(name: string, entry: SteerEntry): string {
     case "subspace": return !entry.ablate && entry.label !== null && entry.label !== bareName(name) ? bareName(name) : "";
     case "manifold": return bareName(name);
     case "jlens": return "lens token";
+    case "slens": return "lens token, as read";
     case "sae": return "SAE feature";
     case "unit": return name.startsWith("head/") ? "attention head" : "MLP neuron";
   }
@@ -139,7 +141,7 @@ export function wrapPieces(text: string): string[] {
 /** Whether the term can be pushed or removed (a rank-one direction): a two-node concept, a lens
  *  token, an SAE feature, a neuron. A curved term and a head cannot be both. */
 export function canRemove(name: string, entry: SteerEntry, info: ManifoldInfo | null): boolean {
-  if (entry.mode === "jlens" || entry.mode === "sae") return true;
+  if (entry.mode === "jlens" || entry.mode === "slens" || entry.mode === "sae") return true;
   // A unit switches both ways when the one rule lets it push (a neuron, not a head).
   if (entry.mode === "unit") return unitTermProblem(name, { ablate: false, alpha: UNIT_PUSH_ALPHA }) === null;
   if (entry.mode === "subspace") return info?.node_count === 1 || info?.node_count === 2;

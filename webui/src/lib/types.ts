@@ -915,6 +915,20 @@ export interface JLensSteerEntry {
   enabled: boolean;
 }
 
+/** S-lens token steering term (``α slens/<word>``): pushes along the input-side lens direction
+ *  for the token, toward having read it (``jlens/`` pushes toward saying it), over the S lens's
+ *  fitted layers.  The same shape and dial as a ``jlens/`` term; the rack key is the full atom. */
+export interface SLensSteerEntry {
+  mode: "slens";
+  /** Mean-ablate the token direction instead of pushing along it. */
+  ablate: boolean;
+  alpha: number;
+  trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
+  enabled: boolean;
+}
+
 /** Resident SAE decoder-row steering term (``α sae/<id>``). */
 export interface SaeSteerEntry {
   mode: "sae";
@@ -942,14 +956,14 @@ export interface UnitSteerEntry {
   enabled: boolean;
 }
 
-/** The two single-direction *atom* families — a J-lens token direction
- *  and an SAE decoder row.  Both rack as ``α <prefix><id>`` with one
- *  coefficient and no geometry, so they share a mutator set; only the key
- *  prefix differs.  A unit (``UnitSteerEntry``) is its own mode: it
+/** The single-direction *atom* families — a lens token direction (toward
+ *  saying it, ``jlens/``, or toward having read it, ``slens/``) and an SAE
+ *  decoder row.  All rack as ``α <prefix><id>`` with one coefficient and
+ *  no geometry, so they share a mutator set; only the key prefix differs.  A unit (``UnitSteerEntry``) is its own mode: it
  *  carries its layer and follows lib/unitTerms.ts. */
-export type AtomMode = "jlens" | "sae";
+export type AtomMode = "jlens" | "slens" | "sae";
 
-export type AtomSteerEntry = JLensSteerEntry | SaeSteerEntry;
+export type AtomSteerEntry = JLensSteerEntry | SLensSteerEntry | SaeSteerEntry;
 
 /** A racked steering term — subspace (flat), manifold (curved), or a
  *  single-direction atom. */
@@ -957,6 +971,7 @@ export type SteerEntry =
   | SubspaceSteerEntry
   | ManifoldSteerEntry
   | JLensSteerEntry
+  | SLensSteerEntry
   | SaeSteerEntry
   | UnitSteerEntry;
 

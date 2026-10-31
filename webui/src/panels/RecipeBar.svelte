@@ -26,7 +26,7 @@
   import type { SteerEntry } from "../lib/types";
 
   /** The order families show in: flat terms, curved terms, then atoms and units. */
-  const ORDER: Record<SteerEntry["mode"], number> = { subspace: 0, manifold: 1, jlens: 2, sae: 2, unit: 3 };
+  const ORDER: Record<SteerEntry["mode"], number> = { subspace: 0, manifold: 1, jlens: 2, slens: 2, sae: 2, unit: 3 };
 
   const model = $derived(sessionState.info?.model_id);
   const chips = $derived([...steerRack.entries.entries()]
