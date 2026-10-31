@@ -504,19 +504,21 @@ GROUP = Verb(
         Verb(
             "decompose", "Split a steerable direction against a token dictionary",
             run=run_decompose,
-            description="Best sparse nonnegative combination of k token atoms per "
-                        "layer: the variance share and the contributing tokens. "
-                        "tokens-out (default) is W_U J_l through the R-family lens "
-                        "(how verbalizable the direction is); tokens-in is the "
-                        "S-family footprint K_l e_v over the token mask (which "
-                        "tokens it reads as having seen).",
+            description="Best sparse combination of k atoms per layer: the "
+                        "variance share and the contributing atoms. tokens-out "
+                        "(default) is W_U J_l through the R-family lens (how "
+                        "verbalizable the direction is); tokens-in is the S-family "
+                        "footprint K_l e_v over the token mask (which tokens it "
+                        "reads as having seen); neurons is the layer's neuron "
+                        "writes, signed (the sign is the pole; `unit find` adds "
+                        "labels).",
             args=(
                 arg("selector", help="Steerable direction (concept, ns/name, "
                                      "jlens/<word> or slens/<word>)"),
                 MODEL_REQ,
                 arg("-k", "--top-k", type=positive_int, default=16, metavar="K",
                     help="Sparsity budget (default 16)"),
-                arg("--dictionary", choices=("tokens-out", "tokens-in"),
+                arg("--dictionary", choices=("tokens-out", "tokens-in", "neurons"),
                     default="tokens-out", help="Atom dictionary (default tokens-out)"),
                 layers_arg("Layer indices or a mode (default: every fitted layer "
                            "the direction covers)"),

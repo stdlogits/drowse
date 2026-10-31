@@ -1,4 +1,4 @@
-"""The ``drowse`` command line: eight verb groups, one error boundary.
+"""The ``drowse`` command line: nine verb groups, one error boundary.
 
     drowse serve <model> [...]
     drowse manifold {extract,generate,from-template,fit,bake,merge,transfer,compare,why} ...
@@ -8,6 +8,7 @@
     drowse template {create,ls,show,score,rm} ...
     drowse lens {fit,fetch,ls,show,use,top,decompose,rm} ...
     drowse sae {train,fetch,ls,show,use,rm} ...
+    drowse unit {read,top,find,stats,fetch,catalog,rm} ...
 
 Each group lives in ``drowse.cli.verbs.<group>`` as a declarative
 :class:`~drowse.cli.spec.Verb` tree.  Building the parser imports only those
@@ -30,12 +31,12 @@ os.environ.setdefault("PYTHONWARNINGS", "ignore::UserWarning:multiprocessing.res
 
 def _groups() -> tuple[Verb, ...]:
     from drowse.cli.verbs import (
-        config, experiment, lens, manifold, pack, sae, serve, template,
+        config, experiment, lens, manifold, pack, sae, serve, template, unit,
     )
 
     return (
         serve.GROUP, manifold.GROUP, pack.GROUP, config.GROUP,
-        experiment.GROUP, template.GROUP, lens.GROUP, sae.GROUP,
+        experiment.GROUP, template.GROUP, lens.GROUP, sae.GROUP, unit.GROUP,
     )
 
 
