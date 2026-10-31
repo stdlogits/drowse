@@ -38,6 +38,7 @@ from drowse.geometry.inject import synthesize_subspace
 from drowse.model.layers import format_layer_indices, resolve_layer_selector
 from drowse.steering.grammar import (
     AblationTerm,
+    UnitAblationTerm,
     LayerScope,
     ManifoldTerm,
     ProjectedTerm,
@@ -508,6 +509,11 @@ class SteeringComposer:
         artifacts = self._artifacts
         entries: dict[str, SteeringStackEntry] = {}
         for name, val in steering.alphas.items():
+            if isinstance(val, UnitAblationTerm):
+                # Nothing to load: a unit is resolved against the model when
+                # its ablation is lowered.
+                entries[name] = val
+                continue
             if isinstance(val, AblationTerm):
                 target = artifacts.concretize_key(val.target)
                 artifacts.ensure_profile_registered(target, role="ablation target")
@@ -807,6 +813,11 @@ class SteeringComposer:
         # synthesis and the mean-1 share normalization see only those layers.
         grouped: dict[Trigger, tuple[list[Any], list[Any]]] = {}
         for name, entry in entries.items():
+            if isinstance(entry, UnitAblationTerm):
+                raise SteeringCompositionError(
+                    f"unit ablation is not wired yet ({name!r}): '!neuron/' and "
+                    "'!head/' parse but cannot be composed"
+                )
             if isinstance(entry, AblationTerm):
                 ablate_prof = _profile(entry.target, "ablation target")
                 keep = _layers(name, ablate_prof, entry.layers)
@@ -918,7 +929,7 @@ class SteeringComposer:
         """
         snap: dict[str, float] = {}
         for name, entry in self.flatten_stack().items():
-            if isinstance(entry, (AblationTerm, ManifoldTerm, ProjectedTerm)):
+            if isinstance(entry, (AblationTerm, UnitAblationTerm, ManifoldTerm, ProjectedTerm)):
                 snap[name] = entry.coeff
                 continue
             snap[name] = entry[0]

@@ -1254,7 +1254,8 @@ def test_layer_clause_canonical_form(text: str, canonical: str) -> None:
     ("x@when:p>0{4}", 10, "before the '@' trigger"),
     ("0.2 neuron/L8n344{8}", 17, "carry their own layer"),
     ("!head/L3h1{3}", 10, "carry their own layer"),
-    ("0.5 a~neuron/L8n3{8}", 17, "carry their own layer"),
+    # A unit is no projection operand at all, so that refusal comes first.
+    ("0.5 a~neuron/L8n3{8}", 6, "does not compose with projection"),
 ])
 def test_layer_clause_rejections_carry_a_column(
     text: str, col: int, message: str,

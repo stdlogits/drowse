@@ -70,6 +70,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ManifoldTerm": ("drowse.steering.grammar", "ManifoldTerm"),
     "ProjectedTerm": ("drowse.steering.grammar", "ProjectedTerm"),
     "AblationTerm": ("drowse.steering.grammar", "AblationTerm"),
+    "UnitAblationTerm": ("drowse.steering.grammar", "UnitAblationTerm"),
+    "NeuronRef": ("drowse.naming", "NeuronRef"),
+    "HeadRef": ("drowse.naming", "HeadRef"),
+    "UnsupportedBlockError": ("drowse.errors", "UnsupportedBlockError"),
     "SelectorError": ("drowse.store.selectors", "SelectorError"),
     "AmbiguousSelectorError": ("drowse.store.selectors", "AmbiguousSelectorError"),
     "ManifoldNotRegisteredError": ("drowse.errors", "ManifoldNotRegisteredError"),
@@ -161,6 +165,10 @@ __all__ = [
     "ManifoldTerm",
     "ProjectedTerm",
     "AblationTerm",
+    "UnitAblationTerm",
+    "NeuronRef",
+    "HeadRef",
+    "UnsupportedBlockError",
     "SelectorError",
     "AmbiguousSelectorError",
     "ManifoldNotRegisteredError",
@@ -278,9 +286,12 @@ if TYPE_CHECKING:
         AblationTerm as AblationTerm,
         ManifoldTerm as ManifoldTerm,
         ProjectedTerm as ProjectedTerm,
+        UnitAblationTerm as UnitAblationTerm,
         format_expr as format_expr,
         parse_expr as parse_expr,
     )
+    from drowse.naming import HeadRef as HeadRef, NeuronRef as NeuronRef
+    from drowse.errors import UnsupportedBlockError as UnsupportedBlockError
     from drowse.store.selectors import (
         AmbiguousSelectorError as AmbiguousSelectorError,
         SelectorError as SelectorError,

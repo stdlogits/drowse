@@ -16,6 +16,7 @@ Grammar::
     atom        := [ns "/"] NAME ["." NAME] [":" variant]
                  | "sae" "/" INT
                  | ("jlens" | "slens") "/" "#" INT      # exact vocab id
+                 | ("neuron" | "head") "/" UNIT         # L8n344 / L20h17
     trigger     := phase ["&" gate] | gate
     phase       := preset | ("first" | "after") ":" INT
     preset      := "before" | "after" | "both" | "thinking" | "response"
@@ -30,6 +31,7 @@ Grammar::
                  | [ns "/"] NAME "~" NAME              # soft-assignment prob ∈ [0,1]
                  | "sae" "/" INT                       # resident SAE feature
                  | ("jlens" | "slens") "/" "#" INT     # token probe by vocab id
+                 | ("neuron" | "head") "/" UNIT        # unit probe
     op          := ">" | ">=" | "<" | "<="
     coeff       := signed_float ("," signed_float)?  # comma-run of ≤2;
                                                        # >1 value is valid
@@ -47,6 +49,15 @@ concepts: the name after the ``/`` is kept verbatim (case-preserving, so
 ``jlens/Paris`` and ``@when:jlens/Paris`` agree and differ from
 ``jlens/paris``), takes no ``:variant``, and never routes through the
 manifold tiers.
+
+Unit atoms ``neuron/L8n344`` and ``head/L20h17`` name one MLP neuron or one
+attention head (:func:`~drowse.naming.parse_unit_ref`: case-insensitive input,
+canonical ``L8n344``).  ``α neuron/…`` is a plain term keyed ``neuron/L8n344``
+(a push along the neuron's write; the sign of ``α`` picks the pole).  A head
+has no single write direction, so ``α head/…`` is a parse error;
+``!neuron/…`` and ``!head/…`` are :class:`UnitAblationTerm` s (the unit's
+activation replaced by its neutral mean, not a residual direction ablation).
+Unit atoms do not compose with ``~``, ``|`` or ``%`` and take no layer clause.
 
 A ``{…}`` layer clause scopes the term to exact layers (``0.5 honest{12-20}``,
 ``!jlens/Paris{24-30}@response``, ``0.4 personas%hacker{workspace}``).  It
@@ -131,13 +142,13 @@ import re
 from dataclasses import dataclass, replace
 from typing import Literal, Optional, TYPE_CHECKING, cast
 
-from drowse.errors import SteeringExprError
+from drowse.errors import SteeringExprError, UnitRefError
 from drowse.model.layers import (
     LayerSelectorError,
     format_layer_indices,
     parse_layer_selector,
 )
-from drowse.naming import RESERVED_NAMESPACES
+from drowse.naming import RESERVED_NAMESPACES, UNIT_NAMESPACES, UnitRef, parse_unit_ref
 from drowse.steering.triggers import Trigger
 
 if TYPE_CHECKING:
@@ -146,10 +157,6 @@ if TYPE_CHECKING:
 
 # Namespaces whose atom also takes the exact-vocab-id form ``#<int>``.
 _TOKEN_ID_NAMESPACES = frozenset({"jlens", "slens"})
-
-# Unit namespaces whose atom names its own layer, so a layer clause on it has
-# nothing to select.
-_UNIT_NAMESPACES = frozenset({"neuron", "head"})
 
 #: A term's layer scope in the IR.  ``None`` acts on every layer the term is
 #: fitted at; ``"workspace"`` on the model's workspace band intersected with
@@ -168,6 +175,12 @@ DEFAULT_COEFF = 0.5
 _MANIFOLD_COMPOSE_MSG = (
     "a manifold term does not compose with projection ('~'/'|') or "
     "ablation ('!')"
+)
+
+
+_UNIT_COMPOSE_MSG = (
+    "a unit atom ('neuron/…', 'head/…') does not compose with projection "
+    "('~'/'|') or a manifold position ('%')"
 )
 
 
@@ -250,6 +263,21 @@ class AblationTerm:
     trigger: Trigger
     target: str
     layers: LayerScope = None
+
+
+@dataclass(frozen=True)
+class UnitAblationTerm:
+    """Unit mean-ablation entry in ``Steering.alphas``: ``!neuron/…`` / ``!head/…``.
+
+    Silences one unit: its activation (a neuron's ``act``, a head's ``z_h``)
+    is replaced by its neutral mean, blended by ``coeff`` (bare ``!`` is 1.0).
+    Lowered as a unit hook, never as a residual direction ablation, so it is
+    not an :class:`AblationTerm`.  Keyed ``"!neuron/L8n344"``; a unit carries
+    its layer, so there is no layer clause.
+    """
+    unit: UnitRef
+    coeff: float
+    trigger: Trigger
 
 
 @dataclass(frozen=True)
@@ -571,6 +599,12 @@ class _Parser:
                 coeff = float(sign) * DEFAULT_ABLATION_COEFF
                 coeffs = (coeff,)
         selector = self._selector()
+        if selector.base.namespace == "head" and not ablation:
+            raise SteeringExprError(
+                "a head has no single write direction; silence it with "
+                f"!head/{selector.base.concept}",
+                col=selector.base.col,
+            )
         layers: tuple[int, ...] | Literal["all", "workspace"] | None = None
         if self._peek().kind == "LAYERS":
             layers = self._layer_clause(selector)
@@ -601,7 +635,7 @@ class _Parser:
         """
         tok = self._consume()
         for atom in (selector.base, selector.onto):
-            if atom is not None and atom.namespace in _UNIT_NAMESPACES:
+            if atom is not None and atom.namespace in UNIT_NAMESPACES:
                 raise SteeringExprError(
                     f"'{atom.namespace}/' atoms carry their own layer and take "
                     f"no layer clause",
@@ -870,6 +904,10 @@ class _Parser:
 
     def _selector(self) -> _Selector:
         base = self._atom()
+        if base.namespace in UNIT_NAMESPACES and self._peek().kind in (
+            "PERCENT", "TILDE", "ORTHO",
+        ):
+            raise SteeringExprError(_UNIT_COMPOSE_MSG, col=self._peek().col)
         if self._peek().kind == "PERCENT":
             # Manifold position term: ``base % NUM(,NUM)*`` (coord form)
             # OR ``base % IDENT`` (label form, sugar for "the coords of
@@ -911,6 +949,8 @@ class _Parser:
             op_tok = self._consume()
             op = "~" if op_tok.kind == "TILDE" else "|"
             onto = self._atom()
+            if onto.namespace in UNIT_NAMESPACES:
+                raise SteeringExprError(_UNIT_COMPOSE_MSG, col=onto.col)
             if self._peek().kind in ("TILDE", "ORTHO"):
                 nxt = self._peek()
                 raise SteeringExprError(
@@ -925,8 +965,11 @@ class _Parser:
         """Consume the name after ``<namespace>/`` (the ``/`` already consumed).
 
         ``sae/<int>`` takes a feature id and ``jlens``/``slens`` also take an
-        exact vocab id ``#<int>``; everything else is an identifier.
+        exact vocab id ``#<int>``; ``neuron``/``head`` take a unit
+        (``L8n344``), returned canonical; everything else is an identifier.
         """
+        if namespace in UNIT_NAMESPACES:
+            return self._unit_name(namespace)
         if namespace == "sae" and self._peek().kind == "NUM":
             return str(self._non_negative_int("SAE feature id"))
         if namespace in _TOKEN_ID_NAMESPACES and self._peek().kind == "HASH":
@@ -937,6 +980,27 @@ class _Parser:
                 )
             return f"#{self._non_negative_int('token id')}"
         return str(self._expect("IDENT").value)
+
+    def _unit_name(self, namespace: str) -> str:
+        """Consume a unit name (``L8n344``) and return its canonical text."""
+        tok = self._peek()
+        if tok.kind != "IDENT":
+            example = "L8n344" if namespace == "neuron" else "L20h17"
+            raise SteeringExprError(
+                f"'{namespace}/' takes a unit, e.g. '{namespace}/{example}'",
+                col=tok.col,
+            )
+        self._consume()
+        try:
+            unit = str(parse_unit_ref(namespace, str(tok.value)))
+        except UnitRefError as exc:
+            raise SteeringExprError(str(exc), col=tok.col) from None
+        if self._peek().kind == "DOT":
+            raise SteeringExprError(
+                f"'{namespace}/{unit}' is a whole unit and takes no '.'",
+                col=self._peek().col,
+            )
+        return unit
 
     def _non_negative_int(self, what: str) -> int:
         tok = self._expect("NUM")
@@ -1156,6 +1220,31 @@ def _merge_ablation(
     )
 
 
+def _merge_unit_ablation(
+    alphas: "dict[str, AlphaEntry]",
+    unit: UnitRef,
+    coeff: float,
+    trig: Trigger,
+) -> None:
+    key = f"!{unit.qualified}"
+    existing = alphas.get(key)
+    if existing is None:
+        alphas[key] = UnitAblationTerm(unit=unit, coeff=coeff, trigger=trig)
+        return
+    if not isinstance(existing, UnitAblationTerm):
+        raise SteeringExprError(  # pragma: no cover — key namespace is disjoint
+            f"unit ablation '{key}' conflicts with another entry of the same name"
+        )
+    if existing.trigger != trig:
+        raise SteeringExprError(
+            f"unit ablation '{key}' appears with conflicting triggers; "
+            f"merge triggers explicitly or split into separate Steering entries"
+        )
+    alphas[key] = UnitAblationTerm(
+        unit=unit, coeff=existing.coeff + coeff, trigger=trig,
+    )
+
+
 def _resolve_manifold_atom(atom: _Atom) -> str:
     """Return the registry key for a manifold atom.
 
@@ -1363,6 +1452,10 @@ def _fold(
                     "ablate the base concept and project separately"
                 )
             effective_trig = trig if trig is not None else Trigger.BOTH
+            if sel.base.namespace in UNIT_NAMESPACES:
+                unit = parse_unit_ref(sel.base.namespace, sel.base.concept)
+                _merge_unit_ablation(alphas, unit, coeff, effective_trig)
+                continue
             _merge_ablation(alphas, base_key, coeff, effective_trig, scope)
             continue
         if sel.operator is None:
@@ -1425,6 +1518,9 @@ def format_expr(steering: "Steering") -> str:
         if isinstance(val, AblationTerm):
             parts.append(_fmt_ablation(val))
             continue
+        if isinstance(val, UnitAblationTerm):
+            parts.append(_fmt_bang(val.unit.qualified, val.coeff, val.trigger))
+            continue
         if isinstance(val, ProjectedTerm):
             parts.append(_fmt_projected(val))
             continue
@@ -1462,15 +1558,18 @@ def _fmt_projected(p: ProjectedTerm) -> str:
 
 
 def _fmt_ablation(a: AblationTerm) -> str:
-    target = f"{a.target}{format_layer_clause(a.layers)}"
-    if a.coeff == 1.0:
+    return _fmt_bang(f"{a.target}{format_layer_clause(a.layers)}", a.coeff, a.trigger)
+
+
+def _fmt_bang(target: str, coeff: float, trigger: Trigger) -> str:
+    if coeff == 1.0:
         body = f"!{target}"
-    elif a.coeff == -1.0:
+    elif coeff == -1.0:
         body = f"-!{target}"
     else:
-        body = f"{a.coeff:g} !{target}"
-    if a.trigger != Trigger.BOTH:
-        body += "@" + _trigger_name(a.trigger)
+        body = f"{coeff:g} !{target}"
+    if trigger != Trigger.BOTH:
+        body += "@" + _trigger_name(trigger)
     return body
 
 
@@ -1603,6 +1702,7 @@ __all__ = [
     "ManifoldTerm",
     "ProjectedTerm",
     "SteeringExprError",
+    "UnitAblationTerm",
     "format_layer_clause",
     "parse_expr",
     "format_expr",

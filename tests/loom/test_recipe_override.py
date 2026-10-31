@@ -612,3 +612,9 @@ def test_recipe_from_dict_rejects_a_non_string_system_prompt() -> None:
     data["system_prompt"] = 5
     with pytest.raises(LoomTreeError, match="system_prompt must be a string or null"):
         Recipe.from_dict(data)
+
+
+def test_invert_unit_ablation_term():
+    """``!neuron/…`` is a UnitAblationTerm; inverting flips its coefficient."""
+    inv = Recipe(steering="!neuron/L1n2 + 0.5 !head/L0h3@response").invert_steering()
+    assert inv.steering == "-!neuron/L1n2 - 0.5 !head/L0h3@response"

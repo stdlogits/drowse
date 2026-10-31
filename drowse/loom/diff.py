@@ -332,7 +332,7 @@ def _entry_alpha(entry: Any) -> float:
     """Extract the numeric coefficient from a Steering.alphas entry.
 
     Handles bare floats, ``(alpha, trigger)`` tuples, ``ProjectedTerm``,
-    ``AblationTerm``, and ``ManifoldTerm`` uniformly so the delta
+    ``AblationTerm``, ``UnitAblationTerm`` and ``ManifoldTerm`` uniformly so the delta
     formatter doesn't have to special-case each shape — every non-scalar
     entry exposes a ``.coeff`` field.
     """
@@ -340,9 +340,10 @@ def _entry_alpha(entry: Any) -> float:
         AblationTerm,
         ManifoldTerm,
         ProjectedTerm,
+        UnitAblationTerm,
     )
 
-    if isinstance(entry, (ProjectedTerm, AblationTerm, ManifoldTerm)):
+    if isinstance(entry, (ProjectedTerm, AblationTerm, UnitAblationTerm, ManifoldTerm)):
         return float(entry.coeff)
     if isinstance(entry, tuple):
         return float(entry[0])

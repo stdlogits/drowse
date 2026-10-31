@@ -239,7 +239,8 @@ class Recipe:
         empty (unsteered) expression, which composes as the no-op.
         """
         from drowse.steering.grammar import (
-            AblationTerm, ManifoldTerm, ProjectedTerm, parse_expr, format_expr,
+            AblationTerm, ManifoldTerm, ProjectedTerm, UnitAblationTerm,
+            format_expr, parse_expr,
         )
         from drowse.steering.terms import Steering
 
@@ -248,7 +249,7 @@ class Recipe:
         parsed = parse_expr(self.steering)
         flipped: dict[str, Any] = {}
         for name, val in parsed.alphas.items():
-            if isinstance(val, (ProjectedTerm, AblationTerm)):
+            if isinstance(val, (ProjectedTerm, AblationTerm, UnitAblationTerm)):
                 flipped[name] = replace(val, coeff=-val.coeff)
             elif isinstance(val, ManifoldTerm):
                 # Flip the directional ``along`` (the representative coeff);

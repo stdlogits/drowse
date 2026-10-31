@@ -31,6 +31,8 @@ from drowse.errors import (
     SteeringCompositionError,
     UnknownManifoldLabelError,
     UnknownVariantError,
+    UnitRefError,
+    UnsupportedBlockError,
     WhitenerError,
 )
 from drowse.errors import ProfileNotRegisteredError
@@ -70,6 +72,9 @@ _OVERRIDES: list[tuple[type[DrowseError], int]] = [
     (SteeringCompositionError, 422),
     (ManifoldArityError, 422),
     (OverlappingManifoldError, 422),
+    # A block the BlockSpec cannot describe: valid model, unsatisfiable request.
+    (UnsupportedBlockError, 422),
+    (UnitRefError, 400),
     (ConcurrentGenerationError, 409),
     (RequestError, 400),
     (GenerationRequestError, 400),
