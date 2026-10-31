@@ -15,7 +15,8 @@ with one or both sites (``out``, ``mid``).  The manifest names the kind, and
 per site the layers, shard files, and per-shard sha256::
 
     {"format_version": 7, "kind": "R",
-     "sites": {"out": {"layers": [...], "tensor_files": {...}, "tensor_sha256": {...}},
+     "sites": {"out": {"layers": [...], "tensor_files": {...}, "tensor_sha256": {...},
+                       "split_half": {...}},     # optional; "odd" too in checkpoints
                "mid": {...}},
      "estimator_policy": {"direction", "rules", "skip_first_positions",
                           "corpus_preprocess_version", "doc_chars"},

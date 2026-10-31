@@ -68,8 +68,8 @@ drowse experiment transcript run PATH.yaml [MODEL] [--max-tokens N]
 drowse experiment naturalness MODEL PROMPT --manifold NAME -S EXPR [--compare-linear]
 drowse template create NAME --slot TOKEN --values V... --contexts PATH [--description TEXT] [-f]
 drowse template ls | show NAME | rm NAME [-y] | score NAME -m MODEL [-S EXPR] [--by sum|mean]
-drowse lens fit MODEL [--kind r|j] [--corpus FILE | --hf-corpus REPO[:CFG][@REV][,K=V...]...] [--prompts N]
-                [--seq-len T] [--dim-batch K] [--prompt-batch B] [--checkpoint-every N] [--layers L] [-f]
+drowse lens fit MODEL [--kind r|j|s|k] [--sites out,mid] [--corpus FILE | --hf-corpus REPO[:CFG][@REV][,K=V...]...]
+                [--prompts N] [--seq-len T] [--dim-batch K] [--checkpoint-every N] [--no-split-half] [--layers L] [-f]
 drowse lens fetch MODEL [neuronpedia|workspace-r|workspace-j] [--repo R] [--revision REV] [-f]
 drowse lens ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
 drowse lens top MODEL "PROMPT" [-k K] [--layers L|sample|workspace|all] [--position P]
@@ -226,7 +226,7 @@ interface here:
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`
   `METHOD_FIT_MODES`, the manifold sidecar and `.drowse` formats, lens format
   v7 (`sites.out`, `out.layer-L` shards);
-- Python it calls: `lens.fit.fit_jacobian_lens` and
+- Python it calls: `lens.fit.fit_lens` and
   `lens.store.save_lens_at`/`LensProvenance`.
 
 A semantic change to any of these regenerates the golden in the same change
@@ -239,8 +239,8 @@ vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%.
 - Hooks write in place, never `.item()` or sync the host, allocate nothing per
   call beyond their own tensors; validation and constants belong in
   compose/lower (`drowse/steering/AGENTS.md`).
-- Generation runs under `torch.inference_mode()`; the J-lens fit is the only
-  backward pass in drowse.
+- Generation runs under `torch.inference_mode()`. Nothing in drowse runs a
+  backward pass: the lens fit is transport, its maps written out by hand.
 - Norms, covariances and fit-time math are fp32.
 - One device→host transfer per decoded token; per-token scoring runs after the
   forward, never inside a capture hook, and only when a consumer needs it
@@ -262,8 +262,8 @@ vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%.
 `torch.mps.empty_cache()` between extraction batches; `torch.mps.synchronize()` at the end of every decode, or a
 rapid regenerate recommits an in-flight Metal command buffer. Metal reports
 queue exhaustion as an asynchronous error that silently zeroes work, so long
-MPS loops drain the queue periodically and guard against zero rows (the J-lens
-fit loop is the reference pattern).
+MPS loops drain the queue periodically and guard against zero rows (the lens
+fit loop, `lens/fit.py`, is the reference pattern).
 
 **Testing.** Most of the suite runs on CPU against a real `DrowseSession` on a
 tiny generated checkpoint (`tiny_session`); route tests that need no behavior

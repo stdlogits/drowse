@@ -48,7 +48,7 @@ so keep test modules exactly one directory deep.
 | `store/` | manifold folders and tensors, selectors, templates, bundled materialization, archive, hub, install, alignment, neutral cache |
 | `steering/` | expression grammar, triggers, steering scopes, hooks, installation, subspace/manifold steering, ablation |
 | `readout/` | monitor, probe roster, read planner, captures, measurements envelope, instrument types, geometry replay, `score_hidden` |
-| `lens/`, `sae/` | J-lens math, fit, RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
+| `lens/`, `sae/` | lens math, the transport estimator (against the autograd oracle), RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
 | `generation/` | decode loop, sampling, logits, prefix cache, render, results, scoring, token payloads |
 | `fit/` | extraction pipeline, capture, bake, monopolar fits, preflight, naturalness, transfer alignment |
 | `loom/` | tree, ops, diff, filter, transcript, recipe overrides, token rows, token replay, joint logprobs, concurrency |
@@ -153,7 +153,8 @@ set session privates.
 | `manifolds.py` | `loop_manifold`, `open_manifold`, `disk_manifold`: curved fits through circle centroids with a 20.0 common-mode offset (without it the kernel's norm cap fires); `stamp_current_geometry`, `euclidean_shares`. |
 | `artifacts.py` | `author_manifold` (a two-node discover folder under `local/`, fitted for `MODEL`), `write_fitted_manifold`. |
 | `decode.py` | `FakeLogitsModel`/`make_logits_model`, `scripted_model`/`scripted_logits`, `NoCacheModel`, `StopTokenizer`, `CharTokenizer`, for decode-loop, scoring, naturalness and joint-logprob tests. |
-| `jlens_toys.py` | `frozen_toy(n_layers)`: an HF-shaped frozen block stack for lens math, with its own `CharTokenizer`. |
+| `jlens_toys.py` | `frozen_toy(n_layers)`: a genuine tiny llama (`TOY_D` wide, `TOY_VOCAB` tokens, weights re-drawn) the lens transport fits, with its own `CharTokenizer`. |
+| `lens_oracle.py` | The autograd lens oracle: `oracle_estimate`/`oracle_lens` compute every kind and site by autograd through the model's own modules, with the RelP rules as derivative patches (`relp_backward_rules`). The reference the transport is tested against. |
 | `blocks.py` | `tiny_dense_model(model_type)`: a float64 tiny model of each dense family (`DENSE_FAMILIES`) with every weight, norm and scalar re-drawn and windows that bind; `default_init_model(model_type, seed=, dtype=)`: the same architecture at its default initialization in a low precision (bf16), the rounding a verification must not take for a term; `spec_forward(spec, ids)`: mids, block outputs and logits from a `ModelSpec` alone, the oracle for `BlockSpec` and transport layer maps. |
 | `server.py` | `mock_session`, `script_generate`, `StubSession` (below). |
 | `cli.py` | `FakeSession`, `install_fake_session` (patches `DrowseSession.from_pretrained`, the CLI's one construction seam, so the real narration, YAML defaults and close-on-exit run), `poison_session` (any model load raises). |

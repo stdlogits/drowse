@@ -14,12 +14,13 @@ and the J-space decomposition of a steerable direction. Inside a session the fac
 
 | Module | Owns |
 |---|---|
-| `key.py` | `LensKey` (kind × site), `FITTABLE_KINDS`, local-name grammar. Torch-free. |
+| `key.py` | `LensKey` (kind × site), `FITTABLE_KINDS`, `site_layers`, `DEFAULT_FIT_DOCUMENTS`, local-name grammar. Torch-free. |
 | `jlens.py` | `JacobianLens` (one kind, both sites), readout math, token-atom resolution, error types, fit defaults. Imports only torch, errors and `key` (decode-step code imports it). |
 | `depth.py` | `LensBand`, `kind_weights`: which kind reads a place, by depth. Torch-free. |
 | `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `sparse_decompose` |
-| `fit.py` | `fit_jacobian_lens`, the only backward passes in drowse. No runtime path imports it. |
-| `relp.py` | `relp_backward_rules`, `RELP_RULES` (the R-lens backward graph) |
+| `transport.py` | The estimator's per-document block maps: `linearize`, `jvp`, `vjp`, the sweeps, `document_estimate` |
+| `fit.py` | `fit_lens` (transport over a corpus), `LensSums`, `LensFit`, `fit_site_layers`. No runtime path imports it. |
+| `relp.py` | `RELP_RULES`, `HALF_RULE_BETA`: the RelP rules the R/S kinds are taken under |
 | `corpus.py` | Hub corpora (pin and stream in a worker), `read_corpus_file`. `sae train` uses it too. |
 | `lifecycle.py` | `plan_lens_fit` (pure), `LensFitter` (executor), `prove_lens_fit_noop` (model-free) |
 | `store.py` | Format-v7 local artifacts: save/load/checkpoint/promote/remove, `LensProvenance`, `lens_estimator_policy`, `lens_identity` |
@@ -29,13 +30,13 @@ and the J-space decomposition of a steerable direction. Inside a session the fac
 
 ## Identity: `LensKey`
 
-A lens's **kind** is the Jacobian's direction crossed with its backward rules:
+A lens's **kind** is the Jacobian's direction crossed with its derivative rules:
 J (output, standard), R (output, RelP), K/S (input, standard/RelP). A
 **site** is `out` (block output) or `mid` (post-attention residual, the MLP's
-input). `LensKey(kind, site)` names one kind at one site. Only J/R at `out`
-have an estimator (`FITTABLE_KINDS`). Every store, binding and selection path
-is keyed on `LensKey`, and every readout surface here reads the output side at
-`out`.
+input). `LensKey(kind, site)` names one kind at one site. One estimator
+(transport) fits every kind at either or both sites (`FITTABLE_KINDS` is all
+four). Every store, binding and selection path is keyed on `LensKey`, and
+every readout surface here reads the output side at `out`.
 
 **One lens, both sites.** A `JacobianLens` holds its kind (`key`, whose site
 is `out`; `kind`) and fp32 per-layer matrices at one or both sites:
@@ -74,8 +75,9 @@ layer, `w_S = 1` below `lo`, 0 above `hi`, linear inside, summing to 1.
 
 - A local directory name carries its kind (`^[jrks](-tag)?$`: `r`, `j`,
   `r-chat`). Every writer refuses a mismatch, so a fit cannot land in or resume
-  from another kind's shards. Fits always write the untagged `local:j` or
-  `local:r`; a tagged name appears only through a direct `save_lens(name=…)`.
+  from another kind's shards. Fits always write the untagged `local:<kind>`
+  (`local:r`, `local:j`, `local:s`, `local:k`); a tagged name appears only
+  through a direct `save_lens(name=…)`.
 - `JacobianLens` defaults to `key=LensKey("J")` and casts every matrix to fp32.
   Code that builds an R-lens by hand must pass `key=LensKey("R")`; a key with
   site `mid` is refused (pass `mid=` matrices).
@@ -96,10 +98,22 @@ tensor_files, tensor_sha256}` for each site the lens holds (`out`, `mid`, or
 both), `n_prompts`, `d_model`, the `LensProvenance`
 fields and `estimator_policy`. The provenance fields are the corpus spec, the
 token-id sha256 (`token_ids_v1`), raw corpus digest and counts, `seq_len`,
-`dim_batch`, layer count, and the loaded-weight and source fingerprints. The
-policy is `{direction, rules, skip_first_positions, corpus_preprocess_version,
-doc_chars}`, with `rules = RELP_RULES` for RelP kinds. There is no `method`
-field.
+`dim_batch` (seeds per transport pass), layer count, and the loaded-weight and
+source fingerprints. The policy is `{direction, rules, skip_first_positions,
+corpus_preprocess_version, doc_chars}`, with `rules = RELP_RULES` for RelP
+kinds. There is no `method` field.
+
+Two per-site fields are optional and validated when present.
+`sites.<site>.split_half` (`{"<layer>": value}`, every layer of the site,
+finite and non-negative) is the fit's split-half difference: local fits
+record it, external imports and fits that could not measure it (a corpus
+extension of a durable artifact, `split_half=False`) lack it;
+`lens_split_half(sidecar, site)` reads it. `sites.<site>.odd`
+(`{tensor_files, tensor_sha256}`) appears only in a checkpoint: the odd-half
+mean shards (`<site>.odd.partial.layer-L…`) a resumed fit continues its
+split-half check from (`load_lens_checkpoint_odd`). Promotion drops it and
+generation GC collects the shards. drowse.ai's browser reader checks exact key
+sets, so a pack carrying `split_half` (or a `mid` site) needs its follow-up.
 
 - **Every kind and site.** `save_lens`, `save_lens_at` and `load_local_lens`
   write and read every site the lens holds; local names carry the kind
@@ -111,7 +125,7 @@ field.
   `{site: layers}`) reads only the named sites and layers; a site or layer
   the artifact lacks raises `LensNotFittedError` (404), never the soft
   "re-fit" `None`, because the artifact is sound and the request is not.
-  The fit lifecycle asks for `{"out": sources}` and adopts a loaded lens as
+  The fit lifecycle asks for its `{site: layers}` and adopts a loaded lens as
   resident only when it holds every site and layer the manifest names. `save_lens_checkpoint` takes
   per-site raw sums (`{site: {layer: sum}}`) and `promote_lens_checkpoint`
   per-site layers (`site_layers`); a checkpoint is subsumed only when the final
@@ -134,8 +148,8 @@ field.
   unreadable. `lens_fit_lock` is cross-process and spans a whole fit or
   removal, on a `.fit` sibling so pointer reads aren't blocked.
 - `save_lens` and checkpoint promotion publish **and select** for the lens's
-  side. `save_lens_at(lens, dir, provenance)` writes the same layout anywhere
-  without selecting it; it is the packaging path.
+  side. `save_lens_at(lens, dir, provenance, split_half=None)` writes the same
+  layout anywhere without selecting it; it is the packaging path.
 
 ## Sources and selection (`sources.py`)
 
@@ -167,68 +181,87 @@ name.
   the live `config._commit_hash`, `d_model` and the layer range, so a model
   loaded without a Hub commit never matches one.
 
-## Estimator (`fit.py`)
+## Estimator (`transport.py`, `fit.py`)
 
-- **Its own autograd forward.** Inference tensors never re-enter autograd, so
-  the fit runs under `enable_grad`. Blocks below the lowest source carry no
-  graph. `_MeanSourceProbe` is an identity whose derivative collapses each
-  source gradient to its position mean. Gradients come from
-  `autograd.grad(final, sources)`, never `backward()` + `retain_grad()`, whose
-  `.grad` accumulation across the multi-backward loop corrupts rows. A
-  terminal hook raises `_FitForwardComplete` (a `BaseException`) to skip the
-  final norm and the vocabulary head.
-- **Weighting.** Cotangents go in at every valid target position. Sources are
-  averaged within a prompt and summed across prompts, so prompts are weighted
-  exactly equally even at ragged lengths. The first `SKIP_FIRST_POSITIONS =
-  16` positions (attention sinks) and the last position are excluded. Prompts
-  of 17 tokens or fewer are dropped before fitting, so `n_prompts` counts
-  consumed documents.
-- **Widths.** `prompt_batch` defaults to 4 (2 on MPS, where 2 measured 1.72×
-  faster than 1 on M5 Max with gemma-3-4b). `dim_batch` defaults to 8 (93.6
-  s/prompt there, 96.9 at 32); its FLOPs are width-invariant, so it trades
-  memory for per-pass overhead. `vjp_mode="auto"` falls back from batched
-  VJPs to the replicated reference path, with `prompt_batch=1`, when the
-  backend lacks vmap coverage.
-- **Memory.** Rows stage through bounded stripes (at most 256 rows and 128 MiB
-  per slot) into a CPU fp32 accumulator; CUDA double-buffers them to overlap
-  device-to-host copies. On OOM the fit first drops the second CUDA slot,
-  then splits the prompt group (keeping committed rows and never retrying a
-  width that failed), then halves `dim_batch`.
-- **MPS.** Metal reports queue exhaustion asynchronously: nothing raises and
-  the work comes back as zeros. Hence `torch.mps.synchronize()` every
-  `_MPS_SYNC_EVERY_PASSES = 4` passes, a zero-row guard before each commit,
-  and `empty_cache` only at checkpoint cadence.
-- Cancellation is checked between prompt groups (completed progress is
-  checkpointed) and around every VJP block. Teardown drops hooks, graph and
-  stripes, then flushes the allocator, so a server's next decode doesn't
-  inherit the working set.
-- `kind="R"` applies the RelP rules itself; don't wrap it again.
-  `initial_lens` hands its matrices to the estimator, which scales them to
-  sums in place, so don't reuse the passed lens.
-- The cost is about `2·d_model` forward-equivalents of backward per prompt.
-  Restricting source layers (`workspace`, an index list) is the only lever
-  that removes work. A fit defaults to every layer below the final one and
-  refuses `sample`.
+One estimator, transport, fits every kind at both sites. It is ported from
+neuron-lens's hand-written maps and generalized over
+`model.blocks.BlockSpec`, so every family the block description covers
+(llama, mistral, qwen2/3, gemma 2/3/4 text) fits without per-family code.
+
+- **Per-document linearization.** `transport.linearize(spec, ids, rules=,
+  skip_first=)` runs the primal once from the `ModelSpec` (the embedding and
+  its scale, every block) and keeps each block's map: the residual norms'
+  `gain·rsqrt` (and the normalized input for the true derivative), the q/k/v
+  head norms, RoPE tables, attention probabilities over padded keys, the
+  softcap's `1 − tanh²` factor, the MLP's activation factors and the
+  per-layer scalar. Projection biases enter only the primal. The final norm
+  and logit softcap are the readout's, never the lens's (`h_final` is the
+  last block's output).
+- **The maps.** `jvp(m, X)` pushes `[b, N, d]` tangents through one block
+  and returns them at its output and `mid`; `vjp(m, G, mid_seed=)` is the
+  exact transpose (the adjoint identity is tested per block). Products run in
+  the model's dtype, elementwise state in `promote(dtype, fp32)`. On CUDA the
+  maps are compiled with fixed shapes (falling back to eager if compilation
+  fails); elsewhere eager.
+- **Rules.** `rules_for(kind)`: `relp` (R, S) holds residual norms' scale
+  (LN rule), linearizes `act(g)` as `φ(g)·dg` (identity rule) and halves the
+  gated product (β = 0.5); `standard` (J, K) takes every derivative true
+  (RMSNorm diagonal plus rank one, `act'(g)`, the product rule). Head norms,
+  softmax, RoPE and the softcap keep their true derivative under both.
+- **Sweeps and seeds.** Output kinds pull `dim_batch` basis cotangents down
+  from the last block's output (`reverse_sweep`); `out` layer `L` is read
+  below block `L + 1` and `mid` layer `L` inside block `L`. Input kinds push
+  basis tangents up from `e = embed(ids)·embed_scale` (`forward_sweep`). One
+  sweep covers every layer and both sites, so a document costs one forward
+  plus `ceil(d_model / dim_batch)` sweeps; restricting layers only trims
+  them (an output fit stops at its lowest layer, an input fit at its
+  highest). `dim_batch` defaults to 256.
+- **Positions and weighting.** Seeds and reads sit at the valid positions
+  `[16, T − 1)` (`SKIP_FIRST_POSITIONS`): attention is causal, so the maps
+  carry only those rows and the primal drops the last token. Each document
+  contributes its position mean; documents weigh equally at ragged lengths
+  and `n_prompts` counts consumed documents (prompts of 17 tokens or fewer
+  are dropped first). A transport J/R equals the autograd J/R on the same
+  corpus, so the estimator policy is unchanged and earlier local fits stay
+  valid.
+- **Split-half.** `fit_lens` keeps the total sums and the odd-indexed
+  documents' (`LensSums.total`/`.odd`, fp32 on the CPU: one more lens of
+  RAM) and returns `LensFit(lens, split_half)`, per site and layer
+  `‖mean_even − mean_odd‖ / ‖mean‖`. Parity follows the corpus index, so a
+  resume continues it exactly; `split_half=False` drops it.
+- **Verification and refusal.** `fit_lens` verifies the model once
+  (`verify_model_spec`, an fp32 replay of every block) unless handed a
+  verified `spec`; the lifecycle verifies at the start of `LensFitter.run`,
+  before any corpus work, so MoE, fused gate-up or qkv, hybrid linear
+  attention and any undescribed term refuse with `UnsupportedBlockError`
+  (422). Quantized weights refuse too. External lenses for those models still
+  load.
+- **Memory and MPS.** A sweep stages its reads on the device and moves them
+  to the host in one transfer per pass, which also drains Metal's queue. An
+  all-zero row from an accelerator is an asynchronous OOM (Metal zeroes lost
+  work): it raises an out-of-memory error, and the OOM ladder halves
+  `dim_batch` (kept down for the rest of the fit) and retries the pass.
+  `empty_cache` runs at checkpoint cadence; teardown drains, collects and
+  flushes the allocator.
+- **Cancellation** is checked between passes and documents. A stop between
+  documents checkpoints the completed prefix; one inside a document abandons
+  its partial sums (the lifecycle reloads from the last checkpoint).
+- `initial=LensSums.from_means(lens, odd)` takes ownership of an averaged
+  base and scales it to sums in place, so don't reuse the passed lens.
+- The autograd estimator lives on as the test oracle
+  (`tests/support/lens_oracle.py`, with the RelP rules as derivative patches).
 
 ## RelP rules (`relp.py`)
 
-The R-lens is the same estimator run through an LRP-modified backward graph
-(RelP, arXiv:2508.21258). Forwards are bit-identical and only gradients
-differ. The R-lens reads early layers more faithfully. The rules:
-
-- **LN-rule.** RMSNorm backpropagates as the diagonal
-  `weight·rsqrt(mean(x²)+eps)`.
-- **Identity-rule.** The detached `act(x)/x` factor replaces `act'(x)`.
-- **Half-rule.** `act(gate)·up` splits β = 0.5 per factor.
-
-Each rewrite routes the module's own output through a custom `Function`, so
-there is no forward arithmetic to drift. The `w` vs `1+w` RMSNorm convention
-is detected empirically, and every patched module verifies its factor on its
-first forward. Scope is dense models: one gated MLP and direct RMSNorm
-children per block, with q/k norms left untouched. MoE, fused gate-up
-projections and instance-level `forward` overrides raise
-`RelpUnsupportedError` (422). Patching is visible to the whole process, so
-hold the model exclusively and pass the eager module list.
+The R- and S-lenses are the J- and K-lenses taken under an LRP-modified
+derivative (RelP, arXiv:2508.21258); forwards are unchanged. The R-lens
+reads late layers faithfully and early ones better than J, the S-lens is the
+faithful read early. The rules: **LN rule** (residual RMSNorms, sandwich
+norms included, hold `rsqrt` constant: the diagonal `gain·rsqrt(mean(x²)+eps)`),
+**identity rule** (`φ(g) = act(g)/g` replaces `act'(g)`), **half rule**
+(`act(gate)·up` passes β = 0.5 per factor). Attention-internal norms keep
+their true derivative (`include_qk_norms: false`). `RELP_RULES` records them
+in every RelP policy; `transport.py` applies them.
 
 ## Corpora (`corpus.py`)
 
@@ -245,14 +278,19 @@ MPS. An empty file corpus raises `EmptyCorpusError` (400).
 
 ## Fit lifecycle (`lifecycle.py`)
 
-`plan_lens_fit` decides from metadata alone. The identity it compares is the
-token-id rows sha256, `seq_len`, the weight fingerprint and the policy.
+`plan_lens_fit` decides from metadata alone, site by site: a request is
+`{site: layers}` (`resolve_fit_layers(selector, kind=, n_layers=, sites=)`:
+each site draws from its own pool, `sample` is refused, an explicit layer no
+requested site holds is refused). The identity it compares is the token-id
+rows sha256, `seq_len`, the weight fingerprint and the policy.
 
 - **`noop`**: the durable artifact covers the corpus and the requested layers.
   A leftover checkpoint is reaped only if the verified final artifact
   subsumes it.
-- **`topup`**: fit only the missing layers and union them in. Unchanged
-  shards carry forward after a re-hash, or without one under a load proof.
+- **`topup`**: fit only the missing `{site: layers}` and union them in.
+  Unchanged shards carry forward after a re-hash, or without one under a
+  load proof; the kept sites' split-half values carry forward and the new
+  layers are measured.
 - **`resume`**: continue from the durable artifact or checkpoint over a
   corpus prefix (`consumed_prefix_sha256`), whichever is farther ahead.
 - **`fresh`**: nothing reusable, or `force`.
@@ -260,6 +298,10 @@ token-id rows sha256, `seq_len`, the weight fingerprint and the policy.
 Extending the corpus of an artifact that holds layers the request omits is
 refused, since one artifact has one corpus identity. Pass the full layer set or
 `force`. When a payload fails to load, the executor drops it and re-plans.
+
+An input-kind (K/S) fit adopts nothing: the resident lens is the output
+side's. An output fit without the `out` site leaves nothing resident (the
+resident readout reads `out`).
 
 `prove_lens_fit_noop` proves a no-op without the model. A file corpus is
 identified by its raw digest, a pinned Hub corpus by spec plus prompt count
@@ -294,7 +336,9 @@ tensors). `LensInstrument` takes every dependency explicitly: model, capture
   `KeyError` in the transport stack. A run is pinned when live readout is on
   or when probes feed a final aggregate or a gate.
 - `fit`, `readout` and `attach` run under the exclusive guard. `fit` takes
-  `lens_fit_lock` first and calls `assert_unsteered`.
+  `lens_fit_lock` first and calls `assert_unsteered`. `fit(prompts, kind=,
+  sites=, layers=, …)` defaults to `kind="J"` and both sites; the CLI and the
+  server default to `r`.
 
 ## Readout math
 
@@ -370,22 +414,28 @@ the per-layer softmax probability `p_l(v)`.
 ## Errors, seams, tests
 
 - Errors: `JacobianLensError` (422), `LensNotFittedError` (404),
-  `JacobianLensCancelled` (409), `RelpUnsupportedError` (422, in
-  `errors.py`). `MultiTokenWordError`, `InvalidTokenIdError`,
+  `JacobianLensCancelled` (409), `UnsupportedBlockError` (422, in
+  `errors.py`, from the block description). `MultiTokenWordError`, `InvalidTokenIdError`,
   `EmptyCorpusError` and `SourceSpecError` are `RequestError`s (400). `HFError`
   (502) means an unresolvable repo commit.
 - **External callers** make these names and the v7 layout an interface.
   neuron-lens calls `load_local_lens`, `save_lens`, `LensProvenance`,
-  `JacobianLens(key=)`, `fit_jacobian_lens(kind=)`, `relp_backward_rules` and
-  `RELP_RULES`. drowse.ai's hosted fit (`browser-runtime/fit_hosted_jlens.py`)
-  calls `fit_jacobian_lens` and `save_lens_at`, and its browser reader
-  accepts v7 packs only, and only J/R with a single `sites.out` (`out.layer-L`
-  shards): a pack with a `mid` site or an S/K kind is a drowse.ai follow-up.
+  `JacobianLens(key=)` and `RELP_RULES` (its tests also call the removed
+  `fit_jacobian_lens`). drowse.ai's hosted fit
+  (`browser-runtime/fit_hosted_jlens.py`) calls `fit_lens(kind=, sites=)`
+  (formerly `fit_jacobian_lens`) and `save_lens_at`, and its browser reader
+  accepts v7 packs only, and only J/R with a single `sites.out` and exactly
+  the required site keys: a pack with a `mid` site, a `split_half` field or
+  an S/K kind is a drowse.ai follow-up.
 - Tests: CPU tests in `tests/lens/` (one file per module plus
   `test_migrate_lens_v7.py`; `test_lens_sites.py` pins kinds × sites in the
   object and the store, `test_lens_depth.py` the depth rule) run on the toy
-  model in
-  `tests/support/jlens_toys.py`. They use `tests/support/lens.py`
+  model in `tests/support/jlens_toys.py`, a genuine tiny llama the transport
+  fits. `test_lens_transport.py` holds every dense family × kind × site to
+  the autograd oracle (`tests/support/lens_oracle.py`), every block map to
+  the adjoint identity, and (when `~/Work/neuron-lens` is checked out)
+  agreement with neuron-lens's transport; `test_fit.py` covers `fit_lens`,
+  `test_fit_split_half.py` the split-half records and per-site lifecycle. They use `tests/support/lens.py`
   (`LensHarness`, `lens_instrument(**kw)`, `lens_kwargs(**kw)`,
   `FakeCapture`), which builds a real `LensInstrument` with session-shaped
   dependencies. Generation-boundary tests use `tiny_session`.
