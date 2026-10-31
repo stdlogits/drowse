@@ -406,6 +406,10 @@ class TestMonitor:
         mgr.clear_all()
 
         ratio = steered_tps / vanilla_tps
+        print(  # noqa: T201 — the gate reports its numbers
+            f"steered: vanilla {vanilla_tps:.1f} tok/s, "
+            f"steered {steered_tps:.1f} tok/s ({ratio:.0%})"
+        )
         assert ratio >= 0.85, (
             f"Steered throughput ({steered_tps:.1f} tok/s) is only "
             f"{ratio:.0%} of vanilla ({vanilla_tps:.1f} tok/s), expected >= 85%; "
@@ -510,6 +514,10 @@ class TestAblationPerformance:
             tok_s_combined = max(len(r_combined.tokens) / dt_combined, 1e-6)
 
             ratio = tok_s_combined / tok_s_vanilla
+            print(  # noqa: T201 — the gate reports its numbers
+                f"ablation: vanilla {tok_s_vanilla:.1f} tok/s, "
+                f"ablation + additive {tok_s_combined:.1f} tok/s ({ratio:.0%})"
+            )
             assert ratio >= 0.80, (
                 f"combined ablation + additive too slow: "
                 f"{ratio:.2%} of vanilla (vanilla={tok_s_vanilla:.1f} tok/s, "
@@ -580,7 +588,7 @@ class TestAblationPerformance:
             vanilla_tps = sorted(vanilla)[1]
             ablated_tps = sorted(ablated)[1]
             ratio = ablated_tps / vanilla_tps
-            print(  # noqa: T201 — the lane reports these numbers
+            print(  # noqa: T201 — the gate reports its numbers
                 f"unit ablation: vanilla {vanilla_tps:.1f} tok/s, "
                 f"ablated {ablated_tps:.1f} tok/s ({ratio:.0%})"
             )
