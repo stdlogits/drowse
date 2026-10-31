@@ -120,25 +120,24 @@
 <div class="weave" class:empty>
   <section class="reading" aria-labelledby="weave-reading-title">
     <header class="section-heading">
-      <h2 id="weave-reading-title">Current text</h2>
-      <span>{path.length} {path.length === 1 ? "turn" : "turns"}</span>
+      <h2 id="weave-reading-title" class="head">Path</h2>
+      <span class="meta">{path.length} {path.length === 1 ? "turn" : "turns"}</span>
     </header>
     {#if empty}
-      <p class="hint">Type a prompt to get started.</p>
+      <p class="meta">Nothing yet</p>
     {:else}
       <div class="reading-path" role="list" aria-label="Weave current path">
         {#each path as node, index (node.id)}
           <article role="listitem" class="passage" class:branch-point={anchorId === node.id} data-weave-passage={node.id}>
-            <header>
-              <span class="role">{role(node)}</span>
-              {#if anchorId === node.id}<span class="marker">branch point</span>{/if}
-              <button type="button" class="quiet" onclick={() => void explore(node)}
+            <header class="row-head">
+              <span class="meta">{role(node)}{anchorId === node.id ? " · branch point" : ""}</span>
+              <button type="button" class="dw-text" onclick={() => void explore(node)}
                 aria-label={`Explore here after turn ${index + 1}`} aria-pressed={anchorId === node.id}>Explore here</button>
             </header>
             <div class="passage-text" dir="auto">{node.text}</div>
             {#if node.tokens?.length}
-              <Expander label="Token branch points" bind:open={() => expandedTokens.has(node.id), (open) => { if (open) expandedTokens.add(node.id); else expandedTokens.delete(node.id); }}>
-                <div class="tokens">
+              <Expander label="Tokens" bind:open={() => expandedTokens.has(node.id), (open) => { if (open) expandedTokens.add(node.id); else expandedTokens.delete(node.id); }}>
+                <div class="toks tokens">
                   {#each node.tokens as token, tokenIndex}
                     <button type="button" data-cursor="inspect" disabled={busy} {...{ "aria-description": "Inspect or branch from this token" }}
                       aria-label={`Inspect token ${tokenIndex + 1}: ${token.text.trim() || "whitespace"}`}
@@ -155,8 +154,8 @@
 
   <section class="possibilities" aria-labelledby="weave-choices-title">
     <header class="section-heading">
-      <h2 id="weave-choices-title" tabindex="-1" bind:this={choicesHeading}>Continuations</h2>
-      {#if parent}<button type="button" onclick={() => void explore(parent)}>Back one point</button>{/if}
+      <h2 id="weave-choices-title" class="head" tabindex="-1" bind:this={choicesHeading}>Continuations</h2>
+      {#if parent}<button type="button" class="dw-text" onclick={() => void explore(parent)}>Back one point</button>{/if}
     </header>
     {#if !empty && anchor}
       <div class="context">
@@ -167,9 +166,9 @@
     {/if}
     <form onsubmit={generate}>
       {#if empty}
-        <label class="prompt-label" for="weave-prompt">Starting text</label>
+        <label class="sr-only" for="weave-prompt">Starting text</label>
         <textarea id="weave-prompt" name="prompt" dir="auto" bind:value={prompt} required rows="5"
-          placeholder="Type a prompt…" disabled={busy}
+          placeholder="Starting text" disabled={busy}
           onkeydown={(event) => {
             if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
               event.preventDefault();
@@ -178,41 +177,35 @@
           }}></textarea>
       {/if}
       <div class="generation-controls">
-        <label>Alternatives
-          <Select bind:value={count} disabled={busy} ariaLabel="Alternatives" options={[1, 2, 3, 4, 6, 8].map(value => ({ value, label: String(value) }))} />
-        </label>
-        <button type="submit" class="primary" disabled={busy || !loomTree.loaded}
+        <span class="count"><Select bind:value={count} disabled={busy} ariaLabel="Alternatives" options={[1, 2, 3, 4, 6, 8].map(value => ({ value, label: String(value) }))} /></span>
+        <button type="submit" class="dw-button" disabled={busy || !loomTree.loaded}
           {...{ "aria-description": "Create sibling turns using the current model and response controls" }}>Generate {count}</button>
-        <button type="button" disabled={!genStatus.active} onclick={sendStop}>Stop</button>
+        {#if genStatus.active}<button type="button" class="dw-text" onclick={sendStop}>Stop</button>{/if}
       </div>
     </form>
-    <p class="status" role="status">{genStatus.active ? "Generating alternatives…" : `${choices.length} available${chosen ? " · one chosen" : ""}`}</p>
+    <p class="meta" role="status">{genStatus.active ? "Generating…" : `${choices.length} available${chosen ? " · one chosen" : ""}`}</p>
     {#if error}<p class="error" role="alert">{error}</p>{/if}
-    {#if !empty && choices.length === 0}
-      <p class="hint">No continuations at this point yet. Generate some to explore.</p>
-    {/if}
     <div class="choice-list" role="list" aria-label="Weave alternatives">
       {#each choices as node, index (node.id)}
         <article class="choice" class:chosen={chosen?.id === node.id} class:generation-active={genStatus.active && loomTree.pendingNodeId === node.id} role="listitem" data-weave-choice={node.id}>
-          <header>
-            <span class="role">Option {index + 1} · {role(node)}</span>
+          <header class="row-head">
+            <span class="meta">{index + 1} · {role(node)}{chosen?.id === node.id ? " · chosen" : ""}</span>
             {#if genStatus.active && loomTree.pendingNodeId === node.id}<span class="generation-label" role="status">Writing…</span>{/if}
-            {#if chosen?.id === node.id}<span class="marker">chosen</span>{/if}
-            <button type="button" class="quiet" aria-label={`${node.starred ? "Starred" : "Star"} option ${index + 1}`} aria-pressed={node.starred}
+            <button type="button" class="dw-text star" aria-label={`${node.starred ? "Starred" : "Star"} option ${index + 1}`} aria-pressed={node.starred}
               onclick={() => void loomStar(node.id, !node.starred)}>{node.starred ? "Starred" : "Star"}</button>
           </header>
           <div class="passage-text" dir="auto">{node.text || (genStatus.active ? "Generating…" : "Empty turn")}</div>
           <footer>
-            <button type="button" disabled={busy || chosen?.id === node.id}
+            <button type="button" class="dw-quiet" disabled={busy || chosen?.id === node.id}
               onclick={() => void choose(node)}>{chosen?.id === node.id ? "Chosen" : "Choose"}</button>
-            <button type="button" disabled={busy} onclick={async () => { await choose(node); if (loomTree.active_node_id === node.id) await explore(node); }}
+            <button type="button" class="dw-text" disabled={busy} onclick={async () => { await choose(node); if (loomTree.active_node_id === node.id) await explore(node); }}
               {...{ "aria-description": "Choose this path and explore its next turns" }}>Explore next</button>
-            <button type="button" disabled={busy || lastBoundary(node) < 0}
+            <button type="button" class="dw-text" disabled={busy || lastBoundary(node) < 0}
               {...{ "aria-description": (lastBoundary(node) < 0
                 ? "This turn has no saved token boundary to continue from"
                 : "Keep every existing token and sample more text with this turn’s saved settings; the original stays intact") }}
-              onclick={() => void extend(node)}>Continue text</button>
-            <button type="button" disabled={busy || !node.parent_id} onclick={(event) => onwrite(node, event.currentTarget)}>Write alternative</button>
+              onclick={() => void extend(node)}>Continue</button>
+            <button type="button" class="dw-text" disabled={busy || !node.parent_id} onclick={(event) => onwrite(node, event.currentTarget)}>Write another</button>
           </footer>
         </article>
       {/each}
@@ -221,44 +214,49 @@
 </div>
 
 <style>
-  .weave { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 0.85fr); flex: 1; min-height: 0; min-width: 0; overflow: hidden; }
-  section { min-width: 0; overflow-y: auto; padding: var(--surface-padding); overscroll-behavior: contain; }
-  .possibilities { background: var(--input-well); }
-  .section-heading, article header, footer, .generation-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
-  .section-heading { justify-content: space-between; margin-block-end: var(--space-4); }
-  h2 { margin: 0; font-size: var(--text-md); font-weight: var(--weight-display); }
-  .section-heading > span, .hint, .status { color: var(--fg-muted); font-size: var(--text-xs); }
-  .reading-path, .choice-list { display: flex; flex-direction: column; gap: var(--space-4); }
-  article { min-width: 0; padding: var(--surface-padding); border: 1px solid var(--glass-line); border-radius: var(--radius-lg); }
-  .passage { border-color: transparent; border-inline-start: 2px solid var(--glass-line); border-radius: 0; }
-  .passage.branch-point { border-inline-start-color: var(--accent); background: var(--glass); }
-  .choice { background: var(--bg-elev); }
-  .choice.chosen { border-color: var(--accent); }
-  article header { margin-block-end: var(--space-2); }
-  article header .quiet { margin-inline-start: auto; }
-  .role, .marker { font-size: var(--text-2xs); color: var(--fg-muted); }
-  .marker { color: var(--accent); }
-  .passage-text { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.65; font-size: var(--text-base); }
-  footer { margin-block-start: var(--space-4); }
-  button, textarea { font: inherit; color: var(--fg); border: 1px solid var(--glass-line); border-radius: var(--radius); background: var(--glass); }
-  button { min-height: var(--control-target); padding: var(--space-2) var(--space-3); font-size: var(--text-xs); cursor: pointer; touch-action: manipulation; }
-  button:hover:not(:disabled) { background: var(--glass-bright); }
-  button.primary { background: var(--accent); color: var(--text-on-accent); border-color: transparent; }
-  button.primary:hover:not(:disabled) { background: var(--accent); }
-  button:disabled { opacity: var(--disabled-opacity); cursor: not-allowed; }
-  button.quiet { background: transparent; border-color: transparent; }
-  :is(button, textarea):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .generation-controls label { display: flex; align-items: center; gap: var(--space-2); font-size: var(--text-xs); }
-  .prompt-label { display: block; margin-block-end: var(--space-2); }
-  textarea { box-sizing: border-box; width: 100%; resize: vertical; min-height: 100px; padding: var(--space-3); margin-block-end: var(--space-3); background: var(--input-well); }
-  .context { margin-block-end: var(--space-3); }
-  .tokens { display: flex; flex-wrap: wrap; gap: var(--space-1); padding: var(--space-1); }
-  .tokens button { white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; }
-  .error { color: var(--accent-red); }
+  /* The weave: the path on the left as rows, the branch point's continuations on the right as
+   * washes. */
+  .weave { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 0.9fr); gap: var(--s6); flex: 1; min-width: 0; min-height: 0; overflow: hidden; }
+  section { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding-bottom: var(--s6); }
+  .section-heading, .row-head, footer, .generation-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
+  .section-heading, .row-head { justify-content: space-between; }
+  .section-heading { min-height: 36px; }
+  h2 { margin: 0; }
+  h2:focus { outline: none; }
+  .reading-path { display: grid; gap: 2px; }
+  .passage { display: grid; gap: var(--s1); min-width: 0; padding: var(--s2) var(--s3) var(--s3); border-radius: var(--r-box); transition: background-color var(--fast) var(--ease); }
+  .passage:hover { background: var(--wash); }
+  .passage.branch-point { background: var(--wash2); }
+  .row-head { min-height: 28px; }
+  .row-head .dw-text { font: var(--type-meta); }
+  .passage-text { color: var(--ink); font: var(--type-small); line-height: 22px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .passage .passage-text { font: var(--type-body); line-height: 28px; }
+  .tokens { padding: var(--s1) 0; }
+  .tokens button { max-width: 100%; padding: 2px 6px; border: 0; border-radius: var(--r-chip); background: var(--paper); color: var(--ink2); font: var(--type-small); white-space: pre-wrap; overflow-wrap: anywhere; cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .passage:not(.branch-point) .tokens button { background: var(--wash); }
+  .tokens button:hover:not(:disabled) { color: var(--ink); background: var(--wash2); }
+  .tokens button:disabled { opacity: 0.4; cursor: default; }
+  .context { color: var(--ink2); }
+  form { display: grid; gap: var(--s3); }
+  textarea { width: 100%; min-height: 120px; padding: var(--s3) var(--s4); border: 0; border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-body); resize: vertical; }
+  .generation-controls { gap: var(--s2) var(--s3); }
+  .count { width: 88px; }
+  .choice-list { display: grid; gap: var(--s3); }
+  .choice { display: grid; gap: var(--s2); min-width: 0; padding: var(--s3) var(--s4) var(--s4); border-radius: var(--r-row); background: var(--wash); transition: background-color var(--fast) var(--ease); }
+  .choice.chosen, .choice.generation-active { background: var(--wash2); }
+  .choice .dw-quiet { background: var(--wash2); }
+  .choice.chosen .dw-quiet, .choice .dw-quiet:hover:not(:disabled) { background: var(--paper); }
+  .star { margin-left: auto; }
+  footer { gap: var(--s2) var(--s4); padding-top: var(--s1); }
+  footer .dw-text { font: var(--type-meta); }
+  .error { color: var(--ink); }
   @media (max-width: 960px), (max-height: 700px) {
     .weave { display: block; overflow-y: auto; }
-    section { overflow: visible; padding: var(--surface-padding); }
-    .reading { max-height: none; }
-    textarea { font-size: max(16px, var(--text-sm)); }
+    section { overflow: visible; }
+    section + section { margin-top: var(--s5); }
+    textarea { font-size: 16px; }
+  }
+  @media (pointer: coarse) {
+    .row-head .dw-text, footer .dw-text { min-height: 44px; }
   }
 </style>
