@@ -262,7 +262,7 @@ def test_external_lens_replacement_plans_and_freezes_refreshed_layers(
     frozen binding are taken — pairing the new lens with stale layers
     KeyErrors in the transport stack."""
     session_a = make_tiny_session(warm=False)
-    session_a.lens.fit(_TINY_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_TINY_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
@@ -272,7 +272,7 @@ def test_external_lens_replacement_plans_and_freezes_refreshed_layers(
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
     disk_b = make_tiny_session(warm=False).lens.fit(
-        corpus_b, source_layers=[1], force=True,
+        corpus_b, layers=[1], force=True,
     )
     assert list(disk_b.source_layers) == [1]
 
@@ -316,7 +316,7 @@ def test_prepare_is_the_refresh_site_and_supplies_the_pin() -> None:
     from drowse.readout.types import LensPrep, ReadRequest
 
     session_a = LensHarness()
-    session_a.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
@@ -325,7 +325,7 @@ def test_prepare_is_the_refresh_site_and_supplies_the_pin() -> None:
     corpus_b = [
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
-    LensHarness().lens.fit(corpus_b, source_layers=[1], force=True)
+    LensHarness().lens.fit(corpus_b, layers=[1], force=True)
 
     inst = session_a.lens
     prep = inst.prepare(ReadRequest(final_aggregate=True))
@@ -353,7 +353,7 @@ def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
     from drowse.readout.types import ReadRequest
 
     session_a = LensHarness()
-    session_a.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
@@ -366,7 +366,7 @@ def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
     corpus_b = [
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
-    LensHarness().lens.fit(corpus_b, source_layers=[1], force=True)
+    LensHarness().lens.fit(corpus_b, layers=[1], force=True)
     assert session_a.lens.has_compatible() is True  # adopts B
     assert session_a.lens.probes["jlens/example"]["layers"] == [1]
 
@@ -484,14 +484,14 @@ def test_idle_measurement_state_is_coherent() -> None:
     from drowse.readout.types import ReadRequest
 
     session_a = LensHarness()
-    session_a.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
     corpus_b = [
         f"replacement idle prompt {i} with enough content" for i in range(4)
     ]
-    LensHarness().lens.fit(corpus_b, source_layers=[1], force=True)
+    LensHarness().lens.fit(corpus_b, layers=[1], force=True)
 
     inst = session_a.lens
     lens, specs = inst._measurement_state()
@@ -747,7 +747,7 @@ def test_jlens_property_rejects_changed_loaded_weights() -> None:
     changed = LensHarness()
     changed_model: Any = changed.model
     with torch.no_grad():
-        changed_model.model.layers[0].w1.data.reshape(-1)[1] += 0.125
+        changed_model.model.layers[0].mlp.up_proj.weight.data.reshape(-1)[1] += 0.125
     assert changed.lens.resident() is None
 
 

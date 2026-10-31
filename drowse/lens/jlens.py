@@ -17,8 +17,8 @@ The J-space decomposition lives in :mod:`drowse.lens.decompose`.  It imports
 nothing beyond torch and the error taxonomy, so a per-step import costs a
 ``sys.modules`` lookup.
 
-The **estimator** — the only backward pass through the language model — lives
-in :mod:`drowse.lens.fit`; importing this module never drags it in.
+The **estimator** (transport, :mod:`drowse.lens.transport`, driven by
+:mod:`drowse.lens.fit`) lives apart; importing this module never drags it in.
 
 One unit runs through every readout surface: the per-layer softmax probability
 ``p_l(v)``.  ``readout_probabilities`` is the single calibration primitive; a
@@ -45,18 +45,11 @@ from drowse.lens.key import LENS_SITES, LensKey
 #: rather than the estimator.
 SKIP_FIRST_POSITIONS = 16
 DEFAULT_SEQ_LEN = 128
-#: Output dims per backward pass. Total backward FLOPs are dim_batch-invariant
-#: (pass count halves as pass width doubles), so this knob trades memory for
-#: per-pass overhead and barely moves wall time — measured on an M5 Max /
-#: gemma-3-4b, 8 is the sweet spot (93.6s/prompt vs 96.9s at 32, 102.5s at
-#: 64, identical output). Halves automatically on OOM.
-DEFAULT_DIM_BATCH = 8
-# Consecutive corpus prompts per autograd graph on CPU/CUDA.  Their Jacobians
-# remain equal-prompt weighted (not equal-token weighted).  MPS defaults to two
-# after the M5 Max / gemma-3-4b sweep measured 1.72x over one with unchanged
-# peak RSS. OOM backoff reduces this independently of ``dim_batch``.
-DEFAULT_PROMPT_BATCH = 4
-DEFAULT_MPS_PROMPT_BATCH = 2
+#: Basis seeds per transport pass: one pass carries this many tangents (or
+#: cotangents) through every block, so a document costs ``ceil(d_model /
+#: dim_batch)`` passes.  The work is width-invariant; the width trades memory
+#: for per-pass overhead (neuron-lens's transport runs 256).  Halves on OOM.
+DEFAULT_DIM_BATCH = 256
 #: Checkpoint cadence (prompts) for resumable fits.
 DEFAULT_CHECKPOINT_EVERY = 25
 

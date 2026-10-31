@@ -248,15 +248,23 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
 `score` is the only template verb that loads a model, and has no `-c`.
 
 **lens** — corpus specs, sources and estimators are in `drowse/lens/AGENTS.md`.
-- `fit MODEL`: `--kind r` (default, RelP R-lens, `local:r`) or `--kind j`
-  (standard, `local:j`); `--corpus FILE` (one document per line, JSON lines
-  contribute `text`) or repeatable `--hf-corpus`, else FineWeb-Edu
-  `sample-10BT` (needs `drowse.ai[hf]`). A Hub corpus is pinned once and the
-  pinned spec serves both the no-op proof and the stream. Unset numeric flags take
-  the `lens.jlens` defaults. A fit never backprops below its shallowest source
-  layer, so a `--layers` band is the one wall-time lever; `sample` is rejected
-  because it includes layer 0 and saves nothing.
-  `-f` restarts from zero, otherwise a matching partial fit resumes.
+- `fit MODEL`: `--kind r` (default, RelP R-lens), `j` (standard J-lens), `s`
+  or `k` (their input-side S- and K-lenses), each at `local:<kind>`;
+  `--sites out,mid` (default both); `--corpus FILE` (one document per line,
+  JSON lines contribute `text`) or repeatable `--hf-corpus`, else FineWeb-Edu
+  `sample-10BT` (needs `drowse.ai[hf]`). `--prompts` defaults to 25. A Hub
+  corpus is pinned once and the pinned spec serves both the no-op proof and
+  the stream. Unset numeric flags take the `lens.jlens` defaults
+  (`--dim-batch` 256 seeds per transport pass). `--layers` resolves per site
+  (the out site of r/j stops below the last block; an explicit layer no
+  requested site holds exits 2); an output fit stops at its lowest layer, an
+  input fit at its highest, so a band trims work. `sample` is rejected.
+  `--no-split-half` saves the split-half accumulator; otherwise the result
+  prints min/median/max split-half per site.
+  `-f` restarts from zero, otherwise a matching partial fit resumes. Without
+  `-f`, a fit that would replace a local lens over more documents, or one
+  holding a site or layer the request omits, exits 2 (a 5.4 default fit
+  holds 100 documents; ask for `--prompts 100`).
 - `fetch` never loads the model: the payload stays in the Hugging Face cache and
   Drowse writes, and activates, a commit-pinned binding. `show` / `rm` default to
   the active output-side source; removing a binding never touches the cache.

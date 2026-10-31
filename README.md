@@ -342,10 +342,12 @@ drowse pack install patient.drowse
 
 # Fetch a provider J-LENS (Neuronpedia by default), or fit a local one:
 # --kind r (the default) is the RelP R-lens at local:r, --kind j the standard
-# J-lens at local:j
+# J-lens; --kind s and k are their input-side S- and K-lenses. Each fits the
+# block output (out) and the MLP input (mid) unless --sites says otherwise
 drowse lens fetch google/gemma-3-4b-it
-drowse lens fit org/model --prompts 100
-drowse lens fit org/model --kind j --layers workspace
+drowse lens fit org/model
+drowse lens fit org/model --kind s --prompts 100
+drowse lens fit org/model --kind j --sites out --layers workspace
 # Or on another commit-pinned Hub dataset (a shuffled one grows by nested samples)
 drowse lens fit org/model --hf-corpus HuggingFaceFW/dclm_100BT-shuffled --prompts 1000
 # A bilingual mix: 3 English documents per Chinese one, the Chinese side spread
@@ -361,10 +363,17 @@ drowse sae fetch google/gemma-3-4b-it saelens:gemma-scope-2-4b-it-res
 drowse sae train org/model my-sae --layer 20 --tokens 1000000
 ```
 
-Lens fits are resumable: an interrupted fit checkpoints and continues, and an
-exact repeat is recognized without loading the model. `--layers workspace`
-(the 40–90% depth band) is the main lever on fit time. Run `drowse <verb> -h`
-and `drowse <verb> <subcommand> -h` for the complete flag surface.
+A local fit averages 25 documents by default and prints its split-half
+difference per site (how differently two halves of the corpus read: the
+signal for whether more documents would help). Fits run on dense models
+(llama, mistral, qwen2/3, gemma 2/3/4 text); mixture-of-experts and hybrid
+stacks are refused, though their published lenses still load. Lens fits are
+resumable: an interrupted fit checkpoints and continues, and an exact repeat
+is recognized without loading the model. A fit never silently replaces a
+local lens over more documents or more layers: a 5.4 lens fitted with the
+old default of 100 documents needs `--prompts 100` (which adds the `mid`
+site) or `-f` to replace it. Run `drowse <verb> -h` and
+`drowse <verb> <subcommand> -h` for the complete flag surface.
 
 ## HTTP APIs
 

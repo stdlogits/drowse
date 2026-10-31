@@ -15,7 +15,9 @@ from drowse.cli.spec import (
     FORCE, JSON, MODEL, MODEL_LOAD, MODEL_REQ, YES, OneOf, Verb, arg,
     layers_arg, positive_int,
 )
-from drowse.lens.key import FITTABLE_KINDS, LensKey  # torch-free
+from drowse.lens.key import (  # torch-free
+    DEFAULT_FIT_DOCUMENTS, FITTABLE_KINDS, LENS_SITES, LensKey,
+)
 
 if TYPE_CHECKING:
     from drowse.lens.corpus import LensCorpus
@@ -23,8 +25,25 @@ if TYPE_CHECKING:
 
 #: ``--kind`` choices: the lower-case letter of each fittable
 #: :class:`~drowse.lens.key.LensKey` kind, which is also the local artifact
-#: name (``local:r`` / ``local:j``).
+#: name (``local:r``, ``local:j``, ``local:s``, ``local:k``).
 LENS_KINDS: tuple[str, ...] = tuple(kind.lower() for kind in FITTABLE_KINDS)
+
+_KIND_TITLES = {
+    "R": "R-lens (RelP, output side)",
+    "J": "J-lens (standard, output side)",
+    "S": "S-lens (RelP, input side)",
+    "K": "K-lens (standard, input side)",
+}
+
+
+def _sites(text: str) -> tuple[str, ...]:
+    """``--sites``: a comma list of ``out``/``mid``, in canonical order."""
+    names = [part.strip() for part in text.split(",") if part.strip()]
+    if not names or len(set(names)) != len(names) or set(names) - set(LENS_SITES):
+        raise argparse.ArgumentTypeError(
+            f"sites must be out, mid or out,mid (got {text!r})"
+        )
+    return tuple(site for site in LENS_SITES if site in names)
 
 _SOURCES_HELP = (
     "local:r, local:j (or local:<kind>-<tag>), or a fetched binding "
@@ -67,7 +86,7 @@ def lens_fit_is_noop(
     ``hf_corpus`` spec plus prompt count before streaming.
     """
     from drowse.lens.lifecycle import prove_lens_fit_noop
-    from drowse.lens.store import lens_artifact_size, lens_layers, lens_manifest_path
+    from drowse.lens.store import lens_artifact_size, lens_manifest_path
     from drowse.model.fingerprint import model_source_fingerprint
 
     if args.force or (docs is None and hf_corpus is None):
@@ -76,6 +95,7 @@ def lens_fit_is_noop(
     sidecar = prove_lens_fit_noop(
         args.model, name,
         requested=requested,
+        sites=args.sites,
         seq_len=args.seq_len,
         source_fingerprint=lambda: model_source_fingerprint(
             args.model, quantize=args.quantize, device=args.device,
@@ -88,17 +108,37 @@ def lens_fit_is_noop(
         return False
     size_mb = lens_artifact_size(args.model, name=name) / 1024**2
     note("Already fitted for this corpus and exact model source — nothing to do.")
-    print(
-        f"Fitted Jacobian lens: {len(lens_layers(sidecar))} layers, "
-        f"{sidecar.get('n_prompts', '?')} prompts, d_model={sidecar.get('d_model', '?')}"
-    )
+    _print_fitted(sidecar)
     print(f"Artifact: {lens_manifest_path(args.model, name)} ({size_mb:.0f} MB across layer shards)")
     return True
 
 
+def _print_fitted(sidecar: dict[str, Any]) -> None:
+    """One line per site: layers, documents and the split-half spread."""
+    from drowse.lens.store import lens_layers, lens_split_half
+
+    kind = sidecar.get("kind", "?")
+    print(
+        f"Fitted {_KIND_TITLES.get(kind, kind)}: {sidecar.get('n_prompts', '?')} "
+        f"prompts, d_model={sidecar.get('d_model', '?')}"
+    )
+    for site in sidecar.get("sites", {}):
+        layers = lens_layers(sidecar, site)
+        line = f"  {kind}:{site}  {len(layers)} layers (L{layers[0]}..L{layers[-1]})"
+        split = sorted(lens_split_half(sidecar, site).values())
+        if split:
+            line += (
+                f"  split-half min {split[0]:.3f} · median "
+                f"{split[len(split) // 2]:.3f} · max {split[-1]:.3f}"
+            )
+        print(line)
+
+
 def run_fit(args: argparse.Namespace) -> None:
     from drowse.lens.corpus import read_corpus_file, stream_lens_corpus
-    from drowse.lens.store import lens_artifact_size, lens_manifest_path
+    from drowse.lens.store import (
+        lens_artifact_size, lens_manifest_path, load_local_lens_sidecar,
+    )
 
     requested = parse_layers(args.layers)
     if requested == "sample":
@@ -121,19 +161,18 @@ def run_fit(args: argparse.Namespace) -> None:
         docs, spec = stream_lens_corpus(args.prompts, hf_corpus)
 
     with open_session(args) as session:
-        note(f"Fitting the {'R-lens (RelP backward rules)' if LensKey(kind).relp else 'standard J-lens'}"
-             f"{' from zero (-f)' if args.force else ''}.")
-        lens = session.lens.fit(
-            docs, kind=kind, corpus_spec=spec, source_layers=requested,
-            dim_batch=args.dim_batch, prompt_batch=args.prompt_batch,
-            seq_len=args.seq_len, force=args.force,
-            checkpoint_every=args.checkpoint_every, on_progress=progress,
+        note(f"Fitting the {_KIND_TITLES[LensKey(kind).kind]} at "
+             f"{' and '.join(args.sites)}{' from zero (-f)' if args.force else ''}.")
+        session.lens.fit(
+            docs, kind=kind, sites=args.sites, corpus_spec=spec, layers=requested,
+            dim_batch=args.dim_batch, seq_len=args.seq_len, force=args.force,
+            checkpoint_every=args.checkpoint_every, split_half=not args.no_split_half,
+            on_progress=progress,
         )
+    sidecar = load_local_lens_sidecar(args.model, args.kind)
+    if sidecar is not None:
+        _print_fitted(sidecar)
     size_mb = lens_artifact_size(args.model, name=args.kind) / 1024**2
-    print(
-        f"Fitted Jacobian lens: {len(lens.source_layers)} layers, "
-        f"{lens.n_prompts} prompts, d_model={lens.d_model}"
-    )
     print(f"Artifact: {lens_manifest_path(args.model, args.kind)} ({size_mb:.0f} MB across layer shards)")
 
 
@@ -345,14 +384,19 @@ GROUP = Verb(
                 "directions into their verbalizable (J-space) component.",
     verbs=(
         Verb(
-            "fit", "Fit the model's Jacobian lens over a text corpus",
+            "fit", "Fit one of the model's lenses over a text corpus",
             run=run_fit,
             description=(
-                "Fit J_l = E[dh_final/dh_l] per source layer over a text corpus: "
-                "one forward + ceil(d_model/dim_batch) backward passes per document. "
-                "--kind r (default) fits the RelP R-lens at local:r, --kind j the "
-                "standard J-lens at local:j. Interrupted fits checkpoint and "
-                "resume; an exact repeat is proven without loading the model."
+                "Fit a lens per layer over a text corpus by transport: one "
+                "forward plus ceil(d_model/dim_batch) passes through every "
+                "block per document. --kind r (default) and j read what an "
+                "activation makes the model say (J_l = E[dh_final/dh_l], RelP "
+                "or standard); s and k what put it there (K_l = E[dh_l/de]). "
+                "--sites picks the block output (out), the MLP input (mid) or "
+                "both. A fit records its split-half difference per layer "
+                "(unless it extends a finished fit's corpus, or --no-split-half); "
+                "interrupted fits checkpoint and resume; an exact repeat is "
+                "proven without loading the model."
             ),
             args=(
                 MODEL,
@@ -368,21 +412,29 @@ GROUP = Verb(
                              "over K data files), seed=S; repeat with weight=W to mix"),
                 )),
                 arg("--kind", choices=sorted(LENS_KINDS), default="r",
-                    help="Estimator: r = RelP R-lens (default), j = standard J-lens"),
-                arg("--prompts", type=positive_int, default=100, metavar="N",
-                    help="Corpus documents to average over (default 100; the paper used 1000)"),
+                    help="Lens: r = RelP R-lens (default), j = standard J-lens, "
+                         "s = RelP S-lens, k = standard K-lens"),
+                arg("--sites", type=_sites, default=LENS_SITES, metavar="out,mid",
+                    help="Residual sites to fit: out (block output), mid (MLP "
+                         "input), or both (default)"),
+                arg("--prompts", type=positive_int, default=DEFAULT_FIT_DOCUMENTS, metavar="N",
+                    help=f"Corpus documents to average over (default {DEFAULT_FIT_DOCUMENTS}; "
+                         "the research lenses used 1000)"),
                 arg("--seq-len", type=positive_int, default=None, metavar="T",
                     help="Truncate each document to T tokens (default 128)"),
                 arg("--dim-batch", type=positive_int, default=None, metavar="K",
-                    help="Output dims per backward pass (default 8; halves on OOM)"),
-                arg("--prompt-batch", type=positive_int, default=None, metavar="B",
-                    help="Prompts per autograd graph (default 4; 2 on MPS)"),
+                    help="Basis seeds per transport pass (default 256; halves on OOM)"),
                 arg("--checkpoint-every", type=positive_int, default=None, metavar="N",
                     help="Resumable checkpoint every N usable prompts (default 25)"),
-                layers_arg("Fit only these source layers (default: every layer below "
-                           "the final one); workspace = the 40-90%% band, the one "
-                           "real wall-time lever"),
-                FORCE.but(help="Restart from zero (default: resume a matching partial fit)"),
+                arg("--no-split-half", action="store_true",
+                    help="Skip the split-half check (saves one lens of RAM)"),
+                layers_arg("Fit only these layers, per site (default: every layer; "
+                           "the out site of r/j stops below the last block); "
+                           "workspace = the 40-90%% band. An output fit stops at "
+                           "its lowest layer, an input fit at its highest"),
+                FORCE.but(help="Restart from zero, replacing the local lens of this kind "
+                               "(default: resume a matching partial fit; without -f a fit "
+                               "never replaces one over more documents or layers)"),
                 MODEL_LOAD,
             ),
         ),

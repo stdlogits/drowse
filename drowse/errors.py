@@ -176,18 +176,6 @@ class SaeFeatureError(RequestError):
     """Raised when an SAE feature id is malformed or outside the resident width."""
 
 
-class RelpUnsupportedError(RuntimeError, DrowseError):
-    """Raised when a model's decoder layers do not fit the dense RelP rule
-    shape (one standard gated MLP plus residual RMSNorms per layer) — MoE
-    experts and fused gate-up projections need per-arch rule arms that are
-    not implemented, and a silently partial RelP fit would be a wrong
-    artifact rather than a degraded one.
-    """
-
-    def user_message(self) -> tuple[int, str]:
-        return (422, str(self) or self.__class__.__name__)
-
-
 class UnsupportedBlockError(RuntimeError, DrowseError):
     """Raised when a decoder block is outside what a
     :class:`~drowse.model.blocks.BlockSpec` can describe: a mixture-of-experts

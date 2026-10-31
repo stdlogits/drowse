@@ -15,15 +15,16 @@ S     input      RelP      K under the same rules
 Its **site** is the residual read: ``out`` (a block's output) or ``mid`` (the
 residual after the attention add — the MLP's input).  Output-side lenses read
 an activation as what it is disposed to make the model *say*; input-side
-lenses read it as what it has *read*.  Only J/R at ``out`` have an estimator
-today; every store, binding, and selection path is already keyed on
-:class:`LensKey`, so the others arrive without another format bump.
+lenses read it as what it has *read*.  One estimator (transport, in
+:mod:`drowse.lens.transport`) fits every kind at both sites; every store,
+binding and selection path is keyed on :class:`LensKey`.
 
 Torch-free: the CLI, server, and source registry parse keys and local names
 without importing the readout math.
 """
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 import re
 
@@ -32,8 +33,15 @@ LENS_SITES = ("out", "mid")
 #: Selection slots: one active lens per side, so an output-side (J/R) and an
 #: input-side (K/S) lens can be resident together.
 LENS_SIDES = ("output", "input")
-#: Kinds the Drowse estimator can fit (reverse mode at the ``out`` site).
-FITTABLE_KINDS = ("J", "R")
+#: Kinds the transport estimator fits: all four, at either or both sites.
+FITTABLE_KINDS = LENS_KINDS
+#: Documents a local fit averages over unless asked otherwise.  At 25
+#: FineWeb-Edu documents on SmolLM2-360M the split-half difference is large:
+#: the R-lens's ``out`` site ranges from 0.04 (last layers) to 0.45 (early
+#: layers), median 0.27; the S-lens's from 0.12 to 0.37, median 0.18.
+#: The default trades that noise for wall time (110 to 136 s per kind there,
+#: on MPS); the research lenses of record used 1,000.
+DEFAULT_FIT_DOCUMENTS = 25
 
 #: A local lens directory: the kind's letter, optionally ``-<tag>``
 #: (``r``, ``j``, ``r-chat``).  The name carries the kind, so ``local:r`` is
@@ -79,6 +87,29 @@ class LensKey:
         if not sep:
             raise ValueError(f"lens key must be KIND:site, got {label!r}")
         return cls(kind, site)
+
+
+def site_layers(kind: str, site: str, n_layers: int) -> list[int]:
+    """Every layer a ``kind`` lens holds at ``site`` on an ``n_layers`` model.
+
+    The output kinds' ``out`` site stops below the last block, whose output is
+    their target (its Jacobian is the identity); every other site covers
+    every block.
+    """
+    key = LensKey(kind, site)
+    top = n_layers - 1 if (key.side == "output" and site == "out") else n_layers
+    return list(range(max(top, 0)))
+
+
+def lens_selectable(kind: str, sites: Iterable[str]) -> bool:
+    """Whether a ``kind`` lens holding ``sites`` can be its side's active source.
+
+    Every output-side read surface reads the ``out`` site, so an output-kind
+    lens without it cannot serve the output side: publishing one leaves the
+    selection where it was, rather than displace a readable source with one
+    every readout refuses.  An input-kind lens always can.
+    """
+    return LensKey(kind).side == "input" or "out" in set(sites)
 
 
 def local_lens_name(kind: str, tag: str | None = None) -> str:

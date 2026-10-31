@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import math
+import re
 import threading
 import time
+import typing
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -485,6 +488,80 @@ class TestSourceSwitch:
         assert resp.status_code == 404
 
 
+#: The dashboard's WebMCP tools, whose ``drowse_prepare_instrument`` schema
+#: advertises each preparation's fields to agents.
+_SERVICE_TOOLS = Path(__file__).resolve().parents[2] / "webui/src/lib/webmcp/serviceTools.ts"
+_OPENERS = {"(": ")", "{": "}", "[": "]"}
+_QUOTES = "\"'`"
+
+
+def _close_of(text: str, start: int) -> int:
+    """The index of the bracket closing ``text[start]``, skipping strings."""
+    stack: list[str] = []
+    i = start
+    while i < len(text):
+        char = text[i]
+        if char in _QUOTES:
+            i = text.index(char, i + 1)
+        elif char in _OPENERS:
+            stack.append(_OPENERS[char])
+        elif stack and char == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i
+        i += 1
+    raise AssertionError(f"unbalanced bracket at {start}")
+
+
+def _top_level_entries(body: str) -> dict[str, str]:
+    """``{key: value text}`` of an object literal's body (a shorthand key
+    maps to itself)."""
+    entries: dict[str, str] = {}
+    start = i = 0
+    while i <= len(body):
+        if i == len(body) or body[i] == ",":
+            entry = body[start:i].strip()
+            if entry:
+                key, sep, value = entry.partition(":")
+                entries[key.strip()] = value.strip() if sep else key.strip()
+            start = i + 1
+        elif body[i] in _QUOTES:
+            i = body.index(body[i], i + 1)
+        elif body[i] in _OPENERS:
+            i = _close_of(body, i)
+        i += 1
+    return entries
+
+
+def _choices(value: str) -> tuple[str, ...]:
+    """The string choices a schema value offers (its ``choices(...)``)."""
+    found = re.search(r"choices\(([^)]*)\)", value)
+    return () if found is None else tuple(re.findall(r'"([^"]*)"', found.group(1)))
+
+
+def _webmcp_preparation_schemas() -> dict[tuple[str, str], dict[str, str]]:
+    """Each ``(family, operation)`` schema's top-level properties, read from
+    ``preparationSchemas()`` in serviceTools.ts."""
+    text = _SERVICE_TOOLS.read_text()
+    head = text.index("function preparationSchemas()")
+    body_start = text.index("{", head)
+    body = text[body_start:_close_of(text, body_start)]
+    schemas: dict[tuple[str, str], dict[str, str]] = {}
+    for match in re.finditer(r"objectSchema\(\{", body):
+        brace = match.end() - 1
+        props = _top_level_entries(body[brace + 1:_close_of(body, brace)])
+        key = (_choices(props["family"])[0], _choices(props["operation"])[0])
+        schemas[key] = {k: v for k, v in props.items() if k not in ("family", "operation")}
+    return schemas
+
+
+def _literals(annotation: Any) -> tuple[Any, ...]:
+    """Every ``Literal`` value inside a field annotation."""
+    if typing.get_origin(annotation) is typing.Literal:
+        return typing.get_args(annotation)
+    return tuple(value for arg in typing.get_args(annotation) for value in _literals(arg))
+
+
 # ---------------------------------------------------------------------------
 # POST/GET/DELETE /instruments/{family}/preparations
 # ---------------------------------------------------------------------------
@@ -495,12 +572,45 @@ class TestPreparations:
 
         from drowse.server.instrument_routes import LensFitRequest
 
-        assert LensFitRequest().kind == "r"
-        assert LensFitRequest(kind="j").kind == "j"
-        stale_bodies: list[dict[str, Any]] = [{"kind": "k"}, {"relp": True}]
+        body = LensFitRequest()
+        assert body.kind == "r" and body.sites == ["out", "mid"] and body.prompts == 25
+        for kind in ("j", "s", "k"):
+            assert LensFitRequest(kind=kind).kind == kind
+        assert LensFitRequest(sites=["mid"]).sites == ["mid"]
+        stale_bodies: list[dict[str, Any]] = [
+            {"kind": "q"}, {"relp": True}, {"prompt_batch": 2}, {"sites": []},
+            {"sites": ["top"]},
+        ]
         for stale in stale_bodies:
             with pytest.raises(ValidationError):
                 LensFitRequest(**stale)
+
+    def test_the_webmcp_preparation_schemas_match_the_request_models(self) -> None:
+        """The dashboard's ``drowse_prepare_instrument`` tool advertises each
+        operation's fields, and the request models forbid extras: a stale
+        field (``prompt_batch``) or a missing choice fails every agent call."""
+        from drowse.server.instrument_routes import (
+            LensFetchRequest, LensFitRequest, SaeFetchRequest, SaeTrainRequest,
+        )
+
+        models: dict[tuple[str, str], Any] = {
+            ("lens", "fetch"): LensFetchRequest, ("lens", "fit"): LensFitRequest,
+            ("sae", "fetch"): SaeFetchRequest, ("sae", "train"): SaeTrainRequest,
+        }
+        schemas = _webmcp_preparation_schemas()
+        assert set(schemas) == set(models)
+        for key, props in schemas.items():
+            fields = models[key].model_fields
+            assert set(props) <= set(fields), (key, sorted(set(props) - set(fields)))
+            for name, value in props.items():
+                if _literals(fields[name].annotation):
+                    assert set(_choices(value)) == set(_literals(fields[name].annotation)), (key, name)
+        lens_fit = schemas[("lens", "fit")]
+        assert {"kind", "sites"} <= set(lens_fit)
+        for kind in _choices(lens_fit["kind"]):
+            LensFitRequest.model_validate(
+                {"kind": kind, "sites": list(_choices(lens_fit["sites"])), "seq_len": None},
+            )
 
     def test_geometry_404(self, session_and_client: Any) -> None:
         _session, client = session_and_client
@@ -738,6 +848,68 @@ class TestPreparations:
         assert session.lens.enable_calls == [None]
         assert session.lens.live_layers is None
         session.lens.fit.assert_not_called()
+
+    def test_input_kind_noop_selects_only_its_own_side(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """An S/K no-op selects as a publishing input fit does: its own side
+        only.  It never turns live readout off or goes through
+        ``select_source``, which evicts the output resident."""
+        session, client = session_and_client
+        monkeypatch.setattr(
+            "drowse.lens.lifecycle.prove_lens_fit_noop",
+            lambda *_a, **_k: {"n_prompts": 1},
+        )
+        selected: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            "drowse.lens.sources.use_lens_source",
+            lambda model_id, source: selected.append((model_id, source)),
+        )
+        session.lens.set_live(True)
+        for kind in ("s", "k"):
+            resp = client.post(
+                f"{_BASE}/lens/preparations",
+                json={"operation": "fit", "prompts": 1, "kind": kind},
+            )
+            assert resp.status_code == 202
+            _wait_idle(client, "lens")
+            assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
+        model_id = session.model_id
+        assert selected == [(model_id, "local:s"), (model_id, "local:k")]
+        session.lens.select_source.assert_not_called()
+        session.lens.fit.assert_not_called()
+        assert session.lens.disable_calls == 0
+        assert session.lens.enable_calls == [None]
+        assert session.lens.live_layers == session.lens.default_layers
+
+    def test_mid_only_output_fit_leaves_the_output_source_and_live_alone(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """The live readout reads ``out``: an R fit at ``mid`` only, proven
+        or fitted, selects nothing and never toggles live readout."""
+        session, client = session_and_client
+        proofs: list[Any] = [{"n_prompts": 1}, None]
+        monkeypatch.setattr(
+            "drowse.lens.lifecycle.prove_lens_fit_noop",
+            lambda *_a, **_k: proofs.pop(0),
+        )
+        monkeypatch.setattr(
+            "drowse.lens.corpus.stream_lens_corpus",
+            lambda _n, _corpus, *, cancel_event=None: (["a long enough prompt."], "spec"),
+        )
+        for _ in range(2):
+            resp = client.post(
+                f"{_BASE}/lens/preparations",
+                json={"operation": "fit", "prompts": 1, "sites": ["mid"]},
+            )
+            assert resp.status_code == 202
+            _wait_idle(client, "lens")
+            assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
+        assert proofs == []
+        session.lens.fit.assert_called_once()
+        assert session.lens.fit.call_args.kwargs["sites"] == ["mid"]
+        session.lens.select_source.assert_not_called()
+        assert session.lens.enable_calls == [] and session.lens.disable_calls == 0
 
     def test_forced_lens_fit_skips_the_noop_proof(
         self, session_and_client: Any, monkeypatch: Any,

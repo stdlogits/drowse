@@ -150,7 +150,7 @@ whose payloads stay in the Hugging Face cache.
   matrices at one or both residual sites (`out`, `mid`): `J_l =
   E[∂h_final/∂h_l]` for output kinds, `K_l = E[∂h_l/∂e]` for input kinds.
   Format v7 stores every kind and site (`local:j`, `local:r`, `local:s`,
-  `local:k`); only J/R at `out` are fitted today. Providers: `neuronpedia`,
+  `local:k`), and one estimator fits them all. Providers: `neuronpedia`,
   `workspace-r`, `workspace-j`. Which kind reads a place is a depth rule
   (`lens/depth.py`): S early, R late, both weighted in a crossover band.
 - An SAE is a local ReLU dictionary trained here or a SAELens release (the
@@ -691,23 +691,30 @@ references are:
 
 The browser also mirrors `RESERVED_NAMESPACES`, `METHOD_FIT_MODES`, the
 manifold sidecar format and lens format v7, and its hosted J-lens fit calls
-`lens.fit.fit_jacobian_lens` and `lens.store.save_lens_at`. Goldens are
+`lens.fit.fit_lens` and `lens.store.save_lens_at`. Goldens are
 byte-frozen and recomputed by `tests/browser/test_browser_parity.py`; a
 semantic change regenerates the golden in the same change, and drowse.ai must
 match before its submodule pin moves past it.
 
 ## 11. J-lens and SAE lifecycle
 
-`lens/fit.py::fit_jacobian_lens` is the only backward-pass code in drowse. It
-estimates `J_l` over a pretraining-like corpus (FineWeb-Edu by default, or any
-pinned Hub dataset or file): prompts share a forward graph, batched
-vector-Jacobian products recover row blocks, and rows stream into a CPU fp32
-accumulator under a byte budget. The R-lens runs the same estimator through
-RelP backward rules (`lens/relp.py`); forward passes are bit-identical, so a
-J/R pair shares one forward distribution and only the gradients differ. The
-measured benefit is more faithful early-layer reads. The fit is resumable and
-checkpointed, adapts to OOM, and on MPS drains the queue and guards against
-zero rows. `lens/lifecycle.py::plan_lens_fit` chooses noop, top-up, resume or
+`lens/fit.py::fit_lens` is the one lens estimator, transport
+(`lens/transport.py`, ported from neuron-lens and generalized over
+`BlockSpec`). It fits any kind at either or both sites over a
+pretraining-like corpus (FineWeb-Edu by default, or any pinned Hub dataset or
+file): each document is linearized once from the block description, then
+basis seeds sweep through hand-written per-block maps, cotangents down from
+the last block for J/R, tangents up from the embedding for K/S, so one sweep
+covers every layer and both sites. No autograd runs; the autograd estimator
+survives only as the test oracle. Standard rules give J/K, RelP rules
+(`lens/relp.py`: LN, identity, half) give R/S; forwards are unchanged. A
+fit records its split-half difference per site and layer, the check on
+whether more documents would help, unless it is a corpus extension of a
+durable artifact (whose halves are gone) or runs with `split_half=False`
+(`--no-split-half`). The fit verifies the model's description
+first and refuses undescribable blocks (`UnsupportedBlockError`), is
+resumable and checkpointed, adapts to OOM, and on MPS drains the queue and
+guards against zero rows. `lens/lifecycle.py::plan_lens_fit` chooses noop, top-up, resume or
 fresh from metadata alone, and a no-op is proved without loading the model.
 Corpus resolution and streaming run in an isolated, cancellable worker process.
 
@@ -853,7 +860,8 @@ executable statement of why a boundary is strict.
   `verify_model_spec` is what catches a forward term the structure hides.
 - Lens format v7 records no embedding width, so stored K/S lenses have
   `d_emb = d_model`. drowse.ai's browser reader accepts only J/R packs with
-  one `out` site; packs with a `mid` site or an input kind need its loader.
+  one `out` site and exact site keys; packs with a `mid` site, an input kind
+  or a `split_half` record need its loader.
 - Provider lenses and SAEs exist only for covered models and revisions; local
   fits are explicit, expensive workflows.
 - Curved manifolds are slower than flat steering, and overlapping curved spans
@@ -890,6 +898,6 @@ executable statement of why a boundary is strict.
 - **Blending.** Off-node midpoints between distinct persona nodes produce
   coherent blended content at the sweet-spot α. Whether interpolation between
   basins holds generally, and on curved fits, is open.
-- **Input-side lenses.** One `JacobianLens` holds K/S and the `mid` site and
-  the store persists them, and `slens` is a reserved namespace; only the
-  output-side J/R estimators at `out` exist.
+- **Input-side lenses.** K/S lenses fit at both sites and the store persists
+  them, and `slens` is a reserved namespace; their readouts (footprints,
+  `slens/` atoms) are the next step.
