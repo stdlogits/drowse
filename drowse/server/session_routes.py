@@ -62,7 +62,10 @@ def register_session_routes(app: FastAPI) -> None:
         would, then rolls straight back — so a green validation cannot hide a
         rack-time failure.  It touches shared hook state, so it serializes on
         the session lock.  A rejected expression is an in-band form result
-        (``valid: false``), not a failed request.
+        (``valid: false``), not a failed request.  A valid one also reports
+        the model's depth and where each term acts (its fitted layers, its
+        share there, the layers its clause selects): the term editor's depth
+        strip.
         """
         expression = req.expression.strip()
         if not expression:
@@ -73,10 +76,24 @@ def register_session_routes(app: FastAPI) -> None:
             return {"valid": False, "expression": expression, "error": exc.user_message()[1]}
         async with session_lock(app):
             try:
-                with session.steering(parsed):
-                    pass
+                with session.steering(parsed) as scope:
+                    terms = scope.term_layers()
             except DrowseError as exc:
                 return {"valid": False, "expression": expression, "error": exc.user_message()[1]}
-        return {"valid": True, "expression": format_expr(parsed), "error": None}
+        return {
+            "valid": True,
+            "expression": format_expr(parsed),
+            "error": None,
+            "n_layers": len(session.layers),
+            "terms": [
+                {
+                    "key": key,
+                    "fitted": list(where.fitted),
+                    "share": list(where.share),
+                    "layers": list(where.layers),
+                }
+                for key, where in terms.items()
+            ],
+        }
 
     app.include_router(router)

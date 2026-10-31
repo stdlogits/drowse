@@ -23,7 +23,7 @@ import torch
 from torch import nn
 
 from drowse.errors import OverlappingManifoldError, SteeringCompositionError
-from drowse.steering.composer import resolve_scope_role
+from drowse.steering.composer import TermLayers, resolve_scope_role
 from drowse.steering.hooks import (
     _SUBSPACE_GAIN,
     AffineGroup,
@@ -375,3 +375,57 @@ def test_the_plan_cache_keys_on_the_clause() -> None:
 def test_scope_role_reads_the_variant_under_a_clause() -> None:
     entries: dict[str, Any] = {"a:role-pirate{1-2}": (0.5, Trigger.BOTH)}
     assert resolve_scope_role(entries, {}) == ("pirate", [])
+
+
+# ---------------------------------------------------------- term layers ---
+
+
+def test_term_layers_report_fit_share_and_selection() -> None:
+    """``term_layers`` (the term editor's depth strip): each term's fitted
+    layers, its share there (mean 1), and the layers its clause selects."""
+    rig, _ = _rig()
+    rig.registry.put_manifold("mood", open_manifold(layers=(0, 1, 2)))
+    expr = "0.5 a{1,3} + 0.4 !c + 0.2 b{workspace} + 0.3 a~b{0} + 0.5 mood%n1{0,2}"
+    with rig.steering(expr) as scope:
+        where = scope.term_layers()
+    assert set(where) == {"a{1,3}", "!c", "b{workspace}", "a~b{0}", "mood%n1{0,2}"}
+
+    a = where["a{1,3}"]
+    assert (a.fitted, a.layers) == ((0, 1, 2, 3), (1, 3))
+    assert sum(a.share) == pytest.approx(len(a.fitted))
+    whitener = rig.neutral.resident_whitener
+    assert whitener is not None
+    raw = [
+        float(whitener.mahalanobis_norms(L, rig.registry.profiles["a"][L].reshape(1, -1))[0])
+        for L in a.fitted
+    ]
+    for L in range(1, len(raw)):
+        assert a.share[L] / a.share[0] == pytest.approx(raw[L] / raw[0], rel=1e-4)
+
+    assert where["!c"] == TermLayers((1, 2), (1.0, 1.0), (1, 2))
+    assert where["b{workspace}"].layers == (2,)
+    assert where["a~b{0}"].fitted == (0, 1, 2, 3)
+    assert where["a~b{0}"].layers == (0,)
+
+    curved = where["mood%n1{0,2}"]
+    baked = rig.registry.manifolds["mood"].mahalanobis_share
+    assert (curved.fitted, curved.layers) == ((0, 1, 2), (0, 2))
+    assert curved.share[0] / curved.share[2] == pytest.approx(baked[0] / baked[2])
+    assert sum(curved.share) == pytest.approx(3.0)
+
+
+def test_term_layers_refuse_a_clause_composition_refuses() -> None:
+    rig, _ = _rig()
+    scope = rig.steering("0.5 c{0}")
+    with pytest.raises(SteeringCompositionError, match=r"fitted layers: 1-2"):
+        scope.term_layers()
+    assert rig.manager.plan is None
+
+
+@pytest.mark.usefixtures("isolated_home")
+def test_term_layers_place_a_unit_at_its_layer(tiny_session: Any) -> None:
+    where = tiny_session.steering("0.5 !neuron/L1n3 + !head/L2h0").term_layers()
+    assert where == {
+        "!neuron/L1n3": TermLayers((1,), (1.0,), (1,)),
+        "!head/L2h0": TermLayers((2,), (1.0,), (2,)),
+    }
