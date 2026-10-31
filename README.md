@@ -162,6 +162,7 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 | `@first:N`, `@after:N` | Restrict a term to a counted decode window |
 | `@when:<probe><op><value>` | Apply a term only while a live probe gate is true |
 | `jlens/<word>`, `jlens/#<id>`, `sae/<id>` | Steer along a J-lens token direction or an SAE decoder row |
+| `slens/<word>`, `slens/#<id>` | Steer toward having read a token: its S-lens footprint at each layer |
 
 A bare pole or node label such as `honest` or `pirate` resolves to its concept
 or manifold; an ambiguous name raises instead of guessing. The operands of `~`,
@@ -206,11 +207,32 @@ A reading includes fitted coordinates, the centered activation's subspace
 fraction, the nearest nodes and their soft assignment, and, for curved manifolds,
 an off-surface residual and tube membership.
 
-### Jacobian lens
+### Jacobian lenses
 
 The Jacobian lens implementation follows Gurnee et al.'s
 [work](https://transformer-circuits.pub/2026/workspace/index.html).
-Drowse lets you use one of the published J-lens artifacts, or fit your own.
+Drowse lets you use one of the published lens artifacts, or fit your own.
+
+A lens reads a vector inside the model as a ranking over tokens, in one of two
+ways. The R-lens (or the standard J-lens) reads what the vector is disposed
+to make the model *say*; the S-lens (or the standard K-lens) reads which input
+tokens it looks like it has *read*. Each comes at two places in a layer: `out`,
+the block's output (also where an MLP neuron writes and where a head reads,
+one layer up), and `mid`, the residual after attention (where a neuron reads
+and a head writes). Which one to trust is a question of depth: the S read is
+the faithful one early in the model, the R read late, and both show, weighted,
+in between. `drowse lens top` reads every layer of a prompt that way and labels
+each read with the lens it used; `session.lens.read(vector, layer, site)` does
+the same for any vector. The S read reports a footprint z, each token's score
+as a z-score over the vocabulary.
+
+[`stdlogits/rs-lenses`](https://huggingface.co/stdlogits/rs-lenses) publishes
+both lenses at both places for Qwen3-8B and Gemma 4 12B (`lens fetch MODEL
+rs-r` and `rs-s`). Drowse keeps one R-family and one S-family lens selected per
+model. `jlens/<word>` steers toward saying a token and `slens/<word>` toward
+having read it; as probes, `jlens/` reads the mean readout probability and
+`slens/` the mean footprint z, and either can gate a term
+(`@when:slens/owl > 3`).
 
 ### Sparse autoencoders
 
@@ -353,8 +375,15 @@ drowse lens fit org/model --hf-corpus HuggingFaceFW/dclm_100BT-shuffled --prompt
 drowse lens fit org/model --prompts 1000 \
   --hf-corpus HuggingFaceFW/dclm_100BT-shuffled,weight=3 \
   --hf-corpus HuggingFaceFW/fineweb-2:cmn_Hani,files=64
-# Pick which lens the session reads
+# Pick which lens the session reads (one R-family and one S-family source)
 drowse lens use org/model local:r
+# rs-lenses' R- and S-lens, both sites, for Qwen3-8B and Gemma 4 12B
+drowse lens fetch Qwen/Qwen3-8B rs-r
+drowse lens fetch Qwen/Qwen3-8B rs-s
+# Read a prompt's residuals through both (--site mid: after each attention)
+drowse lens top Qwen/Qwen3-8B "The capital of France is" --site out
+# Which input tokens' footprints a direction resembles
+drowse lens decompose honest.deceptive -m Qwen/Qwen3-8B --dictionary tokens-in
 
 # Fetch an SAE (needs the [sae] extra) or train a local source
 drowse sae fetch google/gemma-3-4b-it saelens:gemma-scope-2-4b-it-res
@@ -473,7 +502,9 @@ scores = session.score_choices(
 
 The three read families are available as `session.geometry`, `session.lens`
 and `session.sae`; `session.add_probe` attaches a concept, a `jlens/<word>`
-token probe, or an `sae/<id>` feature to the right one.
+or `slens/<word>` token probe, or an `sae/<id>` feature to the right one.
+`session.lens.read(vector, layer, site)` reads any vector through both lens
+families at once.
 
 Notebook helpers are available from `drowse.notebook` after installing
 `drowse.ai[notebook]`: `plot_alpha_sweep`, `plot_probe_correlation`,

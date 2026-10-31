@@ -114,8 +114,9 @@ gate lookup stays a plain `dict.get` on the verbatim string; `GateRef` is for
 preflight and planning.
 
 Readings: geometry produces `ProbeReading`; lens and SAE produce `ScalarReading`
-(`value` + explicit `unit` — `mean_token_probability`, `activation_over_max`,
-`raw_activation` — + `per_layer` + `DepthSummary`). `DepthSummary.basis` travels
+(`value` + explicit `unit` — `mean_token_probability`, `mean_footprint_z`
+(`slens/` probes), `activation_over_max`, `raw_activation` — + `per_layer` +
+`DepthSummary`). `DepthSummary.basis` travels
 with the numbers because the three families weight depth by unrelated masses;
 never compare centers across bases. `as_probe_reading` /
 `ScalarReading.to_probe_reading` is a compatibility projection used only for
@@ -281,7 +282,8 @@ mean/basis/node coords. `token_readout` captures the roster's layer union
 
 ## ProbeRoster
 
-`jlens/…` routes to the lens, `sae/…` to the SAE, anything else to geometry.
+`jlens/…` and `slens/…` route to the lens, `sae/…` to the SAE, anything else
+to geometry.
 `detach` asks lens, then SAE, then geometry, and an unknown name is a no-op (the
 server 404s first). Digests are cached per family until `forget`; `changed`
 drops them and runs `on_change` (the session invalidates analytics; the prefix
