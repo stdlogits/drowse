@@ -79,7 +79,10 @@ neuron, `write_norm` for a head) and `meta.unit` the canonical reference:
 
 - neuron: `act / scale[pole]`, the pole the sign of `act` picks, so `1.0` is
   the pole's typical high firing on either side (`< 0` on the − pole);
-- head: `‖W_O^h z_h‖ / scale`, never negative.
+- head: `‖W_O^h z_h‖ / scale`, never negative. The write norm is Euclidean
+  in the residual: one of the deliberate exceptions to Mahalanobis-only
+  (`drowse/geometry/AGENTS.md`), since it is a scalar firing read against the
+  head's own neutral scale, never a geometric comparison.
 
 Scales are floored at `SCALE_FLOOR = 1e-6`: a pole silent on the neutral corpus
 reads large rather than infinite. One channel (`<name>`, `<name>[0]`);
