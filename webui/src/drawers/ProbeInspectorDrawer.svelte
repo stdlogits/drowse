@@ -51,6 +51,7 @@
   import { nodeCoordExtent, parseProbeTarget } from "../lib/tokens";
   import { polesOf } from "../lib/concepts";
   import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
+  import { replyLayers, replyTrace } from "../panels/rack/probeTrace";
   import type {
     GeometryProbeInfo,
     ProbeGeometryResponse,
@@ -88,14 +89,22 @@
   const geoReading = $derived(geometric ? (latest as ProbeReadingJSON | null) : null);
   const scalarReading = $derived(geometric ? null : (latest as ScalarReadingJSON | null));
   const sparkline = $derived(entry?.sparkline ?? []);
+  /** The latest reply token by token (what the reply is tinted by), else the live buffer. */
+  const tokenTrace = $derived((probeName ? replyTrace(probeName) : null) ?? sparkline);
   const affine = $derived(geo?.is_affine ?? false);
-  const perLayer = $derived(entry?.perLayer ?? {});
+  /** The token the By-token scrubber rests on (null: the latest). */
+  let pickedToken = $state<number | null>(null);
+  /** By layer: the picked token's per-layer reading from the reply, else the live latest. */
+  const perLayer = $derived.by((): Record<string, number> => {
+    const live = entry?.perLayer ?? {};
+    if (pickedToken === null && Object.keys(live).length > 0) return live;
+    return (probeName ? replyLayers(probeName, pickedToken) : null) ?? live;
+  });
   const layerKeys = $derived(Object.keys(perLayer).map(Number).filter(Number.isFinite).sort((a, b) => a - b));
   const deepest = $derived(Math.max(0, ...(geo?.layers ?? []), ...layerKeys));
   const peak = $derived(peakLayer(perLayer));
   const depthCom = $derived(geoReading?.depth_com?.[0] ?? scalarReading?.depth?.center?.[0] ?? null);
   const depthSpread = $derived(geoReading?.depth_spread?.[0] ?? scalarReading?.depth?.spread?.[0] ?? null);
-  const tint = $derived(depthTint(depthCom ?? (peak === null ? null : layerDepth(peak, deepest))));
   const isHighlight = $derived(
     highlightState.target !== null && parseProbeTarget(highlightState.target).base === probeName,
   );
@@ -207,6 +216,11 @@
     layerList.reduce((m, l) => Math.max(m, Math.abs(l.mahalanobis_share)), 0),
   );
   const geomDeepest = $derived(Math.max(deepest, ...layerList.map((l) => l.layer)));
+  const bestShareLayer = $derived(
+    layerList.reduce<ProbeLayerGeometry | null>((best, l) => (best === null || Math.abs(l.mahalanobis_share) > Math.abs(best.mahalanobis_share) ? l : best), null)?.layer ?? null,
+  );
+  /** The probe's place on the ramp: its measured depth, else the layer its fit carries most. */
+  const tint = $derived(depthTint(depthCom ?? (bestShareLayer === null ? null : layerDepth(bestShareLayer, geomDeepest))));
 
   // --- live point + trail for the selected layer (reprojected client-side) ---
   const layerKey = $derived(selectedLayer !== null ? String(selectedLayer) : "");
@@ -447,9 +461,9 @@
     </div>
 
     <section class="dw-sec">
-      <div class="dw-sec-head"><span class="head">By token</span><span class="meta">{sparkline.length > 0 ? `last ${sparkline.length}` : ""}</span></div>
-      {#if sparkline.length > 1}
-        <TraceDetail points={sparkline} percentage={percent} />
+      <div class="dw-sec-head"><span class="head">By token</span></div>
+      {#if tokenTrace.length > 1}
+        <TraceDetail points={tokenTrace} percentage={percent} onpick={(i) => (pickedToken = i)} />
       {:else}
         <p class="meta">No reading yet.</p>
       {/if}
@@ -457,7 +471,7 @@
 
     {#if layerKeys.length > 1}
       <section class="dw-sec">
-        <div class="dw-sec-head"><span class="head">By layer</span>{#if peak !== null}<span class="meta">peaks at L{peak}</span>{/if}</div>
+        <div class="dw-sec-head"><span class="head">By layer</span><span class="meta">{pickedToken === null ? "" : `token ${pickedToken + 1} · `}{peak === null ? "" : `peaks at L${peak}`}</span></div>
         <div class="depth">
           <Trace values={layerKeys.map((l) => perLayer[String(l)])} limit={0} height={56} scale={layerScale}
             colors={layerKeys.map((l) => depthTint(layerDepth(l, deepest)))} cursor={peak === null ? null : layerKeys.indexOf(peak)}

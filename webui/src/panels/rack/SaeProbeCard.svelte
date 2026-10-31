@@ -78,7 +78,7 @@
 
 <InstrumentRow pressed={pinned && isHighlight} onselect={pinned ? choose : undefined} title={name}>
   {#snippet lead()}
-    <span class="n is-id">{#if layer !== null}L{layer} {/if}f{id}</span>
+    <span class="n is-id">{layer === null ? "" : `L${layer} `}f{id}</span>
   {/snippet}
   {#snippet sub()}{label ?? ""}{/snippet}
   {#snippet mark()}

@@ -194,6 +194,27 @@ try {
   readout.data.token_text = "word";
   assert.doesNotMatch(render(LensTab, { props }).body, /class="badge"[^>]*>generated/);
 
+  // A probe's trace is the latest generated reply's token rows (what the reply is tinted by), so it
+  // covers the whole reply and survives a reload; its layers follow the token asked for.
+  const { chatLog } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
+  const { replyTrace, replyLayers } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
+  chatLog.turns = [
+    { role: "assistant", text: "older", generated: true, tokens: [{ text: "a", probes: { calm: 9 } }] },
+    { role: "user", text: "hi", tokens: [{ text: "hi", probes: { calm: 7 } }] },
+    { role: "assistant", text: "abc", generated: true, tokens: [
+      { text: "a", probes: { calm: 0.5 }, perLayerScores: { 3: { calm: 0.2 }, 7: { calm: -0.4, other: 1 } } },
+      { text: "b", coordsByProbe: { calm: [-0.25, 1] } },
+      { text: "c", probes: { calm: NaN }, perLayerScores: { 3: { calm: 0.9 } } },
+    ] },
+  ];
+  assert.deepEqual(replyTrace("calm"), [0.5, -0.25, null], "the latest reply only, coordinates first, non-finite as gaps");
+  assert.deepEqual(replyTrace("calm[1]"), [null, 1, null], "an axis target reads that coordinate");
+  assert.equal(replyTrace("absent"), null, "a reply without the probe gives no trace");
+  assert.deepEqual(replyLayers("calm"), { 3: 0.9 }, "layers default to the last token");
+  assert.deepEqual(replyLayers("calm", 0), { 3: 0.2, 7: -0.4 });
+  assert.equal(replyLayers("calm", 1), null);
+  chatLog.turns = [];
+
   const { default: JLensProbeCard } = await server.ssrLoadModule("/src/panels/rack/JLensProbeCard.svelte");
   const { default: SaeProbeCard } = await server.ssrLoadModule("/src/panels/rack/SaeProbeCard.svelte");
   const card = { token: "word", probeName: "custom lens alias", strength: null,

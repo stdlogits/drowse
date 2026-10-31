@@ -64,6 +64,27 @@ export function traceBars(
   });
 }
 
+/** At most ``max`` readings: past that, consecutive readings share a bar that keeps the largest
+ *  magnitude among them (a long reply still shows its peaks). ``size`` is readings per bar. */
+export function bucketed(
+  values: readonly (number | null | undefined)[],
+  max: number,
+): { values: (number | null)[]; size: number } {
+  const clean = (v: number | null | undefined) => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  if (max <= 0 || values.length <= max) return { values: values.map(clean), size: 1 };
+  const size = Math.ceil(values.length / max);
+  const out: (number | null)[] = [];
+  for (let start = 0; start < values.length; start += size) {
+    let pick: number | null = null;
+    for (const v of values.slice(start, start + size)) {
+      const c = clean(v);
+      if (c !== null && (pick === null || Math.abs(c) > Math.abs(pick))) pick = c;
+    }
+    out.push(pick);
+  }
+  return { values: out, size };
+}
+
 /** A reading shown beside its row: two decimals, a true minus sign, and σ-free. */
 export function readingText(value: number | null | undefined, { signed = false, percent = false } = {}): string {
   if (value == null || !Number.isFinite(value)) return "–";

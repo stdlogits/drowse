@@ -5,7 +5,13 @@
   import { MorphText } from "@stdlogits/ledger";
   import Trace from "./Trace.svelte";
   import { chartValue } from "./chartValues";
-  let { points, percentage = false, height = 56 }: { points: (number | null)[]; percentage?: boolean; height?: number } = $props();
+  let { points, percentage = false, height = 56, onpick }: {
+    points: (number | null)[];
+    percentage?: boolean;
+    height?: number;
+    /** The token the scrubber rests on, or null while it follows the latest. */
+    onpick?: (index: number | null) => void;
+  } = $props();
   let index = $state<number | null>(null);
   let paused = $state<(number | null)[] | null>(null);
   const displayPoints = $derived(paused ?? points);
@@ -17,11 +23,11 @@
   <div class="trace-detail">
     <Trace values={displayPoints} limit={0} {height} cursor={paused ? selected : null}
       label={`Reading by token, ${displayPoints.length} tokens`} />
-    <Slider value={selected} min={0} max={displayPoints.length - 1} step={1} ariaLabel="Trace sample" displayValue={`Sample ${selected + 1}`} oninput={v => { paused ??= points.slice(); index = v; }} />
+    <Slider value={selected} min={0} max={displayPoints.length - 1} step={1} ariaLabel="Trace sample" displayValue={`Sample ${selected + 1}`} oninput={v => { paused ??= points.slice(); index = v; onpick?.(v); }} />
     <div class="readout">
       <span><MorphText text={`token ${selected + 1} of ${displayPoints.length}`} /></span>
       <b><MorphText text={value == null ? "–" : chartValue(value, percentage)} /></b>
-      {#if paused}<button type="button" class="dw-text follow" onclick={() => { index = null; paused = null; }}>Follow latest</button>{/if}
+      {#if paused}<button type="button" class="dw-text follow" onclick={() => { index = null; paused = null; onpick?.(null); }}>Follow latest</button>{/if}
     </div>
   </div>
 {/if}

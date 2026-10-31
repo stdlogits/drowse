@@ -58,8 +58,8 @@
   .row.pressed, .row.pressed:hover { background: var(--wash2); }
   .main {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--mark-width, 140px) 44px;
-    gap: var(--s4);
+    grid-template-columns: minmax(0, 1fr) var(--mark-width, 112px) 44px;
+    gap: var(--s3);
     align-items: center;
     min-width: 0;
     min-height: 44px;
@@ -88,6 +88,6 @@
   .value { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
 
   @media (max-width: 720px) {
-    .main { --mark-width: 88px; gap: var(--s3); }
+    .main { --mark-width: 80px; }
   }
 </style>

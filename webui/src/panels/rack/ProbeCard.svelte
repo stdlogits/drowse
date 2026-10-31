@@ -1,5 +1,5 @@
 <script lang="ts">
-  // A geometry probe as one row of the Instruments: its name and the layer it peaks at, its
+  // A geometry probe as one row of the Instruments: its name and the layer it reads at, its
   // reading token by token (bars on its depth's place on the ramp), and the latest value. A flat
   // probe reads its signed axis-0 coordinate, a curved one the share of the activation on its
   // surface. Choosing the row tints the reply by it and shows the probe in the Inspector, where its
@@ -7,11 +7,12 @@
   import type { GeometryProbeInfo, ProbeReadingJSON, ProbeRackEntry } from "../../lib/types";
   import Bar from "../../lib/charts/Bar.svelte";
   import Trace from "../../lib/charts/Trace.svelte";
-  import { depthTint, layerDepth, peakLayer, readingText } from "../../lib/charts/depth";
+  import { depthTint, readingText } from "../../lib/charts/depth";
   import { nodeCoordExtent, parseProbeTarget } from "../../lib/tokens";
   import { highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   import InstrumentRow from "./InstrumentRow.svelte";
+  import { replyTrace } from "./probeTrace";
 
   let { name, entry }: { name: string; entry: ProbeRackEntry } = $props();
 
@@ -23,15 +24,25 @@
 
   const latest = $derived((entry.aggregate ?? entry.reading) as ProbeReadingJSON | null);
   const sparkline = $derived(entry.sparkline ?? []);
+  /** The latest reply token by token (what the reply is tinted by), else the live buffer. */
+  const trace = $derived(replyTrace(name) ?? sparkline);
   const reading = $derived.by((): number | null => {
     if (latest !== null || sparkline.length > 0) return entry.current;
     if (affine) return entry.savedCoordinates?.[0] ?? entry.savedAggregate ?? null;
     return entry.savedFraction ?? entry.savedAggregate ?? null;
   });
 
-  const peak = $derived(peakLayer(entry.perLayer));
-  const deepest = $derived(Math.max(0, ...(info.layers ?? []), ...Object.keys(entry.perLayer ?? {}).map(Number)));
-  const tint = $derived(depthTint(latest?.depth_com?.[0] ?? (peak === null ? null : layerDepth(peak, deepest))));
+  /** The layer its reading's depth centre of mass falls on. The client knows the model's depth only
+   *  through a fit that covers every layer (0 to the last), so a probe fitted on a subset shows none. */
+  const atLayer = $derived.by((): number | null => {
+    const com = latest?.depth_com?.[0];
+    const layers = info.layers ?? [];
+    const last = Math.max(0, ...layers);
+    const covers = last > 0 && new Set(layers).size === last + 1;
+    return com == null || !Number.isFinite(com) || !covers ? null : Math.round(com * last);
+  });
+  /** The probe's place on the ramp: its measured depth (layer / (layers - 1)), when it has one. */
+  const tint = $derived(depthTint(latest?.depth_com?.[0]));
 
   const isHighlight = $derived(
     highlightState.target !== null && parseProbeTarget(highlightState.target).base === name,
@@ -45,11 +56,11 @@
 
 <InstrumentRow pressed={isHighlight} onselect={choose} {tint} title={name}>
   {#snippet lead()}
-    <span class="n">{displayName}</span>{#if peak !== null}<span class="meta">L{peak}</span>{/if}
+    <span class="n">{displayName}</span>{#if atLayer !== null}<span class="meta">L{atLayer}</span>{/if}
   {/snippet}
   {#snippet mark()}
-    {#if sparkline.length > 1}
-      <Trace values={sparkline} limit={32} {scale} label={`${displayName} by token`} />
+    {#if trace.length > 1}
+      <Trace values={trace} limit={24} {scale} label={`${displayName} by token`} />
     {:else if reading !== null}
       <Bar value={reading} max={scale} width={140} height={4} bipolar={affine} title={`${displayName} ${readingText(reading, { signed: affine })}`} />
     {/if}
