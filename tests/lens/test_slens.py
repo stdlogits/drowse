@@ -225,7 +225,7 @@ def test_slens_gate_refuses_other_channels(make_tiny_session: Any) -> None:
 
 def test_read_returns_both_families_by_depth(make_tiny_session: Any) -> None:
     session = make_tiny_session(warm=False)
-    session.lens.fit(_TINY_PROMPTS)
+    session.lens.fit(_TINY_PROMPTS, sites=("out",))
     s_lens = _install_s_lens(session, sites=("out", "mid"))
     d = s_lens.d_model
     vector = torch.randn(d, generator=torch.Generator().manual_seed(6))
@@ -498,7 +498,8 @@ def test_a_mid_only_r_source_leaves_jlens_probes_layerless_and_generation_runs(
     session = make_tiny_session()
     session.lens.fit(_TINY_PROMPTS)
     session.add_probe("jlens/a")
-    _install_s_lens(session, sites=("mid",), kind="R")  # local:r, selected
+    _install_s_lens(session, sites=("mid",), kind="R")  # local:r, saved unselected
+    session.lens.select_source("local:r")
     assert session.lens.resident().sites == ("mid",)
     assert session.lens.probes["jlens/a"]["layers"] == []
     result = session.generate(
