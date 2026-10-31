@@ -11,7 +11,9 @@
   //
   // Each reading prefers the token's loom-owned measurements envelope (what was captured) and
   // otherwise replays through the family's token-readout route (keyed and shared, one at a time).
-  // "Unsteered" replays all three families without the recipe's steering; the alternatives stay as
+  // Where the runtime has the node replay, the lens side is the token's anatomy instead (one
+  // request: by depth, layer by layer, the units that pushed it, the top heads' attention).
+  // "Unsteered" replays everything without the recipe's steering; the alternatives stay as
   // sampled, since a replay has no sampler.
   import { IconButton, MorphText, Segmented, expand, tokenParts } from "@stdlogits/ledger";
   import { onDestroy, onMount, tick } from "svelte";
@@ -42,8 +44,15 @@
     LensTokenReadoutJSON,
     SaeTokenReadoutJSON,
     ScalarReadingJSON,
+    TokenAnatomy as TokenAnatomyRecord,
     TokenScore,
   } from "../lib/types";
+  import { replayCapabilities } from "../lib/runtime/contracts";
+  import { getRuntimeClient } from "../lib/runtime/registry";
+  import TokenAnatomy from "./token/TokenAnatomy.svelte";
+  import { UnitLabels } from "./token/labels.svelte";
+  import EmptyState from "./token/EmptyState.svelte";
+  import JLensMissingState from "@runtime-jlens-missing";
   import { clampCursor, jumpTurn, segmentTokens, segmentsOf, stepCursor, type SegmentKind, type TokenCursor } from "./token/cursor";
   import { ReplayReadout, type GeometryTokenReadout } from "./token/readout.svelte";
   import { drilldownUi, type DrilldownTab } from "./token/drilldown.svelte";
@@ -218,7 +227,8 @@
 
   const loomNode = $derived(loomNodeId ? (loomTree.nodes.get(loomNodeId) ?? null) : null);
   const recipeSampling = $derived(loomNode?.recipe?.sampling ?? null);
-  const recipeSteering = $derived(loomNode?.recipe?.steering ?? inspected?.appliedSteering ?? null);
+  /** The steering the token was generated under; an empty recipe expression is none. */
+  const recipeSteering = $derived((loomNode?.recipe?.steering ?? inspected?.appliedSteering) || null);
   function fmtSetting(value: number | null | undefined): string {
     if (value == null || !Number.isFinite(value)) return "–";
     return String(Number(value.toFixed(2)));
@@ -343,10 +353,16 @@
   const lensReadout = new ReplayReadout<LensTokenReadoutJSON>();
   const saeReadout = new ReplayReadout<SaeTokenReadoutJSON>();
   const geometryReadout = new ReplayReadout<GeometryTokenReadout>();
+  /** The token layer by layer (the node replay): one request in place of the lens readout, where
+   *  the runtime has it (drowse.ai does not, and keeps the lens readout). */
+  const anatomyAvailable = replayCapabilities(getRuntimeClient().instruments).tokenAnatomy;
+  const anatomyReadout = new ReplayReadout<TokenAnatomyRecord>();
+  const unitLabels = typeof getRuntimeClient().instruments.unitLabels === "function" ? new UnitLabels() : null;
   onDestroy(() => {
     lensReadout.dispose();
     saeReadout.dispose();
     geometryReadout.dispose();
+    anatomyReadout.dispose();
   });
   let lensSteered = $state(true);
   let saeSteered = $state(true);
@@ -354,11 +370,13 @@
 
   /** Steered or unsteered, for all three at once (an agent may still set one family alone). */
   const steeredAll = $derived(lensSteered && saeSteered && geometrySteered);
-  const anyReplay = $derived(lensTokenReplayAvailable || saeTokenReplayAvailable || geometryTokenReplayAvailable);
+  /** The lens side replays as the anatomy where the runtime has it, else as the lens readout. */
+  const lensReplayAvailable = $derived(anatomyAvailable || lensTokenReplayAvailable);
+  const anyReplay = $derived(lensReplayAvailable || saeTokenReplayAvailable || geometryTokenReplayAvailable);
   const showSteering = $derived(anyReplay && hasReplayContext && (recipeSteering !== null || !steeredAll));
   function setSteered(next: "steered" | "unsteered"): void {
     const on = next === "steered";
-    lensSteered = on || !lensTokenReplayAvailable;
+    lensSteered = on || !lensReplayAvailable;
     saeSteered = on || !saeTokenReplayAvailable;
     geometrySteered = on || !geometryTokenReplayAvailable;
   }
@@ -457,8 +475,26 @@
     });
   });
 
+  /** Some lens to read through: an R lens, or any active source (an S lens alone still reads). */
+  const lensReady = $derived(jlensFitted || lensSourceState.sources.some((source) => source.active));
+
+  $effect(() => {
+    if (!active || !anatomyAvailable) return;
+    void token;
+    if (!lensReady) { anatomyReadout.clear(); return; }
+    const nodeId = loomNodeId;
+    const rawIndex = token?.rawIndex;
+    if (!nodeId || rawIndex == null) { anatomyReadout.clear(); return; }
+    anatomyReadout.anatomy(nodeId, rawIndex, { k: Math.min(256, Math.max(1, readoutTopK)), units: 8, patterns: 4, steered: lensSteered, raw: effectiveRawMode() }, (m) => {
+      const anatomy = m.anatomy;
+      if (!anatomy) throw new Error("No anatomy came back for this token. Select it again to retry.");
+      return { data: anatomy, source: anatomy.binding.sources.R ?? null };
+    });
+  });
+
   $effect(() => {
     if (!active) return;
+    if (anatomyAvailable) { lensReadout.clear(); return; }
     void token;
     void loomNodeId;
     const captured = capturedLensData;
@@ -488,7 +524,9 @@
   });
 
   /** The model's deepest layer, as the lens readout names it (the SAE layer's place on the ramp). */
-  const deepest = $derived(lensReadout.data ? lastLayer(lensReadout.data.layers) : null);
+  const deepest = $derived(
+    anatomyReadout.data ? anatomyReadout.data.layers.length - 1 : lensReadout.data ? lastLayer(lensReadout.data.layers) : null,
+  );
 
   // ---- sections, for the WebMCP inspector's "tab" ------------------------
 
@@ -594,8 +632,16 @@
     {/if}
 
     <div class="part" use:sectionRef={"lens"}>
-      <LensReading readout={lensReadout} tokenText={token.text} {jlensFitted} {hasReplayContext}
-        modelId={sessionState.info?.model_id ?? null} replayAvailable={lensTokenReplayAvailable} />
+      {#if !anatomyAvailable}
+        <LensReading readout={lensReadout} tokenText={token.text} {jlensFitted} {hasReplayContext}
+          modelId={sessionState.info?.model_id ?? null} replayAvailable={lensTokenReplayAvailable} />
+      {:else if !lensReady}
+        <section class="dw-sec" aria-label="Lens"><JLensMissingState modelId={sessionState.info?.model_id ?? null} /></section>
+      {:else if !hasReplayContext}
+        <section class="dw-sec" aria-label="Lens"><EmptyState title="No replay record for this token" /></section>
+      {:else}
+        <TokenAnatomy readout={anatomyReadout} tokenText={token.text} labels={unitLabels} />
+      {/if}
     </div>
     <div class="part" use:sectionRef={"geometry"}>
       <ProbeReadings readout={geometryReadout} {pinned} {hasGeometryProbes} {hasReplayContext}
