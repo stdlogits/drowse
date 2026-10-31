@@ -458,6 +458,9 @@ def _stepwise_pools(
         ctx.thinking = step < n_thinking
         ctx.gen_step = step
         stop = prompt_len + step
+        # A (re-)prefill from position 0 carries the attention sink in column
+        # 0; an incremental step does not.
+        ctx.sink_column = 0 if past is None else None
         if past is None:
             kwargs = _prefill_kwargs(full[:, :stop])
         else:
@@ -482,6 +485,7 @@ def _stepwise_pools(
         if adjust.penalties is not None:
             adjust.penalties.add(token_id)
         del out, logits
+    ctx.sink_column = 0
     return pools
 
 

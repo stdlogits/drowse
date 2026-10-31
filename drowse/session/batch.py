@@ -110,6 +110,15 @@ def steering_always_on(steering: Steering | None) -> bool:
     return steering is None or steering.triggers() <= {Trigger.BOTH}
 
 
+def has_unit_ablation(steering: Steering | None) -> bool:
+    """Whether ``steering`` carries a ``!neuron/…`` or ``!head/…`` term."""
+    from drowse.steering.grammar import UnitAblationTerm
+
+    return steering is not None and any(
+        isinstance(term, UnitAblationTerm) for term in steering.alphas.values()
+    )
+
+
 def fast_batch_blocked(spec: "CallSpec") -> bool:
     """True iff the call needs the row-shaped decode loop.
 
@@ -330,6 +339,11 @@ class FastBatchPath:
         # A unit probe reads one row through its own tap; the serial loop
         # reads it for every row.
         if want_readings and self._reads.has_unit_probes:
+            return None
+        # A unit ablation leaves each row's attention sink alone, and a
+        # left-padded batch puts that position in a different column per
+        # row; the serial loop ablates every row exactly.
+        if self._steering.unit_hooks or has_unit_ablation(spec.steering_obj):
             return None
         model = generate_capable_model(self._model())
         if model is None or hf_unneutralizable_processors(model):

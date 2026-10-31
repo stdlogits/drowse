@@ -476,10 +476,14 @@ class UnitHook:
     """One module carrying unit ablations: a forward pre-hook running its groups.
 
     One always-active group makes the hook static (a single
-    :meth:`UnitOp.apply`, no :class:`TriggerContext` read); otherwise the
-    groups run in order, skipping inactive triggers.  The input is rewritten
-    in place before the projection reads it, so every position the forward
-    carries (the whole prompt in a prefill) is ablated.
+    :meth:`UnitOp.apply`, no trigger evaluation); otherwise the groups run in
+    order, skipping inactive triggers.  The input is rewritten in place
+    before the projection reads it, so every position the forward carries
+    (the whole prompt in a prefill) is ablated, except the attention sink:
+    the unit means count positions from 1, so the column
+    :attr:`TriggerContext.sink_column` names keeps its own activation (held
+    aside and written back; only a forward that carries position 0 pays the
+    one-column copy).
     """
 
     def __init__(self, module: torch.nn.Module) -> None:
@@ -503,16 +507,23 @@ class UnitHook:
 
     def hook_fn(self, module: Any, args: Any) -> None:
         x = args[0]
-        static = self._static
-        if static is not None:
-            static.apply(x)
-            return None
         ctx = self._ctx
         if ctx is None:
             return None
-        for group in self.groups:
-            if _trigger_active(group.trigger, ctx):
-                group.op.apply(x)
+        sink = ctx.sink_column
+        held = (
+            x.narrow(-2, sink, 1).clone()
+            if sink is not None and x.shape[-2] > sink else None
+        )
+        static = self._static
+        if static is not None:
+            static.apply(x)
+        else:
+            for group in self.groups:
+                if _trigger_active(group.trigger, ctx):
+                    group.op.apply(x)
+        if held is not None:
+            x.narrow(-2, sink, 1).copy_(held)
         return None
 
     def attach(self) -> None:

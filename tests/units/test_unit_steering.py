@@ -34,8 +34,10 @@ def _stats(session: Any) -> Any:
 
 
 def _neuron_patch(mean: float, n: int, c: float = 1.0) -> Any:
+    """Blend neuron ``n`` toward ``mean`` at every position but the
+    attention sink (position 0), which the unit means never count."""
     def patch(x: torch.Tensor) -> torch.Tensor:
-        x[..., n] = (1.0 - c) * x[..., n] + c * mean
+        x[..., 1:, n] = (1.0 - c) * x[..., 1:, n] + c * mean
         return x
     return patch
 
@@ -43,7 +45,7 @@ def _neuron_patch(mean: float, n: int, c: float = 1.0) -> Any:
 def _head_patch(mean: torch.Tensor, h: int, hd: int, c: float = 1.0) -> Any:
     def patch(x: torch.Tensor) -> torch.Tensor:
         span = slice(h * hd, (h + 1) * hd)
-        x[..., span] = (1.0 - c) * x[..., span] + c * mean
+        x[..., 1:, span] = (1.0 - c) * x[..., 1:, span] + c * mean
         return x
     return patch
 
@@ -111,6 +113,50 @@ def test_units_on_one_module_share_one_hook_and_compose(tiny_session: Any) -> No
         got = forward_logits(tiny_session, TEXT)
     torch.testing.assert_close(got.float(), expected, rtol=1e-5, atol=1e-5)
     assert not tiny_session._steering.unit_hooks
+
+
+def test_unit_ablation_leaves_the_attention_sink_alone(tiny_session: Any) -> None:
+    """Regression: the ablation substituted the unit's mean at position 0 too,
+    though the means count positions from 1 (the sink is out of their
+    distribution).  Position 0 keeps its activation in a prefill from the
+    start; every other position, the prefill's included, is ablated, and a
+    generation's decode steps (which never carry position 0) are too."""
+    from drowse import SamplingConfig
+
+    block = _blocks(tiny_session)[1]
+    mean = float(_stats(tiny_session).layer(1).neuron_mean[3])
+    seen: list[torch.Tensor] = []
+
+    def record(_module: Any, args: Any) -> None:
+        seen.append(args[0][..., 3].detach().float().clone())
+
+    plain_handle = block.mlp.down.register_forward_pre_hook(record)
+    try:
+        forward_logits(tiny_session, TEXT)
+    finally:
+        plain_handle.remove()
+    plain = seen.pop()
+    with tiny_session.steering("!neuron/L1n3"):
+        handle = block.mlp.down.register_forward_pre_hook(record)  # after the unit hook
+        try:
+            forward_logits(tiny_session, TEXT)
+            ablated = seen.pop()
+            seen.clear()
+            tiny_session.generate(
+                TEXT, sampling=SamplingConfig(max_tokens=3, temperature=0.0),
+                stateless=True, thinking=False,
+            )
+        finally:
+            handle.remove()
+    assert float(ablated[0, 0]) == pytest.approx(float(plain[0, 0]))
+    assert torch.allclose(ablated[0, 1:], torch.full_like(ablated[0, 1:], mean), atol=1e-6)
+    prefill, *steps = seen
+    assert float(prefill[0, 0]) != pytest.approx(mean)
+    assert torch.allclose(prefill[0, 1:], torch.full_like(prefill[0, 1:], mean), atol=1e-6)
+    assert steps and all(
+        torch.allclose(step, torch.full_like(step, mean), atol=1e-6) for step in steps
+    )
+    assert tiny_session._steering.ctx.sink_column == 0  # the rest state again
 
 
 def test_unit_ablation_honors_its_trigger(tiny_session: Any) -> None:

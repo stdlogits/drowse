@@ -418,10 +418,19 @@ module and trigger into one `UnitOp` each: full-width fp32 constants `keep`
 composed in registration order when two terms share a span, cast once to the
 activation dtype. `UnitOp.apply` is `x.mul_(keep).add_(bias)` on the
 projection's input: two elementwise ops, no gather, no allocation, no host
-sync, every position the forward carries (the whole prompt in a prefill). A
-`UnitHook` is a forward pre-hook on the down or output projection; one
-always-active group makes it static (no `TriggerContext` read), otherwise it
-walks its groups like a `SteeringHook`. Unit terms make `static_offsets()`
+sync, every position the forward carries (the whole prompt in a prefill)
+except the attention sink. The unit means count positions from 1, so position
+0 keeps its own activation: `TriggerContext.sink_column` names the column
+holding absolute position 0 (rest state 0, for replays, captures and scores
+over a sequence from the start; the decode loop sets 0 on a prefill from
+position 0 or a cacheless re-feed and `None` on incremental steps, as the
+joint-logprob replay does, and both restore 0 after), and the `UnitHook`
+holds that one column aside and writes it back after its ops (one
+`[B, 1, F]` copy, only in a forward that carries position 0). A left-padded
+batch has a per-row sink column, so `session/batch.py` sends a batch with a
+unit ablation to the serial loop. A `UnitHook` is a forward pre-hook on the
+down or output projection; one always-active group makes it static (no
+trigger evaluation), otherwise it walks its groups like a `SteeringHook`. Unit terms make `static_offsets()`
 `None`: the compiled graph was not traced with a module pre-hook.
 
 `SteeringManager.install(plan, …)`: when the session adopted compiled offset

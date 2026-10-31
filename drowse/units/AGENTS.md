@@ -141,8 +141,15 @@ every family's roster).
   `UnitsRuntime.site` into `SteeringPlan.add_unit_ablation` and lower to one
   `UnitOp` per (module, trigger): `x ← x ⊙ keep + bias` on the projection's
   input, `keep = 1 − α`, `bias = α·mean` on the unit's coordinates (α = 1 is
-  exact mean-ablation; any finite α blends, overshoots or amplifies). Details
-  and routing: `drowse/steering/AGENTS.md`.
+  exact mean-ablation; any finite α blends, overshoots or amplifies). It
+  skips position 0, the attention sink: the unit statistics count means from
+  position 1, so substituting the mean there would put an out-of-distribution
+  value at the sink. Every other position is ablated, a prefill's included.
+  The forward's driver names the sink's column (`TriggerContext.sink_column`:
+  0 at rest and on a prefill from the start, `None` on an incremental decode
+  step); a left-padded batch puts it in a different column per row, so a
+  batch with a unit ablation runs on the serial loop. Details and routing:
+  `drowse/steering/AGENTS.md`.
 
 ## Testing
 

@@ -883,6 +883,13 @@ def generate_steered(
                     trigger_ctx.is_prefill = prefill
                     trigger_ctx.thinking = (tstate == _ThinkState.THINKING)
                     trigger_ctx.gen_step = forward_step
+                    # Absolute position 0 (the attention sink) is column 0
+                    # of a prefill from the start, and of every cacheless
+                    # re-feed; an incremental step never carries it.
+                    trigger_ctx.sink_column = (
+                        0 if no_cache_mode or (prefill and cache_position_offset == 0)
+                        else None
+                    )
 
                 # Static-cache path passes ``cache_position`` explicitly so
                 # the model knows where to write into the pre-allocated
@@ -1243,6 +1250,10 @@ def generate_steered(
             )
 
     finally:
+        if trigger_ctx is not None:
+            # Back to the rest state: a later replay or capture forward runs
+            # a sequence from position 0.
+            trigger_ctx.sink_column = 0
         # Flush MPS command buffers before signalling completion — without
         # this, a rapid regenerate can submit new work while Metal is still
         # processing the previous generation's command buffers, triggering

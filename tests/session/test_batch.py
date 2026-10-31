@@ -860,6 +860,29 @@ class TestFastBatchOnTinySession:
         assert calls == []
         assert [r.text for r in runset] == ["re alpha", "re beta"]
 
+    @pytest.mark.parametrize("scoped", [False, True])
+    def test_unit_ablation_runs_serially(
+        self,
+        scoped: bool,
+        make_tiny_session: TinySessionFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A unit ablation leaves each row's attention sink alone, which sits
+        in a different column per row of a left-padded batch: the serial loop
+        runs it, whether the ablation is the call's or an open scope's."""
+        import contextlib
+
+        session, _script = make_tiny_session.scripted(_reply)
+        calls = _spy_model_generate(monkeypatch, session)
+        expr = "!neuron/L1n3"
+        scope = session.steering(expr) if scoped else contextlib.nullcontext()
+        with scope:
+            runset = session.generate_batch(
+                ["alpha", "beta"], steering=None if scoped else expr, thinking=False,
+            )
+        assert calls == []
+        assert [r.text for r in runset] == ["re alpha", "re beta"]
+
 
 class TestSerialBatchOnTinySession:
     def test_shared_prefix_reuses_one_real_dynamic_cache(
