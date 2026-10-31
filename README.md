@@ -510,9 +510,10 @@ scores = session.score_choices(
 )
 ```
 
-The three read families are available as `session.geometry`, `session.lens`
-and `session.sae`; `session.add_probe` attaches a concept, a `jlens/<word>`
-or `slens/<word>` token probe, or an `sae/<id>` feature to the right one.
+The four read families are available as `session.geometry`, `session.lens`,
+`session.sae` and `session.units`; `session.add_probe` attaches a concept, a
+`jlens/<word>` or `slens/<word>` token probe, an `sae/<id>` feature or a
+`neuron/L8n344` / `head/L20h17` unit to the right one.
 `session.lens.read(vector, layer, site)` reads any vector through both lens
 families at once.
 

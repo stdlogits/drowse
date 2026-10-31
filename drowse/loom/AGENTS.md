@@ -59,7 +59,7 @@ duck-typed `session`: it uses `tree`, `model_id`, `config.system_prompt`,
   replays, joined to rows by `raw_index`. Authored and imported turns have
   `tokens=None` until authored capture adds rows (which have no `raw_index`).
 - **Readings.** `aggregate_readings` holds axis-0 finalize aggregates from all
-  three read families; `mean_logprob`/`mean_surprise` cover the response span.
+  four read families; `mean_logprob`/`mean_surprise` cover the response span.
 - **Edits.** `edit` rewrites `text` only. The recipe, rows and
   `raw_token_ids` keep the original decode, so forks, replay and joint
   logprobs read the original; `edit_count`/`edited_at` are the only signal.
