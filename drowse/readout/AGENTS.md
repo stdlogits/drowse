@@ -336,8 +336,18 @@ persisted loom rows may lack them. `envelope_sources` is the one builder of
 generation) and the SAE live config; an aggregate binds a family's source
 only when it carries that family's readings.
 
+A `replay` envelope may also carry `anatomy` (`TokenAnatomy`, built by
+`loom/node_replay.py` and passed to `build_measurements(anatomy=…)`; any other
+scope refuses it): one token's per-layer lens reads (`reads_as`, the residual
+with its S half centred; `attention`, `mlp`, `steering`, write deltas read as
+directions; each a `LensReadDict` with its `of` and per-half `centred`), the
+units that pushed the token (`AnatomyUnit`), the top heads' attention rows
+(`AnatomyPattern`), the decoded `context` and a lens `binding`. An anatomy
+envelope may have empty `instruments`; it sits beside them because it records
+the replay forward, not a probe.
+
 Wire drift is a test failure: `tests/readout/test_measurements_envelope.py`
-pins key sets for every scope; `tests/browser/test_browser_parity.py` compares
+pins key sets for every scope (the anatomy record's included); `tests/browser/test_browser_parity.py` compares
 against the hand-maintained golden
 `tests/fixtures/browser/measurement-envelope-v2.json`, which the drowse.ai
 runtime replays (change both together); the TypedDicts feed

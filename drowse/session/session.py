@@ -70,6 +70,7 @@ from drowse.units.instrument import UnitsInstrument
 from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
 from drowse.units.stats import UnitStats
 from drowse.loom.replay import TokenReplayer
+from drowse.loom.node_replay import NodeReplayer, UnitActivityJSON
 from drowse.store.bundled_probes import bootstrap_probe_roster
 from drowse.geometry.profile import Profile
 from drowse.generation.results import (
@@ -78,10 +79,11 @@ from drowse.generation.results import (
 )
 from drowse.generation.sampling import SamplingConfig
 from drowse.session.batch import BatchRunner, FastBatchPath
-from drowse.steering.terms import Steering
+from drowse.steering.terms import Steering, entry_trigger
 from drowse.geometry.manifold import Manifold
 
 if TYPE_CHECKING:
+    from drowse.readout.measurements import MeasurementsEnvelope
     from drowse.readout.protocol import Instrument
     from drowse.generation.scoring import ChoiceScores
     from drowse.store.manifold_folder import DiscoverGenerationPlan
@@ -442,6 +444,7 @@ class DrowseSession:
             assert_unsteered=self._steering_composer.assert_unsteered,
             replay=self._token_replay,
             whitener=self._neutral.whitener,
+            neutral_means=self._neutral.site_means,
         )
         # The SAE family: resident dictionary + Neuronpedia metadata (the
         # runtime), probes, live discovery and token replay.  ``sae/<id>``
@@ -469,6 +472,23 @@ class DrowseSession:
             replay=self._token_replay,
             put_direction=self._registry.put_profile,
             has_direction=lambda name: name in self._registry.profiles,
+        )
+        # The node replay: one tapped forward over a node's tokens (split
+        # where the open steering's triggers fired differently), read as
+        # token anatomy and unit activity (the lens and units families).
+        self._node_replay = NodeReplayer(
+            replayer=self._token_replay,
+            model=self._model,
+            lens=self._lens_instrument,
+            units=self._units_runtime,
+            tokenizer=self._tokenizer,
+            tree=lambda: self.tree,
+            traits=self._chat,
+            trigger_context=self._steering.ctx,
+            open_triggers=lambda: [
+                entry_trigger(entry)
+                for entry in self._steering_composer.flatten_stack().values()
+            ],
         )
         # The probe roster: attach/detach routing by namespace and the
         # transcript probe-hash caches; a roster change drops the analytics.
@@ -890,6 +910,47 @@ class DrowseSession:
         (``readout`` / ``decompose`` / ``register_direction`` /
         ``token_readout``), probes, and the live readout."""
         return self._lens_instrument
+
+    def token_anatomy(
+        self,
+        node_id: str,
+        raw_index: int,
+        *,
+        k: int = 8,
+        units: int = 8,
+        patterns: int = 4,
+        apply_steering: bool = True,
+        raw: bool = False,
+    ) -> "MeasurementsEnvelope":
+        """One loom token, every layer, as the ``scope="replay"`` measurement
+        envelope's ``anatomy``: what the residual reads as (S centred), what
+        attention and the MLP added, which neurons and heads pushed the token
+        through the R lens, and where the top heads looked.  See
+        :meth:`drowse.loom.node_replay.NodeReplayer.token_anatomy`."""
+        return self._node_replay.token_anatomy(
+            node_id, raw_index, k=k, units=units, patterns=patterns,
+            apply_steering=apply_steering, raw=raw,
+        )
+
+    def unit_activity(
+        self,
+        node_id: str,
+        *,
+        top: int = 32,
+        units: Sequence[str] = (),
+        raw_index: int | None = None,
+        layers: Any = None,
+        apply_steering: bool = True,
+        raw: bool = False,
+    ) -> UnitActivityJSON:
+        """Every neuron's and head's activity over a loom node's tokens: the
+        top units by peak, traces of ``units`` and, with ``raw_index``, that
+        token's whole population.  See
+        :meth:`drowse.loom.node_replay.NodeReplayer.unit_activity`."""
+        return self._node_replay.unit_activity(
+            node_id, top=top, units=units, raw_index=raw_index, layers=layers,
+            apply_steering=apply_steering, raw=raw,
+        )
 
     @property
     def sae(self) -> "SaeInstrument":

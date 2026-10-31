@@ -336,11 +336,11 @@ class TestNeutralBaselineLazy:
 
         from drowse.session.neutral import NeutralBaseline
         from drowse.fit import neutral as neutral_store
-        from drowse.store.neutral import NeutralCache, NeutralUnits
+        from drowse.store.neutral import NeutralCache, NeutralMid, NeutralUnits
 
         def _load(*args: Any, **kwargs: Any) -> NeutralCache:
             calls.append(kwargs["model_id"])
-            return NeutralCache(acts, NeutralUnits(None, 0, "test"), {})
+            return NeutralCache(acts, NeutralUnits(None, 0, "test"), NeutralMid(None, "test"), {})
 
         monkeypatch.setattr(neutral_store, "load_or_compute_neutral_cache", _load)
         return NeutralBaseline(

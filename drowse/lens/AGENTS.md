@@ -21,7 +21,7 @@ at a place through both, by the four-lens rule. Inside a session the face is
 | `jlens.py` | `JacobianLens` (one kind, both sites), readout math, token-atom resolution, error types, fit defaults. Imports only torch, errors and `key` (decode-step code imports it). |
 | `depth.py` | `LensBand`, `kind_weights`: which kind reads a place, by depth. Torch-free. |
 | `footprint.py` | `token_mask`, `TokenEmbeddings` (masked embedding mean and `Σ_E`, fp32), footprint z, `pullback_rows`, `depth_moments_positive`. Torch only. |
-| `read.py` | `read_vectors`, `LensRead` / `FamilyRead` / `TokenScore`: the read of a vector at `(layer, site)` through both families |
+| `read.py` | `plan_reads` / `PendingReads` (a batch of reads on the device, one host transfer), `read_vectors`, `VectorRead`, `ReadOf`, `LensRead` / `FamilyRead` / `TokenScore`: the read of a vector at `(layer, site)` through both families |
 | `decompose.py` | `LensDictionary`, `TokensOut` (`W_U J_l`), `TokensIn` (`K_l ẽ_v`), `sparse_decompose`, `DICTIONARIES` |
 | `transport.py` | The estimator's per-document block maps: `linearize`, `jvp`, `vjp`, the sweeps, `document_estimate` |
 | `fit.py` | `fit_lens` (transport over a corpus), `LensSums`, `LensFit`, `fit_site_layers`. No runtime path imports it. |
@@ -79,22 +79,40 @@ fractions of depth (`layer / (n_layers − 1)`, default 0.15 and 0.35 until
 measured per model); `kind_weights(n_layers, band)` returns `(w_S, w_R)` per
 layer, `w_S = 1` below `lo`, 0 above `hi`, linear inside, summing to 1.
 
-**The read** (`read.py`, `LensInstrument.read`). `read(vector, layer, site,
-k=8)` takes a `[d]` vector (one `LensRead`) or `[n, d]` rows (a list). A
-`LensRead` has `layer`, `site`, `depth` and two `FamilyRead` halves, `r` and
-`s`, each with `weight` (from `kind_weights`, whether or not the half is
-present), `unit` (`probability`: per-layer readout probabilities through the
-model's final path; `footprint_z`), `lens` (the label read through, `R:mid`,
-`J:out`, `S:out`), `tokens` (`TokenScore(token_id, token, value)`, top-k
-descending) and `absent`, the reason when there is no lens of the family, no
-lens at the site, or no matrix at the layer. A vector whose width is not the
-model's residual width is a `RequestError`. A half is never read from the
-other site or family. The weights stay raw, so a consumer fades a light half
-or says that a heavy one is missing. `read_prompt(prompt, site, layers,
-positions, k)` reads a raw prompt's residuals (out: `capture_hidden`; mid: a
-pre-hook on each block's MLP input norm through `model_spec`). `lens.band`
-(`LensBand()`) is the session's crossover band. Token anatomy and unit views
-read through this.
+**The read** (`read.py`, `LensInstrument.read`). `read(vector, layer, site, *,
+of, k=8)` takes a `[d]` vector (one `LensRead`) or `[n, d]` rows (a list).
+**What is read is part of the request and has no default** (`of`, a
+`ReadOf`): a `"residual"` (the stream at a block's output or `mid`) or a
+`"direction"` (a steering vector, a unit's write, an attention or MLP write
+delta). The S half of a residual reads `h − μ`, `μ` the neutral layer mean at
+the read's site (`out`: the monitor's and whitener's centring mean, `X.mean(0)`
+of the neutral activations; `mid`: the neutral cache's mid means): the raw
+residual's large common component otherwise swamps the position's own tokens
+(on SmolLM2, L1 ` Tower` read `ing`, `er`, ` itself` raw and ` towers`, ` Tower`
+centred). A direction, and every R half, is read as given. The means come from
+the injected `neutral_means(site)` getter (the session's
+`NeutralBaseline.site_means`); a residual read with no mean at its site raises
+`NeutralMeansError` (422), never reads uncentred. A `LensRead` has `layer`,
+`site`, `depth`, `of` and two `FamilyRead` halves, `r` and `s`, each with
+`weight` (from `kind_weights`, whether or not the half is present), `unit`
+(`probability`: per-layer readout probabilities through the model's final
+path; `footprint_z`), `lens` (the label read through, `R:mid`, `J:out`,
+`S:out`), `centred` (the S half of a residual), `tokens` (`TokenScore(token_id,
+token, value)`, top-k descending) and `absent`, the reason when there is no
+lens of the family, no lens at the site, or no matrix at the layer. A vector
+whose width is not the model's residual width is a `RequestError`. A half is
+never read from the other site or family. The weights stay raw, so a consumer
+fades a light half or says that a heavy one is missing. `plan_reads(requests,
+k)` (`VectorRead(rows, layer, site, of)` each) computes a batch on the device
+and returns `PendingReads`, whose `tensor` leaves in one transfer (alone or
+packed into a caller's own) and whose `finish(host)` unpacks it; `read` and
+`read_prompt` are its single-transfer uses, token anatomy packs it with its
+own results. `read_prompt(prompt, site, layers, positions, k)` reads a raw
+prompt's residuals (out: `capture_hidden`; mid: a pre-hook on each block's MLP
+input norm through `model_spec`). `neutral_mean(site, layer)` is the mean a
+residual read there centres on. `lens.band` (`LensBand()`) is the session's
+crossover band. Token anatomy (`loom/node_replay.py`) and the unit views read
+through this.
 
 **Footprint z** (`footprint.py`). `u_L = K_Lᵀ h`; `z_L(v) = u_L·ẽ_v /
 sqrt(u_Lᵀ Σ_E u_L)`, with `ẽ_v = scale·W_E[v] − mean` (`scale` from
@@ -404,8 +422,9 @@ sha256 of the canonical manifest or binding descriptor) and `BoundedLRU`
 caches (two device transport stacks, decoded tokens, depth and selector
 tensors). `LensInstrument` takes every dependency explicitly: model, capture
 (`LatestSlices`), `ExclusiveGuard`, `capture_hidden`, the registry
-(`ProfileStore`), `on_change`, `resolve_profile`, `assert_unsteered` and
-`TokenReplay`.
+(`ProfileStore`), `on_change`, `resolve_profile`, `assert_unsteered`,
+`TokenReplay`, the whitener getter and `neutral_means` (site → `{layer:
+mean}`, the residual centring means; raises when a site has none).
 
 - **`state_lock` is the lens-state boundary.** It is a reentrant leaf lock
   over refresh, adopt, evict, registry and live mutations, and `prepare`'s
@@ -496,16 +515,22 @@ the per-layer softmax probability `p_l(v)`.
   a different probe. The final aggregate pools the same last-content-token
   slice as the Monitor and SAE.
 - **`slens/` probe.** `add_probe("slens/…")` routes to the same `attach`
-  (`side: input`) and builds the embedding statistics. Per layer `z_L` of the
-  token (one batched pullback over the S lens's `out` layers, then
-  `TokenEmbeddings.z_of`, one host transfer); the `ScalarReading` is the
+  (`side: input`) and builds the embedding statistics and the neutral `out`
+  means (no means: `NeutralMeansError`, nothing attached). Per layer `z_L` of
+  the token, read from the residual centred on the neutral block-output mean
+  (`u_L = K_Lᵀ (h_L − μ_L)`: one batched pullback over the S lens's `out`
+  layers against a cached `[L, d]` mean stack, then `TokenEmbeddings.z_of`, one
+  host transfer; `prepare` makes the means resident before the decode loop, so
+  a step never builds them); the `ScalarReading` is the
   depth rule's weighted mean `Σ_L w_S(L) z_L / Σ_L w_S(L)` (unit
   `mean_footprint_z`; `w_S` from `depth.kind_weights` under the instrument's
   `band`, so a probe reads where S is the faithful lens and is 0 when no read
   layer has S weight), `per_layer` every `z_L`, and a depth summary weighted
   by `w_S(L) max(z_L, 0)` (basis `footprint_z`). Layers come from the lens
   the reading uses, never the registry. `probe_hash` folds in the S
-  lens identity (`slens-footprint-z-v1`). It joins the final aggregate, the
+  lens identity and a digest of the neutral out means at the probe's layers
+  (`slens-footprint-z-v2`: the reading is of a centred residual, so other
+  means are another probe). It joins the final aggregate, the
   gate path and, with live readout on, the per-step readings.
 - **Gate.** `@when:jlens/<word> > x` (also `[0]` or `#<id>`) fires only for an
   attached probe. The strength channel is the only one

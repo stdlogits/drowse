@@ -16,20 +16,35 @@ it read through:
 - **S** (``unit="footprint_z"``): the footprint z of every masked token,
   ``u · ẽ_v / sqrt(uᵀ Σ_E u)`` with ``u = K_Lᵀ x`` (:mod:`drowse.lens.footprint`).
 
+**What is read** is part of the request (:data:`ReadOf`), and never has a
+default.  A **residual** (the stream at a block's output or ``mid``) carries
+the large common component every position shares, and the footprint of that
+component swamps the position's own tokens, so the S half reads ``h − μ``,
+``μ`` the neutral layer mean at the read's site (``out``: the monitor's and
+whitener's centring mean; ``mid``: the neutral cache's mid means).  A
+**direction** (a steering vector, a neuron or head write, an attention or MLP
+write delta) has no such component and is read as given.  The R half is
+never centred: the final norm already discards the common scale, and the
+readout is the model's own.  A residual read with no mean to centre on raises
+(the ``centre`` callable's error); it is never read uncentred.
+
 A half with no lens, no lens at this site, or no matrix at this layer comes
 back absent with the reason; it is never filled from the other site or the
 other family.  The weights are the depth rule's ``(w_S, w_R)`` at the layer
 whether or not a half is present, so a consumer can fade a light half or say
 that a heavy one is missing.
 
-This is the primitive token anatomy (residual, attention write, MLP write)
-and the unit views ("writes", "fires on") read through;
-:meth:`~drowse.lens.instrument.LensInstrument.read` is its session face.
+Every request of a batch is computed on the device and leaves it in **one**
+transfer (:func:`plan_reads` → :class:`PendingReads`, which a caller may fold
+into a larger packed transfer of its own).  Token anatomy (residual,
+attention write, MLP write) and the unit views ("writes", "fires on") read
+through this; :meth:`~drowse.lens.instrument.LensInstrument.read` is its
+session face.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -42,6 +57,10 @@ from drowse.lens.key import LENS_SITES
 
 LensFamily = Literal["R", "S"]
 ReadUnit = Literal["probability", "footprint_z"]
+#: What a read reads: a ``residual`` (its S half is centred on the neutral
+#: mean at its site) or a ``direction`` (read as given).
+ReadOf = Literal["residual", "direction"]
+READ_OF: tuple[ReadOf, ...] = ("residual", "direction")
 
 
 @dataclass(frozen=True)
@@ -64,7 +83,8 @@ class FamilyRead:
     ``"S:out"``) and ``absent`` is ``None`` when the half was read; otherwise
     ``lens`` may be ``None`` (no lens of the family is selected), ``tokens``
     is empty and ``absent`` says why.  ``weight`` is the depth rule's weight
-    for this family at the layer either way.
+    for this family at the layer either way.  ``centred`` is True when the
+    half read ``x − μ`` (the S half of a residual read).
     """
 
     family: LensFamily
@@ -73,6 +93,7 @@ class FamilyRead:
     lens: str | None = None
     tokens: tuple[TokenScore, ...] = ()
     absent: str | None = None
+    centred: bool = False
 
     @property
     def present(self) -> bool:
@@ -84,6 +105,7 @@ class FamilyRead:
             "weight": round(self.weight, 6),
             "unit": self.unit,
             "lens": self.lens,
+            "centred": self.centred,
             "tokens": [token.to_dict() for token in self.tokens],
             "absent": self.absent,
         }
@@ -94,6 +116,7 @@ class LensRead:
     """The read of one vector at ``(layer, site)``: its R and S halves.
 
     ``depth`` is ``layer / (n_layers − 1)``; ``r.weight + s.weight == 1``.
+    ``of`` says whether a residual or a direction was read.
     """
 
     layer: int
@@ -101,6 +124,7 @@ class LensRead:
     depth: float
     r: FamilyRead
     s: FamilyRead = field(repr=False)
+    of: ReadOf = field(kw_only=True)
 
     @property
     def halves(self) -> tuple[FamilyRead, FamilyRead]:
@@ -112,14 +136,41 @@ class LensRead:
             "layer": self.layer,
             "site": self.site,
             "depth": round(self.depth, 6),
+            "of": self.of,
             "r": self.r.to_dict(),
             "s": self.s.to_dict(),
         }
 
 
+@dataclass(frozen=True)
+class VectorRead:
+    """One read request: ``rows`` (``[d]`` or ``[n, d]``) at ``(layer, site)``,
+    read as a residual or a direction (no default: the caller says which)."""
+
+    rows: torch.Tensor
+    layer: int
+    site: str
+    of: ReadOf
+
+    def __post_init__(self) -> None:
+        if self.of not in READ_OF:
+            raise ValueError(f"a read reads a residual or a direction, got of={self.of!r}")
+        if self.site not in LENS_SITES:
+            raise ValueError(f"site must be one of {', '.join(LENS_SITES)}, got {self.site!r}")
+        if self.rows.ndim not in (1, 2):
+            raise ValueError(f"read takes a [d] vector or [n, d] rows, got {tuple(self.rows.shape)}")
+
+    @property
+    def matrix_rows(self) -> torch.Tensor:
+        return self.rows.reshape(1, -1) if self.rows.ndim == 1 else self.rows
+
+
 #: ``(logits) -> logits``: the model's final path from the last residual
 #: (:class:`~drowse.model.readout.LogitReadout`).
 Readout = Callable[[torch.Tensor], torch.Tensor]
+#: ``(site, layer) -> [d]``: the neutral mean a residual read centres its S
+#: half on (raises when there is none).
+Centre = Callable[[str, int], torch.Tensor]
 
 
 def _matrix(lens: JacobianLens, layer: int, site: str, device: torch.device) -> torch.Tensor:
@@ -153,16 +204,86 @@ def read_s(
     """S-family top-k for rows ``[n, d]``: ``(z [n, k], ids [n, k])``.
 
     ``matrix`` is ``K_L`` at the site; rows pull back as ``u = x @ K_L``.
+    Centring is the caller's (:func:`plan_reads` subtracts the neutral mean
+    from a residual before it gets here).
     """
     u = vectors.to(device=matrix.device, dtype=torch.float32) @ matrix
     z = embeddings.z(u)
     return z.topk(min(int(k), embeddings.n_kept), dim=-1)
 
 
-def read_vectors(
-    vectors: torch.Tensor,
-    layer: int,
-    site: str,
+@dataclass(frozen=True)
+class _Half:
+    """One half of one request: either read (``offset`` into the packed
+    tensor, ``width`` = k) or absent."""
+
+    family: LensFamily
+    weight: float
+    unit: ReadUnit
+    lens: str | None
+    centred: bool
+    absent: str | None = None
+    offset: int = 0
+    width: int = 0
+
+
+@dataclass(frozen=True)
+class _Planned:
+    request: VectorRead
+    n: int
+    depth: float
+    r: _Half
+    s: _Half
+
+
+class PendingReads:
+    """A batch of reads still on the device: :attr:`tensor` is every read
+    half's ``[values, ids]`` flattened into one fp32 vector; :meth:`finish`
+    unpacks the host copy into one ``list[LensRead]`` per request."""
+
+    def __init__(
+        self, tensor: torch.Tensor, planned: list[_Planned],
+        decode: Callable[[int], str],
+    ) -> None:
+        self.tensor = tensor
+        self._planned = planned
+        self._decode = decode
+
+    def finish(self, host: torch.Tensor) -> list[list[LensRead]]:
+        flat = host.reshape(-1).tolist()
+        out: list[list[LensRead]] = []
+        for plan in self._planned:
+            out.append([
+                LensRead(
+                    int(plan.request.layer), plan.request.site, plan.depth,
+                    r=self._half(plan.r, flat, plan.n, row),
+                    s=self._half(plan.s, flat, plan.n, row),
+                    of=plan.request.of,
+                )
+                for row in range(plan.n)
+            ])
+        return out
+
+    def _half(self, half: _Half, flat: list[float], n: int, row: int) -> FamilyRead:
+        if half.absent is not None:
+            return FamilyRead(
+                half.family, half.weight, half.unit, lens=half.lens, absent=half.absent,
+            )
+        k = half.width
+        values = half.offset + row * k
+        ids = half.offset + n * k + row * k
+        tokens = tuple(
+            TokenScore(int(flat[ids + j]), self._decode(int(flat[ids + j])), float(flat[values + j]))
+            for j in range(k)
+        )
+        return FamilyRead(
+            half.family, half.weight, half.unit, lens=half.lens, tokens=tokens,
+            centred=half.centred,
+        )
+
+
+def plan_reads(
+    requests: Sequence[VectorRead],
     *,
     r_lens: JacobianLens | None,
     s_lens: JacobianLens | None,
@@ -173,71 +294,124 @@ def read_vectors(
     device: torch.device,
     k: int = 8,
     band: LensBand | None = None,
+    centre: Centre | None = None,
     no_r_lens: str = "no R-family lens is selected for this model",
     no_s_lens: str = "no S-family lens is selected for this model",
-) -> list[LensRead]:
-    """Read every row of ``vectors`` (``[d]`` or ``[n, d]``) at ``(layer, site)``.
+) -> PendingReads:
+    """Compute every request's halves on the device, packed for one transfer.
 
-    ``readout`` and ``embeddings`` are thunks, so a half that is absent never
-    pays for the vocabulary head or the embedding statistics.  The rows of
-    each half leave the device in one transfer.
+    ``readout``, ``embeddings`` are thunks, so a half that is absent never
+    pays for the vocabulary head or the embedding statistics; ``centre`` is
+    called only for the S half of a residual read, and a residual read with
+    an S half and no ``centre`` is a broken invariant (``ValueError``).
     """
-    if site not in LENS_SITES:
-        raise ValueError(f"site must be one of {', '.join(LENS_SITES)}, got {site!r}")
-    if not 0 <= int(layer) < int(n_layers):
-        raise ValueError(f"layer {layer} is outside the model's {n_layers} layers")
-    if vectors.ndim not in (1, 2):
-        raise ValueError(f"read takes a [d] vector or [n, d] rows, got {tuple(vectors.shape)}")
     for lens, side in ((r_lens, "output"), (s_lens, "input")):
         if lens is not None and lens.key.side != side:
             raise ValueError(f"a {lens.kind} lens cannot read the {side}-family half")
-    rows = vectors.reshape(1, -1) if vectors.ndim == 1 else vectors
-    w_s, w_r = kind_weights(n_layers, band)[int(layer)]
-    depth = layer_depth(int(layer), int(n_layers))
-    n = int(rows.shape[0])
+    weights = kind_weights(n_layers, band)
+    parts: list[torch.Tensor] = []
+    planned: list[_Planned] = []
+    offset = 0
 
-    def half(
-        family: LensFamily, lens: JacobianLens | None, weight: float, unit: ReadUnit,
-        missing: str, run: Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]],
-    ) -> list[FamilyRead]:
-        if lens is None:
-            return [FamilyRead(family, weight, unit, absent=missing)] * n
-        label = lens.site_key(site).label
-        try:
-            matrix = _matrix(lens, int(layer), site, device)
-        except LensNotFittedError as exc:
-            return [FamilyRead(family, weight, unit, lens=label, absent=str(exc))] * n
-        values, ids = run(matrix)
-        host = torch.cat([values.float(), ids.float()], dim=0).detach().cpu()
-        out: list[FamilyRead] = []
-        for row in range(n):
-            tokens = tuple(
-                TokenScore(int(host[n + row, j]), decode(int(host[n + row, j])), float(host[row, j]))
-                for j in range(int(values.shape[1]))
-            )
-            out.append(FamilyRead(family, weight, unit, lens=label, tokens=tokens))
-        return out
+    for request in requests:
+        layer = int(request.layer)
+        if not 0 <= layer < int(n_layers):
+            raise ValueError(f"layer {layer} is outside the model's {n_layers} layers")
+        rows = request.matrix_rows
+        n = int(rows.shape[0])
+        w_s, w_r = weights[layer]
 
-    r_halves = half(
-        "R", r_lens, w_r, "probability", no_r_lens,
-        lambda matrix: read_r(rows, matrix, readout(), k=k),
+        def half(
+            family: LensFamily, lens: JacobianLens | None, weight: float, unit: ReadUnit,
+            missing: str, run: Callable[[torch.Tensor], tuple[torch.Tensor, torch.Tensor]],
+            *, centred: bool = False,
+        ) -> _Half:
+            nonlocal offset
+            if lens is None:
+                return _Half(family, weight, unit, None, False, absent=missing)
+            label = lens.site_key(request.site).label
+            try:
+                matrix = _matrix(lens, layer, request.site, device)
+            except LensNotFittedError as exc:
+                return _Half(family, weight, unit, label, False, absent=str(exc))
+            values, ids = run(matrix)
+            width = int(values.shape[1])
+            parts.append(values.float().reshape(-1))
+            parts.append(ids.float().reshape(-1))
+            planned_half = _Half(family, weight, unit, label, centred, offset=offset, width=width)
+            offset += 2 * n * width
+            return planned_half
+
+        def s_run(matrix: torch.Tensor, *, rows: torch.Tensor = rows) -> tuple[torch.Tensor, torch.Tensor]:
+            x = rows.to(device=matrix.device, dtype=torch.float32)
+            if request.of == "residual":
+                if centre is None:
+                    raise ValueError(
+                        "a residual read needs the neutral means its S half centres on"
+                    )
+                mean = centre(request.site, layer).to(device=matrix.device, dtype=torch.float32)
+                x = x - mean.reshape(1, -1)
+            return read_s(x, matrix, embeddings(), k=k)
+
+        r_half = half(
+            "R", r_lens, w_r, "probability", no_r_lens,
+            lambda matrix, rows=rows: read_r(rows, matrix, readout(), k=k),
+        )
+        s_half = half(
+            "S", s_lens, w_s, "footprint_z", no_s_lens, s_run,
+            centred=request.of == "residual",
+        )
+        planned.append(_Planned(request, n, layer_depth(layer, int(n_layers)), r_half, s_half))
+
+    tensor = (
+        torch.cat(parts) if parts
+        else torch.zeros(0, dtype=torch.float32, device=device)
     )
-    s_halves = half(
-        "S", s_lens, w_s, "footprint_z", no_s_lens,
-        lambda matrix: read_s(rows, matrix, embeddings(), k=k),
+    return PendingReads(tensor, planned, decode)
+
+
+def read_vectors(
+    vectors: torch.Tensor,
+    layer: int,
+    site: str,
+    *,
+    of: ReadOf,
+    r_lens: JacobianLens | None,
+    s_lens: JacobianLens | None,
+    readout: Callable[[], Readout],
+    embeddings: Callable[[], TokenEmbeddings],
+    decode: Callable[[int], str],
+    n_layers: int,
+    device: torch.device,
+    k: int = 8,
+    band: LensBand | None = None,
+    centre: Centre | None = None,
+    no_r_lens: str = "no R-family lens is selected for this model",
+    no_s_lens: str = "no S-family lens is selected for this model",
+) -> list[LensRead]:
+    """Read every row of ``vectors`` (``[d]`` or ``[n, d]``) at ``(layer, site)``
+    as a residual or a direction, in one transfer (:func:`plan_reads`)."""
+    pending = plan_reads(
+        [VectorRead(vectors, int(layer), site, of)],
+        r_lens=r_lens, s_lens=s_lens, readout=readout, embeddings=embeddings,
+        decode=decode, n_layers=n_layers, device=device, k=k, band=band,
+        centre=centre, no_r_lens=no_r_lens, no_s_lens=no_s_lens,
     )
-    return [
-        LensRead(int(layer), site, depth, r=r_halves[row], s=s_halves[row])
-        for row in range(n)
-    ]
+    return pending.finish(pending.tensor.detach().cpu())[0]
 
 
 __all__ = [
+    "Centre",
     "FamilyRead",
     "LensFamily",
     "LensRead",
+    "PendingReads",
+    "READ_OF",
+    "ReadOf",
     "ReadUnit",
     "TokenScore",
+    "VectorRead",
+    "plan_reads",
     "read_r",
     "read_s",
     "read_vectors",

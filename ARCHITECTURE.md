@@ -258,6 +258,9 @@ family that fails it falls back to the template path.
 Neutral activations are cached fp32 per model (`store/neutral.py`, format 5).
 This is a range invariant: late-layer residual channels overflow fp16 and
 would poison every covariance-derived read. The same forward measures the
+mid means (each block's residual after attention at the same pooled
+positions: the centring mean of an S read at the lens `mid` site, as the
+activations' `X.mean(0)` is at `out`) and the
 unit statistics the units family reads in and ablates toward (one hook pair
 per block, streamed; `drowse/units/AGENTS.md`), stored in the same shards; a
 model whose blocks `BlockSpec` refuses gets the cache with units unavailable.
@@ -533,7 +536,8 @@ replay endpoints:
     lens:     {binding, readings?, readout?},
     sae:      {binding, readings?, readout?},
     units:    {binding, readings}
-  }
+  },
+  anatomy?          # replay only: one token, every layer
 }
 ```
 
@@ -543,7 +547,9 @@ chips, the SAE's active features). The flat `scores` are derived joins for
 cross-family consumers such as token tinting, not separate measurements.
 Bindings record source and steering context, so a historical row stays
 interpretable after the active lens or SAE changes; the lens binding names a
-source per lens family (`sources.R`, `sources.S`) that produced the row. The shape is pinned by
+source per lens family (`sources.R`, `sources.S`) that produced the row. A
+replay envelope may carry a token `anatomy` (section 7.5) beside its
+instruments. The shape is pinned by
 `tests/readout/test_measurements_envelope.py` and the browser golden
 `measurement-envelope-v2.json`.
 
@@ -556,6 +562,34 @@ runs one capture forward under the recorded recipe steering (or the unsteered
 counterfactual), and hands the pooled hidden states to the family. Always-
 active affine steering reproduces exactly; phase and gated terms fire as the
 trigger context's rest state decides, which cannot recreate a gated history.
+
+The node replay (`loom/node_replay.py::NodeReplayer`) is the same rebuild
+(`TokenReplayer.forward`) running a forward of its own, tapped where the
+model's parts meet the residual (each block's input, `mid`, output before and
+after the steering hooks, the down and output projections) and stopped after
+the last block. **Token anatomy** reads one token at every layer: the
+residual at `out` through both lens families, the attention write at `mid`
+and the MLP and steering writes at `out` as directions; the neurons and heads
+with the largest direct contribution to the token's logit through the R lens
+(the token's unembedding row, its final norm linearized, pulled back by
+`J_Lᵀ` at `out` for neurons and `mid` for heads); and, under eager attention
+only when a head can be ranked, the top heads' attention rows. It rides the
+replay envelope's `anatomy`. **Unit activity** reads every neuron and head at
+every token of a turn in the units family's unit and reduces it on the device
+(peaks, traces, one token's float16 population). Each leaves the device in one
+transfer. Unlike a token readout, the node replay drives the trigger context:
+with every open term always active it is one forward, otherwise the prefill
+and then KV-cached runs of decode positions where every trigger fires alike,
+as generation ran them; a probe gate or (on a thinking family) a
+thinking-phase window, which the node does not record, refuses (422).
+
+**Residual or direction.** Every lens read says what it reads
+(`lens/read.py`, `of`, no default). The S read of a residual is centred on the
+neutral layer mean at its site (the stream's large common component would
+otherwise swamp the position's own tokens); a direction (a steering vector, a
+unit's write, a write delta) and every R read are read as given. A residual
+read with no mean refuses (`NeutralMeansError`, 422): `read_prompt`, `slens/`
+probes and gates, and the anatomy's `reads_as` all read residuals.
 
 A token fork (`loom/ops.py::plan_fork`) replays the raw prefix, forces the
 replacement token or text, then samples under the node's recipe. The recorded

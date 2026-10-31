@@ -130,13 +130,15 @@ def test_whitener_build_forwards_on_progress(
 
     from drowse.session.neutral import NeutralBaseline
     from drowse.fit import neutral as alignment_mod
-    from drowse.store.neutral import NeutralCache, NeutralUnits
+    from drowse.store.neutral import NeutralCache, NeutralMid, NeutralUnits
 
     seen: dict[str, Any] = {}
 
     def _load(*_args: Any, **kwargs: Any) -> NeutralCache:
         seen["on_progress"] = kwargs.get("on_progress")
-        return NeutralCache({0: torch.randn(6, 4)}, NeutralUnits(None, 0, "test"), {})
+        return NeutralCache(
+            {0: torch.randn(6, 4)}, NeutralUnits(None, 0, "test"), NeutralMid(None, "test"), {},
+        )
 
     monkeypatch.setattr(
         alignment_mod, "load_or_compute_neutral_cache", _load,

@@ -188,13 +188,14 @@ def _seed_neutral_cache(model_id: str, profile: dict[int, torch.Tensor]) -> None
         schema[str(layer)] = {"shape": list(acts.shape), "dtype": "torch.float32"}
     (md / "neutral_activations.json").write_text(json.dumps({
         "method": "neutral_activations", "format_version": 5,
-        "capture_version": 1, "capture_sha256": "test-capture",
+        "capture_version": 2, "capture_sha256": "test-capture",
         "model_fingerprint": "test-fingerprint",
         "model_source_fingerprint": "test-source",
         "tensor_sha256": hashes, "tensor_files": files,
         "layers": list(profile), "tensor_schema": schema,
         "n_prompts": 64, "n_layers": len(profile),
         "units": {"available": False, "reason": "test"},
+        "mid": {"available": False, "reason": "test"},
     }))
 
 

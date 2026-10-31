@@ -68,7 +68,9 @@ raises anything but an out-of-memory error, or an out-of-memory error that
 persists at capture batch size 1 (the capture then `abandon`s the accumulator
 and re-runs the rows without its hooks) publishes a complete cache whose
 `units` block reads `{"available": false, "reason": …}`. Reading units
-then raises `UnitsUnavailableError` (422) with that reason.
+then raises `UnitsUnavailableError` (422) with that reason. Only the refusal
+lasts: a later load of a cache whose units are unavailable for a model
+`model_spec` accepts recomputes it (`drowse/fit/AGENTS.md`).
 
 ## The read family (`instrument.py`, `capture.py`)
 
@@ -128,6 +130,22 @@ wanted (the tap reads one row). Over HTTP the native probe routes attach, list (
 detach units, and the OpenAI/Ollama `x-drowse-probe-readings` extension
 carries their aggregates (`server/runtime.py::attached_probe_names` unions
 every family's roster).
+
+## Over a whole node (`loom/node_replay.py`)
+
+`session.unit_activity(node_id, …)` replays a loom node once and reads every
+neuron and head at every token in the same unit (`activation_over_scale`,
+each token at its producing forward, as its loom row's live readings and
+`token_readout` are), reduced on the device: the top units by peak `|value|`
+with their peak token, per-token traces of named units, and one token's whole
+population packed as float16 (little-endian, base64). It uses this package's
+statistics and `SCALE_FLOOR` directly (no tap), skips the sink (position 0:
+value 0, never a peak), and ranks only values read against a real scale: a
+firing on a pole whose neutral `act_top` is 0 reads over the floor (on
+SmolLM2, 49 of 163,840 poles; `neuron/L31n1094` read −554,688) and stays out
+of the peaks. `session.token_anatomy` ranks units by their direct
+contribution to one token through the R lens instead. Details:
+`drowse/loom/AGENTS.md`.
 
 ## Steering
 

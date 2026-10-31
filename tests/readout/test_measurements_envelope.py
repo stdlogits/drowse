@@ -539,5 +539,29 @@ def test_capability_table_covers_every_family(make_tiny_session: Any) -> None:
     assert set(CAPABILITIES) == set(session.instruments)
 
 
+def test_a_token_anatomy_rides_a_replay_envelope_only() -> None:
+    """The anatomy key set, pinned: the record sits beside ``instruments`` on
+    a replay envelope (which it alone may fill) and nowhere else."""
+    from drowse.loom.node_replay import token_anatomy_record
+
+    record = token_anatomy_record(
+        raw_index=0, token_id=1, token="a", position=3, prompt_length=4,
+        probability=0.5, sources={"R": "local:r", "S": None}, steering=None,
+        layers=[], units=[], units_absent="no R-family lens", patterns=None, context=None,
+    )
+    assert set(record) == {
+        "token", "binding", "layers", "units", "units_absent", "patterns", "context",
+    }
+    assert set(record["token"]) == {
+        "raw_index", "token_id", "token", "position", "prompt_length", "probability",
+    }
+    envelope = build_measurements(scope="replay", provenance="replayed", anatomy=record)
+    assert envelope is not None
+    assert set(envelope) == {"version", "scope", "provenance", "instruments", "anatomy"}
+    assert envelope["instruments"] == {} and envelope.get("anatomy") == record
+    with pytest.raises(ValueError, match="replay envelope only"):
+        build_measurements(scope="token", anatomy=record)
+
+
 if __name__ == "__main__":  # pragma: no cover - convenience
     raise SystemExit(pytest.main([__file__]))

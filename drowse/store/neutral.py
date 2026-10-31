@@ -17,6 +17,15 @@ false, "reason": …}`` for a model whose blocks the description refuses (its
 cache is otherwise complete).  This module stores and validates the tensors
 generically; their meaning is the units package's.
 
+Each shard also carries the layer's **mid mean** (``mid_mean_<layer>``,
+``[D]`` fp32): the residual after the block's attention (the MLP's input, the
+lens ``mid`` site) averaged over the same pooled positions as the activations,
+on the same forward.  It is the centring mean of an S-family read of a ``mid``
+residual, as ``X.mean(0)`` of the activations is at ``out``.  The sidecar's
+``mid`` block is ``{"available": true}``, or ``{"available": false, "reason":
+…}`` for a model whose blocks the description refuses (the ``mid`` site needs
+it).  A cache without the block is stale and recomputes.
+
 Cache identity binds the exact rendered token rows, the loaded model weights
 (``model_fingerprint``), the off-model checkpoint identity
 (``model_source_fingerprint``), and the layer set.  Readers never mutate the
@@ -60,7 +69,11 @@ log = logging.getLogger(__name__)
 _NEUTRAL_LABEL = "neutral activation cache"
 _NEUTRAL_ACTS_NAME = "neutral_activations"
 _NEUTRAL_CACHE_FORMAT_VERSION = 5
-NEUTRAL_CAPTURE_VERSION = 1
+#: Bumped when the neutral forward measures something new (2: the mid means),
+#: so a cache captured without it is stale and recomputes.
+NEUTRAL_CAPTURE_VERSION = 2
+#: The per-layer mid-mean tensor name in a shard (``mid_mean_<layer>``).
+MID_MEAN = "mid_mean"
 
 _SHA256 = re.compile(r"[0-9a-f]{64}")
 _UNIT_NAME = re.compile(r"[a-z][a-z_]*")
@@ -69,7 +82,7 @@ _NEUTRAL_SIDECAR_FIELDS = {
     "method", "format_version", "capture_version", "capture_sha256",
     "model_fingerprint", "model_source_fingerprint", "tensor_sha256",
     "tensor_files", "layers", "tensor_schema", "n_prompts", "n_layers",
-    "units",
+    "units", "mid",
 }
 
 
@@ -83,12 +96,21 @@ class NeutralUnits(NamedTuple):
     reason: str | None
 
 
+class NeutralMid(NamedTuple):
+    """A cache's mid means as stored: ``{layer: [D]}`` fp32 CPU, or
+    ``means=None`` and the ``reason`` they are unavailable."""
+
+    means: dict[int, torch.Tensor] | None
+    reason: str | None
+
+
 class NeutralCache(NamedTuple):
-    """One validated neutral cache: per-layer activations, unit statistics and
-    the sidecar proven in the same transaction."""
+    """One validated neutral cache: per-layer activations, unit statistics,
+    mid means and the sidecar proven in the same transaction."""
 
     activations: dict[int, torch.Tensor]
     units: NeutralUnits
+    mid: NeutralMid
     sidecar: dict[str, Any]
 
 
@@ -155,6 +177,19 @@ def _units_block(units: Any, layers: list[int]) -> dict[str, dict[str, list[int]
         names = set(row)
         out[str(layer)] = {str(name): list(shape) for name, shape in row.items()}
     return out
+
+
+def _mid_block(mid: Any) -> bool:
+    """Validate the sidecar's ``mid`` block; return whether mid means are stored."""
+    if not isinstance(mid, dict) or not isinstance(mid.get("available"), bool):
+        raise ValueError("neutral activation cache has no mid block")
+    if mid["available"]:
+        if set(mid) != {"available"}:
+            raise ValueError("neutral activation cache mid block is malformed")
+        return True
+    if set(mid) != {"available", "reason"} or not isinstance(mid["reason"], str):
+        raise ValueError("neutral activation cache mid block is malformed")
+    return False
 
 
 @contextmanager
@@ -228,6 +263,7 @@ def _validate_neutral_cache_metadata_locked(model_id: str) -> dict[str, Any]:
     ):
         raise ValueError("neutral activation cache sidecar has no layer schema")
     unit_schema = _units_block(sidecar["units"], layers)
+    has_mid = _mid_block(sidecar["mid"])
     expected_n = sidecar["n_prompts"]
     paths = _neutral_shard_paths(ts_path, sidecar, layers)
     digests = sidecar.get("tensor_sha256")
@@ -246,9 +282,22 @@ def _validate_neutral_cache_metadata_locked(model_id: str) -> dict[str, Any]:
         key = f"layer_{layer}"
         spec = schema[str(layer)]
         unit_shapes = unit_schema.get(str(layer), {})
+        mid_keys = {f"{MID_MEAN}_{layer}"} if has_mid else set()
         with safe_open(str(path), framework="pt", device="cpu") as tensors:
-            if set(tensors.keys()) != {key, *(f"{name}_{layer}" for name in unit_shapes)}:
+            if set(tensors.keys()) != {
+                key, *mid_keys, *(f"{name}_{layer}" for name in unit_shapes),
+            }:
                 raise ValueError("neutral activation cache layer keys do not match sidecar")
+            for mid_key in mid_keys:
+                # ``[D]``: the activations' width, checked against the schema below.
+                mid_view = tensors.get_slice(mid_key)
+                if (
+                    mid_view.get_dtype() != "F32"
+                    or list(mid_view.get_shape()) != list(tensors.get_slice(key).get_shape())[1:]
+                ):
+                    raise ValueError(
+                        f"neutral mid mean at layer {layer} failed validation"
+                    )
             for name, unit_shape in unit_shapes.items():
                 unit_view = tensors.get_slice(f"{name}_{layer}")
                 if (
@@ -314,6 +363,7 @@ def _load_neutral_cache(
             )
         )
         unit_schema = _units_block(sidecar["units"], all_layers)
+        has_mid = _mid_block(sidecar["mid"])
         paths = _neutral_shard_paths(ts_path, sidecar, all_layers)
         digests = sidecar["tensor_sha256"]
         shards: dict[int, dict[str, torch.Tensor]] = {}
@@ -357,7 +407,22 @@ def _load_neutral_cache(
                 row[name] = tensor
             unit_tensors[layer] = row
         units = NeutralUnits(unit_tensors, int(units_meta["n_documents"]), None)
-    return NeutralCache(out, units, sidecar)
+    if has_mid:
+        mid_means: dict[int, torch.Tensor] = {}
+        for layer, shard in shards.items():
+            tensor = shard[f"{MID_MEAN}_{layer}"]
+            if (
+                tensor.dtype != torch.float32
+                or tensor.ndim != 1
+                or int(tensor.shape[0]) != int(out[layer].shape[1])
+                or not bool(torch.isfinite(tensor).all())
+            ):
+                raise ValueError(f"neutral mid mean at layer {layer} failed validation")
+            mid_means[layer] = tensor
+        mid = NeutralMid(mid_means, None)
+    else:
+        mid = NeutralMid(None, str(sidecar["mid"]["reason"]))
+    return NeutralCache(out, units, mid, sidecar)
 
 
 def neutral_cache_identity(sidecar: dict[str, Any]) -> dict[str, Any]:
@@ -407,6 +472,7 @@ def publish_neutral_cache(
     model_fingerprint: str,
     model_source_fingerprint: str | None,
     units: NeutralUnits,
+    mid: NeutralMid,
 ) -> dict[str, Any]:
     """Write a fresh neutral-cache generation and publish its pointer.
 
@@ -417,8 +483,9 @@ def publish_neutral_cache(
     the fp16 max of 65504 and overflowed to ±inf) without bf16's input loss,
     at ~2× disk on this one cache.  ``units`` rides in the same shards (its
     tensors, one set per layer with the same names everywhere) or records the
-    reason it is unavailable.  Returns the published sidecar.  The caller
-    holds :func:`neutral_fit_lock`.
+    reason it is unavailable, and so does ``mid`` (one ``[D]`` mean per
+    layer, or the reason).  Returns the published sidecar.  The caller holds
+    :func:`neutral_fit_lock`.
     """
     from drowse.base.atomic import artifact_lock
 
@@ -450,6 +517,22 @@ def publish_neutral_cache(
                 for idx, row in sorted(unit_fp32.items())
             },
         }
+    mid_fp32: dict[int, torch.Tensor] = {}
+    mid_block: dict[str, Any]
+    if mid.means is None:
+        mid_block = {"available": False, "reason": str(mid.reason or "unavailable")}
+    else:
+        if set(mid.means) != set(fp32):
+            raise ValueError("neutral mid means must cover every cached layer")
+        mid_fp32 = {
+            int(idx): t.reshape(-1).contiguous().to(torch.float32).cpu()
+            for idx, t in mid.means.items()
+        }
+        if any(
+            int(t.shape[0]) != int(fp32[idx].shape[1]) for idx, t in mid_fp32.items()
+        ):
+            raise ValueError("a neutral mid mean must match its layer's width")
+        mid_block = {"available": True}
     with artifact_lock(ts_path):
         tensor_files: dict[str, str] = {}
         tensor_sha256: dict[str, str] = {}
@@ -463,6 +546,9 @@ def publish_neutral_cache(
                         f"{name}_{idx}": unit
                         for name, unit in unit_fp32.get(idx, {}).items()
                     },
+                    **(
+                        {f"{MID_MEAN}_{idx}": mid_fp32[idx]} if idx in mid_fp32 else {}
+                    ),
                 })
                 write_bytes_atomic(path, payload)
                 created.append(path)
@@ -491,6 +577,7 @@ def publish_neutral_cache(
             ),
             "n_layers": len(activations),
             "units": units_block,
+            "mid": mid_block,
         }
         if set(sidecar) != _NEUTRAL_SIDECAR_FIELDS:
             raise AssertionError("neutral writer produced a non-canonical sidecar")
