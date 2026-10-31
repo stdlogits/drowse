@@ -110,24 +110,35 @@ export interface Dial {
 }
 
 /** The dial a term's strength takes. Flat terms share one slide (the composer merges them into
- *  one subspace), from 0 to 2; a curved term and an atom push either way, from −1 to 1; a removal
- *  runs from none of it to all of it. */
+ *  one subspace), from 0 to 2, whether a term pushes or removes; a curved term slides toward its
+ *  position, from 0 to 1 (a curved position has no opposite, so composition refuses a negative
+ *  along); an atom pushes either way, from −1 to 1; an atom's or a unit's removal runs from none
+ *  of it to all of it. */
 export function strengthDial(name: string, entry: SteerEntry, subspaceAlong: number): Dial {
   if (entry.mode === "subspace") return { value: subspaceAlong, min: 0, max: 2, step: 0.05, shared: true };
-  if (entry.mode === "manifold") return { value: entry.blend, min: -1, max: 1, step: 0.05, shared: false };
+  if (entry.mode === "manifold") return { value: entry.blend, min: 0, max: 1, step: 0.05, shared: false };
   if (removes(name, entry)) return { value: entry.alpha, min: 0, max: 1, step: 0.05, shared: false };
   return { value: entry.alpha, min: -1, max: 1, step: 0.05, shared: false };
 }
 
-/** What the strength does, in a few words. */
+/** What the strength does, in a few words. A removal says how much of the component it takes: all
+ *  of it at 1 (down to the neutral mean), and on the shared flat dial past 1, more than all of it. */
 export function strengthSays(name: string, entry: SteerEntry, value: number): string {
   const title = termTitle(name, entry);
   if (removes(name, entry)) {
     if (value <= 0) return "Off";
-    return value >= 1 ? "All of it" : `${Math.round(value * 100)}% of it`;
+    const percent = Math.round(value * 100);
+    return percent === 100 ? "All of it" : `${percent}% of it`;
   }
   if (value === 0) return "Off";
   return value > 0 ? `Toward ${title}` : `Away from ${title}`;
+}
+
+/** Where the expression line may wrap: after a namespace's ``/`` and a list's comma, and before a
+ *  ``%`` position, a ``{…}`` clause and an ``@`` trigger, so a break never splits a name or orphans
+ *  a brace. The pieces join back to ``text``. */
+export function wrapPieces(text: string): string[] {
+  return text.split(/(?<=[/,])|(?=[%{@])/u).filter(Boolean);
 }
 
 /** Whether the term can be pushed or removed (a rank-one direction): a two-node concept, a lens

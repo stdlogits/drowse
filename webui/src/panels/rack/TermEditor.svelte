@@ -35,6 +35,7 @@
     termSource,
     termTitle,
     unitLayer,
+    wrapPieces,
   } from "../../lib/steering/terms";
   import type { LayerScope, SteerEntry, Trigger } from "../../lib/types";
 
@@ -168,9 +169,12 @@
 
   const text = $derived(formatTerm(name, entry, steerRack.subspaceAlong));
   const clause = $derived(entry.mode === "unit" ? "" : layerClause(entry.layers));
+  // Split where the line may wrap (lib/steering/terms.ts::wrapPieces), so it never breaks inside a
+  // name or a clause's braces.
   const parts = $derived.by(() => {
     const at = clause ? text.lastIndexOf(clause) : -1;
-    return at < 0 ? { head: text, clause: "", tail: "" } : { head: text.slice(0, at), clause, tail: text.slice(at + clause.length) };
+    const [head, own, tail] = at < 0 ? [text, "", ""] : [text.slice(0, at), clause, text.slice(at + clause.length)];
+    return { head: wrapPieces(head), clause: wrapPieces(own), tail: wrapPieces(tail) };
   });
   let copied = $state(false);
   async function copy(): Promise<void> {
@@ -262,7 +266,7 @@
 
   <div class="expr">
     <p class="text" class:is-empty={noLayers} aria-live="polite">
-      {#if noLayers}No layers selected{:else}<span>{parts.head}</span>{#if parts.clause}<span class="clause">{parts.clause}</span>{/if}<span>{parts.tail}</span>{/if}
+      {#if noLayers}No layers selected{:else}{#each parts.head as piece, i}{#if i}<wbr>{/if}{piece}{/each}{#if parts.clause.length}<wbr><span class="clause">{#each parts.clause as piece, i}{#if i}<wbr>{/if}{piece}{/each}</span>{/if}{#each parts.tail as piece}<wbr>{piece}{/each}{/if}
     </p>
     <button type="button" class="dw-text" disabled={noLayers} onclick={() => void copy()}><MorphText text={copied ? "Copied" : "Copy"} numbers={false} /></button>
   </div>
@@ -330,7 +334,7 @@
 
   /* The term as the expression writes it, live, on paper; the clause in the term's colour. */
   .expr { display: flex; align-items: center; gap: var(--s4); min-width: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--paper); }
-  .text { flex: 1 1 0; min-width: 0; margin: 0; color: var(--ink); font: var(--type-body); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+  .text { flex: 1 1 0; min-width: 0; margin: 0; color: var(--ink); font: var(--type-body); font-variant-numeric: tabular-nums; overflow-wrap: break-word; }
   .text.is-empty { color: var(--ink3); }
   .clause { padding: 0 2px; border-radius: 4px; background: color-mix(in oklch, var(--tint) 18%, transparent); transition: background-color var(--fast) var(--ease); }
   .foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
@@ -340,6 +344,12 @@
     .readout { width: 96px; font-size: 32px; line-height: 40px; }
     .controls { gap: var(--s4); }
     .pick { max-width: 100%; }
+    /* 44 px to a finger: each choice reaches its pill's edge (inside the When pill's scroll box, which
+       clips at that edge), the switch and the range are that tall. */
+    .term :global(.seg > button) { position: relative; height: 36px; }
+    .term :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }
+    .toggles :global(.switch) { height: 44px; }
+    .range input { height: 44px; }
     .foot .dw-text, .expr .dw-text { position: relative; }
     .foot .dw-text::after, .expr .dw-text::after { content: ""; position: absolute; inset: -14px -8px; }
   }

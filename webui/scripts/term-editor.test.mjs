@@ -95,7 +95,7 @@ try {
   for (const name of ["jlens/storm", "neuron/L1n3", "head/L2h0"]) removeSteerEntry(name);
 
   // ---- where a term acts, as the server says
-  const { placeOf, layersProbe, forgetTermLayers } = await server.ssrLoadModule("/src/lib/steering/termLayers.svelte.ts");
+  const { placeOf, layersProbe, forgetTermLayers, SETTLE_MS } = await server.ssrLoadModule("/src/lib/steering/termLayers.svelte.ts");
   const entry = { mode: "manifold", blend: 0.35, onto: 0.2, coords: [0], label: "wonder", variant: "raw", trigger: "BEFORE", enabled: true, layers: [14, 15, 16] };
   const unscoped = layersProbe("default/emotions", entry, false);
   const scoped = layersProbe("default/emotions", entry, true);
@@ -116,7 +116,7 @@ try {
   assert.deepEqual(asked, [unscoped, scoped], "the extent first, then the clause");
   assert.deepEqual(placeOf("default/emotions", entry, "m").selected, [14, 15, 16]);
   const before = asked.length;
-  placeOf("default/emotions", { ...entry, blend: -0.6, trigger: "AFTER" }, "m");
+  placeOf("default/emotions", { ...entry, blend: 0.6, trigger: "AFTER" }, "m");
   await tick();
   assert.equal(asked.length, before, "a strength or a trigger asks nothing new");
 
@@ -146,8 +146,51 @@ try {
   await tick(); await tick();
   assert.equal(placeOf("jlens/sky", other, "m").status, "invalid");
   forgetTermLayers();
-  assert.equal(placeOf("default/emotions", entry, "m").status, "loading", "a catalog change forgets every answer");
+  place = placeOf("default/emotions", entry, "m");
+  assert.equal(place.status, "loading", "a catalog change forgets every answer");
+  assert.deepEqual([place.where?.fitted, place.selected], [fitted, [14, 15, 16]], "and the term keeps its place until the new one comes");
   await tick(); await tick();
+
+  // ---- a moved term keeps its place, and asks once its position rests
+  const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+  const moving = { mode: "manifold", blend: 0.5, onto: 0, coords: [0.1], label: null, variant: "raw", trigger: "BOTH", enabled: true, layers: "workspace" };
+  const at = x => ({ ...moving, coords: [x] });
+  for (const [x, share] of [[0.1, [1, 1, 1]], [0.2, [0.5, 1, 1.5]], [0.3, [1.5, 1, 0.5]]]) {
+    answers.set(layersProbe("default/moods", at(x), false), where([2, 3, 4], share, [2, 3, 4], 8));
+    answers.set(layersProbe("default/moods", at(x), true), where([2, 3, 4], share, [3, 4], 8));
+  }
+  assert.equal(placeOf("default/moods", at(0.1), "m").where, null, "a term's first probe has nothing to show yet");
+  await tick(); await tick();
+  assert.deepEqual(placeOf("default/moods", at(0.1), "m").selected, [3, 4]);
+  let mark = asked.length;
+  for (const x of [0.2, 0.3]) {
+    place = placeOf("default/moods", at(x), "m");
+    assert.equal(place.status, "loading");
+    assert.deepEqual([place.where.share, place.selected], [[1, 1, 1], [3, 4]], "a moved term keeps the strip and the span it showed");
+    await tick(); await tick();
+  }
+  assert.equal(asked.length, mark, "a position in motion asks nothing");
+  await sleep(SETTLE_MS + 30);
+  await tick(); await tick();
+  assert.deepEqual(asked.slice(mark), [layersProbe("default/moods", at(0.3), false), layersProbe("default/moods", at(0.3), true)],
+    "the rested position is asked once, the passed one never");
+  place = placeOf("default/moods", at(0.3), "m");
+  assert.deepEqual([place.status, place.where.share, place.selected], ["ready", [1.5, 1, 0.5], [3, 4]]);
+
+  // A new clause is asked at once, and until the workspace band answers the term keeps the layers
+  // it showed (never none).
+  const calm = { ...moving, coords: [0], layers: null };
+  const calmBand = { ...calm, layers: "workspace" };
+  answers.set(layersProbe("default/calm", calm, false), where([2, 3, 4], [1, 1, 1], [2, 3, 4], 8));
+  answers.set(layersProbe("default/calm", calmBand, true), where([2, 3, 4], [1, 1, 1], [3, 4], 8));
+  placeOf("default/calm", calm, "m");
+  await tick(); await tick();
+  assert.deepEqual(placeOf("default/calm", calm, "m").selected, [2, 3, 4]);
+  mark = asked.length;
+  assert.deepEqual(placeOf("default/calm", calmBand, "m").selected, [2, 3, 4], "the layers last shown, while the band is asked");
+  await tick(); await tick();
+  assert.equal(asked.length, mark + 1, "a new clause is asked without waiting");
+  assert.deepEqual(placeOf("default/calm", calmBand, "m").selected, [3, 4]);
 
   // ---- what a chip and the editor say
   const terms = await server.ssrLoadModule("/src/lib/steering/terms.ts");
@@ -161,10 +204,20 @@ try {
   assert.equal(terms.unitLayer("head/L28h12"), 28);
   assert.equal(terms.triggerWord("AFTER"), "after thinking");
   assert.equal(terms.triggerWord("BOTH"), "");
-  assert.deepEqual(terms.strengthDial("default/emotions", entry, 0.5), { value: 0.35, min: -1, max: 1, step: 0.05, shared: false });
+  assert.deepEqual(terms.strengthDial("default/emotions", entry, 0.5), { value: 0.35, min: 0, max: 1, step: 0.05, shared: false },
+    "a curved term slides toward its position only: composition refuses a negative along");
+  assert.deepEqual(terms.strengthDial("jlens/storm", { mode: "jlens", ablate: false, alpha: 0.3 }, 0.5), { value: 0.3, min: -1, max: 1, step: 0.05, shared: false });
   assert.equal(terms.strengthDial("default/honest", { mode: "subspace" }, 0.7).shared, true);
   assert.deepEqual([terms.strengthDial("jlens/storm", { mode: "jlens", ablate: true, alpha: 0.4 }, 0.5).min, terms.strengthSays("jlens/storm", { mode: "jlens", ablate: true, alpha: 0.4 }, 0.4)], [0, "40% of it"]);
+  const without = { mode: "subspace", ablate: true, coords: [1], label: "confident", variant: "raw", trigger: "BOTH", enabled: true };
+  assert.equal(terms.strengthDial("default/confident.uncertain", without, 1.5).max, 2, "a removed flat term rides the shared dial");
+  assert.deepEqual([1, 1.5, 2].map(v => terms.strengthSays("default/confident.uncertain", without, v)), ["All of it", "150% of it", "200% of it"],
+    "past 1 a removal takes more than all of it, and says so");
   assert.equal(terms.strengthSays("jlens/storm", { mode: "jlens", ablate: false }, -0.3), "Away from storm");
+  const line = "0.5 default/confident.uncertain%confident{4-8,20}@response";
+  assert.deepEqual(terms.wrapPieces(line), ["0.5 default/", "confident.uncertain", "%confident", "{4-8,", "20}", "@response"],
+    "the expression wraps between a selector's parts, never inside a name, and inside a clause only at a comma");
+  assert.equal(terms.wrapPieces(line).join(""), line);
   assert.ok(terms.canRemove("neuron/L1n3", { mode: "unit" }, null) && !terms.canRemove("head/L1h3", { mode: "unit" }, null));
   assert.ok(!terms.canRemove("default/emotions", entry, { node_count: 20 }), "a curved position cannot be removed");
   assert.ok(terms.canRemove("default/honest", { mode: "subspace" }, { node_count: 2 }));

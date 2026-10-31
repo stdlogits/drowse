@@ -333,15 +333,19 @@ drowse.ai too.
 - **The term editor.** A chip selects its term (`{kind: "term"}`) and opens
   `panels/rack/TermEditor.svelte` in place under the chips, as the Steering artboard draws it:
   the name and what it is, Push or Without (a rank-one direction or a neuron), On, the
-  strength (a readout that scrubs sideways over a signed range; flat terms share one
-  `subspaceAlong`), When (the trigger presets; the thinking pair only on a thinking model),
+  strength (a readout that scrubs sideways over the term's dial, `terms.ts::strengthDial`:
+  flat terms share one `subspaceAlong` from 0 to 2, a curved term runs from 0 to 1 because
+  composition refuses a negative curved along, an atom is signed), When (the trigger
+  presets; the thinking pair only on a thinking model),
   the position on its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
   as tall as the term's share, painted by dragging; All fitted, Workspace, Clear) and the
   term as the expression writes it. While a term is selected the Inspector shows the
   instruments, and the phone's sheet stays down. Where a term acts comes from `POST
   .../steering/validate` (`terms`, `n_layers`), asked once per term text at strength 1 and
   `@response`, so a probe never drops the cached prefix (`termLayers.svelte.ts`); a runtime
-  that does not report them hides the strip.
+  that does not report them hides the strip. The probe names the term's position, so a moved
+  position asks again once it has rested (`SETTLE_MS`), and until the answer comes the term
+  keeps the strip and span it last showed.
 
 ## Testing
 
