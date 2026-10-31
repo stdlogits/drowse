@@ -283,12 +283,14 @@ def register_instrument_routes(app: FastAPI) -> None:
         except Exception:  # noqa: BLE001 - the artifact is in place; live is optional
             log.exception("could not enable live readout after %s", preparation.label)
 
-    async def select_lens_source(source: str) -> None:
-        """Make ``source`` the lens's runtime source with live readout off.
+    async def select_lens_source(source: str, *, live_off: bool = True) -> None:
+        """Make ``source`` its family's runtime source, with the live readout
+        off unless ``live_off`` is false (an S-family switch).
 
         The caller holds the session lock.
         """
-        session.lens.set_live(False)
+        if live_off:
+            session.lens.set_live(False)
         try:
             await run_in_thread(session.lens.select_source, source)
         except FileNotFoundError as exc:
@@ -298,7 +300,16 @@ def register_instrument_routes(app: FastAPI) -> None:
             raise HTTPException(404, str(exc)) from None
 
     async def activate_lens_source(source: str) -> list[int]:
+        """Select ``source`` in its family's slot.  An R-family source turns
+        the live readout back on over it; an S-family source only selects
+        (there is no live S readout), leaving the R family's live state and
+        source alone, and answers the current live layers."""
+        from drowse.lens.sources import LENS_SOURCES, lens_source_side
+
         async with session_lock(app):
+            if lens_source_side(LENS_SOURCES.parse(source)) == "input":
+                await select_lens_source(source, live_off=False)
+                return list(session.lens.live_layers or ())
             await select_lens_source(source)
             return await enable_lens_live()
 
@@ -382,7 +393,7 @@ def register_instrument_routes(app: FastAPI) -> None:
         body = LensFetchRequest(**fields)
         if body.source not in LENS_PROVIDERS:
             raise HTTPException(
-                400, "J-lens source must be one of " + ", ".join(sorted(LENS_PROVIDERS)),
+                400, "lens fetch source must be one of " + ", ".join(sorted(LENS_PROVIDERS)),
             )
         lens_fetch.start(lambda: lens_fetch_body(body), message="starting…", source=body.source, live_layers=None)
 
