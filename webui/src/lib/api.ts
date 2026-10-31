@@ -57,6 +57,7 @@ import type {
   NeuronReadJSON,
   UnitCatalogJSON,
   UnitFindJSON,
+  UnitLabelsJSON,
   UnitTopJSON,
   VectorInfo,
 } from "./types";
@@ -884,6 +885,12 @@ export const apiInstruments = {
   /** The model's neuron-lens catalog binding (disk only). */
   unitCatalog(id: string = SESSION): Promise<UnitCatalogJSON> {
     return request(`${SESSION_BASE(id)}/instruments/units/catalog`);
+  },
+
+  /** The catalog's labels for some units, per neuron pole and per head (disk only). */
+  unitLabels(units: string[], id: string = SESSION): Promise<UnitLabelsJSON> {
+    const params = new URLSearchParams({ units: units.join(",") });
+    return request(`${SESSION_BASE(id)}/instruments/units/labels?${params.toString()}`);
   },
 };
 

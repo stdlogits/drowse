@@ -1581,6 +1581,36 @@ class UnitReader:
         assert isinstance(ref, HeadRef)
         return self.head(ref, k=k, hide_hubs=hide_hubs)
 
+    def labels(self, units: Sequence[str | UnitRef]) -> dict[str, Any]:
+        """The catalog's labels for ``units`` (disk only: no lens and no model
+        work), one row per neuron pole (``+`` then ``-``) and one per head, in
+        the order asked, each unit once; ``label`` is ``None`` where the
+        catalog has no row.  ``catalog`` is the binding as the unit views show
+        it; unbound, there are no rows and ``reason`` says why."""
+        refs = list(dict.fromkeys(self._parse(unit) for unit in units))
+        catalog, status = self.catalog.view()
+        rows: list[dict[str, Any]] = []
+        if catalog is not None:
+            for ref in refs:
+                if isinstance(ref, NeuronRef):
+                    rows.extend(
+                        {"unit": ref.qualified, "pole": pole,
+                         "label": catalog.neuron_label(ref.layer, ref.index, sign)}
+                        for sign, pole in ((1, "+"), (-1, "-"))
+                    )
+                else:
+                    rows.append({"unit": ref.qualified, "pole": None,
+                                 "label": catalog.head_label(ref.layer, ref.index)})
+        return {
+            "catalog": {
+                "bound": catalog is not None,
+                "slug": status.get("slug"),
+                "credit": LABEL_CREDIT if catalog is not None else None,
+                "reason": status["reason"],
+            },
+            "labels": rows,
+        }
+
     def _parse(self, unit: str | UnitRef) -> UnitRef:
         if isinstance(unit, (NeuronRef, HeadRef)):
             return self.runtime.check(unit)

@@ -39,6 +39,7 @@ import type {
   UnitActivityJSON,
   UnitCatalogJSON,
   UnitFindJSON,
+  UnitLabelsJSON,
   UnitTopJSON,
   VectorInfo,
   WSClientMessage,
@@ -620,6 +621,8 @@ export interface RuntimeInstrumentsService {
   unitFind?(body: UnitFindBody, id?: string): Promise<UnitFindJSON>;
   /** The model's neuron-lens catalog binding; fetch it with `startPreparation("units", { operation: "fetch" })`. */
   unitCatalog?(id?: string): Promise<UnitCatalogJSON>;
+  /** The catalog's labels for some units (both poles of a neuron, a head once; disk only). Optional, as the reads. */
+  unitLabels?(units: string[], id?: string): Promise<UnitLabelsJSON>;
 }
 
 export interface TokenAnatomyOptions {
@@ -796,6 +799,7 @@ export const RUNTIME_SERVICE_METHODS = Object.freeze({
     unitTop: true,
     unitFind: true,
     unitCatalog: true,
+    unitLabels: true,
   }),
 }) satisfies {
   [Service in RuntimeServiceName]: Readonly<

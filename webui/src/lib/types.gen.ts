@@ -1146,6 +1146,14 @@ export interface UnitCatalogJSON {
   binding: UnitCatalogBindingJSON | null;
 }
 
+/** The catalog binding without a unit: bound, or why not. */
+export interface UnitCatalogSummaryJSON {
+  bound: boolean;
+  slug: string | null;
+  credit: string | null;
+  reason: string | null;
+}
+
 /**
  * ``POST .../instruments/units/find`` — a direction split over each
  * layer's neuron writes (Mahalanobis; the sign is the pole).
@@ -1218,6 +1226,26 @@ export interface UnitLabelJSON {
   /** Open shape — the producer may carry more than the
    *  contract names; unknown keys ride through. */
   [key: string]: unknown;
+}
+
+/**
+ * One catalog label: a neuron pole's (``pole`` ``+``/``-``) or a head's
+ * (``pole`` ``None``); ``label`` is ``None`` where the catalog has no row.
+ */
+export interface UnitLabelRowJSON {
+  unit: string;
+  pole: "+" | "-" | null;
+  label: UnitLabelJSON | null;
+}
+
+/**
+ * ``GET .../instruments/units/labels`` — the catalog's labels for some
+ * units (disk only): every pole of each neuron, each head once.  Unbound:
+ * no rows, and ``catalog.reason`` says why.
+ */
+export interface UnitLabelsJSON {
+  catalog: UnitCatalogSummaryJSON;
+  labels: UnitLabelRowJSON[];
 }
 
 /**

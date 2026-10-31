@@ -13,11 +13,13 @@ What a neuron or head is about, from its weights, over HTTP (the CLI's
 - ``POST units/find {selector | vector + layer, k, layers}`` — a direction
   split over each layer's neuron writes.
 - ``GET units/catalog`` — the model's neuron-lens catalog binding.
+- ``GET units/labels?units=neuron/L8n344,head/L20h3`` — the catalog's labels
+  for some units, per neuron pole and per head (the token anatomy's rows).
 
 The catalog fetch is the units family's ``fetch`` preparation
 (``POST .../instruments/units/preparations {operation: "fetch"}``, polled like
 the lens fetch; :mod:`drowse.server.instrument_routes`).  Reads run model work
-under the session lock; the catalog status is disk only.
+under the session lock; the catalog status and labels are disk only.
 """
 
 from __future__ import annotations
@@ -34,9 +36,13 @@ from drowse.server.response_models import (
     NeuronReadJSON,
     UnitCatalogJSON,
     UnitFindJSON,
+    UnitLabelsJSON,
     UnitTopJSON,
 )
 from drowse.server.runtime import NativeRequest, run_in_thread, session_lock, session_router
+
+#: Units one ``units/labels`` request may name.
+MAX_LABEL_UNITS = 128
 
 
 class UnitFindRequest(NativeRequest):
@@ -115,5 +121,16 @@ def register_unit_routes(app: FastAPI) -> None:
     def unit_catalog() -> UnitCatalogJSON:
         """The model's neuron-lens catalog binding (disk only, no lock)."""
         return session.units.catalog_status()
+
+    @router.get("/instruments/units/labels")
+    def unit_labels(units: str) -> UnitLabelsJSON:
+        """The catalog's labels for up to ``MAX_LABEL_UNITS`` comma-separated
+        units, per neuron pole and per head (disk only, no lock)."""
+        names = [name.strip() for name in units.split(",") if name.strip()]
+        if not names:
+            raise HTTPException(400, "units names at least one neuron/… or head/… unit")
+        if len(names) > MAX_LABEL_UNITS:
+            raise HTTPException(400, f"units names at most {MAX_LABEL_UNITS} units")
+        return session.units.labels(names)  # type: ignore[return-value]
 
     app.include_router(router)
