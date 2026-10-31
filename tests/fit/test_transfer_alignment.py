@@ -33,7 +33,7 @@ def _cross_process_alignment_worker(
 
     def sidecar(model_id: str) -> dict[str, Any]:
         return {
-            "method": "neutral_activations", "format_version": 4,
+            "method": "neutral_activations", "format_version": 5,
             "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
@@ -151,7 +151,7 @@ def test_cold_alignment_reuses_loaded_target_neutrals_for_whitener(
         loaded.append(model_id)
         acts = src_acts if model_id == "src/model" else tgt_acts
         return acts, {
-            "method": "neutral_activations", "format_version": 4,
+            "method": "neutral_activations", "format_version": 5,
             "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
@@ -248,7 +248,7 @@ def test_cold_narrow_alignment_releases_full_seed_rosters_before_fit(
         }
         unrequested_refs.append(weakref.ref(rows[9]))
         return rows, {
-            "method": "neutral_activations", "format_version": 4,
+            "method": "neutral_activations", "format_version": 5,
             "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
@@ -314,7 +314,7 @@ def test_cached_alignment_keeps_model_free_offline_whitener_path(
 
     def sidecar(model_id: str) -> dict[str, Any]:
         return {
-            "method": "neutral_activations", "format_version": 4,
+            "method": "neutral_activations", "format_version": 5,
             "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
@@ -384,7 +384,7 @@ def test_missing_cached_alignment_fits_offline_from_proven_neutral_rows(
 
     def sidecar(model_id: str) -> dict[str, Any]:
         return {
-            "method": "neutral_activations", "format_version": 4,
+            "method": "neutral_activations", "format_version": 5,
             "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
@@ -480,7 +480,7 @@ def test_force_refits_only_requested_layer_without_loading_models(
 
     def sidecar(model_id: str) -> dict[str, Any]:
         return {
-            "method": "neutral_activations", "format_version": 4, "capture_version": 1,
+            "method": "neutral_activations", "format_version": 5, "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
             "capture_sha256": model_id,
@@ -578,7 +578,7 @@ def test_target_neutral_generation_race_replans_cached_alignment(
     def sidecar(model_id: str) -> dict[str, Any]:
         generation = target_generation if model_id == "tgt/model" else "stable"
         return {
-            "method": "neutral_activations", "format_version": 4, "capture_version": 1,
+            "method": "neutral_activations", "format_version": 5, "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}:{generation}",
             "model_source_fingerprint": f"source:{model_id}",
             "capture_sha256": generation,
@@ -651,7 +651,7 @@ def test_concurrent_distinct_alignments_single_flight_shared_model_load(
 
     def sidecar(model_id: str) -> dict[str, Any]:
         return {
-            "method": "neutral_activations", "format_version": 4, "capture_version": 1,
+            "method": "neutral_activations", "format_version": 5, "capture_version": 1,
             "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
             "capture_sha256": model_id,

@@ -1,9 +1,12 @@
-"""NeutralBaseline — the per-model neutral means and Mahalanobis whitener.
+"""NeutralBaseline — the per-model neutral means, Mahalanobis whitener and
+unit statistics.
 
-Both read the one fp32 neutral-activation cache
-(:func:`~drowse.fit.neutral.load_or_compute_neutral_activations`): the
-probe-centering mean is its per-layer ``X.mean(0)`` and the whitener's
-covariance is built from the same stack, so one load produces both.
+All read the one neutral cache
+(:func:`~drowse.fit.neutral.load_or_compute_neutral_cache`): the
+probe-centering mean is its per-layer ``X.mean(0)``, the whitener's
+covariance is built from the same stack, and the unit statistics (a neuron's
+or head's neutral mean and scale) ride in the same shards, so one load
+produces all three.
 
 Two entry points:
 
@@ -26,6 +29,7 @@ import torch
 
 from drowse.base.exclusive import ExclusiveGuard
 from drowse.errors import ConcurrentExtractionError, DrowseError
+from drowse.units.stats import UnitStats
 
 if TYPE_CHECKING:
     from drowse.geometry.whitener import LayerWhitener
@@ -55,6 +59,10 @@ class NeutralBaseline:
         self._whitener: LayerWhitener | None = None
         self._load_error: BaseException | None = None
         self._on_whitener: list[Callable[["LayerWhitener"], None]] = []
+        # The unit statistics of the same load: the stats, or why there are
+        # none; both ``None`` until a load (or ``adopt``) settled them.
+        self._unit_stats: UnitStats | None = None
+        self._units_reason: str | None = None
 
     # ------------------------------------------------------------- state
 
@@ -69,6 +77,22 @@ class NeutralBaseline:
         return self._whitener
 
     @property
+    def unit_stats(self) -> "UnitStats | None":
+        """The resident unit statistics (``None`` until built, or when the
+        model has none: :attr:`units_unavailable` says why).  No build."""
+        return self._unit_stats
+
+    @property
+    def units_unavailable(self) -> str | None:
+        """Why the loaded cache has no unit statistics (``None`` when it has
+        them, or before a load)."""
+        return self._units_reason
+
+    @property
+    def _units_settled(self) -> bool:
+        return self._unit_stats is not None or self._units_reason is not None
+
+    @property
     def ready(self) -> bool:
         return bool(self._means) and self._whitener is not None
 
@@ -78,11 +102,18 @@ class NeutralBaseline:
 
     def adopt(
         self, means: dict[int, torch.Tensor], whitener: "LayerWhitener | None",
+        *, unit_stats: "UnitStats | None" = None,
     ) -> None:
-        """Install an externally computed baseline (means + whitener)."""
+        """Install an externally computed baseline (means + whitener, and the
+        unit statistics when given; without them units are unavailable)."""
         self._means = dict(means)
         self._whitener = whitener
         self._load_error = None
+        self._unit_stats = unit_stats
+        self._units_reason = (
+            None if unit_stats is not None
+            else "the adopted neutral baseline carries no unit statistics"
+        )
         if whitener is not None:
             for callback in self._on_whitener:
                 callback(whitener)
@@ -92,6 +123,8 @@ class NeutralBaseline:
         self._means = {}
         self._whitener = None
         self._load_error = None
+        self._unit_stats = None
+        self._units_reason = None
 
     # ------------------------------------------------------------ build
 
@@ -102,9 +135,10 @@ class NeutralBaseline:
         leaves the means empty (``require_means`` raises) and the whitener
         ``None``; a whitener that cannot be built from loaded activations is
         logged and left ``None``, since every Mahalanobis consumer raises its
-        own ``WhitenerError`` without one.
+        own ``WhitenerError`` without one.  The unit statistics settle from
+        the same load (:attr:`unit_stats`, or :attr:`units_unavailable`).
         """
-        if self.ready:
+        if self.ready and self._units_settled:
             return
         if self._steered():
             raise ConcurrentExtractionError(
@@ -112,10 +146,10 @@ class NeutralBaseline:
                 "active steering scope; exit session.steering() first"
             )
         from drowse.geometry.whitener import LayerWhitener
-        from drowse.fit.neutral import load_or_compute_neutral_activations
+        from drowse.fit.neutral import load_or_compute_neutral_cache
 
         try:
-            acts = load_or_compute_neutral_activations(
+            cache = load_or_compute_neutral_cache(
                 self._model, self._tokenizer, self._layers,
                 model_id=self._model_id, on_progress=on_progress,
             )
@@ -128,6 +162,14 @@ class NeutralBaseline:
             )
             return
         self._load_error = None
+        acts = cache.activations
+        if not self._units_settled:
+            if cache.units.tensors is None:
+                self._units_reason = cache.units.reason or "unavailable"
+            else:
+                self._unit_stats = UnitStats.from_tensors(
+                    cache.units.tensors, n_documents=cache.units.n_documents,
+                )
         if not self._means:
             self._means = {idx: X.mean(dim=0) for idx, X in acts.items()}
         if self._whitener is not None:
