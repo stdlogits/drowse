@@ -114,6 +114,37 @@ def test_lens_decompose_on_registered_profile(_isolated_home: None) -> None:
         assert tokens and tokens[0][0] == "g"
 
 
+def test_tokens_out_norms_are_cached_for_every_layer(
+    _isolated_home: None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the tokens-out atom norms lived in an LRU sized for two
+    ``[L, d, d]`` stacks, so a decomposition over more than two layers
+    recomputed every layer's ``V × d²`` norm pass on every call.  One pass
+    per layer now serves every later decomposition."""
+    import drowse.lens.decompose as decompose_module
+
+    session = LensHarness(n_layers=5)
+    session.whitener = isotropic_whitener(
+        range(len(session.layers)), int(session.model.config.hidden_size),
+    )
+    session.lens.fit(_PROMPTS)
+    name = session.lens.register_direction("g")
+    passes: list[int] = []
+    real = decompose_module.token_atom_norms
+
+    def counted(jacobian: torch.Tensor, unembed: torch.Tensor) -> torch.Tensor:
+        passes.append(1)
+        return real(jacobian, unembed)
+
+    monkeypatch.setattr(decompose_module, "token_atom_norms", counted)
+    first = session.lens.decompose(name, k=4)
+    assert len(first) > 2  # more layers than the stack cache holds
+    assert len(passes) == len(first)
+    second = session.lens.decompose(name, k=4)
+    assert len(passes) == len(first)  # every layer's norms were cached
+    assert second == first
+
+
 class _SignedDictionary:
     """A neurons-shaped dictionary: signed atoms (two poles per unit)."""
 

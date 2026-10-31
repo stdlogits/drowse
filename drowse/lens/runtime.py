@@ -200,8 +200,10 @@ class LensRuntime:
         self._readout_modules: tuple[torch.Tensor, torch.nn.Module] | None = None
         #: Whitened ``tokens-out`` atom norms by ``(lens identity, layer)``,
         #: each beside the whitener they were taken in (:func:`cached_norms`).
+        #: One ``[V]`` fp32 entry per layer of the resident lens (a swap
+        #: clears them), so a decomposition over every layer recomputes none.
         self._atom_norms: BoundedLRU[tuple[str | None, int], tuple[Any, torch.Tensor]] = (
-            BoundedLRU(DEVICE_STACK_CACHE_MAX)
+            BoundedLRU(max(self.n_layers, 1))
         )
 
     # ------------------------------------------------------------ residency
