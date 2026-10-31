@@ -106,6 +106,18 @@ def refuse_if_busy(session: "DrowseSession") -> None:
     session.gen_lock.release()
 
 
+def attached_probe_names(session: "DrowseSession") -> set[str]:
+    """Every attached probe's name, across every read family.
+
+    The Monitor's roster (the geometry family's names) plus each family in
+    ``session.instruments``, so a new family is covered by its registry entry.
+    """
+    attached = set(session.monitor.probe_names)
+    for instrument in session.instruments.values():
+        attached.update(instrument.names)
+    return attached
+
+
 async def finish_worker(task: asyncio.Future[_T]) -> _T:
     """Join a worker without letting request cancellation abandon its thread."""
     cancelled = False

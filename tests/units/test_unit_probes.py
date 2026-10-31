@@ -9,6 +9,7 @@ lifetime and the refusals.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -317,3 +318,62 @@ def test_the_instruments_route_lists_the_units_family(
     assert client.get(
         "/drowse/v1/sessions/default/instruments/units/sources",
     ).status_code == 404
+
+
+def test_the_probe_routes_attach_list_and_detach_units(
+    tiny_session: Any, app_client: Any,
+) -> None:
+    client = app_client(tiny_session)
+    probes = "/drowse/v1/sessions/default/probes"
+    row = {
+        "family": "units", "name": "neuron/L1n3", "unit": "neuron/L1n3",
+        "kind": "neuron", "layer": 1, "index": 3, "layers": [1],
+        "intrinsic_dim": 1, "feature_space": "unit-readout",
+    }
+    posted = client.post(probes, json={"selector": "neuron/L1n3"})
+    assert posted.status_code == 201, posted.text
+    assert posted.json() == row
+    head = client.post(probes, json={"selector": "head/L2h1", "name": "h"})
+    assert head.status_code == 201, head.text
+    assert head.json()["kind"] == "head" and head.json()["unit"] == "head/L2h1"
+    listed = client.get(probes)
+    assert listed.status_code == 200
+    assert [r["name"] for r in listed.json()["probes"]] == ["neuron/L1n3", "h"]
+    assert listed.json()["probes"][0] == row
+    assert client.delete(f"{probes}/neuron%2FL1n3").status_code == 204
+    assert tiny_session.units.names == ["h"]
+    assert client.delete(f"{probes}/neuron%2FL1n3").status_code == 404
+
+
+def test_compat_responses_carry_unit_probe_readings(
+    tiny_session: Any, app_client: Any,
+) -> None:
+    client = app_client(tiny_session)
+    tiny_session.add_probe("neuron/L1n3")
+    body = {
+        "messages": [{"role": "user", "content": "hello"}],
+        "max_tokens": 3, "seed": 0,
+    }
+    resp = client.post("/v1/chat/completions", json=body)
+    assert resp.status_code == 200, resp.text
+    ext = resp.json()["choices"][0]["x-drowse-probe-readings"]
+    assert len(ext["neuron/L1n3"]["coords"]) == 1  # the one strength axis
+    streamed = client.post("/v1/chat/completions", json={**body, "stream": True})
+    assert streamed.status_code == 200
+    chunks = [
+        json.loads(line.removeprefix("data: "))
+        for line in streamed.text.splitlines()
+        if line.startswith("data: ") and line != "data: [DONE]"
+    ]
+    finals = [
+        chunk["choices"][0]["x-drowse-probe-readings"] for chunk in chunks
+        if chunk.get("choices") and "x-drowse-probe-readings" in chunk["choices"][0]
+    ]
+    assert finals and "neuron/L1n3" in finals[-1]
+    ollama = client.post("/api/chat", json={
+        "model": tiny_session.model_id, "stream": False,
+        "messages": [{"role": "user", "content": "hello"}],
+        "options": {"num_predict": 3, "seed": 0},
+    })
+    assert ollama.status_code == 200, ollama.text
+    assert "neuron/L1n3" in ollama.json()["x-drowse-probe-readings"]

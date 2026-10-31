@@ -12,7 +12,7 @@ security boundary.
 | Module | Owns |
 |---|---|
 | `app.py` | `create_app(session, default_steering, cors_origins, api_key, *, web, max_request_bytes)`, the only export of `server/__init__.py` |
-| `runtime.py` | `session_lock(app)` (503 on timeout), `refuse_if_busy` (409), `run_in_thread` / `finish_worker` / `stream_events`, `ClosingStreamingResponse`, `NativeRequest`, `session_router()` |
+| `runtime.py` | `session_lock(app)` (503 on timeout), `refuse_if_busy` (409), `attached_probe_names` (every family's roster), `run_in_thread` / `finish_worker` / `stream_events`, `ClosingStreamingResponse`, `NativeRequest`, `session_router()` |
 | `errors.py` | `describe_error` (the one classifier), `protocol_error` (the three envelopes), `validation_message` |
 | `security.py` | `HttpSecurityMiddleware`, `ws_auth_ok` |
 | `operations.py` | `run_operation` (SSE-or-JSON jobs), `OperationLedger` (receipts), `Preparation` / `PreparationGroup` (polled jobs) |

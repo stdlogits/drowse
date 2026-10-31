@@ -117,7 +117,11 @@ and `head/`), `try_detach`, `specs` (`{unit, kind, layer, index}`), `names`,
 `token_readout` (replays the producing forward with a depth-1 tap attached
 inside the replay's exclusive section; `top_k` and `layers` are 400).
 `generate_batch` runs serially when unit probes are attached and readings are
-wanted (the tap reads one row).
+wanted (the tap reads one row). Over HTTP the native probe routes attach, list (a
+`UnitsProbeInfo` row: `family: "units"`, `unit`, `kind`, `layer`, `index`) and
+detach units, and the OpenAI/Ollama `x-drowse-probe-readings` extension
+carries their aggregates (`server/runtime.py::attached_probe_names` unions
+every family's roster).
 
 ## Steering
 
@@ -140,8 +144,9 @@ wanted (the tap reads one row).
 computation on llama and Gemma 3, the cache, the unavailable path, v4
 recompute), `test_unit_probes.py` (the tap by hand, probes through a real
 tiny session, gates with and without an attached probe, replay, refusals,
-the HTTP family block), `test_unit_steering.py` (ablation against a
-hand-patched forward to 1e-5, partial coefficients, heads, triggers and gates,
+the HTTP family block, the probe routes and the compat extension),
+`test_unit_steering.py` (ablation against a hand-patched forward to 1e-5,
+partial coefficients, heads, triggers and gates,
 the push against the kernel on the write direction, 422s and 400s). Helpers:
 `tests/support/units.py`. GPU: `tests/gpu/test_smoke.py::TestAblationPerformance::test_throughput_with_unit_ablation`
 (8 neurons and 2 heads ablated, ≥ 80% of vanilla tok/s).
