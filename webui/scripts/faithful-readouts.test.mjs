@@ -173,15 +173,9 @@ try {
   probeRack.active = ["word alias", "feature alias"];
   assert.equal(highlightScale("word alias"), 1);
   assert.equal(highlightScale("feature alias"), 5, "reading units override newly cached feature metadata");
-  const { highlightStyleFor, highlightStyleString, THREAD_TINT_GROUND } = await server.ssrLoadModule("/src/lib/highlight.ts");
+  const { highlightStyleFor } = await server.ssrLoadModule("/src/lib/highlight.ts");
   highlightState.target = "word alias";
   assert.match(highlightStyleFor({ text: "x", probes: { "word alias": 0.5 } }).backgroundColor, /var\(--tint\)/, "a lens word tints at the depth tint");
-  // The thread mixes each tint opaquely over its surface, so neighbouring tokens' 2px spreads
-  // overlap without adding up into darker seams; elsewhere a tint stays translucent.
-  const threadTint = highlightStyleString({ text: "x", probes: { "word alias": 0.5 } }, THREAD_TINT_GROUND);
-  assert.match(threadTint, /background-color: color-mix\(in oklch, var\(--tint\) [\d.]+%, var\(--tok-ground, var\(--paper\)\)\)/);
-  assert.match(threadTint, /box-shadow: 0 0 0 2px color-mix\([^;]*var\(--tok-ground/);
-  assert.match(highlightStyleString({ text: "x", probes: { "word alias": 0.5 } }), /, transparent\)/);
   tokenHoverState.active = true;
   tokenHoverState.lensAggregate = [[" word", 0.9, 0.5, 0.1]];
   assert.equal(probeEntryForDisplay("word alias").reading, null, "hover cannot borrow a whitespace variant's probability");

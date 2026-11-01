@@ -127,7 +127,6 @@ export function scoreToRgb(
   score: number | null | undefined,
   scale: number = HIGHLIGHT_SAT,
   hue: TintHue = "signed",
-  ground = "transparent",
 ): string {
   if (score == null || !Number.isFinite(score)) return "transparent";
   const s = Number.isFinite(scale) && scale > 1e-6 ? scale : HIGHLIGHT_SAT;
@@ -142,7 +141,7 @@ export function scoreToRgb(
         : t > 0
           ? TINT_POS
           : TINT_NEG;
-  return `color-mix(in oklch, ${color} ${amount}%, ${ground})`;
+  return `color-mix(in oklch, ${color} ${amount}%, transparent)`;
 }
 
 /** Color family for a selected transcript-highlight channel. */
@@ -197,10 +196,9 @@ export function twoStripeStyle(
   scaleB: number = HIGHLIGHT_SAT,
   hueA: TintHue = "signed",
   hueB: TintHue = "signed",
-  ground = "transparent",
 ): { backgroundImage: string } {
-  const top = scoreToRgb(scoreA, scaleA, hueA, ground);
-  const bot = scoreToRgb(scoreB, scaleB, hueB, ground);
+  const top = scoreToRgb(scoreA, scaleA, hueA);
+  const bot = scoreToRgb(scoreB, scaleB, hueB);
   return {
     backgroundImage: `linear-gradient(to bottom, ${top} 0%, ${top} 50%, ${bot} 50%, ${bot} 100%)`,
   };
@@ -216,10 +214,9 @@ export function twoBlendStyle(
   scaleB: number = HIGHLIGHT_SAT,
   hueA: TintHue = "signed",
   hueB: TintHue = "signed",
-  ground = "transparent",
 ): { backgroundImage: string } {
-  const top = scoreToRgb(scoreA, scaleA, hueA, ground);
-  const bot = scoreToRgb(scoreB, scaleB, hueB, ground);
+  const top = scoreToRgb(scoreA, scaleA, hueA);
+  const bot = scoreToRgb(scoreB, scaleB, hueB);
   return {
     backgroundImage: `linear-gradient(to bottom, ${top}, ${bot})`,
   };
@@ -239,13 +236,12 @@ export function tokenBackgroundStyle(
   scaleB: number = HIGHLIGHT_SAT,
   hueA: TintHue = "signed",
   hueB: TintHue = "signed",
-  ground = "transparent",
 ): { backgroundColor?: string; backgroundImage?: string } {
   if (scoreB === null || scoreB === undefined) {
-    const bg = scoreToRgb(scoreA, scaleA, hueA, ground);
+    const bg = scoreToRgb(scoreA, scaleA, hueA);
     return bg === "transparent" ? {} : { backgroundColor: bg };
   }
   return smooth
-    ? twoBlendStyle(scoreA, scoreB, scaleA, scaleB, hueA, hueB, ground)
-    : twoStripeStyle(scoreA, scoreB, scaleA, scaleB, hueA, hueB, ground);
+    ? twoBlendStyle(scoreA, scoreB, scaleA, scaleB, hueA, hueB)
+    : twoStripeStyle(scoreA, scoreB, scaleA, scaleB, hueA, hueB);
 }

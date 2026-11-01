@@ -103,7 +103,6 @@
   } from "../lib/tokens";
   import {
     highlightStyleString,
-    THREAD_TINT_GROUND,
   } from "../lib/highlight";
   import Select from "../lib/Select.svelte";
   import Combobox from "../lib/Combobox.svelte";
@@ -1422,7 +1421,7 @@
         {#if !turnCollapsed(turnIdx, turn)}
           <div class="thinking-body" dir="auto" transition:expand>
             {#each turn.thinkingTokens ?? [] as tok, tokenIdx (tokenIdx)}
-              {@const tint = highlightStyleString(tok, THREAD_TINT_GROUND)}
+              {@const tint = highlightStyleString(tok)}
               {@const chosen = isSelectedToken(turnIdx, tokenIdx, true)}
               <span
                 class="tok"
@@ -1451,7 +1450,7 @@
     <div class={user ? "dw-user" : "dw-said"} dir="auto">
       {#if (turn.tokens?.length ?? 0) > 0}
         {#each visibleResponseTokens(turn.tokens ?? []) as { tok, originalIdx }, visibleIdx (originalIdx)}
-          {@const tint = highlightStyleString(tok, THREAD_TINT_GROUND)}
+          {@const tint = highlightStyleString(tok)}
           {@const chosen = isSelectedToken(turnIdx, originalIdx, false)}
           <span
             class="tok"

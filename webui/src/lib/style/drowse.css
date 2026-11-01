@@ -52,7 +52,7 @@
 
 .dw-turn { display: grid; gap: var(--s2); min-width: 0; }
 .dw-seat { color: var(--ink3); font: var(--type-meta); }
-.dw-user { justify-self: end; max-width: 88%; margin: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; --tok-ground: var(--wash); }
+.dw-user { justify-self: end; max-width: 88%; margin: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
 .dw-said { margin: 0; color: var(--ink); font: var(--type-body); line-height: 32px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .dw-under { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); color: var(--ink3); font: var(--type-meta); }
 /* The tint key: the swatch and what the words are coloured by. */
