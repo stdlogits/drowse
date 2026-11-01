@@ -307,12 +307,19 @@ same way) splits the replay the same way: one cacheless forward when every open 
 decode positions in runs where every trigger fires alike (`@first:N`,
 `@after:N` boundaries, judged by `Trigger.active` itself), run on one KV cache
 with `is_prefill`, `gen_step` and `sink_column` set as the decode loop sets
-them and the rest state restored after. A probe gate (live probe scores) or,
-on a family that thinks, a thinking-phase window (`@after`, `@thinking`)
-depends on state the node does not record, so a steered replay under one
-raises `SteeringCompositionError` (422); `apply_steering=False` replays
-without the node's own terms. Pinned against the live unit readings of
-`@prompt`, `@response`, `@first:2` and `@after:2` generations.
+them and the rest state restored after. A probe gate fires on live probe
+scores the node does not record: when the node's own steering has one,
+`TokenReplayer.forward` binds a gate-only capture (`gate_reads`, the session's
+`ReadPlane.gate_run`, the same binding joint logprobs uses) and
+`replay_segments(gate=...)` steps every decode position as its own forward,
+`drive_segments` setting `ctx.probe_scores` from the scores after the one
+before, as the decode loop does. On a family that thinks, a thinking-phase
+window (`@after`, `@thinking`) follows the decode loop's delimiter machine,
+which the node does not record, so a steered replay under one raises
+`SteeringCompositionError` (422), as does a gate in an ambient scope that is
+not the node's; `apply_steering=False` replays without the node's own terms.
+Pinned against the live unit readings of `@prompt`, `@response`, `@first:2`,
+`@after:2` and `@when:` generations.
 
 - **Token anatomy** (`token_anatomy(node_id, raw_index, k=8, units=8,
   patterns=4)`): per layer the residual at `out` read as a residual
@@ -433,8 +440,8 @@ both chosen-token logprobs, `lp_a_in_b`/`lp_b_in_a`, `rank_changed` and
 - Position-independent steering (`all_fast_path()` or `static_steerable()`)
   with no penalties replays teacher-forced in `_REPLAY_CHUNK = 128` chunks;
   otherwise one forced token per forward drives the trigger context, with a
-  gate-only read-plane binding when probe gates need it (runs close in a
-  `finally`).
+  gate-only read-plane binding (`ReadPlane.gate_run`) when probe gates need it
+  (runs close in a `finally`).
 - Alignment is `shared_prefix_len` then `per_token_diff`; indices are relative
   to the divergence point and cross values exist only on aligned rows.
   `approx_kl` is KL(P_A‖P_B) over the union of each side's top

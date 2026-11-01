@@ -435,6 +435,8 @@ class DrowseSession:
                 for entry in self._steering_composer.flatten_stack().values()
             ],
             trigger_context=self._steering.ctx,
+            # The read plane is built below, once the instruments exist.
+            gate_reads=lambda: self._read_plane.gate_run(),
         )
         self._geometry_instrument = GeometryInstrument(
             monitor=self._monitor,

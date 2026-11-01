@@ -616,9 +616,13 @@ counterfactual), and hands the pooled hidden states to the family. The forward
 runs as generation ran it (`replay_segments`: one forward when every term
 fires everywhere, else the prefill and the decode runs where the triggers
 fire alike), so one token reads the same number in every family and in the
-node replay. A probe-gated term, or a thinking-phase window on a family that
-thinks, fired on state the node does not record, so a replay under one refuses
-(422).
+node replay. A probe-gated term fired on the generation's live probe scores,
+which the node does not record: the replay steps one decode position at a time
+under a gate-only read-plane capture (`ReadPlane.gate_run`) and scores the
+gates after each forward as the decode loop does, so it fires where generation
+did (slower: one forward a position). A thinking-phase window on a family that
+thinks follows the decode loop's delimiter machine, which the node does not
+record either, so a replay under one refuses (422).
 
 The node replay (`loom/node_replay.py::NodeReplayer`) is the same rebuild
 (`TokenReplayer.forward`) running a forward of its own, tapped where the
@@ -637,8 +641,9 @@ every token of a turn in the units family's unit and reduces it on the device
 transfer. Unlike a token readout, the node replay drives the trigger context:
 with every open term always active it is one forward, otherwise the prefill
 and then KV-cached runs of decode positions where every trigger fires alike,
-as generation ran them; a probe gate or (on a thinking family) a
-thinking-phase window, which the node does not record, refuses (422).
+as generation ran them, and one position a forward under a probe gate (its
+scores replayed as above); a thinking-phase window on a thinking family, which
+the node does not record, refuses (422).
 
 **Residual or direction.** Every lens read says what it reads
 (`lens/read.py`, `of`, no default). The S read of a residual is centred on the
@@ -1000,8 +1005,8 @@ executable statement of why a boundary is strict.
   fits are explicit, expensive workflows.
 - Curved manifolds are slower than flat steering, and overlapping curved spans
   are rejected.
-- Replay reproduces always-active affine steering exactly but cannot recreate
-  a phase- or probe-gated history from one isolated forward.
+- Replay reproduces always-active affine steering exactly and a probe-gated
+  history one forward a position, but cannot recreate a thinking-phase history.
 - Discover coordinates are model-specific, and `fit_mode=auto` can resolve flat
   on one model and curved on another, so a negative `%` coefficient pushes away
   on one and raises on the other.

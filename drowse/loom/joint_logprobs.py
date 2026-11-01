@@ -703,34 +703,11 @@ class JointLogprobReplayer:
                     adjust=adjust, config=config,
                 )
             elif self._needs_probe_gating():
-                reads = self._reads
-                gate_only = reads.resolve_demand(
-                    want_hidden=False, live_scores_on=False,
-                    has_monitor_probes=False, loom_attached=False,
-                    wants_live_token_scores=False, persists_layer_scores=False,
-                    persists_probe_row=False, persists_subspace_coords=False,
-                    live_lens_active=False, live_sae_active=False,
-                    final_probe_aggregate=False, capture_prompt=False,
-                )
-                try:
-                    # Inside the try: ``begin`` binds every family's
-                    # per-generation run, so a partial-bind failure must
-                    # still reach the teardown below.
-                    reads.begin(gate_only)
+                with self._reads.gate_run() as gate:
                     pools = _stepwise_pools(
                         manager.ctx, model, full, branch,
-                        adjust=adjust, config=config,
-                        gating_callback=reads.gate_score_callback(),
+                        adjust=adjust, config=config, gating_callback=gate,
                     )
-                finally:
-                    # A bound run must not leak past the request (a stale
-                    # lens pin suppresses disk refresh between generations;
-                    # a stale SAE binding keeps serving frozen units to idle
-                    # reads) — even when the hook detach itself raises.
-                    try:
-                        reads.end()
-                    finally:
-                        reads.close_runs()
             else:
                 pools = _stepwise_pools(
                     manager.ctx, model, full, branch,

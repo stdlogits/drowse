@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
@@ -41,6 +41,11 @@ if TYPE_CHECKING:
 
 T = TypeVar("T")
 
+#: Scores the open steering's probe gates after a replay forward, as the
+#: decode loop's ``score_callback`` does after each step (the read plane's
+#: ``gate_score_callback`` under a gate-only capture): ``gen_step`` -> scores.
+GateScores = Callable[[int], dict[str, float]]
+
 
 @dataclass(frozen=True)
 class ReplayForward:
@@ -54,6 +59,10 @@ class ReplayForward:
     prompt_length: int
     raw_ids: tuple[int, ...]
     raw_index: int
+    #: The gate scorer bound for this replay when the open steering has
+    #: probe-gated terms (None otherwise); :meth:`TokenReplayer.segments`
+    #: then steps the decode positions one forward at a time.
+    gate: GateScores | None = None
 
     @property
     def position(self) -> int:
@@ -82,16 +91,20 @@ def _forward(model: nn.Module, ids: torch.Tensor) -> None:
 class ReplaySegment:
     """One forward of a replay: positions ``[start, stop)`` under one trigger
     state (the prompt's ``prefill``, or decode step ``gen_step``: the forward
-    producing raw token ``gen_step``)."""
+    producing raw token ``gen_step``).  ``gate``, when set, scores the probe
+    gates after this forward for the next one (the decode loop's
+    ``score_callback``)."""
 
     start: int
     stop: int
     prefill: bool
     gen_step: int
+    gate: GateScores | None = field(default=None, compare=False, repr=False)
 
 
 def replay_segments(
     prompt_length: int, length: int, triggers: Iterable[Trigger], *, can_think: bool,
+    gate: GateScores | None = None,
 ) -> tuple[ReplaySegment, ...]:
     """The forwards that replay ``length`` positions the way generation ran
     them under ``triggers`` (every open steering term's trigger).
@@ -102,31 +115,48 @@ def replay_segments(
     one forward over ``[0, length)`` is exact.  Otherwise the prefill is one
     segment and the decode positions split wherever a trigger's activity
     changes (``@first:N``, ``@after:N``), each segment evaluated by
-    :meth:`Trigger.active` itself.  Raises
-    :class:`~drowse.errors.SteeringCompositionError` (422) for a term whose
-    firing depends on state the node does not record: a probe gate (the
-    generation's live probe scores) or, when the family can think
-    (``can_think``), a thinking-phase window (``@after``, ``@thinking``).
+    :meth:`Trigger.active` itself.  A probe gate fires on the generation's
+    live probe scores, which the node does not record: with ``gate`` (the
+    replay's own gate scorer) every decode position is its own forward and
+    the gates read the replay's scores after each one, as the decode loop
+    reads them (joint logprobs' stepwise replay); without it the replay is
+    refused.  Raises :class:`~drowse.errors.SteeringCompositionError` (422)
+    for a probe gate without ``gate`` and, when the family can think
+    (``can_think``), for a thinking-phase window (``@after``, ``@thinking``),
+    whose firing follows the decode loop's thinking state.
     """
     windowed = list(dict.fromkeys(t for t in triggers if t != Trigger.BOTH))
     if not windowed:
         return (ReplaySegment(0, int(length), prefill=False, gen_step=0),)
     gated = any(t.generated and t.gate is not None for t in windowed)
     phased = can_think and any(t.generated and t.thinking != t.response for t in windowed)
-    if gated or phased:
+    if (gated and gate is None) or phased:
         what = " and ".join(
             label for label, present in (
                 ("probe-gated terms (@when:…), which fire on the generation's live "
-                 "probe scores", gated),
+                 "probe scores", gated and gate is None),
                 ("thinking-phase terms (@after, @thinking), which fire on the decode "
                  "loop's thinking state", phased),
             ) if present
         )
         raise SteeringCompositionError(
-            f"the replayed steering has {what}; the node records neither, so a "
-            "replay cannot reproduce where they fired. Replay without them "
+            f"the replayed steering has {what}; the node does not record where "
+            "they fired, so a replay cannot reproduce them. Replay without them "
             "(apply_steering=false drops the node's own steering)."
         )
+    if gated:
+        prefill_stop = min(int(prompt_length), int(length))
+        stepped: list[ReplaySegment] = []
+        if prefill_stop > 0:
+            stepped.append(ReplaySegment(0, prefill_stop, prefill=True, gen_step=0, gate=gate))
+        stepped.extend(
+            ReplaySegment(
+                position, position + 1, prefill=False,
+                gen_step=position - int(prompt_length) + 1, gate=gate,
+            )
+            for position in range(prefill_stop, int(length))
+        )
+        return tuple(stepped)
 
     def fires(step: int) -> tuple[bool, ...]:
         ctx = TriggerContext(gen_step=step)
@@ -172,7 +202,8 @@ def drive_segments(
     cacheless forward, the context untouched.  Otherwise each segment, a
     lone prefill included, runs on one KV cache with the context set as the
     decode loop sets it (the attention sink in column 0 only from position
-    0), and the context returns to its rest state after.  The taps raise
+    0; the probe scores a gated segment's predecessor scored), and the
+    context returns to its rest state after.  The taps raise
     :class:`_ReplayStop` in the last segment only.
     """
     if len(segments) == 1 and not segments[0].prefill:
@@ -184,6 +215,7 @@ def drive_segments(
         raise ValueError("a segmented replay needs the trigger context")
     keep = logits_keep_kwarg(model)
     past: Any = None
+    scores: dict[str, float] = {}
     try:
         with torch.inference_mode():
             for i, segment in enumerate(segments):
@@ -193,7 +225,7 @@ def drive_segments(
                 ctx.thinking = False
                 ctx.gen_step = segment.gen_step
                 ctx.sink_column = 0 if segment.start == 0 else None
-                ctx.probe_scores = {}
+                ctx.probe_scores = scores
                 kwargs: dict[str, Any] = {
                     "input_ids": ids[:, segment.start:segment.stop], "use_cache": True,
                 }
@@ -213,6 +245,9 @@ def drive_segments(
                         "the model returned no KV cache; a segmented replay runs on one"
                     )
                 del out
+                # The decode loop scores the gates after each forward for the
+                # next one; ``gen_step`` is the step identity it threads.
+                scores = segment.gate(segment.gen_step) if segment.gate is not None else {}
     finally:
         ctx.reset()
 
@@ -279,7 +314,10 @@ class TokenReplayer:
     - ``open_triggers``: the triggers of every open steering term (read
       inside the replay's scope);
     - ``trigger_context``: the steering's :class:`TriggerContext`, which a
-      segmented replay sets as the decode loop set it.
+      segmented replay sets as the decode loop set it;
+    - ``gate_reads``: opens a gate-only capture for the open steering's probe
+      gates and yields its scorer (:data:`GateScores`), so a probe-gated
+      replay steps as generation did.  Without it such a replay is refused.
     """
 
     def __init__(
@@ -294,6 +332,7 @@ class TokenReplayer:
         capture: Callable[..., dict[int, torch.Tensor]],
         open_triggers: Callable[[], Iterable[Trigger]] = tuple,
         trigger_context: TriggerContext | None = None,
+        gate_reads: Callable[[], AbstractContextManager[GateScores]] | None = None,
     ) -> None:
         self._tree = tree
         self._renderer = renderer
@@ -304,6 +343,7 @@ class TokenReplayer:
         self._capture = capture
         self._open_triggers = open_triggers
         self._ctx = trigger_context
+        self._gate_reads = gate_reads
 
     def segments(self, forward: "ReplayForward") -> tuple[ReplaySegment, ...]:
         """The forwards replaying ``forward`` as the open steering fired
@@ -312,7 +352,7 @@ class TokenReplayer:
         (422) for a term whose firing the node does not record."""
         return replay_segments(
             forward.prompt_length, int(forward.ids.shape[1]), self._open_triggers(),
-            can_think=bool(self._traits.supports_thinking),
+            can_think=bool(self._traits.supports_thinking), gate=forward.gate,
         )
 
     def __call__(
@@ -392,12 +432,20 @@ class TokenReplayer:
                 # device work like the forward's: outside the section it would
                 # share MPS's one command buffer with whatever thread holds it.
                 ids = self._producing_ids(anchor, raw=raw)
-                result = run(ReplayForward(
-                    ids=ids,
-                    prompt_length=int(ids.shape[1]) - anchor.raw_index,
-                    raw_ids=anchor.raw_ids,
-                    raw_index=anchor.raw_index,
-                ))
+                # A probe-gated steering replays one decode position at a
+                # time, its gates scored by a gate-only capture bound here.
+                gated = steering is not None and self._gate_reads is not None and any(
+                    t.generated and t.gate is not None for t in self._open_triggers()
+                )
+                gates = self._gate_reads() if gated and self._gate_reads else nullcontext(None)
+                with gates as gate:
+                    result = run(ReplayForward(
+                        ids=ids,
+                        prompt_length=int(ids.shape[1]) - anchor.raw_index,
+                        raw_ids=anchor.raw_ids,
+                        raw_index=anchor.raw_index,
+                        gate=gate,
+                    ))
         return (
             ReplayedToken(
                 node_id=node_id,
@@ -450,6 +498,7 @@ class TokenReplayer:
 
 
 __all__ = [
+    "GateScores",
     "ReplayForward",
     "ReplaySegment",
     "ReplayWindow",

@@ -26,7 +26,8 @@ steering stack's active gate references.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 import torch
@@ -400,6 +401,38 @@ class ReadPlane:
         ring stay readable for finalize)."""
         self.capture.detach()
         self._units.end_capture()
+
+    @contextmanager
+    def gate_run(self) -> Iterator[GateScoreCallback]:
+        """A gate-only capture for a forced replay of probe-gated steering.
+
+        Binds the runs with the demand that captures only what the open
+        steering's probe gates read (nothing is scored for display) and
+        yields :meth:`gate_score_callback`, which the replay calls after each
+        forward as the decode loop does.  The runs close on exit, even when
+        the hook detach raises: a bound run must not leak past the replay (a
+        stale lens pin suppresses disk refresh between generations; a stale
+        SAE binding keeps serving frozen units to idle reads).  The one gate
+        capture of joint logprobs and the loom token replays.
+        """
+        gate_only = self.resolve_demand(
+            want_hidden=False, live_scores_on=False,
+            has_monitor_probes=False, loom_attached=False,
+            wants_live_token_scores=False, persists_layer_scores=False,
+            persists_probe_row=False, persists_subspace_coords=False,
+            live_lens_active=False, live_sae_active=False,
+            final_probe_aggregate=False, capture_prompt=False,
+        )
+        try:
+            # Inside the try: ``begin`` binds every family's run, so a
+            # partial-bind failure must still reach the teardown.
+            self.begin(gate_only)
+            yield self.gate_score_callback()
+        finally:
+            try:
+                self.end()
+            finally:
+                self.close_runs()
 
     def reset(self) -> None:
         """Back to the between-generations state: FULL, no rows."""

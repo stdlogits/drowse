@@ -482,6 +482,16 @@ def test_replay_refuses_triggers_the_node_does_not_record() -> None:
     # A gate on a prompt-only term never fires: nothing to reproduce.
     never = replace(Trigger.PROMPT_ONLY, gate=Trigger.when("x", ">", 0.1).gate)
     assert len(replay_segments(5, 9, [never], can_think=True)) == 2
+    # With the replay's own gate scorer, a gated term steps: the prompt in one
+    # forward, then one forward per decode position, each scoring the gates.
+    def scorer(_step: int) -> dict[str, float]:
+        return {}
+
+    stepped = replay_segments(5, 9, [Trigger.when("x", ">", 0.1)], can_think=False, gate=scorer)
+    assert [(seg.start, seg.stop, seg.prefill, seg.gen_step) for seg in stepped] == [
+        (0, 5, True, 0), (5, 6, False, 1), (6, 7, False, 2), (7, 8, False, 3), (8, 9, False, 4),
+    ]
+    assert all(seg.gate is scorer for seg in stepped)
 
 
 @pytest.mark.parametrize("window", ["@prompt", "@response", "@first:2", "@after:2"])

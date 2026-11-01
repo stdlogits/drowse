@@ -285,7 +285,8 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   `units` comma-separated, `raw_index`, `layers` a selector, `steered`, `raw`)
   returns `UnitActivityJSON` (`session.unit_activity`; units unavailable is
   the family's 422). Both answer 422 (`SteeringCompositionError`) for steered
-  probe-gated or thinking-phase terms the replay cannot reproduce.
+  thinking-phase terms the replay cannot reproduce (a probe gate replays one
+  position a forward).
 - **Units** (`unit_routes.py`, under `S/instruments/units/`; the CLI's
   `drowse unit`). `GET read?unit=&k=&hide_hubs=` is the unit view
   (`NeuronReadJSON | HeadReadJSON`, discriminated by `kind`), `GET
