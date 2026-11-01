@@ -36,6 +36,7 @@ from drowse.session.neutral import NeutralBaseline
 from drowse.errors import (
     ConcurrentExtractionError,
     ManifoldNotRegisteredError,
+    RequestError,
 )
 from drowse.generation.token_callback import TokenSink
 from drowse.model.scene import TurnGrammar
@@ -1286,10 +1287,21 @@ class DrowseSession:
         registered ``Profile``, a fold cached by an earlier steer) → folded
         into a 1-node neutral-anchored ray; (2) a fitted manifold on disk
         (``[ns/]name[:variant]``) → loaded directly, so a 2-node ``pca`` reads
-        rank-1 and a discover / curved fit reads rank-R; (3) a bare concept
-        with neither → extracted, then folded.  Folds go through
+        rank-1 and a discover / curved fit reads rank-R; (3) an installed
+        manifold that is not fitted (or is stale) for this model → fitted in
+        place, then loaded as (2), the way serve's startup fits a missing
+        default probe; (4) a bare raw name that names no installed manifold →
+        extracted (authored under ``local/``), then folded.  Folds go through
         :meth:`ArtifactRegistry.fold_probe`, which tracks them, so evicting
         or re-fitting the artifact reaches these probes too.
+
+        The resolver never substitutes another concept: a typed namespace or
+        a variant names an installed artifact, so a miss there raises
+        :class:`ManifoldNotRegisteredError` (404) instead of extracting a slug
+        of the selector, and a variant a fit cannot produce here (``sae-`` or
+        ``from-``) raises :class:`RequestError` (400) naming the command that
+        does.  It runs inside the geometry attach's exclusive section, which
+        the fit re-enters.
 
         ``jlens/<word>`` selectors never reach this resolver — ``add_probe``
         routes them to the lens-probe registry (the readout channel), so the
@@ -1297,12 +1309,48 @@ class DrowseSession:
         nonsense manifold named "jlens/<word>".
         """
         profile = self._registry.profiles.get(selector)
-        if profile is None:
-            try:
+        if profile is not None:
+            return self._registry.fold_probe(selector, profile)
+        try:
+            return self._registry.ensure_manifold_loaded(selector)
+        except ManifoldNotRegisteredError:
+            pass
+        from drowse.session.registry import split_key
+        from drowse.store.selectors import Selector, resolve
+
+        namespace, name, variant = split_key(selector)
+        installed = resolve(Selector(kind="name", value=name, namespace=namespace))
+        if installed:
+            (match,) = installed
+            qualified = f"{match.namespace}/{match.name}"
+            if variant == "raw" or variant.startswith("role-"):
+                self.fit(match.folder)
                 return self._registry.ensure_manifold_loaded(selector)
-            except ManifoldNotRegisteredError:
-                pass
-            _, profile = self.extract(selector)
+            if variant.startswith("sae-"):
+                how = (
+                    f"produce it with `drowse manifold fit {qualified} "
+                    f"-m {self.model_id} --sae {variant[len('sae-'):]}`"
+                )
+            elif variant.startswith("from-"):
+                how = (
+                    f"produce it with `drowse manifold transfer {qualified} "
+                    f"--from <source model> --to {self.model_id}`"
+                )
+            else:
+                how = "name a release or a role (`:sae-<release>`, `:role-<id>`)"
+            raise RequestError(
+                f"probe {selector!r}: manifold {qualified} has no {variant!r} "
+                f"fit for {self.model_id}, and attaching a probe fits only the "
+                f"residual stream; {how}, then attach again"
+            )
+        if namespace is not None or variant != "raw":
+            raise ManifoldNotRegisteredError(
+                f"probe {selector!r}: no manifold "
+                f"{namespace + '/' if namespace else ''}{name} is installed; "
+                f"install it (`drowse pack install`) or attach a bare concept "
+                f"name to extract one"
+            )
+        _, profile = self.extract(selector)
         return self._registry.fold_probe(selector, profile)
 
     def _fold_profile_probe(self, name: str, profile: Any) -> "Manifold":
