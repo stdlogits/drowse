@@ -78,15 +78,17 @@ function probeHue(target: string) {
   return highlightHue(target);
 }
 
-/** ``highlightStyleFor`` flattened to an inline ``style`` attribute. A single tint also
- *  spreads 2px in its own colour (Ledger's marked token), so a run of tinted tokens reads as
- *  one wash; an empty string means the token is not tinted. */
+/** ``highlightStyleFor`` flattened to an inline ``style`` attribute. A single tint also grows
+ *  2px up and down in its own colour (Ledger's marked token), so a run of tinted lines reads as
+ *  one wash; never sideways, where a translucent spread overlaps its neighbour's tint and paints
+ *  a darker seam between tokens (and an opaque one would cover the glyph before it). An empty
+ *  string means the token is not tinted. */
 export function highlightStyleString(t: TokenScore): string {
   const style = highlightStyleFor(t);
   const parts: string[] = [];
   if (style.backgroundColor) {
     parts.push(`background-color: ${style.backgroundColor}`);
-    parts.push(`box-shadow: 0 0 0 2px ${style.backgroundColor}`);
+    parts.push(`box-shadow: 0 -2px 0 0 ${style.backgroundColor}, 0 2px 0 0 ${style.backgroundColor}`);
   }
   if (style.backgroundImage) {
     parts.push(`background-image: ${style.backgroundImage}`);

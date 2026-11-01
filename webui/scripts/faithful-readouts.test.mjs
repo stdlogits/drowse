@@ -173,9 +173,14 @@ try {
   probeRack.active = ["word alias", "feature alias"];
   assert.equal(highlightScale("word alias"), 1);
   assert.equal(highlightScale("feature alias"), 5, "reading units override newly cached feature metadata");
-  const { highlightStyleFor } = await server.ssrLoadModule("/src/lib/highlight.ts");
+  const { highlightStyleFor, highlightStyleString } = await server.ssrLoadModule("/src/lib/highlight.ts");
   highlightState.target = "word alias";
   assert.match(highlightStyleFor({ text: "x", probes: { "word alias": 0.5 } }).backgroundColor, /var\(--tint\)/, "a lens word tints at the depth tint");
+  // Regression (W5): a tint spread 2px sideways in a translucent colour, so neighbouring tokens'
+  // spreads overlapped into darker seams. It grows only up and down.
+  const tinted = highlightStyleString({ text: "x", probes: { "word alias": 0.5 } });
+  assert.match(tinted, /box-shadow: 0 -2px 0 0 color-mix\([^;]*\), 0 2px 0 0 color-mix\(/);
+  assert.doesNotMatch(tinted, /0 0 0 2px/);
   tokenHoverState.active = true;
   tokenHoverState.lensAggregate = [[" word", 0.9, 0.5, 0.1]];
   assert.equal(probeEntryForDisplay("word alias").reading, null, "hover cannot borrow a whitespace variant's probability");
