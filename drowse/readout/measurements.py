@@ -49,7 +49,8 @@ A loom token row persists the token envelope through
 reading's summary (no per-layer traces, never the inspector's subspace
 coordinates), the scalar readings whole, the lens readout's layer-aggregated
 chips without its per-layer matrix, and every float rounded to
-:data:`ROW_DECIMALS` places (the views show three).  A generation that sets
+:data:`~drowse.readout.types.READING_DIGITS` significant digits, the
+envelope's own precision (a probability of 3e-05 keeps its value).  A generation that sets
 ``persist_per_layer_scores`` keeps the geometry traces and the readout's
 layer rows on its rows too; otherwise the per-layer views replay the token
 (``token_readout``, ``token_anatomy``) while a model is loaded.  The live
@@ -73,11 +74,13 @@ from typing_extensions import NotRequired, TypedDict
 
 from drowse.readout.types import (
     UNIT_MEAN_FOOTPRINT_Z,
+    READING_DIGITS,
     UNIT_MEAN_TOKEN_PROBABILITY,
     ProbeReading,
     Reading,
     ScalarReading,
     reading_axis0,
+    round_reading,
 )
 
 MEASUREMENTS_VERSION = 2
@@ -378,7 +381,7 @@ class MeasurementsEnvelope(TypedDict):
 
 def _axis0(readings: Mapping[str, Reading]) -> dict[str, float]:
     return {
-        str(name): round(reading_axis0(reading), 6)
+        str(name): round_reading(reading_axis0(reading))
         for name, reading in readings.items()
     }
 
@@ -553,10 +556,6 @@ def build_measurements(
 # The loom token row's projection
 # --------------------------------------------------------------------------
 
-#: Decimal places a loom token row keeps for every float it persists: one
-#: more than any view shows (coordinates, shares and distances print three).
-ROW_DECIMALS = 4
-
 #: A geometry reading's per-layer traces, kept on a row only on request.
 GEOMETRY_TRACE_KEYS = ("fraction_per_layer", "coords_per_layer", "residual_per_layer")
 
@@ -568,7 +567,7 @@ GEOMETRY_SUMMARY_KEYS = (
 
 
 def _r(value: Any) -> float:
-    return round(float(value), ROW_DECIMALS)
+    return round_reading(value)
 
 
 def _row_ranked(pairs: list[Any]) -> list[list[Any]]:
@@ -631,7 +630,9 @@ def token_row_measurements(
     summary read, once: each geometry reading's summary (without its
     per-layer traces), each scalar reading whole (its trace is a few values),
     the lens readout's layer-aggregated chips, the SAE features, the bindings
-    and the flat ``scores``, every float at :data:`ROW_DECIMALS` places.
+    and the flat ``scores``, every float at ``READING_DIGITS`` significant
+    digits (the envelope's own rounding, so a scalar is never rounded twice
+    into a different value).
     ``per_layer`` (the generation's ``persist_per_layer_scores``) also keeps
     the geometry traces and the lens readout's ``layers``.  The probe
     inspector's ``subspace_coords_per_layer`` is a live trail and is never
@@ -796,7 +797,7 @@ __all__ = [
     "Measurements",
     "MeasurementsEnvelope",
     "ProbeReadingDict",
-    "ROW_DECIMALS",
+    "READING_DIGITS",
     "SaeChannel",
     "SaeFeature",
     "SaeReadout",

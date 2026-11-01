@@ -797,7 +797,7 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
 
     assert envelope == fixture["expected"]
     # The loom token row the browser writes for the same token: the one row
-    # projection (summaries, ROW_DECIMALS places, no traces, never the
+    # projection (summaries, READING_DIGITS significant digits, no traces, never the
     # inspector's subspace coordinates).
     assert envelope is not None
     assert token_row_measurements(envelope, per_layer=False) == fixture["expectedRow"]

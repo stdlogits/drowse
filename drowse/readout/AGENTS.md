@@ -29,7 +29,7 @@ other three families (`drowse/units/AGENTS.md`);
 | `monitor_flat.py` | `_FlatEngine`: the batched read over every flat probe |
 | `geometry.py` | `GeometryInstrument`, `GeometryRun` |
 | `roster.py` | `ProbeRoster` and its `GeometryFamily`/`ReadoutFamily` protocols |
-| `measurements.py` | `build_measurements`, `token_row_measurements` (the loom row's projection, `ROW_DECIMALS`), `envelope_sources`, `LENS_FAMILY_BY_UNIT`, the envelope TypedDicts |
+| `measurements.py` | `build_measurements`, `token_row_measurements` (the loom row's projection at `types.READING_DIGITS`), `envelope_sources`, `LENS_FAMILY_BY_UNIT`, the envelope TypedDicts |
 | `analytics.py` | `cross_layer_cosine`, `cosine_matrix` (whitened; used by `server/profile_routes.py`) |
 
 ## Layering
@@ -351,7 +351,12 @@ membership, depth_com, depth_spread), each scalar reading whole (its
 `per_layer` is a lens probe's band or one unit or SAE layer, and no replay
 returns a lens probe's), the lens readout's `aggregate` without `layers`, the
 SAE features, the bindings and `scores`, every float rounded to
-`ROW_DECIMALS` (4, one more than any view prints). `per_layer=True` (the
+`READING_DIGITS` (6) significant digits (`types.round_reading`: `%g`'s
+correctly rounded form, `FLT_DIG`, what an fp32 reading reliably carries;
+the envelope's scalar readings and `scores` use the same rule, so the row
+never rounds a value twice). Significant digits, not
+decimal places: a `jlens/` probability is often below 1e-4 and is read on a
+log scale, so fixed places would zero it. `per_layer=True` (the
 call's `persist_per_layer_scores`) adds `GEOMETRY_TRACE_KEYS` and the
 readout's `layers`. `subspace_coords_per_layer` (the inspector's live trail)
 is never kept. That is why the geometry per-layer keys and

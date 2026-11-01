@@ -256,6 +256,40 @@ def test_lens_token_id_keys_filter():
     assert parse_filter("last:slens/#3 < 0.5").clauses[0].probe == "slens/#3"
 
 
+def test_a_small_lens_probability_survives_the_row_for_the_filter():
+    """Regression: the row rounded every float to 4 decimal places, so a
+    ``jlens/`` probability below 5e-5 persisted as 0.0 and a filter clause
+    on it could not tell the rows apart."""
+    from drowse.readout.measurements import build_measurements, token_row_measurements
+    from drowse.readout.types import DepthSummary, ScalarReading
+
+    def row(value: float) -> dict[str, Any]:
+        envelope = build_measurements(
+            scope="token",
+            lens_readings={"jlens/storm": ScalarReading(
+                value=value,
+                unit="mean_token_probability",
+                per_layer={20: value * 1.3, 21: value * 0.7},
+                depth=DepthSummary(
+                    center=(0.6,), spread=(0.1,), basis="readout_probability_mass",
+                ),
+            )},
+            lens_sources={"R": "local:default"},
+        )
+        assert envelope is not None
+        return {"text": "t", "measurements": token_row_measurements(envelope, per_layer=False)}
+
+    rows = [row(3.2e-5), row(2.1e-6)]
+    reading = rows[0]["measurements"]["instruments"]["lens"]["readings"]["jlens/storm"]
+    assert reading["value"] == 3.2e-5
+    assert reading["per_layer"] == {"20": 4.16e-5, "21": 2.24e-5}
+    assert rows[0]["measurements"]["scores"]["jlens/storm"] == 3.2e-5
+    node = _SyntheticNode({"jlens/storm": 2.1e-6}, tokens=rows)
+    assert parse_filter("any:jlens/storm > 1e-5").evaluate(node) is True
+    assert parse_filter("last:jlens/storm < 1e-5").evaluate(node) is True
+    assert parse_filter("any:jlens/storm > 5e-5").evaluate(node) is False
+
+
 @pytest.mark.parametrize("probe", [
     "personas[3]",          # another coordinate axis — never persisted
     "emotions:fraction",

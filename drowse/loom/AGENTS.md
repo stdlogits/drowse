@@ -347,7 +347,7 @@ probe  := [ns "/"] NAME ["." NAME] | "sae/" INT
 Deliberately separate from `@when:`, which gates live per-step readings; this
 filters what the loom persisted. `agg:` reads `aggregate_readings`. `any:`
 (max for `>`/`>=`, min for `<`/`<=`) and `last:` read the node's own rows,
-thinking first, from `measurements.scores` (rounded to the row's 4 places),
+thinking first, from `measurements.scores` (at the row's 6 significant digits),
 skipping rows without the probe. A missing probe makes the clause false. No
 OR, negation or grouping; compose with `LoomTree.filter(pred)`. Keys go
 through `readout/types.py::parse_gate_ref`: `name[0]` normalizes to `name`,

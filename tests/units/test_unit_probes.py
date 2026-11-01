@@ -141,8 +141,8 @@ def test_probes_and_gates_read_heads_of_both_gemma4_sizes(tmp_path: Path) -> Non
         replayed = replay["measurements"]["instruments"]["units"]["readings"]
         row = node.tokens[0]["measurements"]["instruments"]["units"]["readings"]
         for name in readings:
-            # The row keeps ROW_DECIMALS places.
-            assert replayed[name]["value"] == pytest.approx(row[name]["value"], abs=6e-5)
+            # The row keeps READING_DIGITS significant digits.
+            assert replayed[name]["value"] == pytest.approx(row[name]["value"], rel=1e-5, abs=1e-6)
         # A gate on a 16-wide head while 8-wide heads are probed.
         register_vectors(session, "v")
 
@@ -189,7 +189,7 @@ def test_unit_probes_ride_the_generation(tiny_session: Any) -> None:
     assert head["value"] >= 0
     assert result.measurements["scores"]["h"] == head["value"]
     # Every loom token row carries the live readings (at the row's
-    # ROW_DECIMALS places, without the one-layer trace), and the aggregate is
+    # READING_DIGITS significant digits, without the one-layer trace), and the aggregate is
     # one of them (the last content token's).
     node = session.tree.nodes[session.tree.active_node_id]
     rows = [row["measurements"]["instruments"]["units"]["readings"] for row in node.tokens]

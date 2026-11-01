@@ -240,6 +240,20 @@ UNIT_RAW_ACTIVATION = "raw_activation"
 #: neutral ``act_top`` (signed), a head's write norm over its ``act_top``.
 UNIT_ACTIVATION_OVER_SCALE = "activation_over_scale"
 
+#: Significant digits a measured float keeps on the wire and in a loom token
+#: row: ``FLT_DIG``, every digit an fp32 reading reliably carries.
+#: Significant digits, not decimal places: a ``jlens/`` probability is often
+#: far below 1e-4 and is read on a log scale (the token view's ``formatP``,
+#: the tree filter's thresholds), so fixed places would zero it.
+READING_DIGITS = 6
+
+
+def round_reading(value: float) -> float:
+    """``value`` at :data:`READING_DIGITS` significant digits: ``%g``, the
+    exact binary value rounded to the nearest decimal (an exact tie to even,
+    as ``round`` does)."""
+    return float(f"{float(value):.{READING_DIGITS}g}")
+
 
 @dataclass
 class ProbeReading:
@@ -395,17 +409,17 @@ class ScalarReading:
         measurements" pattern the 5.x break removed from the gate path.
         """
         out: dict[str, Any] = {
-            "value": round(float(self.value), 6),
+            "value": round_reading(self.value),
             "unit": str(self.unit),
             "per_layer": {
-                str(layer): round(float(v), 6)
+                str(layer): round_reading(v)
                 for layer, v in self.per_layer.items()
             },
         }
         if self.depth is not None:
             out["depth"] = {
-                "center": [round(float(c), 6) for c in self.depth.center],
-                "spread": [round(float(s), 6) for s in self.depth.spread],
+                "center": [round_reading(c) for c in self.depth.center],
+                "spread": [round_reading(s) for s in self.depth.spread],
                 "basis": str(self.depth.basis),
             }
         else:
@@ -695,6 +709,8 @@ class InstrumentBinding:
 
 
 __all__ = [
+    "READING_DIGITS",
+    "round_reading",
     "AGG_TAIL_DEPTH",
     "Assignment",
     "Axis",

@@ -116,7 +116,7 @@ export interface SaeTokenReadoutJSON {
 //
 // The single JSON-safe read-side record on the WS ``token`` frame (whole),
 // the loom token row (``measurements`` key: its ``token_row_measurements``
-// projection, each reading's summary at 4 places and no per-layer traces
+// projection, each reading's summary at 6 significant digits and no per-layer traces
 // unless the call persisted them), and the token-readout replay endpoint
 // (wrapped in ``{measurements}``); see drowse.readout.measurements.
 
@@ -675,7 +675,7 @@ export interface LoomTokenRowJSON {
   /** The row projection of the token's measurement envelope
    *  (``token_row_measurements``): the flat ``scores`` (the highlight tint),
    *  each geometry reading's summary, each scalar reading whole, the lens
-   *  aggregate chips, at 4 places. The per-layer views replay the token while
+   *  aggregate chips, at 6 significant digits. The per-layer views replay the token while
    *  the model is loaded; a row keeps the geometry traces and the lens
    *  readout's ``layers`` only when its call set ``persist_per_layer_scores``. */
   measurements?: MeasurementsEnvelopeJSON;

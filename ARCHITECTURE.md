@@ -561,7 +561,7 @@ chips, the SAE's active features). The flat `scores` are derived joins for
 cross-family consumers such as token tinting, not separate measurements; a
 reading's per-layer trace lives in the reading alone. A loom token row keeps
 `token_row_measurements(envelope)`: each geometry reading's summary and each
-scalar reading once, floats at `ROW_DECIMALS` (4) places, the lens readout's
+scalar reading once, floats at `READING_DIGITS` (6) significant digits, the lens readout's
 aggregate chips without its per-layer matrix, and never the probe inspector's
 subspace coordinates; a call
 with `persist_per_layer_scores` keeps the per-layer traces too. Otherwise the

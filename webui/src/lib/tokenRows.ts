@@ -2,7 +2,7 @@
 //
 // A row keeps its measurement envelope's projection (``drowse.readout.measurements.
 // token_row_measurements``): the flat ``scores``, each geometry reading's summary, each scalar
-// reading whole and the lens aggregate chips, at 4 places. The geometry readings' per-layer traces
+// reading whole and the lens aggregate chips, at 6 significant digits. The geometry readings' per-layer traces
 // and the lens readout's layer rows ride the live token frame; a finished reply's per-layer views
 // replay the token while the model is loaded. A row keeps them only when its call set
 // ``persist_per_layer_scores``, which the dashboard does not.

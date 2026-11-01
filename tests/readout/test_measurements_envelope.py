@@ -591,25 +591,25 @@ class TestTokenRow:
         inst = row["instruments"]
         reading = inst["geometry"]["readings"]["formal.casual"]
         assert set(reading) == set(GEOMETRY_SUMMARY_KEYS) | set(GEOMETRY_TRACE_KEYS)
-        assert reading.get("fraction_per_layer") == {"12": 0.1235, "18": 0.5}
+        assert reading.get("fraction_per_layer") == {"12": 0.123457, "18": 0.5}
         assert reading.get("coords_per_layer") == {"12": [0.5, -0.1], "18": [0.7, -0.3]}
         readout = inst["lens"]["readout"]
         assert [layer["layer"] for layer in readout.get("layers", [])] == [12, 18]
-        assert readout.get("layers", [])[0]["tokens"][0]["logprob"] == round(
-            math.log(0.78), 4,
+        assert readout.get("layers", [])[0]["tokens"][0]["logprob"] == float(
+            f"{math.log(0.78):.6g}",
         )
 
-    def test_floats_round_to_row_decimals(self) -> None:
-        from drowse.readout.measurements import ROW_DECIMALS, token_row_measurements
+    def test_floats_round_to_row_digits(self) -> None:
+        from drowse.readout.measurements import READING_DIGITS, token_row_measurements
 
-        assert ROW_DECIMALS == 4
+        assert READING_DIGITS == 6
         row: Any = token_row_measurements(self._envelope(), per_layer=False)
         inst = row["instruments"]
         reading = inst["geometry"]["readings"]["formal.casual"]
-        assert reading["assignment"] == [["formal", 0.9877]]
+        assert reading["assignment"] == [["formal", 0.987654]]
         assert reading["nearest"] == [["formal", 1.25]]
-        assert inst["lens"]["readout"]["aggregate"][0]["strength"] == 0.4123
-        assert inst["sae"]["readout"]["features"][0]["activation"] == 3.5123
+        assert inst["lens"]["readout"]["aggregate"][0]["strength"] == 0.412346
+        assert inst["sae"]["readout"]["features"][0]["activation"] == 3.51235
         assert inst["units"]["readings"]["neuron/L8n344"].get("meta") == {
             "unit": "neuron/L8n344", "activation": -0.75,
         }
