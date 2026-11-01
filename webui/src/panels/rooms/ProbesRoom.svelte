@@ -8,6 +8,7 @@
   // reply's aggregate and the live trail. A token's row keeps each probe's value; the rest (a
   // manifold's nearest node and whitened place, a probe attached since) replays the token, steered
   // as it was generated.
+  import { Icon } from "@stdlogits/ledger";
   import TokenStrip from "./TokenStrip.svelte";
   import ProbeGeometryPlot from "../manifold/ProbeGeometryPlot.svelte";
   import Bar from "../../lib/charts/Bar.svelte";
@@ -18,6 +19,7 @@
   import { chatLog, effectiveRawMode, genStatus } from "../../lib/stores/chat.svelte";
   import { loomTree } from "../../lib/stores/loom.svelte";
   import { goto } from "../../lib/stores/rooms.svelte";
+  import { openDrawer } from "../../lib/stores/drawers.svelte";
   import { probeRack } from "../../lib/stores/probes.svelte";
   import { instrumentFamily } from "../../lib/stores.svelte";
   import { moveCursor, settled, tokenCursor } from "../../lib/stores/tokenCursor.svelte";
@@ -155,7 +157,11 @@
   {#if attached.length === 0 || linear.length + manifolds.length + features.length === 0}
     <div class="dw-empty">
       <span class="head">No probes</span>
-      <button type="button" class="dw-quiet" onclick={() => goto("workbench")}>Workbench</button>
+      <div class="dw-row">
+        <button type="button" class="dw-quiet" onclick={() => openDrawer("subspace")}>A concept</button>
+        <button type="button" class="dw-quiet" onclick={() => openDrawer("manifolds")}>A manifold</button>
+        <button type="button" class="dw-quiet" onclick={() => goto("artifacts", "build")}>Build one<Icon name="right" /></button>
+      </div>
     </div>
   {:else}
     {#if replay.error && !whole && replay.key === want?.key}<p class="meta">{replay.error}</p>{/if}

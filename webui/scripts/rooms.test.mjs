@@ -91,7 +91,8 @@ try {
     }
   };
   walk(src);
-  const setup = { "Choose a lens": "lenses", "Choose an SAE": "saes", "Fit a lens here": "lenses", "Fetch labels": "units", "Build a probe": "build" };
+  const setup = { "Choose a lens": "lenses", "Choose an SAE": "saes", "Fit a lens here": "lenses", "Fetch labels": "units", "Build a probe": "build",
+    "Build one": "build", "Lenses": "lenses", "Unit catalog": "units" };
   let links = 0;
   for (const file of files) {
     const text = readFileSync(file, "utf8");
@@ -102,7 +103,16 @@ try {
       assert.equal(match[1], `"artifacts", "${want}"`, `${file.pathname.split("/src/")[1]}: ${match[2].trim()}`);
     }
   }
-  assert.ok(links >= 5, `found ${links} setup links`);
+  assert.ok(links >= 9, `found ${links} setup links`);
+  // W6 integration: a readout room missing its instrument leads to the Artifacts section that
+  // prepares it. The Probes room with nothing attached offered only "Workbench"; it attaches a
+  // concept or a manifold in place, or builds one.
+  const probesRoom = read("panels/rooms/ProbesRoom.svelte");
+  const empty = probesRoom.slice(probesRoom.indexOf(">No probes<"), probesRoom.indexOf("{:else}", probesRoom.indexOf(">No probes<")));
+  assert.match(empty, /openDrawer\("subspace"\)\}>A concept</);
+  assert.match(empty, /openDrawer\("manifolds"\)\}>A manifold</);
+  assert.match(empty, /goto\("artifacts", "build"\)\}>Build one</);
+  assert.match(read("panels/rooms/LensRoom.svelte"), /goto\("artifacts", "lenses"\)\}>Lenses</);
   const model = read("panels/rooms/ModelFacts.svelte");
   assert.ok(model.includes(`goto("artifacts", "lenses")}>{canFit ? "Fit a lens here"`));
   assert.ok(model.includes(`goto("artifacts", "saes")}>{sae ? "SAEs" : "Choose an SAE"}`));

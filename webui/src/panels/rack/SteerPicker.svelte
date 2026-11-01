@@ -7,7 +7,7 @@
   // label among the features seen). A pick adds the term through lib/steerActions.ts, which selects
   // its chip, so its editor opens for the strength. A kind this runtime cannot read is left out.
   import { onMount, tick } from "svelte";
-  import { Segmented, Tabs, tokenParts } from "@stdlogits/ledger";
+  import { Icon, Segmented, Tabs, tokenParts } from "@stdlogits/ledger";
   import { apiInstruments, describeError } from "../../lib/runtime/services";
   import { userFacingError } from "../../lib/runtime/userFacingError";
   import { genStatus } from "../../lib/stores/chat.svelte";
@@ -56,15 +56,14 @@
   ];
 
   const lensReady = $derived(lensNamespaceReady("jlens") || lensNamespaceReady("slens"));
-  const kinds = $derived(KINDS.filter((k) => {
-    if (k.value === "unit") return unitsAvailable();
-    if (k.value === "lens") return lensReady;
-    if (k.value === "feature") return saeLoaded();
-    return true;
-  }));
+  // Every kind is listed (a runtime that reads no units leaves those out): a lens token or a feature
+  // with no lens or SAE yet is one link to the Artifacts section that prepares it.
+  const kinds = $derived(KINDS.filter((k) => k.value !== "unit" || unitsAvailable()));
   let chosen = $state<Kind>(lastKind);
   const kind = $derived<Kind>(kinds.some((k) => k.value === chosen) ? chosen : kinds[0]?.value ?? "concept");
   const placeholder = $derived(KINDS.find((k) => k.value === kind)?.placeholder ?? "");
+  const missing = $derived(kind === "lens" && !lensReady ? { head: "No lens", label: "Lenses", section: "lenses" }
+    : kind === "feature" && !saeLoaded() ? { head: "No SAE", label: "SAEs", section: "saes" } : null);
 
   let field: HTMLInputElement | null = $state(null);
   let query = $state("");
@@ -278,88 +277,95 @@
 <section class="picker" aria-label="Add a steering term">
   <Tabs label="Steer with" value={kind} options={kinds.map((k) => ({ value: k.value, label: k.label }))} onchange={choose} scroll />
 
-  <form class="find" onsubmit={submit}>
-    <label class="sr-only" for="steer-find">{KINDS.find((k) => k.value === kind)?.label}</label>
-    <input id="steer-find" type="search" autocomplete="off" spellcheck="false" bind:this={field} value={query} {placeholder}
-      inputmode={kind === "feature" && /^\d*$/u.test(query) ? "numeric" : undefined}
-      oninput={(e) => typed((e.currentTarget as HTMLInputElement).value)} />
-    {#if kind === "lens" && lensBoth}
-      <Segmented label="Toward the word" value={lensAs} options={[...LENS_NAMESPACES]}
-        onchange={(value: LensNamespace) => (lensPairState.namespace = value)} />
-    {/if}
-    {#if kind === "lens" || kind === "feature"}
-      <button type="submit" class="dw-quiet" disabled={busy || !query.trim()} data-tip={kind === "lens" ? pair.hint : undefined}>Push</button>
-    {/if}
-  </form>
-
-  {#if kind === "unit"}
-    {#if unitHead}<span class="head">{unitHead}</span>{/if}
-    {#if unitPicks.length > 0}
-      <div class="picks" role="list">
-        {#each unitPicks as u (u.id)}
-          <div class="pick" role="listitem">
-            <span class="pid">{unitTitle(u.id)}</span>
-            <span class="plabel">{u.label ?? (u.kind === "head" ? "attention head" : "MLP neuron")}</span>
-            {#if u.value !== null}<span class="pval">{u.value}</span>{/if}
-            <span class="acts">
-              {#if u.kind === "neuron"}
-                <button type="button" class="dw-text" onclick={() => picked(pushUnit(u.id, u.pole))}>Push{u.pole === "-" ? " −" : ""}</button>
-              {/if}
-              <button type="button" class="dw-text" onclick={() => picked(silenceUnit(u.id))}>Silence</button>
-            </span>
-          </div>
-        {/each}
-      </div>
-    {/if}
-    {#if unitStatus}
-      <div class="dw-row"><span class="meta" role="status">{unitStatus.text}</span>{#if unitStatus.retry}<button type="button" class="dw-text" onclick={retryUnits}>Try again</button>{/if}</div>
-    {/if}
-    <div class="foot"><button type="button" class="dw-text" onclick={() => { onpicked(); goto("units"); }}>Units room</button></div>
-  {:else if kind === "lens"}
-    {#if lensNow.length > 0}
-      <span class="head">The lens reads</span>
-      <div class="chips">
-        {#each lensNow as chip (chip[4])}
-          {@const parts = tokenParts(chip[0])}
-          <button type="button" class="node" disabled={busy} data-tip={pair.hint}
-            onclick={() => picked(pushLensToken({ id: chip[4], text: chip[0] }, lensAs))}><span class="ws">{parts.lead ? "·" : ""}</span>{parts.empty ? "∅" : parts.text}</button>
-        {/each}
-      </div>
-    {/if}
-  {:else if kind === "concept" || kind === "position"}
-    {#if fitGroups.length > 0}
-      <div class="groups">
-        {#each fitGroups as group (group.key)}
-          <div class="group">
-            <span class="head" data-tip={group.key}>{group.title}</span>
-            <div class="chips">
-              {#each group.nodes as label (label)}
-                <button type="button" class="node" onclick={() => pickNode(group, label)}>{label}</button>
-              {/each}
-              {#if group.more > 0}
-                <button type="button" class="dw-text more" onclick={() => (opened = group.key)}>{group.more} more</button>
-              {/if}
-            </div>
-          </div>
-        {/each}
-      </div>
-    {/if}
-    {#if fitStatus}<span class="meta" role="status">{fitStatus}</span>{/if}
-    <div class="foot">
-      <button type="button" class="dw-text" onclick={() => { onpicked(); openDrawer(kind === "concept" ? "subspace" : "manifolds"); }}>{kind === "concept" ? "All concepts" : "All manifolds"}</button>
-      <button type="button" class="dw-text" onclick={() => { onpicked(); goto("artifacts", "build"); }}>Build one</button>
+  {#if missing}
+    <div class="dw-row missing">
+      <span class="head">{missing.head}</span>
+      <button type="button" class="dw-quiet" onclick={() => { onpicked(); goto("artifacts", missing.section); }}>{missing.label}<Icon name="right" /></button>
     </div>
-  {:else if kind === "feature"}
-    {#if featurePicks.length > 0}
-      <div class="picks" role="list">
-        {#each featurePicks as f (f.id)}
-          <div class="pick" role="listitem">
-            <span class="pid">{f.id}</span>
-            <span class="plabel">{f.label ?? "SAE feature"}</span>
-            <span class="acts"><button type="button" class="dw-text" disabled={busy} onclick={() => void addFeature(f.id)}>Push</button></span>
-          </div>
-        {/each}
+  {:else}
+    <form class="find" onsubmit={submit}>
+      <label class="sr-only" for="steer-find">{KINDS.find((k) => k.value === kind)?.label}</label>
+      <input id="steer-find" type="search" autocomplete="off" spellcheck="false" bind:this={field} value={query} {placeholder}
+        inputmode={kind === "feature" && /^\d*$/u.test(query) ? "numeric" : undefined}
+        oninput={(e) => typed((e.currentTarget as HTMLInputElement).value)} />
+      {#if kind === "lens" && lensBoth}
+        <Segmented label="Toward the word" value={lensAs} options={[...LENS_NAMESPACES]}
+          onchange={(value: LensNamespace) => (lensPairState.namespace = value)} />
+      {/if}
+      {#if kind === "lens" || kind === "feature"}
+        <button type="submit" class="dw-quiet" disabled={busy || !query.trim()} data-tip={kind === "lens" ? pair.hint : undefined}>Push</button>
+      {/if}
+    </form>
+
+    {#if kind === "unit"}
+      {#if unitHead}<span class="head">{unitHead}</span>{/if}
+      {#if unitPicks.length > 0}
+        <div class="picks" role="list">
+          {#each unitPicks as u (u.id)}
+            <div class="pick" role="listitem">
+              <span class="pid">{unitTitle(u.id)}</span>
+              <span class="plabel">{u.label ?? (u.kind === "head" ? "attention head" : "MLP neuron")}</span>
+              {#if u.value !== null}<span class="pval">{u.value}</span>{/if}
+              <span class="acts">
+                {#if u.kind === "neuron"}
+                  <button type="button" class="dw-text" onclick={() => picked(pushUnit(u.id, u.pole))}>Push{u.pole === "-" ? " −" : ""}</button>
+                {/if}
+                <button type="button" class="dw-text" onclick={() => picked(silenceUnit(u.id))}>Silence</button>
+              </span>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if unitStatus}
+        <div class="dw-row"><span class="meta" role="status">{unitStatus.text}</span>{#if unitStatus.retry}<button type="button" class="dw-text" onclick={retryUnits}>Try again</button>{/if}</div>
+      {/if}
+      <div class="foot"><button type="button" class="dw-text" onclick={() => { onpicked(); goto("units"); }}>Units room</button></div>
+    {:else if kind === "lens"}
+      {#if lensNow.length > 0}
+        <span class="head">The lens reads</span>
+        <div class="chips">
+          {#each lensNow as chip (chip[4])}
+            {@const parts = tokenParts(chip[0])}
+            <button type="button" class="node" disabled={busy} data-tip={pair.hint}
+              onclick={() => picked(pushLensToken({ id: chip[4], text: chip[0] }, lensAs))}><span class="ws">{parts.lead ? "·" : ""}</span>{parts.empty ? "∅" : parts.text}</button>
+          {/each}
+        </div>
+      {/if}
+    {:else if kind === "concept" || kind === "position"}
+      {#if fitGroups.length > 0}
+        <div class="groups">
+          {#each fitGroups as group (group.key)}
+            <div class="group">
+              <span class="head" data-tip={group.key}>{group.title}</span>
+              <div class="chips">
+                {#each group.nodes as label (label)}
+                  <button type="button" class="node" onclick={() => pickNode(group, label)}>{label}</button>
+                {/each}
+                {#if group.more > 0}
+                  <button type="button" class="dw-text more" onclick={() => (opened = group.key)}>{group.more} more</button>
+                {/if}
+              </div>
+            </div>
+          {/each}
+        </div>
+      {/if}
+      {#if fitStatus}<span class="meta" role="status">{fitStatus}</span>{/if}
+      <div class="foot">
+        <button type="button" class="dw-text" onclick={() => { onpicked(); openDrawer(kind === "concept" ? "subspace" : "manifolds"); }}>{kind === "concept" ? "All concepts" : "All manifolds"}</button>
+        <button type="button" class="dw-text" onclick={() => { onpicked(); goto("artifacts", "build"); }}>Build one</button>
       </div>
+    {:else if kind === "feature"}
+      {#if featurePicks.length > 0}
+        <div class="picks" role="list">
+          {#each featurePicks as f (f.id)}
+            <div class="pick" role="listitem">
+              <span class="pid">{f.id}</span>
+              <span class="plabel">{f.label ?? "SAE feature"}</span>
+              <span class="acts"><button type="button" class="dw-text" disabled={busy} onclick={() => void addFeature(f.id)}>Push</button></span>
+            </div>
+          {/each}
+        </div>
+      {/if}
     {/if}
   {/if}
 </section>

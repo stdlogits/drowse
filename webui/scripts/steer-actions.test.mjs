@@ -91,6 +91,20 @@ try {
   const kinds = [...tabs.matchAll(/<button[^>]*>([^<]+)</g)].map((m) => m[1]);
   assert.deepEqual(kinds, ["Neuron or head", "Lens token", "Concept", "Manifold position", "SAE feature"]);
   assert.doesNotMatch(picker, /<p class="meta"/, "no caption explains it");
+  // W6 integration: a kind whose instrument is missing stays listed and leads to the Artifacts
+  // section that prepares it (no lens, no SAE), where the picker had left it out.
+  sessionState.info = { model_id: "m" };
+  const bare = render(SteerPicker, { props: { onpicked: () => {} } }).body;
+  const bareKinds = [...bare.slice(0, bare.indexOf("<form")).matchAll(/<button[^>]*>([^<]+)</g)].map((m) => m[1]);
+  assert.deepEqual(bareKinds, ["Neuron or head", "Lens token", "Concept", "Manifold position", "SAE feature"], "no lens, no SAE: still listed");
+  const pickerSource = readFileSync(new URL("../src/panels/rack/SteerPicker.svelte", import.meta.url), "utf8");
+  assert.match(pickerSource, /section: "lenses"/);
+  assert.match(pickerSource, /section: "saes"/);
+  assert.match(pickerSource, /goto\("artifacts", missing\.section\)/);
+  sessionState.info = {
+    model_id: "m", jlens_fitted: true, architecture: { model_type: "llama", layers: 32, hidden_size: 960, neurons_per_layer: 2560, heads_per_layer: 15, parameters: 1 },
+    instruments: [{ family: "sae", source: "s", live: { layer: 12 } }],
+  };
 
   // ---- the instruments: Units, Lens, Probes, Features; the panels add no term of their own
   const { default: Instruments } = await server.ssrLoadModule("/src/panels/inspector/Instruments.svelte");

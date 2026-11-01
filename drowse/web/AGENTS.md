@@ -315,8 +315,9 @@ The shell's own state is three small slices. `rooms.svelte.ts` is the route (`#/
 `#/artifacts/packs`): the room, its section and in-memory params for the tool it hosts. The rooms,
 in order: Workbench, Units, Lens, Probes, Artifacts, Model. Units, Lens and Probes are readouts of
 the conversation; Artifacts is where what they read with is fitted, fetched, built and installed,
-and every link to setup anywhere (a missing lens or SAE, Model's "Fit a lens here", the
-Inspector's Sources) goes to its section, `goto("artifacts", "lenses")`. A section (`ROOM_SECTIONS`)
+and every link to setup anywhere (a missing lens or SAE, "+ Steer"'s lens and feature kinds without
+one, the Probes room with nothing attached, Model's "Fit a lens here", the Inspector's Sources)
+goes to its section, `goto("artifacts", "lenses")`. A section (`ROOM_SECTIONS`)
 is either a hosted drawer or, with `drawer: null`, a panel its room draws: the room passes
 `RoomSections` a `panels` map from section value to component, and a panel section the room leaves
 out of the map is not shown. `sectionShown` is which sections this runtime has (the HTTP runtime's
@@ -513,15 +514,16 @@ drowse.ai too.
 - **Steering in one place.** Every term is made through `lib/steerActions.ts` and lands as a chip
   in the composer's strip, selected, so its editor opens for the strength; nothing else edits a
   strength or takes a term out (the chip's Remove does). "+ Steer" (`panels/rack/SteerPicker.svelte`)
-  offers the kinds in the one priority order, each with its picker, a kind this runtime cannot read
-  left out: a neuron or head (`L20 n512` by ID, checked against session info's `architecture`; a
+  offers the kinds in the one priority order, each with its picker (a runtime that reads no units
+  leaves that kind out; a lens token with no lens, or a feature with no SAE, is one link to
+  `#/artifacts/lenses` or `#/artifacts/saes`): a neuron or head (`L20 n512` by ID, checked against session info's `architecture`; a
   word, its writers through `unitsForWord`; else, once the picker rests on an empty search, the
   latest reply's most active units, a replay), a lens token (a word through `validateLensToken`, or
   one the live lens reads), a concept (a flat fit's node), a manifold position (a curved fit's node)
   and an SAE feature (its number, or a label among the features seen). Enter takes the first pick.
   The instruments keep one-click shortcuts only (`SteerButton`): Push on the Lens panel's and the
   SAE panel's rows, Push (a neuron, on the side that fired) and Silence on the token anatomy's units
-  and Silence on its heads, Push +, Push − and Silence in the unit view, the token view's "Steer
+  and Silence on its heads, Push +, Push − and Silence in the unit view and the Units room's summary, the token view's "Steer
   toward it". A neuron is pushed or silenced, a head only silenced; pushing a held push keeps it
   (a strength and its pole), silencing a silenced unit keeps its blend. A unit's term queues behind a
   running reply like every rack edit: its selection holds while a rack edit is queued
