@@ -1,15 +1,17 @@
 <script lang="ts">
   // The Model room's own section (the Phone canvas's Model view), under the room's facts line (its
-  // layers, neurons and heads a layer): the depth ramp, the lenses prepared for the model and a way
-  // to fit one. The shape is the server's (session info's ``architecture``, read from the config at
-  // load); a runtime that does not describe its model leaves the ramp out. The lenses are the Lens
-  // room's sources.
+  // layers, neurons and heads a layer): the depth ramp, then what is prepared for the model in the
+  // dashboard's order of priority (the unit catalog, the lenses, the SAE), each with the way to its
+  // Artifacts section. The shape is the server's (session info's ``architecture``, read from the
+  // config at load); a runtime that does not describe its model leaves the ramp out.
   import { onMount } from "svelte";
   import { depthTint } from "../../lib/charts/depth";
   import { documentsText, lensKindName, originText, rangeText, siteSeries, unloaded } from "../../lib/lensRoom";
-  import { goto } from "../../lib/stores/rooms.svelte";
+  import { goto, sectionShown, ROOM_SECTIONS } from "../../lib/stores/rooms.svelte";
   import { instrumentFamily, lensSourceState, refreshLensSources } from "../../lib/stores.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
+  import { loadCatalog, unitsState } from "../../lib/stores/units.svelte";
+  import { runtimeClient } from "../../lib/runtime/client";
 
   const info = $derived(sessionState.info);
   const shape = $derived(info?.architecture ?? null);
@@ -18,6 +20,13 @@
   const compact = new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 });
   const lenses = $derived(lensSourceState.sources.filter(row => row.family === "R" || row.family === "S"));
   const canFit = $derived(instrumentFamily("lens")?.capabilities.preparations.includes("fit") === true);
+  const unitsShown = (ROOM_SECTIONS.artifacts ?? []).some(row => row.value === "units" && sectionShown(row));
+  const catalogReadable = typeof runtimeClient.instruments.unitCatalog === "function";
+  const catalog = $derived(unitsState.catalog);
+  const catalogText = $derived(catalog?.bound ? `labelled from ${catalog.slug ?? catalog.repo}`
+    : catalog?.available ? "labels to fetch" : unitsState.catalogRead ? "no labels" : "");
+  const saeFamily = $derived(instrumentFamily("sae"));
+  const sae = $derived(saeFamily?.source ?? null);
 
   function lensMeta(row: (typeof lenses)[number]): string {
     const provider = lensSourceState.providers.find(p => p.source === row.source) ?? null;
@@ -32,6 +41,7 @@
 
   onMount(() => {
     if (lensSourceState.sources.length === 0) void refreshLensSources();
+    if (unitsShown && catalogReadable && !unitsState.catalogRead) void loadCatalog();
   });
 </script>
 
@@ -43,6 +53,16 @@
         {#each { length: n } as _, layer (layer)}<i style:background={depthTint(n > 1 ? layer / (n - 1) : 0)}></i>{/each}
       </div>
       <div class="ends meta"><span>L0</span><span>L{n - 1}</span></div>
+    </div>
+  </section>
+{/if}
+
+{#if unitsShown}
+  <section class="dw-sec facts" aria-labelledby="model-units-head">
+    <div class="dw-sec-head"><span class="head" id="model-units-head">Units</span>{#if catalogText}<span class="meta">{catalogText}</span>{/if}</div>
+    <div class="dw-row">
+      <button type="button" class="dw-quiet" onclick={() => goto("artifacts", "units")}>{catalog?.available && !catalog.bound ? "Fetch labels" : "Unit catalog"}</button>
+      <button type="button" class="dw-text" onclick={() => goto("units")}>Read units</button>
     </div>
   </section>
 {/if}
@@ -59,15 +79,20 @@
       {/each}
     </div>
   {:else}
-    <p class="meta">{lensSourceState.loading ? "Looking for lenses" : "No lens is prepared for this model yet."}</p>
+    <p class="meta">{lensSourceState.loading ? "Looking for lenses" : "None prepared"}</p>
   {/if}
-  {#if canFit}
-    <div class="dw-row">
-      <button type="button" class="dw-quiet" onclick={() => goto("lens")}>Fit a lens here</button>
-      {#if lensSourceState.fitDocuments}<span class="meta">{documentsText(lensSourceState.fitDocuments)}</span>{/if}
-    </div>
-  {/if}
+  <div class="dw-row">
+    <button type="button" class="dw-quiet" onclick={() => goto("artifacts", "lenses")}>{canFit ? "Fit a lens here" : "Lenses"}</button>
+    {#if canFit && lensSourceState.fitDocuments}<span class="meta">{documentsText(lensSourceState.fitDocuments)}</span>{/if}
+  </div>
 </section>
+
+{#if saeFamily}
+  <section class="dw-sec facts" aria-labelledby="model-sae-head">
+    <div class="dw-sec-head"><span class="head" id="model-sae-head">SAE</span><span class="meta">{sae ?? "none"}</span></div>
+    <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "saes")}>{sae ? "SAEs" : "Choose an SAE"}</button></div>
+  </section>
+{/if}
 
 <style>
   .facts { max-width: 720px; }

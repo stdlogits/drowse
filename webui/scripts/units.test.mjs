@@ -335,7 +335,8 @@ try {
   rooms.goto("artifacts", "units");
   const artifactsHtml = render(ArtifactsRoom, {}).body;
   for (const label of ["Units", "Lenses", "Build", "Packs", "SAEs"]) assert.match(artifactsHtml, new RegExp(`>${label}<`));
-  assert.match(artifactsHtml, /No unit catalog here yet/);
+  assert.match(artifactsHtml, /Unit catalog/);
+  assert.match(artifactsHtml, />Read units</);
   rooms.goto("workbench");
   chatLog.turns = [
     { role: "user", text: "Write one sentence." },

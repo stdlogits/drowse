@@ -305,7 +305,7 @@
       {/if}
     </form>
   {:else}
-    <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose a lens</button></div>
+    <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "lenses")}>Choose a lens</button></div>
   {/if}
 </div>
 

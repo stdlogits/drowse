@@ -254,9 +254,9 @@ panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), 
                       ConversationFormat (Chat | Raw)
 panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace)
 panels/rooms/         RoomSections (a room's tabs: Artifacts, Model), ModelFacts (the Model room's
-                      depth ramp and lenses), LensRoom (lens/: the depth axis, a family column, a
-                      card), UnitsRoom (+ UnitAtlas), ProbesRoom, ArtifactsRoom (artifacts/: its
-                      panel sections, UnitCatalog, LensSources, SaeSources)
+                      depth ramp and what is prepared), LensRoom (lens/: the depth axis, a family
+                      column, a card), UnitsRoom (+ UnitAtlas), ProbesRoom, ArtifactsRoom
+                      (artifacts/: its panel sections, UnitCatalog, LensSources, SaeSources)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/ (the probe
                       cards; TermEditor and LayerStrip, the term editor under the chips)
@@ -300,10 +300,18 @@ slices that stream, loom, chat and instruments share. Narrower slices (`selectio
 
 The shell's own state is three small slices. `rooms.svelte.ts` is the route (`#/lens`,
 `#/artifacts/packs`): the room, its section and in-memory params for the tool it hosts. The rooms,
-in order: Workbench, Units, Lens, Probes, Artifacts, Model. A section (`ROOM_SECTIONS`) is either a
-hosted drawer or, with `drawer: null`, a panel its room draws: the room passes `RoomSections` a
-`panels` map from section value to component, and a panel section the room leaves out of the map
-is not shown. Section values are unique across rooms, so an agent's `section` alone names its room.
+in order: Workbench, Units, Lens, Probes, Artifacts, Model. Units, Lens and Probes are readouts of
+the conversation; Artifacts is where what they read with is fitted, fetched, built and installed,
+and every link to setup anywhere (a missing lens or SAE, Model's "Fit a lens here", the
+Inspector's Sources) goes to its section, `goto("artifacts", "lenses")`. A section (`ROOM_SECTIONS`)
+is either a hosted drawer or, with `drawer: null`, a panel its room draws: the room passes
+`RoomSections` a `panels` map from section value to component, and a panel section the room leaves
+out of the map is not shown. `sectionShown` is which sections this runtime has (the HTTP runtime's
+health and API access, the browser's local runtime, the unit catalog only where units read).
+Section values are unique across rooms, so an agent's `section` alone names its room; each also
+says what it `does` ("Fit or fetch a lens"), which is how the command palette lists it. The header's
+tabs are the way between rooms; on a phone they are the menu's Rooms, and the shell draws a crumb
+(Workbench › the room) over every room, which therefore draws none of its own.
 `selection.svelte.ts` is what the Inspector shows (none, token, probe, term, unit).
 `workbench.svelte.ts` is what the Page region shows (the conversation or the loom) and the
 phone's sheet.
@@ -322,24 +330,28 @@ kept per model, not a sampling field) sits by the thread's header, rendered once
 thread column, in the row the thread folds into at the other two layouts. A base model has no
 template, so it shows none.
 
-The Lens room (`#/lens`) is where lens and SAE sources are chosen, fetched and fitted. Its
-depth axis draws the server's crossover band (shown only when the runtime sends one); its 2x2
-(`panels/JLensSourceSection.svelte`, the `@runtime-jlens-source` alias, so drowse.ai shows its
-hosted section there instead) holds the S and R families, each with its selected source at the
+The Artifacts room (`#/artifacts`) runs in the dashboard's order of priority: `units` (the
+neuron-lens unit catalog: the model's neurons and heads, the catalog's commit and files once
+fetched, "Fetch labels" while it is not, then the Units room), `lenses`, the probe tools (`build`,
+`packs`, `combine`, `templates`, `roles`, the hosted drawers) and `saes` (`@runtime-sae-source`
+under the SAE in use). Each panel section opens on what is prepared and leads on to its readout.
+The `lenses` section's 2x2 (`panels/JLensSourceSection.svelte`, the `@runtime-jlens-source`
+alias, so drowse.ai shows its hosted section there instead) holds the S and R families, each with its selected source at the
 out and mid sites (layers held and split-half difference per layer), its sources (providers
 still to fetch among them) and a local fit whose documents start at the server's
 `fit_documents`. A selected source the server marks not `compatible` says it is not loaded (a
 provider's offers Fetch again), and a failed fit offers Replace only when the status is
 `replaceable`. The room's fit always covers every layer, since each family reads its own span of
-the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is one line per family and the SAE, with a link to the
-room; its Features shows a "Choose an SAE" button that leads there until an SAE is loaded.
+the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is
+one line per family and the SAE, with a link to `#/artifacts/lenses`; its Features shows a "Choose
+an SAE" button that leads to `#/artifacts/saes` until an SAE is loaded.
 
 The Model room (`#/model`) opens on the model's facts: its layers, neurons and heads a layer
 (session info's optional `architecture`, read from the config at load; a runtime that sends none
-leaves them and the depth ramp out), the device and versions, the depth ramp, the prepared lenses
-(the Lens room's sources: origin, documents, split-half range) and "Fit a lens here", which goes to
-the Lens room with the server's `fit_documents`. Its tabs (health or the local runtime, API
-access) follow.
+leaves them and the depth ramp out), the device and versions, the depth ramp, then what is
+prepared for it in the order of priority, each with the way to its Artifacts section: the unit
+catalog, the lenses (origin, documents, split-half range; "Fit a lens here" with the server's
+`fit_documents`) and the SAE. Its tabs (health or the local runtime, API access) follow.
 
 Slices import each other directly, never through the barrel. The import graph has cycles
 (loom ↔ ws, chat ↔ pending). These are safe only because every cross-slice reference sits
@@ -360,7 +372,10 @@ The registry is `drawers/index.ts::DRAWERS: Record<DrawerName, DrawerEntry>`. Ea
 has a lazy `load()` (rendered by `DrawerOutlet` and cached after the first open), optional
 fixed `params` (how one `RackDrawer` serves both `subspace` and `manifolds`), `narrow`,
 and either a `launcher` or `launcher: null` with a `via` string naming the surface that
-opens it. `RAIL_CATEGORIES` (the command palette's tools) is derived from the launchers.
+opens it. `RAIL_CATEGORIES` (the command palette's tools) is derived from the launchers. The
+palette (`lib/commands.ts`) lists the rooms, the instruments (the lens, the probes, the SAE's
+features), every room's sections by what they do, then the remaining tools; a tool a room hosts is
+listed once, as its section. `searchCommands` is its one filter and ranking.
 
 `openDrawer(name, params)` (`lib/stores/drawers.svelte.ts`) is the one entry point, and where
 a tool opens depends on what it is. `token_drilldown` and `probe_inspector` are selections,
