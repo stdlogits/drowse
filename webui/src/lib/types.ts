@@ -844,9 +844,14 @@ export interface TokenScore {
    *  transcript-imported nodes (engine pre-dates raw-id capture),
    *  in which case the token can't be forked. */
   rawIndex?: number | null;
+  /** An authored (prompt) token's index into its node's captured rows, thinking rows then
+   *  visible rows: its replay address (the ``raw_index`` an authored node's token readouts and
+   *  anatomy take, through the node's ``prompt_capture``). A prompt token has no ``rawIndex``,
+   *  so it is never forked. ``replayIndex`` reads either. */
+  promptIndex?: number | null;
   /** The measurements from the original decode step: the live frame's whole envelope while the
-   *  reply is in this page, else its loom row's (a generated row keeps its scores and each
-   *  geometry share and coordinates; ``wholeEnvelope`` says which). */
+   *  reply is in this page, else its loom row's (a generated or captured prompt row keeps its
+   *  scores and each geometry share and coordinates; ``wholeEnvelope`` says which). */
   measurements?: TokenRowEnvelopeJSON;
 }
 

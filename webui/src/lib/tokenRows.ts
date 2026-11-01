@@ -5,10 +5,11 @@
 // reading's ``fraction`` and ``coords``, at 6 significant digits, and no other channel. The rest of
 // the token (a geometry reading's nearest nodes, assignment, residual, membership and depth; the
 // lens and SAE readings, chips and features; the per-layer traces) replays while the model is
-// loaded: the token view and the hover ask the family's token readout or the anatomy. A row nothing
-// replays (an authored prompt row) and a row of a call that set ``persist_per_layer_scores``
-// (which the dashboard does not) keep every reading whole with its traces
-// (``summary_measurements``). The reply's settled reading rides the node
+// loaded: the token view and the hover ask the family's token readout or the anatomy. An authored
+// (prompt) row is the same projection: its node's ``prompt_capture`` anchors the replay, addressed
+// by the row's place among the node's captured rows (``promptIndex``). A row of a call that set
+// ``persist_per_layer_scores`` (which the dashboard does not) keeps every reading whole with its
+// traces (``summary_measurements``). The reply's settled reading rides the node
 // (``aggregate_measurements``), which the rack and the probe inspector draw after a reload.
 import type {
   AnyReadingJSON,
@@ -16,6 +17,7 @@ import type {
   ProbeReadingJSON,
   RowProbeReadingJSON,
   TokenRowEnvelopeJSON,
+  TokenScore,
 } from "./types";
 
 /** The keys a token row may carry (the loom reader refuses any other). */
@@ -128,6 +130,85 @@ export function aggregateMeasurementsProblem(value: unknown): string | null {
   }
   const lens = isObject(value.instruments.lens) ? value.instruments.lens : null;
   return lensReadoutProblem(lens ? lens.readout : undefined);
+}
+
+/** The keys of an authored node's ``prompt_capture`` (``loom/tree.py::PromptCapture``). */
+const PROMPT_CAPTURE_KEYS = ["steering", "system_prompt", "thinking", "raw", "start", "thinking_start", "digest"] as const;
+
+const isPosition = (value: unknown): boolean =>
+  typeof value === "number" && Number.isInteger(value) && value >= 0;
+
+/** The token-side fields of a loom node the capture rule reads. */
+export interface CapturedNodeFields {
+  recipe: unknown;
+  tokens?: unknown;
+  thinking_tokens?: unknown;
+  prompt_capture?: unknown;
+}
+
+/** Why ``node``'s rows and ``prompt_capture`` disagree (a fragment that reads after "prompt
+ *  capture: "), or null. The loom reader's rule (``loom/tree.py::PromptCapture.from_dict`` and
+ *  ``_check_prompt_capture``; both sides run ``tests/fixtures/token_rows.json``'s ``authored``
+ *  cases): a generated node has none; an authored node has rows exactly where its capture places a
+ *  channel (an empty list is no rows), each with its ``token_id`` and no ``raw_index``, thinking
+ *  before visible; the capture has exactly its seven fields, a SHA-256 hex ``digest`` and at
+ *  least one start. Authored rows saved before the anchor (kept whole, with none) are refused. */
+export function promptCaptureProblem(node: CapturedNodeFields): string | null {
+  const capture = node.prompt_capture ?? null;
+  if (capture !== null) {
+    if (!isObject(capture)) return "it is not an object";
+    if (!hasExactly(capture, PROMPT_CAPTURE_KEYS)) return "it does not carry exactly its fields";
+    for (const key of ["steering", "system_prompt"] as const) {
+      if (capture[key] !== null && typeof capture[key] !== "string") return `its ${key} is not a string`;
+    }
+    for (const key of ["thinking", "raw"] as const) {
+      if (typeof capture[key] !== "boolean") return `its ${key} flag is not a boolean`;
+    }
+    for (const key of ["start", "thinking_start"] as const) {
+      if (capture[key] !== null && !isPosition(capture[key])) return `its ${key} is not a position`;
+    }
+    if (capture.start === null && capture.thinking_start === null) return "it places no channel";
+    if (typeof capture.digest !== "string" || !/^[0-9a-f]{64}$/.test(capture.digest)) return "its digest is not SHA-256 hex";
+  }
+  // Provenance is recipe presence: only a null recipe is authored (a node without the field is
+  // refused by the loom reader for that).
+  if (node.recipe !== null) return capture === null ? null : "a generated node has none";
+  const placed = isObject(capture) ? capture : {};
+  for (const [field, start] of [["tokens", placed.start], ["thinking_tokens", placed.thinking_start]] as const) {
+    const rows = node[field];
+    const present = Array.isArray(rows) && rows.length > 0;
+    if (present !== (start !== undefined && start !== null)) {
+      return `an authored node's ${field} are not where it places a channel (rows saved before their replay anchor are not read)`;
+    }
+    for (const row of present ? (rows as unknown[]) : []) {
+      if (!isObject(row)) continue;
+      if ("raw_index" in row) return "an authored row carries a raw index";
+      if (typeof row.token_id !== "number" || !Number.isInteger(row.token_id)) return "an authored row has no token id";
+    }
+  }
+  const visible = placed.start, thinking = placed.thinking_start;
+  if (typeof visible === "number" && typeof thinking === "number"
+    && thinking + (node.thinking_tokens as unknown[]).length > visible) {
+    return "its thinking channel does not precede the visible one";
+  }
+  return null;
+}
+
+/** A captured authored row's replay address: its place among the node's captured rows, thinking
+ *  rows first (``loom/ops.py::resolve_prompt_anchor``), or null for a generated or uncaptured node. */
+export function authoredRowIndex(
+  node: CapturedNodeFields & { thinking_tokens?: unknown[] | null },
+  thinking: boolean,
+  index: number,
+): number | null {
+  if (node.recipe !== null || node.prompt_capture === null || node.prompt_capture === undefined) return null;
+  return thinking ? index : (node.thinking_tokens?.length ?? 0) + index;
+}
+
+/** The index a token replays at: a generated token's raw decode index, an authored token's place
+ *  in its node's capture. Null when the token has neither (a live prompt token, an imported turn). */
+export function replayIndex(token: Pick<TokenScore, "rawIndex" | "promptIndex"> | null | undefined): number | null {
+  return token?.rawIndex ?? token?.promptIndex ?? null;
 }
 
 /** ``m`` when it is a whole envelope (a live token frame's, or a row kept whole), else null (a

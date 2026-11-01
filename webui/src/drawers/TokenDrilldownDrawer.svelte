@@ -73,7 +73,7 @@
   import ProbeReadings from "./token/ProbeReadings.svelte";
   import FeatureReadings from "./token/FeatureReadings.svelte";
   import { formatP, lastLayer } from "./token/layers";
-  import { geometryReplayView, lensReplay, tokenPins } from "./token/readings";
+  import { geometryReplayView, lensReplay, replayAnchor, tokenPins } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
   import { geometryTracesKept, rowGeometry, wholeEnvelope } from "../lib/tokenRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
@@ -158,7 +158,14 @@
     return visible[effCursor.turnIdx]?.id ?? null;
   });
 
-  const hasReplayContext = $derived(loomNodeId != null && token?.rawIndex != null);
+  /** Where the token replays and under which steering (``replayAnchor``): a generated token at
+   *  its raw decode index, a captured prompt token at its place in its node's capture. Only a
+   *  generated token branches (``rawIndex``). */
+  const replayTarget = $derived(replayAnchor(
+    loomNodeId ? loomTree.nodes.get(loomNodeId) : null, token, inspected?.appliedSteering,
+  ));
+  const replayAt = $derived(replayTarget.index);
+  const hasReplayContext = $derived(loomNodeId != null && replayAt != null);
   const canBranch = $derived(branch === "primary" && loomNodeId != null && token?.rawIndex != null && !genStatus.active);
 
   // ---- branching ----------------------------------------------------------
@@ -240,8 +247,9 @@
 
   const loomNode = $derived(loomNodeId ? (loomTree.nodes.get(loomNodeId) ?? null) : null);
   const recipeSampling = $derived(loomNode?.recipe?.sampling ?? null);
-  /** The steering the token was generated under; an empty recipe expression is none. */
-  const recipeSteering = $derived((loomNode?.recipe?.steering ?? inspected?.appliedSteering) || null);
+  /** The steering the token was generated under (a prompt token: the steering its capture read it
+   *  under); an empty expression is none. */
+  const recipeSteering = $derived(replayTarget.steering);
   function fmtSetting(value: number | null | undefined): string {
     if (value == null || !Number.isFinite(value)) return "–";
     return String(Number(value.toFixed(2)));
@@ -429,7 +437,7 @@
     if (!lens?.readout || !token) return null;
     return {
       node_id: loomNodeId ?? "",
-      raw_index: token.rawIndex ?? -1,
+      raw_index: replayAt ?? -1,
       token_id: token.tokenId ?? -1,
       token_text: token.text,
       steering: lens.binding.steering,
@@ -444,7 +452,7 @@
     if (!sae?.readout || !token) return null;
     return {
       node_id: loomNodeId ?? "",
-      raw_index: token.rawIndex ?? -1,
+      raw_index: replayAt ?? -1,
       token_id: token.tokenId ?? -1,
       token_text: token.text,
       steering: sae.binding.steering,
@@ -483,7 +491,7 @@
     const captured = capturedGeometryData;
     if (!geometryTokenReplayAvailable && !geometrySteered) geometrySteered = true;
     const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
+    const rawIndex = replayAt;
     const canReplay = geometryTokenReplayAvailable && hasGeometryProbes && !!nodeId && rawIndex != null;
     if ((geometrySteered || !geometryTokenReplayAvailable) && captured && (capturedGeometryLayers || !canReplay)) {
       geometryReadout.adopt(captured, null);
@@ -514,7 +522,7 @@
     if (!saeTokenReplayAvailable) return;
     if (!saeResident) return;
     const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
+    const rawIndex = replayAt;
     if (!nodeId || rawIndex == null) return;
     const replayTokenId = token?.tokenId ?? -1;
     const replayTokenText = token?.text ?? "";
@@ -537,7 +545,7 @@
     // refused or cut short while it streamed): read the selected token again then.
     void genStatus.active;
     const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
+    const rawIndex = replayAt;
     if (!anatomyShown || !nodeId || rawIndex == null) { anatomyReadout.clear(); return; }
     anatomyReadout.anatomy(nodeId, rawIndex, { k: Math.min(256, Math.max(1, readoutTopK)), units: 8, patterns: 4, steered: lensSteered, raw: effectiveRawMode() }, (m) => {
       const anatomy = m.anatomy;
@@ -557,7 +565,7 @@
     const captured = capturedLensData;
     if (!lensReplayAvailable && !lensSteered) lensSteered = true;
     const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
+    const rawIndex = replayAt;
     const canReplay = !anatomyAvailable && lensTokenReplayAvailable && jlensFitted && !!nodeId && rawIndex != null;
     if ((lensSteered || !lensReplayAvailable) && captured && (capturedLensLayers || !canReplay)) {
       lensReadout.adopt(captured, whole?.instruments.lens?.binding.sources.R ?? null, whole?.instruments.lens?.readings ?? null);
@@ -711,7 +719,7 @@
           <button type="button" class="fact" onclick={toggleSeg} aria-label={`Show the ${otherSeg}`}>{effCursor.seg}</button>
         {:else if effCursor.seg === "thinking"}<span>thinking</span>{/if}
         {#if hasAbPair}<button type="button" class="fact" aria-pressed={branch === "shadow"} data-tip="The same turn, generated without steering" onclick={() => (branch = branch === "shadow" ? "primary" : "shadow")}>A/B twin</button>{/if}
-        {#if token.rawIndex == null}<span data-tip="The generation record is missing, so this token cannot be replayed or branched">not replayable</span>{/if}
+        {#if replayAt == null}<span data-tip="The generation record is missing, so this token cannot be replayed or branched">not replayable</span>{/if}
         {#if !atAnchor}<button type="button" class="fact" onclick={resetToAnchor}>Back</button>{/if}
       </div>
       {#if recipeSteering || recipeLine}

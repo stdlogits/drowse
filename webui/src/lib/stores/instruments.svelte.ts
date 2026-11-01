@@ -36,7 +36,7 @@ import type {
   TokenScore,
 } from "../types";
 import { resolveReadoutTopK } from "../readouts";
-import { geometryTracesKept, rowGeometry, wholeEnvelope } from "../tokenRows";
+import { geometryTracesKept, replayIndex, rowGeometry, wholeEnvelope } from "../tokenRows";
 import { pushToast } from "./toasts.svelte";
 import { createPreparationSlice } from "./preparations.svelte";
 import { effectiveRawMode } from "./chat.svelte";
@@ -412,7 +412,9 @@ export function beginTokenHover(
   _hoverFetchTimer = null;
 
   const raw = effectiveRawMode();
-  const rawIndex = token.rawIndex ?? null;
+  // A generated token replays at its raw decode index, a captured prompt token at its place in
+  // its node's capture (``promptIndex``): one address for every family's token readout.
+  const rawIndex = replayIndex(token);
   const modelKey = sessionState.info?.model_id ?? "unknown-model";
   const key = nodeId && rawIndex !== null
     ? _hoverTokenKey(nodeId, rawIndex, raw)

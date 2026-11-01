@@ -113,7 +113,7 @@ try {
 function file(text) { return { size: Buffer.byteLength(text), async text() { return text; } }; }
 
 function node(id, parent_id, role, text) {
-  return { id, parent_id, role, text, role_label: null, thinking_text: null, aggregate_readings: {}, aggregate_measurements: null, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null };
+  return { id, parent_id, role, text, role_label: null, thinking_text: null, aggregate_readings: {}, aggregate_measurements: null, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null, prompt_capture: null };
 }
 
 function snapshot() {

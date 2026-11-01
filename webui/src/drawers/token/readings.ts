@@ -3,9 +3,31 @@
 // the view only draws.
 
 import { polesOf } from "../../lib/concepts";
-import { withRowValues } from "../../lib/tokenRows";
-import type { MeasurementsEnvelopeJSON, RowProbeReadingJSON, ScalarReadingJSON } from "../../lib/types";
+import { replayIndex, withRowValues } from "../../lib/tokenRows";
+import type {
+  LoomNodeJSON,
+  MeasurementsEnvelopeJSON,
+  RowProbeReadingJSON,
+  ScalarReadingJSON,
+  TokenScore,
+} from "../../lib/types";
 import type { GeometryTokenReadout, Pins, ReadoutView } from "./readout.svelte";
+
+/** Where the token view replays ``token`` and the steering its readings were taken under: a
+ *  generated token at its raw decode index under its recipe's steering (or the turn's applied
+ *  steering), a captured prompt token at its place in the node's capture under the steering the
+ *  capture ran (``prompt_capture.steering``). An empty expression is none; ``index`` is null where
+ *  the token has no replay record. */
+export function replayAnchor(
+  node: Pick<LoomNodeJSON, "recipe" | "prompt_capture"> | null | undefined,
+  token: Pick<TokenScore, "rawIndex" | "promptIndex"> | null | undefined,
+  appliedSteering: string | null | undefined,
+): { index: number | null; steering: string | null } {
+  return {
+    index: replayIndex(token),
+    steering: (node?.recipe?.steering ?? node?.prompt_capture?.steering ?? appliedSteering) || null,
+  };
+}
 
 /** An axis's name wherever a probe's coordinates are listed (the token view, the probe
  *  inspector): a one-axis concept of one or two nodes reads by its first node (+1 there: the

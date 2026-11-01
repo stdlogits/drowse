@@ -9,7 +9,7 @@ import type {
 import { FINISH_REASONS } from "./types";
 import { migrateLegacyDatabase } from "./brandMigration";
 import { isRoleSlug } from "./roleSlug";
-import { aggregateMeasurementsProblem, tokenRowProblem } from "./tokenRows";
+import { aggregateMeasurementsProblem, promptCaptureProblem, tokenRowProblem, type CapturedNodeFields } from "./tokenRows";
 
 const DATABASE_NAME = "drowse-hosted-sessions";
 const DATABASE_VERSION = 2;
@@ -622,6 +622,7 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
     "mean_surprise",
     "notes",
     "parent_id",
+    "prompt_capture",
     "raw_token_ids",
     "recipe",
     "role",
@@ -673,6 +674,14 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
     for (const tokenId of value.raw_token_ids) {
       validateNonNegativeInteger(tokenId, "raw token id");
     }
+  }
+  // An authored node's prompt rows and their replay anchor agree (the loom reader's rule).
+  const captureProblem = promptCaptureProblem(value as unknown as CapturedNodeFields);
+  if (captureProblem !== null) throw invalid(`Node prompt capture: ${captureProblem}`);
+  const capture = value.prompt_capture as Record<string, unknown> | null;
+  if (capture !== null) {
+    validateNullableString(capture.steering, "prompt capture steering", 64 * 1024);
+    validateNullableString(capture.system_prompt, "prompt capture system prompt", 4 * 1024 * 1024);
   }
 }
 

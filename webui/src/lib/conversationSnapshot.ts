@@ -1,5 +1,5 @@
 import { serializeExpression } from "./expression";
-import { aggregateMeasurementsProblem, tokenRowProblem } from "./tokenRows";
+import { aggregateMeasurementsProblem, promptCaptureProblem, tokenRowProblem, type CapturedNodeFields } from "./tokenRows";
 import { unitTermProblem } from "./unitTerms";
 import type {
   LoomTreeJSON,
@@ -147,6 +147,9 @@ export function validateConversationSnapshot(
         if (problem !== null) throw new TypeError(`Unreadable token row: ${problem}`);
       }
     }
+    // An authored node's prompt rows ride their replay anchor; rows saved before it are refused.
+    const captureProblem = promptCaptureProblem(node as CapturedNodeFields);
+    if (captureProblem !== null) throw new TypeError(`Unreadable prompt capture: ${captureProblem}`);
   }
   record(tree.children_of, "tree children map");
   record(tree.cast, "tree cast");

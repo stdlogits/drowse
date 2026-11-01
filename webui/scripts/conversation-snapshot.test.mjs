@@ -206,6 +206,25 @@ try {
   const tokenRows = JSON.parse(readFileSync(new URL("../../tests/fixtures/token_rows.json", import.meta.url), "utf8"));
   for (const c of tokenRows.accepted) assert.equal(tokenRowProblem(structuredClone(c.row)), null, c.name);
   for (const c of tokenRows.refused) assert.notEqual(tokenRowProblem(structuredClone(c.row)), null, c.name);
+  // The same table's authored nodes: a captured prompt turn's rows ride their replay anchor
+  // (``prompt_capture``); rows saved before it (kept whole, with no anchor) are refused, by the
+  // snapshot validator as by the loom reader.
+  const { promptCaptureProblem } = await server.ssrLoadModule("/src/lib/tokenRows.ts");
+  const authoredProblem = (node) => promptCaptureProblem(node)
+    ?? [...(node.tokens ?? []), ...(node.thinking_tokens ?? [])].map((row) => tokenRowProblem(row)).find((p) => p !== null)
+    ?? null;
+  for (const c of tokenRows.authored.accepted) assert.equal(authoredProblem(structuredClone(c.node)), null, c.name);
+  for (const c of tokenRows.authored.refused) assert.notEqual(authoredProblem(structuredClone(c.node)), null, c.name);
+  const authoredSnapshot = (node) => {
+    const value = rowSnapshot(() => {});
+    Object.assign(value.tree.nodes[0], node);
+    return value;
+  };
+  const oldWhole = tokenRows.authored.refused.find((c) => c.name.startsWith("authored rows without their anchor"));
+  assert.throws(() => validateConversationSnapshot(authoredSnapshot(structuredClone(oldWhole.node)), keys),
+    /Unreadable prompt capture: an authored node's tokens are not where it places a channel/);
+  const anchored = tokenRows.authored.accepted.find((c) => c.name.startsWith("a captured authored turn"));
+  assert.equal(isConversationSnapshot(authoredSnapshot(structuredClone(anchored.node)), keys), true);
   assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => { row.measurements.version = 1; }), keys),
     /Unreadable token row: its measurements are version 1/);
   // A node's finish reason is the loom reader's closed set; ``cancelled`` marks a cut reply.

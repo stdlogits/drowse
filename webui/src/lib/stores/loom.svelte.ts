@@ -17,7 +17,7 @@ import type { LoomNodeJSON, LoomTreeJSON } from "../types";
 import type { CastMemberJSON, ChatTurn, TokenScore } from "../types";
 import { pushToast } from "./toasts.svelte";
 import { chatLog, genStatus } from "./chat.svelte";
-import { rowGeometry } from "../tokenRows";
+import { authoredRowIndex, rowGeometry } from "../tokenRows";
 import { invalidateEdgeLabels } from "./loomUi.svelte";
 import { hydrateProbeRackFromActiveNode } from "./probes.svelte";
 import { sessionState } from "./session.svelte";
@@ -178,10 +178,17 @@ function nodeToTurn(n: LoomNodeJSON): ChatTurn {
     // The same rollup the live done frame carries (read off this node), so a reload keeps it.
     meanLogprob: n.mean_logprob ?? null,
   };
+  // A captured prompt turn's rows replay through the node's ``prompt_capture``, addressed by their
+  // place among its captured rows (thinking first); a generated row by its ``raw_index``.
+  const promptIndex = (thinking: boolean, i: number, s: TokenScore): void => {
+    const index = authoredRowIndex(n, thinking, i);
+    if (index !== null) s.promptIndex = index;
+  };
   if (n.tokens && n.tokens.length > 0) {
-    turn.tokens = n.tokens.map((r) => {
+    turn.tokens = n.tokens.map((r, i) => {
       const s = tokenRowToScore(r);
       s.thinking = false;
+      promptIndex(false, i, s);
       return s;
     });
   }
@@ -197,9 +204,10 @@ function nodeToTurn(n: LoomNodeJSON): ChatTurn {
     );
   }
   if (n.thinking_tokens && n.thinking_tokens.length > 0) {
-    turn.thinkingTokens = n.thinking_tokens.map((r) => {
+    turn.thinkingTokens = n.thinking_tokens.map((r, i) => {
       const s = tokenRowToScore(r);
       s.thinking = true;
+      promptIndex(true, i, s);
       return s;
     });
     turn.thinking = true;
@@ -358,6 +366,8 @@ function replayContextChanged(nextNodes: readonly LoomNodeJSON[], removed: reado
       previous.thinking_text !== next.thinking_text ||
       previous.applied_steering !== next.applied_steering ||
       JSON.stringify(previous.recipe) !== JSON.stringify(next.recipe) ||
+      // An authored node's prompt tokens replay through its capture.
+      JSON.stringify(previous.prompt_capture ?? null) !== JSON.stringify(next.prompt_capture ?? null) ||
       previous.raw_token_ids?.length !== next.raw_token_ids?.length ||
       (previous.raw_token_ids ?? []).some((id, index) => id !== next.raw_token_ids?.[index]);
   });

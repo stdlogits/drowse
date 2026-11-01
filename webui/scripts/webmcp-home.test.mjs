@@ -90,7 +90,7 @@ try {
 } finally { await server.close(); }
 
 function snapshot() {
-  const node = { id: "root", parent_id: null, role: "system", text: "Be helpful", role_label: null, thinking_text: null, aggregate_readings: {}, aggregate_measurements: null, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null };
+  const node = { id: "root", parent_id: null, role: "system", text: "Be helpful", role_label: null, thinking_text: null, aggregate_readings: {}, aggregate_measurements: null, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null, prompt_capture: null };
   return {
     version: 8, savedAt: "2026-09-12T12:00:00.000Z", model_id: "fixture/model", session_id: "default",
     tree: { tree_format: 2, drowse_version: "test", model_id: "fixture/model", session_id: "default", name: null, rev: 1, root_id: "root", active_node_id: "root", nodes: [node], children_of: { root: [] }, cast: {} },

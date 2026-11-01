@@ -362,7 +362,7 @@ function treeTools(): AppTool[] {
         if (input.node_id) {
           const item = tree.nodes.find((entry) => entry.id === input.node_id);
           if (!item) throw new ToolError("NODE_NOT_FOUND", "The requested node is not in the current tree.");
-          return { revision: tree.rev, model_id: tree.model_id, node: input.include_tokens ? item : { ...item, tokens: undefined, thinking_tokens: undefined, raw_token_ids: undefined } };
+          return { revision: tree.rev, model_id: tree.model_id, node: input.include_tokens ? item : { ...item, tokens: undefined, thinking_tokens: undefined, raw_token_ids: undefined, prompt_capture: undefined } };
         }
         return { revision: tree.rev, root_id: tree.root_id, active_node_id: tree.active_node_id, model_id: tree.model_id, replay: await r.tree.replayCapabilities(), ...page(tree.nodes.map(nodeSummary), input) };
       } }),
