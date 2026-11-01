@@ -785,8 +785,8 @@
   }
   .inspect .context-changed { text-decoration: underline dashed var(--ink3); text-underline-offset: 4px; }
   .inspect .clickable { cursor: pointer; }
-  @media (hover: hover) { .inspect .clickable:hover { background: var(--wash2); box-shadow: 0 0 0 2px var(--wash2); } }
-  .inspect .clickable[aria-expanded="true"] { background: var(--ink); color: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
+  @media (hover: hover) { .inspect .clickable:hover { background: var(--wash2); padding-block: 2px; } }
+  .inspect .clickable[aria-expanded="true"] { background: var(--ink); color: var(--paper); padding-block: 2px; }
   .origin-draft { text-decoration: underline dashed var(--ink3); text-underline-offset: 4px; }
   /* Tokens that recorded their alternatives carry a faint underline, so the forkable ones show. */
   .inspect .has-alts { text-decoration: underline dotted var(--ink3); text-underline-offset: 4px; }

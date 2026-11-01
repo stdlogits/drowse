@@ -41,6 +41,13 @@ try {
       assert.ok(!source.includes(`<MorphText text={${value}}`), `${path}: ${value} must not morph per token`);
     }
   }
+  // Regression: the selected token's ink chip spread 2px on every side and painted over the glyph
+  // before it (the t of "export", the n of "Ocean"). The wash and the ink grow only up and down.
+  for (const [path, selector] of [["panels/Chat.svelte", /\.tok\.sel, \.tok\.sel:hover \{([^}]*)\}/], ["panels/RawBuffer.svelte", /\.clickable\[aria-expanded="true"\][^{]*\{([^}]*)\}/]]) {
+    const rule = selector.exec(await read(path))?.[1] ?? "";
+    assert.match(rule, /padding-block: 2px/, `${path}: the chip grows up and down`);
+    assert.doesNotMatch(rule, /box-shadow|padding-inline|margin/, `${path}: and never sideways`);
+  }
   console.log("Live text: per-token values are plain while a reply streams and morph once it settles");
 } finally {
   await server.close();

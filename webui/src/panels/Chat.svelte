@@ -1541,10 +1541,11 @@
   .plain { white-space: pre-wrap; }
 
   /* One token: joined to its word, a wash on hover, ink when it is the one selected. The
-   * highlight's own fill rides its inline style. */
-  .tok { border-radius: 4px; cursor: pointer; transition: background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease), color var(--fast) var(--ease); }
-  .tok:not(.tinted):hover { background: var(--wash2); box-shadow: 0 0 0 2px var(--wash2); }
-  .tok.sel, .tok.sel:hover { background: var(--ink); color: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
+   * highlight's own fill rides its inline style. The wash and the ink grow only up and down (inline
+   * padding never moves the line), so a chip never paints over the glyph beside it. */
+  .tok { border-radius: 4px; cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .tok:not(.tinted):hover { background: var(--wash2); padding-block: 2px; }
+  .tok.sel, .tok.sel:hover { background: var(--ink); color: var(--paper); padding-block: 2px; }
   .tok:focus-visible { outline-offset: 1px; }
 
   .thinking-block { display: grid; gap: var(--s2); min-width: 0; }
