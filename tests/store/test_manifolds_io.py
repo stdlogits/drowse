@@ -4099,3 +4099,19 @@ def test_discovery_ignores_staging_and_misnamed_folders(
     shutil.copytree(folder, folder.with_name("foo.copy"))
 
     assert [(ns, mf.name) for ns, mf in iter_manifold_folders()] == [("local", "foo")]
+
+
+@pytest.mark.parametrize("spec, label", [
+    ({"type": "box", "axes": [{"name": "month", "periodic": True, "period": 12.0, "lo": 0.0, "hi": 12.0}]}, "ring(12)"),
+    ({"type": "box", "axes": [{"name": "phase", "periodic": True, "period": 6.5, "lo": 0.0, "hi": 6.5}]}, "ring(6.5)"),
+    ({"type": "box", "axes": [{"name": "x", "lo": -1.0, "hi": 1.0}]}, "box(1d)"),
+    ({"type": "box", "axes": [{"name": "a", "periodic": True, "period": 1.0}, {"name": "b", "periodic": True, "period": 1.0}]}, "torus(2d)"),
+    ({"type": "box", "axes": [{"name": "a", "periodic": True, "period": 1.0}, {"name": "b", "lo": 0.0, "hi": 1.0}]}, "box(2d, 1 periodic)"),
+    ({"type": "sphere", "dim": 2}, "sphere(2d)"),
+])
+def test_domain_label_names_periodic_axes(spec: dict[str, Any], label: str) -> None:
+    """Wave 3 finding 26: the picker labelled the months ring ``box(1d)``,
+    which hid that it wraps around."""
+    from drowse.store.manifold_schema import domain_label
+
+    assert domain_label(spec) == label

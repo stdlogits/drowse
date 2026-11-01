@@ -171,14 +171,30 @@ def sanitize_hyperparams(
 
 
 def domain_label(spec: Mapping[str, Any]) -> str:
-    """Short ``type(Nd)`` label for a manifold domain spec dict."""
+    """Short ``type(Nd)`` label for a manifold domain spec dict.
+
+    A box names its periodic axes, so a ring does not read as an interval:
+    one periodic axis is ``ring(<period>)`` (months: ``ring(12)``), all
+    periodic ``torus(Nd)``, some ``box(Nd, K periodic)``.
+    """
     kind = spec.get("type", "?")
     if kind == "klein":
         return "Klein bottle (2D)"
     if kind == "projective":
         return "Projective plane / RP² (2D)"
     if kind == "box":
+        axes = [axis for axis in spec.get("axes", []) if isinstance(axis, Mapping)]
         n = len(spec.get("axes", []))
+        periodic = [axis for axis in axes if axis.get("periodic") is True]
+        if n == 1 and len(periodic) == 1:
+            period = periodic[0].get("period")
+            if isinstance(period, (int, float)) and not isinstance(period, bool):
+                return f"ring({period:g})"
+            return "ring(1d)"
+        if periodic and len(periodic) == n:
+            return f"torus({n}d)"
+        if periodic:
+            return f"box({n}d, {len(periodic)} periodic)"
     elif kind == "sphere":
         n = int(spec.get("dim", 0))
     elif kind == "custom":
