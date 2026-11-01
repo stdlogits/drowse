@@ -1051,13 +1051,17 @@ class NodeReplayer:
         last in the token stream), after checking ``raw_index`` addresses
         one.  A generated node's rows are its raw decode record; an authored
         turn's are its captured prompt rows (thinking, then visible), which
-        replay through its prompt capture as one prefill."""
+        replay through its prompt capture as one prefill.  A render's first
+        token (no position produces it) is a row like any other for the
+        whole turn and refuses only as the asked population."""
         tree = self._tree()
         label = "session.unit_activity"
         at = 0 if raw_index is None else int(raw_index)
         if tree.get(node_id).recipe is not None:
             return len(resolve_token_anchor(tree, node_id, at, label=label).raw_ids) - 1
-        prompt = resolve_prompt_anchor(tree, node_id, at, label=label)
+        prompt = resolve_prompt_anchor(
+            tree, node_id, at, label=label, produced=raw_index is not None,
+        )
         first, position = max(prompt.runs, key=lambda run: run[1])
         stops = [row for row, _ in prompt.runs if row > first]
         return (min(stops) if stops else len(prompt.token_ids)) - 1
@@ -1077,12 +1081,17 @@ class NodeReplayer:
         # (a generated node: one span after its prompt; an authored turn: its
         # thinking rows, then its visible rows).  The rows produced before
         # ``UNIT_POSITIONS_FROM`` sit on the attention sink (host arithmetic:
-        # nothing about them is read back from the device).
+        # nothing about them is read back from the device).  A render's first
+        # token (an authored first turn rendered with no BOS) has no producing
+        # position, so no forward column holds it: it reads 0 like the sink.
         spans = forward.spans()
         at_sink = [False] * count
+        unproduced: list[tuple[int, int]] = []
         for r_first, r_stop, at in spans:
             for row in range(r_first, r_stop):
                 at_sink[row] = at + row - r_first < UNIT_POSITIONS_FROM
+            if at < 0:
+                unproduced.append((r_first, min(r_stop, r_first - at)))
         n_sink = sum(at_sink)
         sink = torch.tensor(at_sink, dtype=torch.bool, device=device)            # [N]
         window = ReplayWindow()
@@ -1173,6 +1182,10 @@ class NodeReplayer:
                 handles.append(block.mlp.down.register_forward_hook(neuron_hook(block)))
                 handles.append(block.attn.o.register_forward_hook(head_hook(block)))
             drive_segments(self._model, ids, segments, self._ctx, window)
+            for key in list(peaks):
+                width = int(peaks[key][0].numel())
+                for r0, r1 in unproduced:
+                    reduce(key, torch.zeros(r1 - r0, width, device=device), r0)
             if len(seen) != 2 * n or any(rows != count for rows in seen.values()):
                 raise RuntimeError("the replay forward did not reach every unit at every token")
             order = [(kind, L) for L in range(n) for kind in ("neuron", "head")]

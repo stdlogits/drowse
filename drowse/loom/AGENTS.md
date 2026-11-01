@@ -306,7 +306,9 @@ position. `raw` does not apply (the anchor records the render). The node replay'
 unit activity reads an authored turn's every row in one prefill: it anchors
 the row latest in the render, and `ReplayForward.spans()` places each
 channel's rows at their producing positions (a gap between the thinking and
-visible channels included). The forward fires the open terms as generation
+visible channels included). A raw first turn's row 0 sits at render
+position 0, which no position produces: it reads 0 like the sink's rows,
+and only a population asked there refuses (400). The forward fires the open terms as generation
 fired them (`TokenReplayer.segments`, the **Triggers** rule below, shared with
 the node replay), so a family's token readout, the token anatomy and the unit
 activity read one number for one token; a probe-gated term replays one decode

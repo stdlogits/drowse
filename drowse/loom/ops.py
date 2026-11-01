@@ -278,15 +278,16 @@ class PromptAnchor:
 
 
 def resolve_prompt_anchor(
-    tree: LoomTree, node_id: str, index: int, *, label: str,
+    tree: LoomTree, node_id: str, index: int, *, label: str, produced: bool = True,
 ) -> PromptAnchor:
     """Validate a ``(node_id, raw_index)`` address into an authored turn's
     captured prompt tokens (``raw_index`` indexes its thinking rows, then
     its visible rows).  Raises
     :class:`~drowse.loom.errors.UnknownNodeError` for an unknown node and
     :class:`InvalidNodeOperationError` for a generated node, an authored
-    turn no generation has measured, an out-of-range index or the render's
-    first token (nothing produces it)."""
+    turn no generation has measured, an out-of-range index or, with
+    ``produced`` (the default: the caller reads that token's own forward),
+    the render's first token (nothing produces it)."""
     node = tree.get(node_id)
     if node.role not in _SEATS:
         raise InvalidNodeOperationError(
@@ -327,7 +328,7 @@ def resolve_prompt_anchor(
         channel_offset=0 if in_thinking else len(thinking),
         thinking_rows=len(thinking),
     )
-    if anchor.position < 1:
+    if produced and anchor.position < 1:
         raise InvalidNodeOperationError(
             f"{label}: the token at raw_index {index} of {node_id!r} opens the "
             f"prompt, so no position produced it"

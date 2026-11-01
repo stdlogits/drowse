@@ -685,6 +685,37 @@ def test_authored_unit_activity_reads_each_channel_at_its_place(
         assert traces[name] == pytest.approx(whole[name][:2] + whole[name][3:], abs=1e-5)
 
 
+def test_authored_unit_activity_reads_a_raw_first_turn(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a raw first turn's captured rows start at render position
+    0 (no BOS), so no position produces row 0.  Unit activity at a token
+    raised a bare RuntimeError (a 500) and over the whole turn refused (a
+    400); row 0 now reads 0 like the sink, and the asked population at row 0
+    still refuses as the token readouts do."""
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    for name in _UNITS:
+        session.add_probe(name)
+    session.generate("Say hi there my friend.", raw=True, sampling=SamplingConfig(max_tokens=3))
+    reply = session.tree.get(session.tree.active_node_id)
+    node = session.tree.get(cast(str, reply.parent_id))
+    assert node.prompt_capture is not None and node.prompt_capture.start == 0
+    rows = len(node.tokens)
+    at_token = session.unit_activity(node.id, top=1024, units=list(_UNITS), raw_index=2)
+    whole = session.unit_activity(node.id, top=1024, units=list(_UNITS))
+    assert at_token["sink_raw_index"] == whole["sink_raw_index"] == 0
+    for traces in (at_token["traces"], whole["traces"]):
+        for name in _UNITS:
+            assert len(traces[name]) == rows and traces[name][:2] == [0.0, 0.0]
+            for k in range(2, rows):
+                replay = session.units.token_readout(node.id, k)
+                value = replay["measurements"]["instruments"]["units"]["readings"][name]["value"]
+                assert traces[name][k] == pytest.approx(value, abs=1e-5), (name, k)
+    assert all(peak["raw_index"] >= 2 for peak in whole["top"])
+    with pytest.raises(InvalidNodeOperationError, match="opens the prompt"):
+        session.unit_activity(node.id, top=2, raw_index=0)
+
+
 def test_authored_unit_activity_refuses_an_edited_earlier_turn(
     make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
