@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import torch
 
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import envelope_sources, token_row_measurements
+from drowse.readout.measurements import envelope_sources, summary_measurements
 
 if TYPE_CHECKING:
     from drowse.lens.instrument import LensInstrument
@@ -385,10 +385,10 @@ class AuthoredPromptCapture:
             if not measurements:
                 continue
             row = output_rows[match_index][token_index]
-            # An authored row keeps its per-layer traces whatever the call
-            # persists: it has no raw_index, so no replay can bring them
-            # back, and a prompt's rows are few.
-            row["measurements"] = token_row_measurements(measurements, per_layer=True)
+            # An authored row keeps every reading whole with its per-layer
+            # traces, whatever the call persists: it has no raw_index, so no
+            # replay can bring any of it back, and a prompt's rows are few.
+            row["measurements"] = summary_measurements(measurements, per_layer=True)
             populated_matches.add(match_index)
 
         for match_index in sorted(populated_matches):

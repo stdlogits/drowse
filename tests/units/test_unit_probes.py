@@ -141,10 +141,11 @@ def test_probes_and_gates_read_heads_of_both_gemma4_sizes(tmp_path: Path) -> Non
         node = session.tree.nodes[session.tree.active_node_id]
         replay = session.units.token_readout(node.id, int(node.tokens[0]["raw_index"]))
         replayed = replay["measurements"]["instruments"]["units"]["readings"]
-        row = node.tokens[0]["measurements"]["instruments"]["units"]["readings"]
+        row = node.tokens[0]["measurements"]["scores"]
         for name in readings:
-            # The row keeps READING_DIGITS significant digits.
-            assert replayed[name]["value"] == pytest.approx(row[name]["value"], rel=1e-5, abs=1e-6)
+            # The row keeps the value as its score, at READING_DIGITS
+            # significant digits.
+            assert replayed[name]["value"] == pytest.approx(row[name], rel=1e-5, abs=1e-6)
         # A gate on a 16-wide head while 8-wide heads are probed.
         register_vectors(session, "v")
 
@@ -191,25 +192,29 @@ def test_unit_probes_ride_the_generation(tiny_session: Any) -> None:
     assert neuron["meta"]["scale"] == head["meta"]["scale"] == "neutral"
     assert head["value"] >= 0
     assert result.measurements["scores"]["h"] == head["value"]
-    # Every loom token row carries the live readings (at the row's
-    # READING_DIGITS significant digits, without the one-layer trace), and the aggregate is
-    # one of them (the last content token's).
+    # Every loom token row keeps each live value as its score (at the row's
+    # READING_DIGITS significant digits; the reading itself replays), and the
+    # aggregate is one of them (the last content token's).
     node = session.tree.nodes[session.tree.active_node_id]
-    rows = [row["measurements"]["instruments"]["units"]["readings"] for row in node.tokens]
+    rows = [row["measurements"]["scores"] for row in node.tokens]
     assert len(rows) == len(node.tokens) > 0
-    assert all(set(row["h"]) == {"value", "unit", "per_layer", "depth", "meta"} for row in rows)
+    assert all("units" not in row["measurements"]["instruments"] for row in node.tokens)
     assert any(
-        abs(row["h"]["value"] - head["value"]) < 6e-5
-        and abs(row["neuron/L1n3"]["value"] - neuron["value"]) < 6e-5
+        abs(row["h"] - head["value"]) < 6e-5
+        and abs(row["neuron/L1n3"] - neuron["value"]) < 6e-5
         for row in rows
     )
+    # The node keeps the aggregate reading whole (the rack's after a reload).
+    kept = node.aggregate_measurements
+    assert kept is not None and kept["scope"] == "aggregate" and "scores" not in kept
+    assert kept["instruments"].get("units", {}).get("readings", {}).get("h") == head
     # The token replay rebuilds the same forward and reads the same value.
     replay = session.units.token_readout(node.id, int(node.tokens[0]["raw_index"]))
     envelope = replay["measurements"]
     assert envelope["scope"] == "replay" and envelope["provenance"] == "replayed"
     replayed = envelope["instruments"]["units"]["readings"]
     for name in ("neuron/L1n3", "h"):
-        assert replayed[name]["value"] == pytest.approx(rows[0][name]["value"], abs=6e-5)
+        assert replayed[name]["value"] == pytest.approx(rows[0][name], abs=6e-5)
     # Hooks existed only while the generation read them.
     assert not session.units.hooks_attached
     for block in session.units.runtime.spec().blocks:
@@ -245,7 +250,8 @@ def test_the_units_live_switch_drops_per_token_readings_only(tiny_session: Any) 
     assert _units_channel(result.measurements) is not None
     node = session.tree.nodes[session.tree.active_node_id]
     assert all(
-        _units_channel(row.get("measurements")) is None for row in node.tokens
+        "neuron/L1n3" not in (row.get("measurements") or {}).get("scores", {})
+        for row in node.tokens
     )
     with pytest.raises(TypeError):
         session.units.set_live(True, layers=[1])

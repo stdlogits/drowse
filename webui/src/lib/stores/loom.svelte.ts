@@ -15,10 +15,9 @@ import { userFacingError } from "../runtime/userFacingError";
 import { invalidateTokenReadoutCache } from "../runtime/tokenReadoutCache";
 import type { LoomNodeJSON, LoomTreeJSON } from "../types";
 import type { CastMemberJSON, ChatTurn, TokenScore } from "../types";
-import { isScalarReading } from "../types";
 import { pushToast } from "./toasts.svelte";
 import { chatLog, genStatus } from "./chat.svelte";
-import { mergedReadings } from "./instruments.svelte";
+import { rowGeometry } from "../tokenRows";
 import { invalidateEdgeLabels } from "./loomUi.svelte";
 import { hydrateProbeRackFromActiveNode } from "./probes.svelte";
 import { sessionState } from "./session.svelte";
@@ -121,18 +120,13 @@ export function tokenRowToScore(row: NonNullable<LoomNodeJSON["tokens"]>[number]
   if (row.raw_index !== undefined) out.rawIndex = row.raw_index;
   if (m?.scores) out.probes = m.scores;
   if (m) out.measurements = m;
-  const readings = mergedReadings(m);
-  if (readings) {
-    const byProbe: Record<string, number[]> = {};
-    for (const [name, reading] of Object.entries(readings)) {
-      // Multi-axis coordinates are a geometry-only channel — a one-channel
-      // reading has nothing to spread across axes.
-      if (!isScalarReading(reading) && reading.coords.length > 1) {
-        byProbe[name] = reading.coords;
-      }
-    }
-    if (Object.keys(byProbe).length > 0) out.coordsByProbe = byProbe;
+  // Multi-axis coordinates are a geometry-only channel (a one-channel reading has nothing to
+  // spread across axes); a generated row keeps them, and so does a row kept whole.
+  const byProbe: Record<string, number[]> = {};
+  for (const [name, reading] of Object.entries(rowGeometry(m))) {
+    if (reading.coords.length > 1) byProbe[name] = reading.coords;
   }
+  if (Object.keys(byProbe).length > 0) out.coordsByProbe = byProbe;
   return out;
 }
 

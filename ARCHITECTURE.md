@@ -580,15 +580,23 @@ replay endpoints:
 family's discovery surface (the R lens's layer-by-vocabulary matrix and aggregate
 chips, the SAE's active features). The flat `scores` are derived joins for
 cross-family consumers such as token tinting, not separate measurements; a
-reading's per-layer trace lives in the reading alone. A loom token row keeps
-`token_row_measurements(envelope)`: each geometry reading's summary and each
-scalar reading once, floats at `READING_DIGITS` (6) significant digits, the lens readout's
-aggregate chips without its per-layer matrix, and never the probe inspector's
-subspace coordinates; a call
-with `persist_per_layer_scores` keeps the per-layer traces too. Otherwise the
-per-layer views replay the token (section 7.5) while a model is loaded. A
-SmolLM2 row with the 17 default probes, a curved probe and the lens readout
-is about 7 kB, where the whole envelope is about 118 kB.
+reading's per-layer trace lives in the reading alone. A generated loom token
+row keeps `token_row_measurements(envelope)`: what the transcript's tint, the
+reply trace and the tree filter read per token without a model, the flat
+`scores` and each geometry reading's `fraction` and `coords`, at
+`READING_DIGITS` (6) significant digits. Everything else about the token (a
+geometry reading's nearest nodes, assignment, residual, membership and depth;
+the lens and SAE readings, readouts and bindings; the unit readings) is the
+token view's, which replays the token (section 7.5) while a model is loaded;
+the lens and SAE replays and the anatomy return the attached probes' readings
+too. The node keeps its reply's settled aggregate once
+(`aggregate_measurements`: each reading's summary, no traces, no scores), which
+the rack and the probe inspector draw after a reload. A row nothing replays (an
+authored prompt row) and a row of a call with `persist_per_layer_scores` keep
+`summary_measurements(envelope, per_layer=True)`, every reading whole with its
+traces but never the probe inspector's subspace coordinates. A SmolLM2 row
+with the 17 default probes and the lens readout is about 1 kB (it was about
+6 kB as a summary row), where the whole envelope is about 118 kB.
 Bindings record source and steering context, so a historical row stays
 interpretable after the active lens or SAE changes; the lens binding names a
 source per lens family (`sources.R`, `sources.S`) that produced the row. A

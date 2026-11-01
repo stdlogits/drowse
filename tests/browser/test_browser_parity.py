@@ -46,7 +46,11 @@ from drowse.lens.footprint import footprint_probe_rows
 from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT, InheritSystemPrompt, SamplingConfig
 from drowse.loom.recipe import CastMember, Recipe, compose_call
 from drowse.loom.tree import LoomTree
-from drowse.readout.measurements import build_measurements, token_row_measurements
+from drowse.readout.measurements import (
+    aggregate_measurements,
+    build_measurements,
+    token_row_measurements,
+)
 from drowse.readout.monitor import _depth_stats
 from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.sae.backend import LocalSaeBackend
@@ -862,11 +866,26 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
     )
 
     assert envelope == fixture["expected"]
-    # The loom token row the browser writes for the same token: the one row
-    # projection (summaries, READING_DIGITS significant digits, no traces, never the
-    # inspector's subspace coordinates).
+    # The loom token row the browser writes for the same token: the generated
+    # row's projection (the scores and each geometry share and coordinates, at
+    # READING_DIGITS significant digits; the token view replays the rest).
     assert envelope is not None
-    assert token_row_measurements(envelope, per_layer=False) == fixture["expectedRow"]
+    assert token_row_measurements(envelope) == fixture["expectedRow"]
+    # The node the browser finalizes keeps its reply's aggregate envelope as
+    # ``aggregate_measurements``: every reading's summary, no traces, no scores.
+    aggregate = build_measurements(
+        scope="aggregate",
+        geometry_readings={geometry["name"]: geometry_reading},
+        lens_readings={lens["name"]: lens_reading, slens["name"]: slens_reading},
+        sae_readings={sae["name"]: sae_reading},
+        lens_sources={"R": lens["source"], "S": slens["source"]},
+        sae_source=sae["source"],
+        sae_layer=sae["layer"],
+        units_readings={units["name"]: units_reading},
+        steering=fixture["steering"],
+    )
+    assert aggregate is not None
+    assert aggregate_measurements(aggregate) == fixture["expectedNodeAggregate"]
 
 
 def anatomy_envelope(fixture: dict[str, Any]) -> Any:

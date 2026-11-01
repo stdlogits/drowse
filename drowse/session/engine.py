@@ -71,6 +71,7 @@ from drowse.generation.token_payloads import TokenProbePayload
 from drowse.readout.measurements import (
     Measurements,
     envelope_sources,
+    summary_measurements,
     token_row_measurements,
 )
 from drowse.generation.types import (
@@ -113,9 +114,10 @@ class ConsumerPlan:
 
     ``live_scores_on`` is the geometry instrument's live toggle (off masks
     every per-token monitor consumer at the source).  ``persists_layer_scores``
-    is the call's ``persist_per_layer_scores``: the loom rows keep their
-    readings' per-layer traces and the lens readout's layers
-    (:func:`~drowse.readout.measurements.token_row_measurements`).  ``lens`` / ``sae`` mean
+    is the call's ``persist_per_layer_scores``: the loom rows keep every
+    reading whole with its per-layer traces and the lens readout's layers
+    (:func:`~drowse.readout.measurements.summary_measurements`) instead of
+    the generated row's scalars (``token_row_measurements``).  ``lens`` / ``sae`` mean
     the family's live readout is on and the callback asked for it; ``units``
     that attached unit probes tick per token (loom row or live scores).
     ``need_tap`` is false when nothing would consume a per-token callback, so
@@ -321,10 +323,13 @@ class TokenTap:
                     for a in top_alts
                 ]
             if measurements:
-                # The row keeps the envelope's projection (summaries, rounded;
-                # the per-layer traces only when the call asked to persist them).
-                row["measurements"] = token_row_measurements(
-                    cast(Measurements, measurements), per_layer=self._per_layer,
+                # The row keeps what the transcript, the reply trace and the
+                # filter read (the token view replays the rest); a call that
+                # persists the traces keeps every reading whole.
+                envelope = cast(Measurements, measurements)
+                row["measurements"] = (
+                    summary_measurements(envelope, per_layer=True)
+                    if self._per_layer else token_row_measurements(envelope)
                 )
             self._append_token(row, thinking=bool(is_thinking))
 

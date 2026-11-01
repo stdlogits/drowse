@@ -1,26 +1,20 @@
-import type { AnyReadingJSON, LoomTokenRowJSON, ProbeInfo, ProbeReadingJSON } from "./types";
+import type { AnyReadingJSON, MeasurementsEnvelopeJSON, ProbeInfo, ProbeReadingJSON } from "./types";
 
-/** The reading a saved reply kept for ``name`` on its last measured row (the response's, else the
- *  thinking's): the token the reply's settled aggregate reads (the last content token), as a row
- *  keeps it. A geometry reading is its summary (share, coordinates, nearest, assignment, residual,
- *  depth; no per-layer traces), a scalar reading whole. Null when no row measured the probe. */
+/** The reading a saved reply settled on for ``name``: its node's aggregate
+ *  (``aggregate_measurements``), the reading the live rack showed when the reply finished. A
+ *  geometry reading is its summary (share, coordinates, nearest, assignment, residual, depth; no
+ *  per-layer traces), a scalar reading whole (a lens probe's band and depth). Null when the node
+ *  kept none (an authored or imported turn, a reply that measured nothing) or the probe was not
+ *  read. */
 export function savedProbeReading(
   info: ProbeInfo,
   name: string,
-  node: { tokens: LoomTokenRowJSON[] | null; thinking_tokens: LoomTokenRowJSON[] | null } | undefined,
+  node: { aggregate_measurements: MeasurementsEnvelopeJSON | null } | undefined,
 ): AnyReadingJSON | null {
-  if (!node) return null;
-  const family = info.family;
-  for (const rows of [node.tokens, node.thinking_tokens]) {
-    for (let index = (rows?.length ?? 0) - 1; index >= 0; index -= 1) {
-      const instruments = rows?.[index]?.measurements?.instruments as
-        | Partial<Record<string, { readings?: Record<string, AnyReadingJSON> }>>
-        | undefined;
-      const reading = instruments?.[family]?.readings?.[name];
-      if (reading) return reading;
-    }
-  }
-  return null;
+  const instruments = node?.aggregate_measurements?.instruments as
+    | Partial<Record<string, { readings?: Record<string, AnyReadingJSON> }>>
+    | undefined;
+  return instruments?.[info.family]?.readings?.[name] ?? null;
 }
 
 /** What the rack shows for a probe on a saved reply: the node's flat aggregate scores (its axis-0

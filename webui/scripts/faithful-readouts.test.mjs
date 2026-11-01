@@ -170,20 +170,33 @@ try {
   tokenHoverState.saeReadout = [{ id: 7, activation: 3, max_act: null }];
   assert.equal(probeEntryForDisplay("feature alias").reading.unit, "raw_activation");
   assert.equal(probeEntryForDisplay("feature alias").reading.value, 3, "historical rows are not normalized using current metadata");
-  // A saved row keeps a geometry reading's summary: the hovered card shows its captured value and
-  // draws its layer strip from the token's replay, never from the capture alone.
+  // A captured reading without its traces (a node's summary) draws its layer strip from the token's
+  // replay, its value from the capture.
   probeRack.entries.set("calm", { info: { family: "geometry", name: "calm", is_affine: true, layers: [3, 7] },
     current: 0, previous: 0, sparkline: [], reading: null, aggregate: null });
   const calmSummary = { fraction: 0.4, nearest: [["calm", 1]], coords: [0.25], residual: 0, assignment: [], membership: 1, depth_com: [], depth_spread: [] };
+  const calmReplayed = { ...calmSummary, coords: [0.3], depth_com: [0.5], coords_per_layer: { 3: [0.1], 7: [0.3] }, fraction_per_layer: {}, residual_per_layer: {} };
   tokenHoverState.probeReadings = { calm: calmSummary };
-  tokenHoverState.replayedLayers = null;
-  assert.deepEqual(probeEntryForDisplay("calm").perLayer, {}, "a saved summary has no strip of its own");
+  tokenHoverState.replayedReadings = null;
+  assert.deepEqual(probeEntryForDisplay("calm").perLayer, {}, "a summary has no strip of its own");
   assert.equal(probeEntryForDisplay("calm").current, 0.25);
-  tokenHoverState.replayedLayers = { calm: { ...calmSummary, coords: [0.3], coords_per_layer: { 3: [0.1], 7: [0.3] }, fraction_per_layer: {}, residual_per_layer: {} } };
+  tokenHoverState.replayedReadings = { calm: calmReplayed };
   assert.deepEqual(probeEntryForDisplay("calm").perLayer, { 3: 0.1, 7: 0.3 }, "the strip comes from the replay");
   assert.equal(probeEntryForDisplay("calm").current, 0.25, "the value stays the capture's");
+  // A generated row keeps the value (its geometry coordinates) and nothing else: the card shows it at
+  // once, and the replayed reading (its depth, its strip) once it lands, beside the row's value.
   tokenHoverState.probeReadings = null;
-  tokenHoverState.replayedLayers = null;
+  tokenHoverState.replayedReadings = null;
+  tokenHoverState.rowGeometry = { calm: { fraction: 0.4, coords: [0.25] } };
+  tokenHoverState.probes = { calm: 0.25 };
+  assert.equal(probeEntryForDisplay("calm").current, 0.25, "a generated row's value shows at once");
+  tokenHoverState.replayedReadings = { calm: calmReplayed };
+  assert.equal(probeEntryForDisplay("calm").reading.depth_com[0], 0.5, "the replay brings the rest of the reading");
+  assert.deepEqual(probeEntryForDisplay("calm").perLayer, { 3: 0.1, 7: 0.3 });
+  assert.equal(probeEntryForDisplay("calm").current, 0.25, "the value stays the row's");
+  tokenHoverState.probes = null;
+  tokenHoverState.rowGeometry = null;
+  tokenHoverState.replayedReadings = null;
   tokenHoverState.active = false;
   probeRack.active = [];
   probeRack.entries.clear();
@@ -243,27 +256,36 @@ try {
   assert.equal(layers.formatSigned(-0.001), "0.00", "a reading that rounds to zero carries no sign");
 
   const readings = await server.ssrLoadModule("/src/drawers/token/readings.ts");
-  const pin = { value: 0.25, unit: "mean_token_probability", per_layer: {}, depth: null };
-  const recorded = {
-    lens: { binding: { source: "old", steering: null }, readings: { "lens-pin": pin } },
-    sae: { binding: { source: "old", steering: null, layer: 0 }, readings: { "sae-pin": pin } },
-  };
-  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "captured", sae: "captured" })), ["lens-pin", "sae-pin"],
-    "the pins recorded with the token show beside their capture");
-  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "replayed", sae: "captured" })), ["sae-pin"],
-    "a replayed lens readout hides the lens pins captured with the token");
-  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: "captured", sae: "replayed" })), ["lens-pin"],
-    "a replayed SAE readout hides the SAE pins captured with the token");
-  assert.deepEqual(readings.pinnedReadings(recorded, { lens: null, sae: null }), {}, "no readout yet, no pins");
-  assert.deepEqual(readings.pinnedReadings(undefined, { lens: "captured", sae: "captured" }), {});
-  // The anatomy is always a replay: where it shows, the lens pins follow the steering switch, so a
-  // steered anatomy keeps the pins it replays (the lens readout is cleared, its origin null).
-  assert.equal(readings.lensPinOrigin(true, true, null), "captured");
-  assert.deepEqual(Object.keys(readings.pinnedReadings(recorded, { lens: readings.lensPinOrigin(true, true, null), sae: null })), ["lens-pin"],
-    "a steered anatomy shows the lens pins captured with the token");
-  assert.equal(readings.lensPinOrigin(true, false, null), null, "an unsteered anatomy hides them");
-  assert.equal(readings.lensPinOrigin(false, true, "replayed"), "replayed", "without the anatomy the readout's origin rules");
-  assert.equal(readings.lensPinOrigin(false, false, "captured"), "captured");
+  const pin = (value) => ({ value, unit: "mean_token_probability", per_layer: {}, depth: null });
+  const captured = { "lens-pin": pin(0.25) };
+  const replayedLens = { "lens-pin": pin(0.24) };
+  const sae = { "sae-pin": pin(0.5) };
+  const tokenPins = (o) => readings.tokenPins({
+    anatomy: false, steered: true, captured: null, anatomyPins: null, lensPins: null, saePins: null, ...o,
+  });
+  assert.deepEqual(tokenPins({ lensPins: captured, saePins: sae }), { ...captured, ...sae },
+    "each family's pins are its shown read's (a capture's)");
+  assert.deepEqual(tokenPins({ lensPins: replayedLens }), replayedLens,
+    "a replayed lens readout lists the pins it read: a generated row keeps none of its own");
+  assert.deepEqual(tokenPins({}), {}, "no read yet, no pins");
+  // Where the anatomy stands in for the readout: steered, the pins captured with a live token, else
+  // the anatomy's own (a generated row, an unsteered view).
+  assert.deepEqual(tokenPins({ anatomy: true, captured, anatomyPins: replayedLens }), captured);
+  assert.deepEqual(tokenPins({ anatomy: true, captured: null, anatomyPins: replayedLens }), replayedLens,
+    "a generated row's steered anatomy lists the pins it replayed");
+  assert.deepEqual(tokenPins({ anatomy: true, steered: false, captured, anatomyPins: replayedLens }), replayedLens,
+    "an unsteered anatomy lists its own (unsteered) pins, never the captured ones");
+  assert.deepEqual(tokenPins({ anatomy: true, lensPins: replayedLens }), {}, "the hidden readout's pins never show");
+  // Steered, a replayed pin keeps the value the row kept (its score); unsteered, it is all replay.
+  const scores = { "lens-pin": 0.25 };
+  assert.equal(tokenPins({ anatomy: true, anatomyPins: replayedLens, scores })["lens-pin"].value, 0.25);
+  assert.equal(tokenPins({ anatomy: true, steered: false, anatomyPins: replayedLens, scores })["lens-pin"].value, 0.24);
+  assert.equal(tokenPins({ saePins: { "lens-pin": pin(0.3) }, saeSteered: false, scores })["lens-pin"].value, 0.3);
+  const { withRowValues } = await server.ssrLoadModule("/src/lib/tokenRows.ts");
+  const replayedGeometry = { calm: { fraction: 0.41, nearest: [["calm", 1]], coords: [0.26], residual: 0, assignment: [], membership: 1, depth_com: [0.5], depth_spread: [0.1] } };
+  assert.deepEqual(withRowValues(replayedGeometry, { calm: { fraction: 0.4, coords: [0.25] } }).calm,
+    { ...replayedGeometry.calm, fraction: 0.4, coords: [0.25] }, "a generated row's share and coordinates stand; the rest replays");
+  assert.deepEqual(withRowValues(replayedGeometry, {}), replayedGeometry);
   // The lens side replays as the anatomy (any active lens, an S lens alone included) or as the
   // readout (the R lens only); the view and the WebMCP inspector gate Unsteered on the same answer.
   const gate = (o) => readings.lensReplay({ anatomy: false, tokenReadout: false, rLens: false, activeLens: false, replayContext: true, ...o });
@@ -456,7 +478,8 @@ try {
 
   // Regression: after a reload the rack, the Lens panel's pins and the inspector lost what the live
   // view showed (a curved probe's share, a lens pin's value, nearest, residual, depth), though the
-  // tree keeps it: the node's aggregate and its last measured row. The hydrate reads both.
+  // tree keeps it: the node's flat aggregate and its aggregate reading (aggregate_measurements; a
+  // generated row keeps only its scores and geometry shares and coordinates). The hydrate reads both.
   {
     const { hydrateProbeRackFromActiveNode, probeRack: rack } =
       await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
@@ -472,8 +495,12 @@ try {
       assignment: [["october", 0.9]], membership: 0.8, depth_com: [0.5], depth_spread: [0.26] };
     const parisReading = { value: 0.9205, unit: "mean_footprint_z", per_layer: { 0: 0.8, 1: 1.04 },
       depth: { center: [0.6], spread: [0.1], basis: "footprint_z" } };
-    const row = (readings) => ({ text: "x", raw_index: 0, measurements: { version: 2, scope: "token", provenance: "captured",
-      instruments: { geometry: { readings: { "default/months": readings.months } }, lens: { binding: { sources: { R: null, S: "s" }, steering: null }, readings: { "slens/Paris": readings.paris } } } } });
+    const row = (fraction) => ({ text: "x", raw_index: 0, measurements: { version: 2, scope: "token", provenance: "captured",
+      instruments: { geometry: { readings: { "default/months": { fraction, coords: [2.3, 0.4] } } } },
+      scores: { "default/months": 2.3, "slens/Paris": 0.1 } } });
+    const aggregate = { version: 2, scope: "aggregate", provenance: "captured", instruments: {
+      geometry: { readings: { "default/months": monthsReading } },
+      lens: { binding: { sources: { R: null, S: "s" }, steering: null }, readings: { "slens/Paris": parisReading } } } };
     applySnapshot({
       tree_format: 2, drowse_version: "test", session_id: "default", model_id: "fixture",
       root_id: "root", active_node_id: "reply", rev: 9, children_of: { root: ["reply"], reply: [] }, cast: {},
@@ -481,21 +508,22 @@ try {
         { id: "root", parent_id: null, role: "system", text: "", recipe: null, applied_steering: null, finish_reason: null, tokens: null, thinking_tokens: null, aggregate_readings: {} },
         { id: "reply", parent_id: "root", role: "assistant", text: "x y", recipe: null, applied_steering: null, finish_reason: "stop",
           aggregate_readings: { "default/months": 2.3732, "slens/Paris": 0.9205 },
-          tokens: [row({ months: { ...monthsReading, fraction: 0.2 }, paris: { ...parisReading, value: 0.1 } }), row({ months: monthsReading, paris: parisReading }), { text: "\n" }],
+          aggregate_measurements: aggregate,
+          tokens: [row(0.2), row(0.3), { text: "\n" }],
           thinking_tokens: null },
       ],
     });
     hydrateProbeRackFromActiveNode();
     const m = rack.entries.get("default/months");
-    assert.equal(m.savedFraction, 0.341, "a curved probe's share comes from the last measured row");
+    assert.equal(m.savedFraction, 0.341, "a curved probe's share comes from the node's aggregate reading");
     assert.equal(m.current, 0.341);
-    assert.deepEqual(m.savedCoordinates, [2.3732, 0.5], "axis 0 from the exact aggregate, the rest from the row");
+    assert.deepEqual(m.savedCoordinates, [2.3732, 0.5], "axis 0 from the exact aggregate, the rest from its reading");
     assert.equal(m.savedReading.residual, 1.02);
     assert.deepEqual(m.nearest, [["october", 24.19]]);
     const p = rack.entries.get("slens/Paris");
     assert.equal(p.savedAggregate, 0.9205, "a lens pin keeps its saved value");
     assert.equal(p.savedReading.depth.center[0], 0.6);
-    assert.deepEqual(p.perLayer, { 0: 0.8, 1: 1.04 }, "a scalar reading's band comes back from the row");
+    assert.deepEqual(p.perLayer, { 0: 0.8, 1: 1.04 }, "a scalar reading's band comes back from the aggregate");
     rack.entries.clear();
   }
 

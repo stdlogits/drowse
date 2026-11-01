@@ -1333,21 +1333,23 @@ def _row_tree(row: dict[str, Any]) -> tuple[LoomTree, dict[str, Any]]:
 
 
 def test_node_reader_reads_the_6_0_row_shape():
-    """A summary row and a row that kept its per-layer traces both load."""
-    reading = _geometry_row_reading()
-    envelope = {
+    """A generated row (scores, each geometry share and coordinates) and a
+    row kept whole (every reading with its per-layer traces) both load."""
+    envelope: dict[str, Any] = {
         "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
         "scores": {"calm": 0.25},
-        "instruments": {"geometry": {"readings": {"calm": reading}}},
+        "instruments": {"geometry": {"readings": {"calm": {"fraction": 0.5, "coords": [0.25]}}}},
     }
     row = {"token_id": 7, "text": "x", "logprob": -0.1, "perplexity": 1.1,
            "raw_index": 0, "measurements": envelope}
     _tree, raw = _row_tree(row)
     assert LoomTree.from_dict(raw)
+    reading = _geometry_row_reading()
     reading.update({
         "fraction_per_layer": {"0": 0.5}, "coords_per_layer": {"0": [0.25]},
         "residual_per_layer": {"0": 0.0},
     })
+    envelope["instruments"]["geometry"]["readings"]["calm"] = reading
     assert LoomTree.from_dict(raw)
 
 
@@ -1371,7 +1373,14 @@ def test_node_reader_reads_the_6_0_row_shape():
         (
             lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
             .update(fraction_per_layer={"0": 0.5}),
-            "plus all of",
+            "pre-6.0 shape.*keeps its summary without all its traces",
+        ),
+        (
+            lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
+            .update(fraction_per_layer={"0": 0.5}, coords_per_layer={"0": [0.25]},
+                    residual_per_layer={"0": 0.0}) or row["measurements"]["instruments"][
+                        "geometry"]["readings"].update(months={"fraction": 0.3, "coords": [1.0]}),
+            "mixes a generated row's geometry readings",
         ),
         (lambda row: row.update(hidden={"0": [1.0]}), "unknown loom token row field 'hidden'"),
     ],
@@ -1379,12 +1388,13 @@ def test_node_reader_reads_the_6_0_row_shape():
 def test_node_reader_refuses_pre_6_0_token_rows(
     mutate: Callable[[dict[str, Any]], None], message: str,
 ):
-    """Regression: a 6.0 row keeps each reading's summary once
-    (``token_row_measurements``).  The unreleased earlier shapes of token
+    """Regression: a 6.0 generated row keeps its scores and each geometry
+    share and coordinates (``token_row_measurements``), a row kept whole
+    every reading with its traces.  The unreleased earlier shapes of token
     sidecar 3 / envelope 2 (a row-level score copy, the layer-major
     ``per_layer_scores`` map, the inspector's subspace coordinates on every
-    token) are refused with a plain error rather than handed to readers that
-    no longer expect them."""
+    token, a reading's summary without its traces) are refused with a plain
+    error rather than handed to readers that no longer expect them."""
     envelope = {
         "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
         "scores": {"calm": 0.25},
@@ -1621,3 +1631,46 @@ def test_loom_import_reports_corrupt_token_sidecars(tmp_path: Path, compressed: 
     (tmp_path / "tree.tokens.json.gz").write_bytes(compressed)
     with pytest.raises(loom.LoomTreeError, match="complete gzip"):
         loom.LoomTree.load(path)
+
+
+@pytest.mark.parametrize(
+    ("aggregate", "message"),
+    [
+        ([], "must be an object or null"),
+        ({"version": 1, "scope": "aggregate", "provenance": "captured", "instruments": {}},
+         "unsupported aggregate measurements version 1"),
+        ({"version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+          "instruments": {}}, "aggregate envelope without scores"),
+        ({"version": MEASUREMENTS_VERSION, "scope": "aggregate", "provenance": "captured",
+          "instruments": {}, "scores": {"calm": 0.25}}, "aggregate envelope without scores"),
+        ({"version": MEASUREMENTS_VERSION, "scope": "aggregate", "provenance": "captured",
+          "instruments": {"geometry": {"readings": {"calm": {"fraction": 0.5, "coords": [0.25]}}}}},
+         "aggregate reading 'calm' must carry exactly"),
+    ],
+)
+def test_node_reader_checks_the_aggregate_measurements(aggregate: Any, message: str):
+    """A node keeps its reply's aggregate envelope (each reading's summary, no
+    scores, ``aggregate_readings`` being its flat view); another shape is
+    refused."""
+    _tree, raw = _row_tree({"token_id": 7, "text": "x"})
+    node = next(n for n in raw["nodes"] if n.get("tokens"))
+    node["aggregate_measurements"] = {
+        "version": MEASUREMENTS_VERSION, "scope": "aggregate", "provenance": "captured",
+        "instruments": {"geometry": {"readings": {"calm": _geometry_row_reading()}}},
+    }
+    loaded = LoomTree.from_dict(raw)
+    assert loaded.get(node["id"]).aggregate_measurements == node["aggregate_measurements"]
+    node["aggregate_measurements"] = aggregate
+    with pytest.raises(LoomTreeError, match=message):
+        LoomTree.from_dict(raw)
+
+
+def test_the_dashboard_tree_fixture_is_a_current_tree():
+    """``tests/fixtures/loom_tree_v2.json`` is the tree save the dashboard's
+    snapshot tests restore; it stays a tree this reader loads (its nodes
+    carry ``aggregate_measurements``)."""
+    raw = json.loads(
+        (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "loom_tree_v2.json").read_text(),
+    )
+    tree = LoomTree.from_dict(raw)
+    assert all(node.aggregate_measurements is None for node in tree.nodes.values())

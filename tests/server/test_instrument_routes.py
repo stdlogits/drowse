@@ -8,7 +8,7 @@ import threading
 import time
 import typing
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -1214,6 +1214,7 @@ class TestTokenReadout:
             12: [(" a", 0.78, 5), (" d", 0.13, 3)],
         },
         [(" a", 0.41, 0.31, 0.05, 7), (" b", 0.2, 0.8, 0.1, 8)],
+        {},  # the attached lens probes' readings (none here)
     )
 
     @staticmethod
@@ -1328,8 +1329,10 @@ class TestTokenReadout:
         assert [row["layer"] for row in lens["readout"]["layers"]] == [12, 18]
         assert lens["readout"]["aggregate"][0]["token"] == " a"
         assert session.lens.token_readout.call_args.kwargs["top_k"] == 2
-        # The replay captures the layers the lens resolved.
-        assert session.lens_replay.call_args.kwargs["layers"] == [12, 18]
+        # The replay captures the layers the lens resolved (and the attached
+        # probes', none here), resolved inside the section.
+        layers = session.lens_replay.call_args.kwargs["layers"]
+        assert callable(layers) and list(cast(Any, layers)()) == [12, 18]
         # ONE conversion on the whole path: the read's p_l reaches the
         # envelope untouched and ``build_measurements`` logs it exactly once,
         # so exponentiating the wire value returns the original probability.
@@ -1376,7 +1379,7 @@ class TestTokenReadout:
             layer=14,
             feature_meta={"42": {"label": "fruit", "max_act": 121.1}},
         )
-        session.sae_replay.return_value = (self._token(None), [(42, 3.5)])
+        session.sae_replay.return_value = (self._token(None), ([(42, 3.5)], {}))
         resp = client.get(
             f"{_BASE}/sae/token-readout",
             params={"node_id": "n1", "raw_index": 2},

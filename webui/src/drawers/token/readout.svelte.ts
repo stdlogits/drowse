@@ -19,6 +19,7 @@ import type { InstrumentFamily } from "../../lib/types";
 import type {
   MeasurementsEnvelopeJSON,
   ProbeReadingJSON,
+  ScalarReadingJSON,
 } from "../../lib/types";
 
 export type ReadoutOrigin = "captured" | "replayed" | null;
@@ -35,8 +36,20 @@ interface ReplayEntry<T> {
   state: "loading" | "ready" | "failed";
   data: T | null;
   source: string | null;
+  pins: Pins | null;
   error: string | null;
   progress: ReadoutProgress | null;
+}
+
+/** The lens or SAE probes pinned while the token was read, by name: a capture's, or a replay's
+ *  (the lens and SAE replays and the anatomy return the attached probes' readings). */
+export type Pins = Record<string, ScalarReadingJSON>;
+
+/** What a family read maps its envelope to: the view, its source and its pinned probes. */
+export interface ReadoutView<T> {
+  data: T;
+  source: string | null;
+  pins?: Pins | null;
 }
 
 const MAX_REPLAY_CACHE_ENTRIES = 48;
@@ -55,21 +68,24 @@ export class ReplayReadout<T> {
   error: string | null = $state(null);
   origin: ReadoutOrigin = $state(null);
   source: string | null = $state(null);
+  /** The probes the shown read pinned (captured or replayed with it), else null. */
+  pins: Pins | null = $state(null);
   progress: ReadoutProgress | null = $state(null);
   #selectedKey: string | null = null;
   /** The saved capture a replay stands on: shown while the replay loads and kept beside its error
    *  if it fails, so a failed replay never takes away what the row saved. */
-  #base: { data: T; source: string | null } | null = null;
+  #base: ReadoutView<T> | null = null;
   #entries = new Map<string, ReplayEntry<T>>();
   #disposed = false;
 
   /** Adopt the loom-captured envelope view directly (no fetch). */
-  adopt(data: T, source: string | null): void {
+  adopt(data: T, source: string | null, pins: Pins | null = null): void {
     this.#selectedKey = null;
     this.#base = null;
     this.data = data;
     this.origin = "captured";
     this.source = source;
+    this.pins = pins;
     this.loading = false;
     this.error = null;
     this.progress = null;
@@ -82,6 +98,7 @@ export class ReplayReadout<T> {
     this.data = null;
     this.origin = null;
     this.source = null;
+    this.pins = null;
     this.loading = false;
     this.error = null;
     this.progress = null;
@@ -104,11 +121,8 @@ export class ReplayReadout<T> {
     nodeId: string,
     rawIndex: number,
     opts: { topK?: number; steered?: boolean; raw?: boolean; layers?: string },
-    map: (env: MeasurementsEnvelopeJSON) => {
-      data: T;
-      source: string | null;
-    },
-    base: { data: T; source: string | null } | null = null,
+    map: (env: MeasurementsEnvelopeJSON) => ReadoutView<T>,
+    base: ReadoutView<T> | null = null,
   ): void {
     const key = replayKey(family, nodeId, rawIndex, opts);
     this.#base = base;
@@ -120,7 +134,7 @@ export class ReplayReadout<T> {
     nodeId: string,
     rawIndex: number,
     opts: TokenAnatomyOptions,
-    map: (env: MeasurementsEnvelopeJSON) => { data: T; source: string | null },
+    map: (env: MeasurementsEnvelopeJSON) => ReadoutView<T>,
   ): void {
     const key = JSON.stringify([
       "anatomy", tokenReadoutCacheEpoch("lens"), nodeId, rawIndex,
@@ -134,7 +148,7 @@ export class ReplayReadout<T> {
     key: string,
     rawIndex: number,
     request: (onProgress: (event: RuntimeProgressEvent) => void) => Promise<{ measurements: MeasurementsEnvelopeJSON }>,
-    map: (env: MeasurementsEnvelopeJSON) => { data: T; source: string | null },
+    map: (env: MeasurementsEnvelopeJSON) => ReadoutView<T>,
   ): void {
     this.#selectedKey = key;
     const cached = this.#entries.get(key);
@@ -148,6 +162,7 @@ export class ReplayReadout<T> {
       state: "loading",
       data: null,
       source: null,
+      pins: null,
       error: null,
       progress: {
         phase: "queued",
@@ -166,10 +181,11 @@ export class ReplayReadout<T> {
         if (this.#selectedKey === key) this.#show(key, entry);
       })
       .then((res) => {
-        const { data, source } = map(res.measurements);
+        const { data, source, pins } = map(res.measurements);
         entry.state = "ready";
         entry.data = data;
         entry.source = source;
+        entry.pins = pins ?? null;
         entry.error = null;
         entry.progress = null;
       })
@@ -192,6 +208,7 @@ export class ReplayReadout<T> {
     this.error = entry.error;
     this.origin = entry.state === "ready" ? "replayed" : base ? "captured" : null;
     this.source = base ? base.source : entry.source;
+    this.pins = base ? base.pins ?? null : entry.pins;
     this.progress = entry.progress;
   }
 

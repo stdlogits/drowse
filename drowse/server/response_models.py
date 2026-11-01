@@ -37,6 +37,7 @@ from pydantic import ConfigDict
 from typing_extensions import NotRequired, TypedDict
 
 from drowse.generation.results import FinishReason
+from drowse.readout.measurements import Measurements
 
 #: Response-model config for shapes whose payload is produced outside this
 #: module.  Extra keys are preserved rather than silently dropped by the
@@ -311,6 +312,7 @@ class LoomNodeJSON(TypedDict):
     role_label: str | None
     thinking_text: str | None
     aggregate_readings: dict[str, float]
+    aggregate_measurements: Measurements | None
     applied_steering: str | None
     finish_reason: FinishReason | None
     starred: bool

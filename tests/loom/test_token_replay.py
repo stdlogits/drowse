@@ -46,8 +46,9 @@ _STEERING = "0.4 mood"
 def _all_families_session(
     factory: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
 ) -> Any:
-    """A scripted tiny session with a geometry probe, a fitted J-lens and a
-    resident mock SAE, every family's live readout on."""
+    """A scripted tiny session with a geometry probe, a fitted J-lens with a
+    ``jlens/`` probe and a resident mock SAE with an ``sae/`` probe, every
+    family's live readout on."""
     from drowse.sae import runtime as sae_runtime
     from drowse.sae import sources as sae_sources
     from drowse.sae.backend import ResolvedSae
@@ -66,6 +67,8 @@ def _all_families_session(
     monkeypatch.setattr(sae_sources, "load_sae_feature_meta", lambda *_a, **_k: {})
     monkeypatch.setattr(sae_sources, "save_sae_metadata", lambda *_a, **_k: None)
     session.sae.load("mock-release", layer=1)
+    session.add_probe("jlens/a")
+    session.add_probe("sae/1")
     session.lens.set_live(True)
     session.sae.set_live(True)
     return session
@@ -73,7 +76,8 @@ def _all_families_session(
 
 def _live_rows(session: Any) -> tuple[Any, dict[int, dict[str, Any]]]:
     """Each token's live envelope (the token frame's, every per-layer trace
-    included), keyed by raw index; its loom row keeps the projection."""
+    included), keyed by raw index; its loom row keeps the generated row's
+    projection (the scores, each geometry share and coordinates)."""
     events: list[TokenEvent] = []
     session.generate(
         "Say hi.", steering=_STEERING,
@@ -85,10 +89,18 @@ def _live_rows(session: Any) -> tuple[Any, dict[int, dict[str, Any]]]:
     }
     assert len(live) == len(node.raw_token_ids) == 5
     for row in node.tokens:
-        assert row["measurements"] == token_row_measurements(
-            live[int(row["raw_index"])], per_layer=False,
-        )
+        assert row["measurements"] == token_row_measurements(live[int(row["raw_index"])])
     return node, live
+
+
+def _assert_scalar_reading(got: Any, want: Any) -> None:
+    """A replayed lens or SAE probe reading is the live one: its value, its
+    unit and its per-layer trace."""
+    assert got["unit"] == want["unit"]
+    assert got["value"] == pytest.approx(want["value"], rel=1e-4, abs=1e-7)
+    assert set(got["per_layer"]) == set(want["per_layer"])
+    for layer, value in want["per_layer"].items():
+        assert got["per_layer"][layer] == pytest.approx(value, rel=1e-4, abs=1e-7)
 
 
 def _replay(session: Any, family: str, node_id: str, k: int, **kw: Any) -> Any:
@@ -120,6 +132,9 @@ def test_every_family_replays_the_producing_forward(
 
         sae = _replay(session, "sae", node.id, k)
         assert sae["binding"] == live["sae"]["binding"]
+        # The pinned probe replays with the features: a loom row keeps only
+        # its value, and the token view draws its reading from the replay.
+        _assert_scalar_reading(sae["readings"]["sae/1"], live["sae"]["readings"]["sae/1"])
         live_features = {f["id"]: f["activation"] for f in live["sae"]["readout"]["features"]}
         replay_features = {f["id"]: f["activation"] for f in sae["readout"]["features"]}
         assert set(replay_features) == set(live_features)
@@ -131,6 +146,12 @@ def test_every_family_replays_the_producing_forward(
         # nearly flat, so the ranking itself can swap near-ties).
         lens = _replay(session, "lens", node.id, k, top_k=256)
         assert lens["binding"] == live["lens"]["binding"]
+        _assert_scalar_reading(lens["readings"]["jlens/a"], live["lens"]["readings"]["jlens/a"])
+        anatomy = session.token_anatomy(node.id, k, patterns=0)["measurements"]
+        _assert_scalar_reading(
+            anatomy["instruments"]["lens"]["readings"]["jlens/a"],
+            live["lens"]["readings"]["jlens/a"],
+        )
         replay_layers = {
             row["layer"]: {t["id"]: t["logprob"] for t in row["tokens"]}
             for row in lens["readout"]["layers"]
@@ -330,3 +351,36 @@ def test_replay_refuses_a_bad_anchor_before_any_work() -> None:
     with pytest.raises(InvalidNodeOperationError, match="no raw token record"):
         replay(bare, 0)
     assert rig.events == []
+
+
+def test_a_call_that_persists_the_traces_keeps_every_reading_whole(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A generated row keeps its scores and each geometry share and
+    coordinates; a call that sets ``persist_per_layer_scores`` keeps every
+    reading whole with its traces instead.  Either way the node keeps its
+    reply's aggregate once (``aggregate_measurements``), and both survive the
+    tree's own round trip."""
+    from drowse.loom.tree import LoomTree
+    from drowse.readout.measurements import aggregate_measurements, summary_measurements
+
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    events: list[TokenEvent] = []
+    result = session.generate(
+        "Say hi.", steering=_STEERING, on_token=_live_consumer(events),
+        sampling=SamplingConfig(max_tokens=3, persist_per_layer_scores=True),
+    ).first
+    node = session.tree.get(session.tree.active_node_id)
+    live = {int(cast(int, event.raw_index)): event.measurements for event in events}
+    for row in node.tokens:
+        assert row["measurements"] == summary_measurements(
+            cast(Any, live[int(row["raw_index"])]), per_layer=True,
+        )
+        assert "coords_per_layer" in row["measurements"]["instruments"]["geometry"]["readings"]["mood"]
+    assert result.measurements is not None
+    kept = node.aggregate_measurements
+    assert kept == aggregate_measurements(cast(Any, result.measurements))
+    assert kept is not None and set(kept["instruments"]) >= {"geometry", "lens", "sae"}
+    again = LoomTree.from_dict(session.tree.to_dict(include_tokens=True))
+    assert again.get(node.id).aggregate_measurements == kept
+    assert again.get(node.id).tokens == node.tokens

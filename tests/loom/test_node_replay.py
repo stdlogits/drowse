@@ -505,13 +505,13 @@ def test_a_triggered_node_replays_as_generation_steered_it(
     activity = session.unit_activity(node.id, units=names)
     assert node.recipe is not None and activity["steering"] == node.recipe.steering
     rows = {
-        int(row["raw_index"]): row["measurements"]["instruments"]["units"]["readings"]
+        int(row["raw_index"]): row["measurements"]["scores"]
         for row in node.tokens
     }
     assert rows
     for raw_index, readings in rows.items():
         for name, trace in activity["traces"].items():
-            assert trace[raw_index] == pytest.approx(readings[name]["value"], abs=1e-4)
+            assert trace[raw_index] == pytest.approx(readings[name], abs=1e-4)
     unsteered = session.unit_activity(node.id, units=names, apply_steering=False)
     assert unsteered["traces"] != activity["traces"]
     fired = {
@@ -567,12 +567,12 @@ def test_unit_activity_equals_the_unit_probes_at_the_same_tokens(tiny_session: A
             assert traces[name][raw_index] == pytest.approx(readings[name]["value"], abs=1e-5)
     # The live loom rows read the same values.
     rows = {
-        int(row["raw_index"]): row["measurements"]["instruments"]["units"]["readings"]
+        int(row["raw_index"]): row["measurements"]["scores"]
         for row in node.tokens
     }
-    for raw_index, readings in rows.items():
+    for raw_index, scores in rows.items():
         for name in traces:
-            assert traces[name][raw_index] == pytest.approx(readings[name]["value"], abs=1e-4)
+            assert traces[name][raw_index] == pytest.approx(scores[name], abs=1e-4)
     # Peaks: each is its unit's largest |value| over the node, at its token;
     # the top neurons, then the top heads, each kind ranked on its own (a
     # neuron's and a head's values are different quantities).

@@ -1,5 +1,5 @@
 import { serializeExpression } from "./expression";
-import { tokenRowProblem } from "./tokenRows";
+import { aggregateMeasurementsProblem, tokenRowProblem } from "./tokenRows";
 import { unitTermProblem } from "./unitTerms";
 import type {
   LoomTreeJSON,
@@ -135,6 +135,10 @@ export function validateConversationSnapshot(
       && !(FINISH_REASONS as readonly unknown[]).includes(finishReason)) {
       invalid("node finish reason");
     }
+    // The node's settled aggregate (the rack's after a restore), in the loom reader's one shape.
+    const aggregate = (node as Record<string, unknown>).aggregate_measurements;
+    const aggregateProblem = aggregateMeasurementsProblem(aggregate === undefined ? null : aggregate);
+    if (aggregateProblem !== null) throw new TypeError(`Unreadable node aggregate: ${aggregateProblem}`);
     for (const field of ["tokens", "thinking_tokens"] as const) {
       const rows = (node as Record<string, unknown>)[field];
       if (rows === undefined || rows === null) continue;

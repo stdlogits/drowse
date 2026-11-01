@@ -93,6 +93,7 @@ from drowse.readout.measurements import (
     TokenAnatomy,
     build_measurements,
 )
+from drowse.readout.types import ScalarReading
 from drowse.steering.triggers import TriggerContext
 from drowse.units.capture import SCALE_FLOOR
 from drowse.units.runtime import UnitsUnavailableError
@@ -736,6 +737,9 @@ class NodeReplayer:
         top ``units`` units, and the attention from the token's producing
         position of the top ``patterns`` heads (0, or an R lens with no
         ``mid`` layer to rank heads by: none, and no eager attention).  The
+        envelope's lens channel carries the attached ``jlens/`` and
+        ``slens/`` probes' readings of the same residual (as a live token
+        scores them; a loom row keeps only their values).  The
         forward runs as generation's triggers ran it (:func:`~drowse.loom.replay.replay_segments`).
         Raises ``UnsupportedBlockError`` (422) for a model the block
         description refuses and ``SteeringCompositionError`` (422) for
@@ -761,7 +765,7 @@ class NodeReplayer:
         except UnitsUnavailableError:
             unit_scales = None
 
-        def run(forward: ReplayForward) -> TokenAnatomy:
+        def run(forward: ReplayForward) -> tuple[TokenAnatomy, dict[str, ScalarReading]]:
             segments = self._segments(forward)
             # Eager attention and the pattern taps only when a pattern can be
             # returned (a head ranked through the R lens at ``mid``).
@@ -772,18 +776,26 @@ class NodeReplayer:
                     segments=segments, ctx=self._ctx,
                 )
             with torch.inference_mode():
-                return self._anatomy(
+                anatomy = self._anatomy(
                     spec, taps, forward, k=int(k), units=int(units), patterns=int(patterns),
                     unit_scales=unit_scales,
                 )
+                # The lens probes read the residual each block wrote (after
+                # the steering), as the live capture does.
+                probes = self._lens.score_probes(
+                    {L: taps.out[L] for L in range(int(taps.out.shape[0]))},
+                )
+            return anatomy, probes
 
-        token, anatomy = self._replayer.forward(
+        token, (anatomy, probe_readings) = self._replayer.forward(
             node_id, raw_index, run=run, apply_steering=apply_steering, raw=raw,
             label="session.token_anatomy",
         )
         anatomy["binding"]["steering"] = token.steering
         return {"measurements": build_measurements(
             scope="replay", provenance="replayed", anatomy=anatomy,
+            lens_readings=probe_readings or None,
+            lens_sources=anatomy["binding"]["sources"],
             steering=token.steering,
         )}
 

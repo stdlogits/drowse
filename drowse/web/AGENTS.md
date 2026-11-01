@@ -139,12 +139,17 @@ own checkout, so in a worktree run it from the repo root with `PYTHONPATH=.`.
 
 **Measurements.** The read side has one record, the versioned `measurements` envelope from
 `drowse/readout/measurements.py`. Its scope is `"token"` on each measured `token` frame,
-which carries it whole; the loom token row keeps its projection
-(`token_row_measurements`: each reading's summary at 6 significant digits, no per-layer traces unless
-the call set `persist_per_layer_scores`, which the dashboard does not), so a finished
-reply's per-layer views replay the token. It is `"aggregate"` on
+which carries it whole; a generated loom token row keeps only what the thread's tint, the
+rack's trace and the tree filter read (`token_row_measurements`: the `scores` and each geometry
+reading's `fraction` and `coords`, at 6 significant digits; `TokenRowMeasurementsJSON`), so a
+finished reply's token view and hover replay the rest of the token (geometry summaries and
+layers, the lens and SAE readings, chips and features). A row kept whole (an authored row, or a
+call that set `persist_per_layer_scores`, which the dashboard does not) carries every reading
+with its traces. The reply's settled reading rides the node (`aggregate_measurements`), which the
+rack and the probe inspector draw after a reload. It is `"aggregate"` on
 `done.result.measurements`, and `"replay"` (with `provenance: "replayed"`) from
-`.../instruments/{family}/token-readout`.
+`.../instruments/{family}/token-readout` and the token anatomy, whose lens channel carries the
+attached lens probes' readings.
 
 `mergedReadings` folds the three families' readings into one name-keyed map. Branch on a
 reading's shape, never on probe-info flags: `isScalarReading` (the reading has a `value`)

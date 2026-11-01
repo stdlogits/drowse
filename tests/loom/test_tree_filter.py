@@ -277,12 +277,12 @@ def test_a_small_lens_probability_survives_the_row_for_the_filter():
             lens_sources={"R": "local:default"},
         )
         assert envelope is not None
-        return {"text": "t", "measurements": token_row_measurements(envelope, per_layer=False)}
+        return {"text": "t", "measurements": token_row_measurements(envelope)}
 
     rows = [row(3.2e-5), row(2.1e-6)]
-    reading = rows[0]["measurements"]["instruments"]["lens"]["readings"]["jlens/storm"]
-    assert reading["value"] == 3.2e-5
-    assert reading["per_layer"] == {"20": 4.16e-5, "21": 2.24e-5}
+    # A generated row keeps a lens probe's value as its score, unrounded to
+    # zero; its band replays.
+    assert rows[0]["measurements"]["instruments"] == {}
     assert rows[0]["measurements"]["scores"]["jlens/storm"] == 3.2e-5
     node = _SyntheticNode({"jlens/storm": 2.1e-6}, tokens=rows)
     assert parse_filter("any:jlens/storm > 1e-5").evaluate(node) is True

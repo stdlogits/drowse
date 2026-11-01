@@ -706,14 +706,35 @@ export interface LoomTokenRowJSON {
   perplexity: number | null;
   top_alts?: { id: number; text: string; logprob: number }[];
   raw_index?: number | null;
-  /** The row projection of the token's measurement envelope
-   *  (``token_row_measurements``): the flat ``scores`` (the highlight tint),
-   *  each geometry reading's summary, each scalar reading whole, the lens
-   *  aggregate chips, at 6 significant digits. The per-layer views replay the token while
-   *  the model is loaded; a row keeps the geometry traces and the lens
-   *  readout's ``layers`` only when its call set ``persist_per_layer_scores``. */
-  measurements?: MeasurementsEnvelopeJSON;
+  /** A generated row keeps what the thread's tint, the rack's trace and the tree filter read
+   *  (``token_row_measurements``: the flat ``scores`` and each geometry reading's ``fraction``
+   *  and ``coords``, at 6 significant digits); the token view and the hover replay the rest. A
+   *  row kept whole (authored capture, or a call that set ``persist_per_layer_scores``) carries
+   *  every reading with its traces (``summary_measurements``). */
+  measurements?: TokenRowEnvelopeJSON;
 }
+
+/** A generated row's geometry reading (``readout/measurements.py::RowProbeReadingDict``): the
+ *  share on the probe's subspace and its domain coordinates. */
+export interface RowProbeReadingJSON {
+  fraction: number;
+  coords: number[];
+}
+
+/** A generated loom token row's ``measurements`` (``TokenRowMeasurements``): the envelope
+ *  header, the flat ``scores`` and each geometry probe's share and coordinates; no other
+ *  channel. */
+export interface TokenRowMeasurementsJSON {
+  version: number;
+  scope: MeasurementsEnvelopeJSON["scope"];
+  provenance: MeasurementsEnvelopeJSON["provenance"];
+  instruments: { geometry?: { readings: Record<string, RowProbeReadingJSON> } };
+  scores?: Record<string, number>;
+}
+
+/** What a token's ``measurements`` holds: a live frame's whole envelope or a row kept whole,
+ *  or a generated row's projection. ``wholeEnvelope`` tells them apart. */
+export type TokenRowEnvelopeJSON = MeasurementsEnvelopeJSON | TokenRowMeasurementsJSON;
 
 /** Per-op delta sent on every tree mutation.  Clients apply in-place
  * keyed by ``rev`` continuity; full re-fetch on gap.
@@ -818,8 +839,10 @@ export interface TokenScore {
    *  transcript-imported nodes (engine pre-dates raw-id capture),
    *  in which case the token can't be forked. */
   rawIndex?: number | null;
-  /** Loom-owned 5.x measurement envelope from the original decode step. */
-  measurements?: MeasurementsEnvelopeJSON;
+  /** The measurements from the original decode step: the live frame's whole envelope while the
+   *  reply is in this page, else its loom row's (a generated row keeps its scores and each
+   *  geometry share and coordinates; ``wholeEnvelope`` says which). */
+  measurements?: TokenRowEnvelopeJSON;
 }
 
 export interface ChatTurn {
