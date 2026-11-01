@@ -4,7 +4,7 @@
 //
 // A unit's reference is the engine's (``neuron/L31n4410``, ``head/L28h12``) and its ID as the
 // views write it is ``L31 n4410`` / ``L28 h12``.
-import { stem } from "@stdlogits/ledger";
+import { formatValue, stem } from "@stdlogits/ledger";
 import type {
   ActivityPeak,
   HeadReadJSON,
@@ -279,6 +279,69 @@ export function fieldGeometry(fw: number, fh: number, count: number): { g: numbe
   const g = Math.max(1, Math.floor(fw / side));
   const rows = Math.ceil(count / g);
   return { g, cw: fw / g, ch: fh / rows, rows };
+}
+
+/** All's field in a plot ``width`` × ``height`` px over ``count`` columns: each column's cells fill
+ *  its middle ``share`` (wider when the columns are narrow), 8 px in from the top and the bottom.
+ *  The atlas paints, pins and hit-tests through this one layout. */
+export interface FieldLayout { colW: number; share: number; top: number; fh: number }
+
+export function fieldLayout(width: number, height: number, count: number, narrow: boolean): FieldLayout {
+  return { colW: count > 0 ? width / count : 0, share: narrow ? 0.7 : 0.62, top: 8, fh: height - 16 };
+}
+
+/** Where neuron ``index`` of a ``total``-neuron layer sits in the field, in px from the plot's corner. */
+export function fieldCell(layout: FieldLayout, layer: number, index: number, total: number): { x: number; y: number; w: number; h: number } {
+  const { g, cw, ch } = fieldGeometry(layout.colW * layout.share, layout.fh, total);
+  const cx = index % g;
+  return { x: (layer + (1 - layout.share) / 2) * layout.colW + cx * cw, y: layout.top + Math.floor(index / g) * ch, w: cw, h: ch };
+}
+
+/** The neuron under a point of the field (px from the plot's corner), given each layer's neuron
+ *  count; null between the cells' block and the column's edge, or past its last cell. */
+export function fieldCellAt(layout: FieldLayout, x: number, y: number, totals: readonly number[]): { layer: number; index: number } | null {
+  if (layout.colW <= 0 || x < 0) return null;
+  const layer = Math.floor(x / layout.colW);
+  const total = totals[layer] ?? 0;
+  if (total <= 0) return null;
+  const { g, cw, ch } = fieldGeometry(layout.colW * layout.share, layout.fh, total);
+  if (cw <= 0 || ch <= 0) return null;
+  const cx = Math.floor((x - (layer + (1 - layout.share) / 2) * layout.colW) / cw);
+  const cy = Math.floor((y - layout.top) / ch);
+  if (cx < 0 || cx >= g || cy < 0) return null;
+  const index = cy * g + cx;
+  return index < total ? { layer, index } : null;
+}
+
+/** A unit's engine reference from its kind, layer and index: ``neuron/L31n4410``. */
+export function unitRef(kind: UnitKind, layer: number, index: number): string {
+  return `${kind}/L${layer}${kind === "neuron" ? "n" : "h"}${index}`;
+}
+
+/** A unit's value as the views write it, with a true minus. */
+export function signedValue(v: number): string {
+  const t = formatValue(Math.abs(v));
+  return v < 0 ? `−${t}` : t;
+}
+
+/** Where the atlas's one keyboard stop sits: a column's own button (``row`` -1, its layer) or one
+ *  of its bars (``row`` its rank). Up and down move along a column, from its button to its bars;
+ *  left and right go to the next column at the same rank (or its last bar, or its button when it
+ *  has none); Home and End to the first and the last column. Null for a key the atlas leaves. */
+export function atlasStep(lengths: readonly number[], at: { layer: number; row: number }, key: string): { layer: number; row: number } | null {
+  const n = lengths.length;
+  if (n === 0) return null;
+  const L = Math.max(0, Math.min(n - 1, at.layer));
+  const rowIn = (layer: number, row: number) => Math.max(-1, Math.min(row, lengths[layer] - 1));
+  switch (key) {
+    case "ArrowUp": return { layer: L, row: rowIn(L, at.row - 1) };
+    case "ArrowDown": return { layer: L, row: rowIn(L, at.row + 1) };
+    case "ArrowLeft": return { layer: Math.max(0, L - 1), row: rowIn(Math.max(0, L - 1), at.row) };
+    case "ArrowRight": return { layer: Math.min(n - 1, L + 1), row: rowIn(Math.min(n - 1, L + 1), at.row) };
+    case "Home": return { layer: 0, row: rowIn(0, at.row) };
+    case "End": return { layer: n - 1, row: rowIn(n - 1, at.row) };
+    default: return null;
+  }
 }
 
 // ---------------------------------------------------------------- the search

@@ -2,8 +2,8 @@
   // The Units room (the Units canvas): the model's neurons and heads on this conversation. The atlas
   // draws every layer as a column of its units (UnitAtlas): the strongest of each layer, or every
   // neuron of it at one token; the units most active over the latest reply, the clearest writers of
-  // a word, or the units the catalog labels. The search names a word (the units that write it) or a
-  // unit's ID. Below, the units as rows (ID, label, a meter, the value) and the chosen one in brief:
+  // a word, or the units the catalog labels; a bar (All: a cell) chooses its unit. The search names a
+  // word (the units that write it) or a unit's ID. Below, the units as rows (ID, label, a meter, the value) and the chosen one in brief:
   // its peak here, its activation token by token (a bar chooses the token the atlas reads), what it
   // writes, and the way to the workbench (which selects it) or to its Neuron Lens page.
   import { tick, untrack } from "svelte";
@@ -43,6 +43,7 @@
     peakPole,
     poleOf,
     scaleText,
+    signedValue as signed,
     strongestColumns,
     unitTitle,
     type AtlasBar,
@@ -213,6 +214,12 @@
       }));
     }
   }
+  /** A unit chosen in the atlas: it and its layer, the list and the summary left where they are. */
+  function pickInAtlas(id: string, L: number): void {
+    if (id !== selected) picks += 1;
+    sel = id;
+    layer = L;
+  }
   const atLayer = $derived(layer ?? selRef?.layer ?? 0);
 
   // ---------- the atlas
@@ -311,10 +318,6 @@
   });
   const tint = $derived(selRef && nLayers > 1 ? depthTint(selRef.layer / (nLayers - 1)) : null);
 
-  function signed(v: number): string {
-    const t = formatValue(Math.abs(v));
-    return v < 0 ? `−${t}` : t;
-  }
   function open(): void {
     if (!selected) return;
     select({ kind: "unit", id: selected });
@@ -367,7 +370,7 @@
         <span class="meta"><MorphText text={layerFact} /></span>
       </div>
       {#if columns.length > 0}
-        <UnitAtlas {columns} rows={rowsPerColumn} {lit} selected={selected} layer={atLayer} onlayer={(L) => (layer = L)}
+        <UnitAtlas {columns} rows={rowsPerColumn} {lit} selected={selected} layer={atLayer} onlayer={(L) => (layer = L)} onunit={pickInAtlas}
           {field} {hits} {pin} label="Layers" />
       {:else if loading?.status === "error"}
         <div class="dw-row"><span class="meta">{loading.error}</span><button type="button" class="dw-text" onclick={retryUnits}>Try again</button></div>
