@@ -51,7 +51,7 @@
 
   const uid = $props.id();
   const info = $derived(entry.mode === "subspace" || entry.mode === "manifold" ? manifoldByName(name) : null);
-  const title = $derived(termTitle(name, entry));
+  const title = $derived(termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null));
   const removal = $derived(removes(name, entry));
   const place = $derived(placeOf(name, entry, sessionState.info?.model_id));
   const where = $derived(place.where);
@@ -166,6 +166,20 @@
       .sort((a, b) => (a.at ?? 0) - (b.at ?? 0));
   });
 
+  /** The node the slider sits at: the term's own node, else the one nearest its free position (a
+   *  free point at 6.0 on months sits by its sixth node, not at the first). */
+  const nodeIndex = $derived.by(() => {
+    const named = orderedNodes.findIndex(row => row.node === nodeLabel);
+    if (named >= 0) return named;
+    const at = coords[0];
+    if (orderedNodes.length === 0 || !Number.isFinite(at)) return 0;
+    let best = 0;
+    orderedNodes.forEach((row, i) => {
+      if (Math.abs((row.at ?? 0) - at) < Math.abs((orderedNodes[best].at ?? 0) - at)) best = i;
+    });
+    return best;
+  });
+
   // ---------- where
 
   const scope = $derived<LayerScope>(entry.mode === "unit" ? null : entry.layers ?? null);
@@ -241,8 +255,8 @@
         <Select value={nodeLabel ?? ""} options={nodeOptions} ariaLabel="Node of {info.name}"
           onchange={(value) => setSteerLabel(name, value === "" ? null : value)} /></span>{/if}</div>
       {#if orderedNodes.length > 2}
-        <Slider value={Math.max(0, orderedNodes.findIndex(row => row.node === nodeLabel))} min={0} max={orderedNodes.length - 1} step={1}
-          displayValue={nodeLabel ?? "Free position"} ariaLabel="Nodes of {info.name} in order"
+        <Slider value={nodeIndex} min={0} max={orderedNodes.length - 1} step={1}
+          displayValue={nodeLabel ?? `Free, near ${orderedNodes[nodeIndex]?.node ?? "a node"}`} ariaLabel="Nodes of {info.name} in order"
           oninput={(index) => setSteerLabel(name, orderedNodes[index].node)} />
       {/if}
       {#if nodeLabel === null || info.node_count > 2}

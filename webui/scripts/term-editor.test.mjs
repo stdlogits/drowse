@@ -288,6 +288,12 @@ try {
     ["jlens/storm", { mode: "jlens", ablate: false, alpha: 0.3, trigger: "BOTH", enabled: true }],
   ]), 0.5), "0.3 jlens/storm + 0.3 slens/Paris{2-4}@response + 0.3 sae/7", "lens tokens emit together, said before read");
   assert.equal(terms.termTitle("slens/Paris", read), "Paris");
+  // Regression: a free months position read "6" beside "months", which reads as a duration.
+  const free = { mode: "manifold", blend: 0.5, onto: 0, coords: [6], label: null, variant: "raw", trigger: "BOTH", enabled: true };
+  const monthsInfo = { domain: { type: "box", axes: [{ name: "month", lo: 0, hi: 12, periodic: true }] } };
+  assert.equal(terms.termTitle("default/months", free, monthsInfo), "month 6.00");
+  assert.equal(terms.termTitle("default/months", free), "point 6.00", "without the manifold's axes it is a point");
+  assert.equal(terms.termTitle("default/months", { ...free, label: "july" }, monthsInfo), "july");
   assert.equal(terms.termSource("slens/Paris", read), "lens token, as read");
   assert.ok(terms.canRemove("slens/Paris", read, null));
   assert.equal(layersProbe("slens/Paris", read, true), "1 slens/Paris{2-4}@response");

@@ -53,6 +53,13 @@ export function formatP(p: number | null | undefined): string {
   return p.toExponential(1);
 }
 
+/** A pinned probe's value in the Readings list: a probability as ``formatP`` writes it, anything
+ *  else (an activation, a unit's value over its scale, a footprint z) signed to two places, as the
+ *  Inspector's rows are. */
+export function readingText(value: number, unit: string | null | undefined): string {
+  return unit === "mean_token_probability" || unit === "token_probability" ? formatP(value) : formatSigned(value, 2);
+}
+
 /** A signed reading: a true minus and a plus, two places. */
 export function formatSigned(value: number, places = 2): string {
   if (!Number.isFinite(value)) return "–";

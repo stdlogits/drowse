@@ -83,6 +83,11 @@ try {
   const held = [layers[0], layer(1, read(1, 0, [], [score(stars, " stars", 0.4)]))];
   assert.deepEqual(a.anatomyByDepth(held, stars, 0.41).map(d => d.p), [null, 0.4]);
 
+  // Regression: Readings showed ragged precision (5.0199, 19.661, −11.7679) beside the Inspector's two.
+  const { readingText } = await server.ssrLoadModule("/src/drawers/token/layers.ts");
+  assert.deepEqual([5.0199, 19.661, -11.7679].map(v => readingText(v, "activation_over_scale")), ["+5.02", "+19.66", "−11.77"]);
+  assert.equal(readingText(0.004, "mean_token_probability"), "0.004", "a probability keeps its small values");
+
   // A token or unit selection names what it selected (the Inspector reopens at the top on a new one).
   const { selectionIdentity } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
   assert.equal(selectionIdentity({ kind: "none" }), null);

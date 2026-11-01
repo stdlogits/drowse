@@ -9,6 +9,7 @@
   import { runtimeClient } from "../../lib/runtime/client";
   import { drawerAvailability } from "../../lib/runtime/ui-capabilities";
   import { sessionState } from "../../lib/stores/session.svelte";
+  import { loomTree } from "../../lib/stores/loom.svelte";
   import { DROWSE_UI_VERSION } from "../../lib/version";
 
   let { room }: { room: Room } = $props();
@@ -38,6 +39,7 @@
         <span><b>{sessionState.info.dtype}</b></span>
         {#if sessionState.info.is_base_model}<span>base model</span>{/if}
         {#if sessionState.info.supports_thinking}<span>thinks</span>{/if}
+        {#if loomTree.drowse_version}<span>drowse <b>{loomTree.drowse_version}</b></span>{/if}
         <span>dashboard <b>{DROWSE_UI_VERSION}</b></span>
       </div>
     {/if}

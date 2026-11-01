@@ -35,7 +35,9 @@
       value: genStatus.active ? "active" : genStatus.finishReason ?? "idle",
       meta: `${genStatus.tokensSoFar}/${genStatus.maxTokens || "–"} tokens · ${genStatus.tokPerSec.toFixed(1)} tok/s`,
     },
-    { key: "Perplexity", value: ppl === null ? "–" : ppl.toFixed(2), meta: `${genStatus.ppl.count} steps` },
+    // The footer's figure (the geometric mean of each step's entropy perplexity), named as the
+    // footer names it: a reply's own perplexity (from its chosen tokens) is another number.
+    { key: "Uncertainty", value: ppl === null ? "–" : ppl.toFixed(2), meta: `entropy perplexity · ${genStatus.ppl.count} steps` },
     {
       key: "Loom",
       value: loomTree.nodes.size ? String(loomTree.nodes.size) : "–",

@@ -98,6 +98,9 @@ try {
   const sent = { prompts: 64, kind: "r", sites: ["out", "mid"] };
   const refused = { state: "error", source: "local:r", replaceable: true };
   assert.equal(lens.replaceTarget(refused, sent), "local:r");
+  // Regression: the room showed the server's CLI and Python wording ("force=True (`-f`)").
+  assert.equal(lens.replaceMessage("local:s", 64, 32), "local:s already holds a lens over 64 documents. This fit, over 32 documents, would replace it.");
+  assert.doesNotMatch(lens.replaceMessage("local:s", undefined, 32), /force|`/);
   assert.equal(lens.replaceTarget({ ...refused, replaceable: false }, sent), null, "ConnectionError: no replace");
   assert.equal(lens.replaceTarget({ state: "error", source: "local:r" }, sent), null, "a runtime that does not mark it offers none");
   assert.equal(lens.replaceTarget({ ...refused, state: "running" }, sent), null);

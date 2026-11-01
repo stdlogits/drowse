@@ -134,5 +134,16 @@
   .dw-term .dw-alpha { height: 36px; }
   .dw-sampling { min-height: 44px; }
   .dw-crumbs button:not(.icon), .dw-compose .dw-text, .dw-tintkey { position: relative; }
-  .dw-crumbs button:not(.icon)::after, .dw-compose .dw-text::after, .dw-tintkey::after { content: ""; position: absolute; inset: -14px -8px; }
+  .dw-crumbs button:not(.icon)::after, .dw-compose .dw-text::after, .dw-tintkey::after { content: ""; position: absolute; inset: -14px -8px; width: auto; height: auto; translate: none; }
+}
+
+/* Touch (the Phone canvas: every target 44 px). A text button, a segmented option, a tab and the
+ * mark keep their size and layout and gain a 44 px target: an invisible extension centred on them.
+ * Dense depth strips and atlas columns stay as drawn (their presets and rows are the touch path). */
+@media (max-width: 720px), (pointer: coarse) {
+  :where(.dw-text, .dw-mark, .seg button, [role="tab"]) { position: relative; }
+  :where(.dw-text, .dw-mark, .seg button, [role="tab"])::after {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%;
+  }
 }

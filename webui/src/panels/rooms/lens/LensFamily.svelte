@@ -23,6 +23,7 @@
     unloaded,
     type FitBody,
     type LensFamily,
+    replaceMessage,
   } from "../../../lib/lensRoom";
   import { etaLabel, remainingWorkMs, type WorkSample } from "../../../lib/manifoldProgress";
   import { runtimeOperationAvailability } from "../../../lib/runtime/ui-capabilities";
@@ -89,6 +90,9 @@
   // the failure offer the same fit again, replacing it. Any other failure offers nothing.
   let lastFit = $state<FitBody | null>(null);
   const replaces = $derived(fitError ? replaceTarget(lensFit.state.latest, lastFit) : null);
+  const replaceText = $derived(replaces && lastFit
+    ? replaceMessage(replaces, items.find((item) => item.source === replaces)?.row?.n_prompts, lastFit.prompts)
+    : null);
 
   function startFit(force = false): void {
     if (!allowFit || busy || documents === null) return;
@@ -154,7 +158,7 @@
         {/if}
       </div>
       {#if fitError}
-        <p class="meta err" role="alert">{fitError}</p>
+        <p class="meta err" role="alert">{replaceText ?? fitError}</p>
         {#if replaces}<button type="button" class="dw-text act replace" disabled={busy} onclick={() => startFit(true)}>Replace {replaces}</button>{/if}
       {/if}
       {#if fetchError}<p class="meta err" role="alert">{fetchError}</p>{/if}

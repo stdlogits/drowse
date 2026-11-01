@@ -214,6 +214,13 @@ export function replaceTarget(
   return status.source === target ? target : null;
 }
 
+/** The room's own words for a refused replacement (the server's names the CLI flag and the Python
+ *  keyword): what ``target`` holds and what the fit would put in its place. */
+export function replaceMessage(target: string, held: number | undefined, prompts: number): string {
+  const holds = documentsText(held);
+  return `${target} already holds a lens${holds ? ` over ${holds}` : ""}. This fit, over ${documentsText(prompts)}, would replace it.`;
+}
+
 /** A running fit's line: its stage until the first document is fitted ("Streaming 64 documents
  *  from …"), then the documents done. */
 export function fitProgressText(current: number, total: number, message: string | null | undefined): string {

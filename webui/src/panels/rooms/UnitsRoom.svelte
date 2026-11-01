@@ -6,7 +6,7 @@
   // unit's ID. Below, the units as rows (ID, label, a meter, the value) and the chosen one in brief:
   // its peak here, its activation token by token (a bar chooses the token the atlas reads), what it
   // writes, and the way to the workbench (which selects it) or to its Neuron Lens page.
-  import { untrack } from "svelte";
+  import { tick, untrack } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { Icon, MorphText, Segmented, Swap, Token, formatValue, tokenParts } from "@stdlogits/ledger";
   import UnitAtlas, { type AtlasField } from "./UnitAtlas.svelte";
@@ -197,11 +197,20 @@
   // The selected unit: the one chosen, else the first row; choosing a row picks its layer and kind.
   const selected = $derived(sel ?? rows[0]?.id ?? null);
   const selRef = $derived(selected ? parseUnit(selected) : null);
+  // On a phone the detail sits under the list: a chosen row brings it into view.
+  let detail: HTMLElement | null = $state(null);
+  const phone = new MediaQuery("max-width: 720px");
   function pick(row: Row): void {
     if (row.id !== selected) picks += 1;
     sel = row.id;
     layer = row.layer;
     kind = row.kind;
+    if (phone.current) {
+      void tick().then(() => detail?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      }));
+    }
   }
   const atLayer = $derived(layer ?? selRef?.layer ?? 0);
 
@@ -244,6 +253,8 @@
     const values = kind === "head" ? pop.heads[atLayer] : pop.neurons[atLayer];
     if (!values) return "";
     if (word && kind === "neuron" && q.mode !== "id") {
+      // Until the search answers there is no count to state.
+      if (!writers?.value) return "";
       const n = writerRows.filter(r => r.layer === atLayer).length;
       return `L${atLayer} · ${n} write ${tokenParts(word.shown).lead ? "·" : ""}${tokenParts(word.shown).text}`;
     }
@@ -408,7 +419,7 @@
 
       {#if selected}
         <Swap key={`${selected}:${picks}`}>
-          <section class="sum" aria-label="Selected unit" style:--tint={tint ?? undefined}>
+          <section class="sum" aria-label="Selected unit" style:--tint={tint ?? undefined} bind:this={detail}>
             <div class="name">
               <h2 class="dw-title">{unitTitle(selected)}</h2>
               {#if selLabel}<p class="label">{selLabel}</p>{/if}

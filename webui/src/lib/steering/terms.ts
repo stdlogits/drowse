@@ -52,11 +52,19 @@ export function removes(name: string, entry: SteerEntry): boolean {
   return (entry.mode === "subspace" || entry.mode === "jlens" || entry.mode === "slens" || entry.mode === "sae") && entry.ablate;
 }
 
-/** The term's name as its chip and its editor show it. */
-export function termTitle(name: string, entry: SteerEntry): string {
+/** The term's name as its chip and its editor show it. A manifold position off its nodes names
+ *  its coordinates by their axes (``month 6.00``, with the manifold's ``info``), else as a point,
+ *  so a bare number never reads as a quantity of the manifold's name ("6 months"). */
+export function termTitle(name: string, entry: SteerEntry, info?: ManifoldInfo | null): string {
   switch (entry.mode) {
     case "subspace": return entry.ablate ? bareName(name) : entry.label ?? bareName(name);
-    case "manifold": return entry.label ?? entry.coords.map(c => coefficientText(c)).join(", ");
+    case "manifold": {
+      if (entry.label) return entry.label;
+      const axes = info?.domain.type === "box" ? info.domain.axes : [];
+      return entry.coords.length === 1 && axes.length === 1
+        ? `${axes[0].name} ${coefficientText(entry.coords[0], { fixed: true })}`
+        : `point ${entry.coords.map(c => coefficientText(c, { fixed: true })).join(", ")}`;
+    }
     case "jlens": return name.slice("jlens/".length);
     case "slens": return name.slice("slens/".length);
     case "sae": return `feature ${name.slice("sae/".length)}`;

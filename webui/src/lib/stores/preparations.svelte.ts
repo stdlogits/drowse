@@ -107,6 +107,8 @@ export function createPreparationSlice(
     if (st.finished_at === null) return;
     if (st.message === "cancelled") {
       pushToast(`${label} cancelled`, { kind: "info" });
+    } else if (st.replaceable === true) {
+      // A refusal to replace an artifact is the room's to show, beside its Replace action.
     } else if (state.error) {
       pushToast(`${label}: ${state.error}`, { kind: "error", ttlMs: null });
     } else {

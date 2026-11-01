@@ -14,6 +14,7 @@
     currentSteeringExpression,
     applyCustomSteeringExpression,
     removeSteerEntry,
+    manifoldByName,
   } from "../lib/stores/steering.svelte";
   import { openDrawer } from "../lib/stores/drawers.svelte";
   import { apiSessions } from "../lib/runtime/services";
@@ -42,7 +43,7 @@
         name,
         enabled: entry.enabled,
         strength: chipStrength(name, entry, steerRack.subspaceAlong),
-        title: termTitle(name, entry),
+        title: termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null),
         source: (entry.mode === "unit" ? unitTermLabel(name, entry) : null) ?? termSource(name, entry),
         span: place.where ? depthSpan(place.selected, place.where.nLayers) : null,
         meta: [layers, triggerWord(entry.trigger)].filter(Boolean).join(" · "),

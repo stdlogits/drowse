@@ -5,13 +5,12 @@
   // the lens and SAE probes pinned while the token was generated read their one channel. A row
   // opens to the rest: every axis, the share, the nearest nodes and assignment, the residual and
   // tube membership, and any layer's own coordinates.
-  import { formatValue } from "@stdlogits/ledger";
   import { openDrawer, probeAxisScale, probeRack } from "../../lib/stores.svelte";
   import { drawerAvailability } from "../../lib/runtime/ui-capabilities";
   import type { ProbeReadingJSON, ScalarReadingJSON } from "../../lib/types";
   import type { GeometryTokenReadout, ReplayReadout } from "./readout.svelte";
   import ReadingWait from "./ReadingWait.svelte";
-  import { depthTint, formatSigned } from "./layers";
+  import { depthTint, formatSigned, readingText } from "./layers";
   import { probeNote } from "./readings";
 
   let { readout, pinned, hasGeometryProbes, hasReplayContext, replayAvailable, returnToToken }: {
@@ -82,7 +81,7 @@
       out.push({
         name,
         kind: "pinned",
-        value: formatValue(reading.value),
+        value: readingText(reading.value, reading.unit),
         note: "",
         bars,
         scale: Math.max(1e-9, ...bars.map(bar => Math.abs(bar.value ?? 0))),
