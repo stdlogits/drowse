@@ -84,6 +84,44 @@ def test_decode_ending_inside_thinking_has_an_empty_response(
     assert ids[state.thinking_end_idx:] == []
 
 
+def test_an_external_stop_finishes_the_reply_cancelled() -> None:
+    """Regression (decision 5): an external stop ended the reply ``stop``,
+    the same as EOS, so the loom node could not tell a cut reply apart."""
+    tokenizer = _ThinkTokenizer()
+    state = GenerationState()
+    seen: list[int] = []
+
+    def _on_token(*_args: Any, **_kwargs: Any) -> None:
+        seen.append(1)
+        if len(seen) == 2:
+            state.request_stop()
+
+    ids = generate_steered(
+        _scripted([_A, _B, _A, _B, _A, _B]), cast(Any, tokenizer), torch.tensor([[_A]]),
+        GenerationConfig(max_new_tokens=6, temperature=0.0),
+        state, on_token=_on_token,
+    )
+    assert ids == [_A, _B]
+    assert state.finish_reason == "cancelled"
+
+
+def test_a_cancellation_scope_event_finishes_the_reply_cancelled() -> None:
+    """A closed stream or a socket disconnect stops through the scope's event."""
+    import threading
+
+    tokenizer = _ThinkTokenizer()
+    state = GenerationState()
+    event = threading.Event()
+    with state.cancellation_scope(event):
+        ids = generate_steered(
+            _scripted([_A, _B, _A, _B]), cast(Any, tokenizer), torch.tensor([[_A]]),
+            GenerationConfig(max_new_tokens=4, temperature=0.0),
+            state, on_token=lambda *_args, **_kwargs: event.set(),
+        )
+    assert ids == [_A]
+    assert state.finish_reason == "cancelled"
+
+
 def test_closed_thinking_anchors_the_response_after_the_delimiter() -> None:
     ids, state = _run([_THINK, _A, _END_THINK, _B, _EOS], 10)
     assert ids == [_THINK, _A, _END_THINK, _B]

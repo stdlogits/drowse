@@ -40,6 +40,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, BinaryIO, Callable, Iterator, Literal, Mapping, Sequence, cast
 
 from drowse.events import EventBus, LoomMutated
+from drowse.generation.results import FINISH_REASONS, FinishReason
 from drowse.loom.errors import (
     InvalidNodeOperationError,
     LoomTreeError,
@@ -252,7 +253,10 @@ class LoomNode:
     recipe: Recipe | None = None
     aggregate_readings: dict[str, float] = field(default_factory=dict)
     applied_steering: str | None = None
-    finish_reason: str | None = None
+    # Why the generation ended (``FinishReason``); ``None`` for an authored
+    # or imported turn and while a reply streams.  ``"cancelled"`` marks a
+    # reply a client Stop or disconnect cut short.
+    finish_reason: FinishReason | None = None
     starred: bool = False
     notes: str = ""
     created_at: float = field(default_factory=time.time)
@@ -337,12 +341,17 @@ class LoomNode:
         for field_name in ("text", "notes"):
             if not isinstance(data[field_name], str):
                 raise LoomTreeError(f"loom node field {field_name!r} must be a string")
-        for field_name in ("role_label", "thinking_text", "applied_steering", "finish_reason"):
+        for field_name in ("role_label", "thinking_text", "applied_steering"):
             value = data[field_name]
             if value is not None and not isinstance(value, str):
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a string or null"
                 )
+        if data["finish_reason"] is not None and data["finish_reason"] not in FINISH_REASONS:
+            raise LoomTreeError(
+                "loom node field 'finish_reason' must be null or one of "
+                + ", ".join(sorted(FINISH_REASONS))
+            )
         if not isinstance(data["aggregate_readings"], dict) or any(
             not isinstance(name, str) or not is_number(value)
             for name, value in data["aggregate_readings"].items()
@@ -919,7 +928,7 @@ class LoomTree:
         text: str,
         aggregate_readings: dict[str, float] | None = None,
         applied_steering: str | None = None,
-        finish_reason: str | None = None,
+        finish_reason: FinishReason | None = None,
         mean_logprob: float | None = None,
         mean_surprise: float | None = None,
         raw_token_ids: list[int] | None = None,

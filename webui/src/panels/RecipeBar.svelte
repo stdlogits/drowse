@@ -113,7 +113,9 @@
 <div class="recipe">
   <div class="dw-recipe" role="group" aria-label="Steering">
     {#if recipe !== null}
-      <button type="button" class="dw-term held" aria-expanded={recipeOpen} data-tip="A recipe from elsewhere, as it was written"
+      <!-- The tip says what the open panel says at length: it goes while the panel shows, so a tap
+           (which shows a tip on touch) never leaves it over the read-only reason. -->
+      <button type="button" class="dw-term held" aria-expanded={recipeOpen} data-tip={recipeOpen ? undefined : "A recipe from elsewhere, as it was written"}
         onclick={() => { recipeOpen = !recipeOpen; adding = false; }}>
         <span class="dw-alpha">recipe</span><span class="dw-term-name">{recipe}</span>
       </button>

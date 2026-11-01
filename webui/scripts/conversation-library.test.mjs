@@ -188,8 +188,12 @@ try {
     if (originalTimeZone === undefined) delete process.env.TZ;
     else process.env.TZ = originalTimeZone;
   }
-  assert.equal(displayModelName("Qwen/Qwen3-1.7B"), "Qwen3 1.7B");
-  assert.equal(displayModelName("google/gemma-3-4b-it"), "Gemma 3 4B it");
+  // Wave 3 finding 26: Saved chats wrote "SmolLM2 360M Instruct" where the header and every other
+  // view write the repository's name as it is.
+  assert.equal(displayModelName("Qwen/Qwen3-1.7B"), "Qwen3-1.7B");
+  assert.equal(displayModelName("google/gemma-3-4b-it"), "gemma-3-4b-it");
+  assert.equal(displayModelName("HuggingFaceTB/SmolLM2-360M-Instruct"), "SmolLM2-360M-Instruct");
+  assert.equal(displayModelName("local-model"), "local-model");
 
   let nextAutoId = 0;
   let autoTime = Date.parse("2026-09-07T07:05:00Z");

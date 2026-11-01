@@ -114,3 +114,42 @@ def test_other_chat_families_load_and_generate(
         assert session.generate("hi").first.text == "ok"
     finally:
         factory.close()
+
+
+def test_a_stop_mid_reply_records_cancelled_on_the_loom_node(tiny_session: Any) -> None:
+    """Regression (decision 5): a reply cut by a Stop was stored as ``stop``,
+    the same as a natural end, so nothing could mark it after a reload."""
+    stream = tiny_session.generate_stream(
+        "Say hi.", sampling=SamplingConfig(max_tokens=12, seed=0),
+    )
+    for index, _event in enumerate(stream):
+        if index == 1:
+            tiny_session.stop()
+    result = tiny_session.last_result
+    assert result is not None
+    assert result.finish_reason == "cancelled"
+    assert result.token_count < 12
+    node = tiny_session.tree.get(tiny_session.tree.active_node_id)
+    assert node.role == "assistant"
+    assert node.finish_reason == "cancelled"
+    assert node.to_dict()["finish_reason"] == "cancelled"
+
+
+def test_model_info_names_the_layer_shape(tiny_session: Any) -> None:
+    """The Model room's facts: neurons and heads a layer, from the config."""
+    info = tiny_session.model_info
+    config = tiny_session.model.config
+    assert info["num_layers"] == len(tiny_session.layers)
+    assert info["mlp_width"] == config.intermediate_size
+    assert info["num_heads"] == config.num_attention_heads
+
+
+def test_config_width_reads_per_layer_lists_and_refuses_junk() -> None:
+    from types import SimpleNamespace
+
+    from drowse.model.arch import _config_width
+
+    assert _config_width(SimpleNamespace(intermediate_size=[8, 16, 12]), "intermediate_size") == 16
+    assert _config_width(SimpleNamespace(), "intermediate_size") is None
+    assert _config_width(SimpleNamespace(num_attention_heads=True), "num_attention_heads") is None
+    assert _config_width(SimpleNamespace(num_attention_heads=0), "num_attention_heads") is None

@@ -91,11 +91,19 @@ try {
     tree => { tree.nodes[1].parent_id = "alternate"; },
     tree => { tree.nodes[2].tokens[0].top_alts[0].logprob = "invalid"; },
     tree => { tree.tree_format = 999; },
+    // The finish reason is a closed set, as the loom reader's is.
+    tree => { tree.nodes[2].finish_reason = "eos"; },
   ]) {
     const malformed = structuredClone(original.snapshot);
     mutate(malformed.tree);
     await assert.rejects(importChatBackup(file(JSON.stringify(malformed)), library));
   }
+  // A reply a Stop cut short keeps its ``cancelled`` reason through a backup.
+  const cut = structuredClone(original.snapshot);
+  cut.tree.nodes[2].finish_reason = "cancelled";
+  const cutCopy = await importChatBackup(file(JSON.stringify(cut)), library);
+  assert.equal(cutCopy.snapshot.tree.nodes[2].finish_reason, "cancelled");
+  await library.delete(cutCopy.id);
   failWrites = true;
   await assert.rejects(importChatBackup(file(encoded), library), /Storage full/);
   assert.deepEqual([...rows], before, "all rejected imports leave existing records unchanged");

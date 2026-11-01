@@ -102,6 +102,11 @@ const FONT_LABEL = '500 11px "Wix Madefor Text", system-ui, sans-serif';
 const FONT_AXIS = '500 10px "Wix Madefor Text", system-ui, sans-serif';
 
 const PAD = 28;
+/** The rank-3 reference triad's reach past the farthest framed point; the base scale fits it in
+ *  the PAD box, so a node label (11px above its dot) and a triad name stay on the canvas. */
+const AXIS_REACH = 1.1;
+/** The rank-3 view's opening zoom: fit, with neutral at the centre and every node inside. */
+export const DEFAULT_ORBIT_ZOOM = 1;
 
 /** Reset transform, size for devicePixelRatio, clear. */
 function prep(
@@ -512,6 +517,9 @@ function drawRank3(
   const C: Vec3 = neutralPca;
 
   // Rotation-invariant radius over the static framing set → fixed base scale.
+  // At zoom 1 (``DEFAULT_ORBIT_ZOOM``) the reference triad's ends (``AXIS_REACH``
+  // past the farthest point) land on the PAD box, so every node — the farthest
+  // one too, in any orientation — sits inside it with PAD left for its label.
   let rho = 0;
   for (const p of [...nodePca, neutralPca, ...overlayPca]) {
     const d = Math.hypot(p[0] - C[0], p[1] - C[1], p[2] - C[2]);
@@ -520,7 +528,7 @@ function drawRank3(
   rho = rho || 1;
   const iw = w - 2 * PAD;
   const ih = h - 2 * PAD;
-  const scale = (Math.min(iw, ih) / 2 / rho) * zoom;
+  const scale = (Math.min(iw, ih) / 2 / (rho * AXIS_REACH)) * zoom;
   const ox = w / 2;
   const oy = h / 2;
 
@@ -549,7 +557,7 @@ function drawRank3(
   // PC1/PC2/PC3 reference triad through neutral (behind everything),
   // rotating rigidly with the cloud so orientation is always readable.
   {
-    const axLen = rho * 1.1;
+    const axLen = rho * AXIS_REACH;
     const triad: Array<{ dir: Vec3; name: string }> = [
       { dir: [1, 0, 0], name: "PC1" },
       { dir: [0, 1, 0], name: "PC2" },

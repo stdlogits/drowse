@@ -96,7 +96,7 @@ try {
   const barSource = await readFile(new URL("../src/lib/charts/Bar.svelte", import.meta.url), "utf8");
   assert.doesNotMatch(barSource, /preserveAspectRatio/);
 
-  const { renderProbeGeometry, DEFAULT_ORBIT_QUAT } = await server.ssrLoadModule("/src/lib/charts/probeGeometry.ts");
+  const { renderProbeGeometry, DEFAULT_ORBIT_QUAT, DEFAULT_ORBIT_ZOOM } = await server.ssrLoadModule("/src/lib/charts/probeGeometry.ts");
   const textCalls = [];
   const ctx = new Proxy({
     measureText: (text) => ({ width: text.length * 6 }),
@@ -128,6 +128,35 @@ try {
     for (const rank of [1, 3]) {
       input.geom = { ...input.geom, rank, pca_rotation: [[1, 0, 0], [0, 1, 0]] };
       assert.equal(renderProbeGeometry(canvas, input).length, 3, `rank ${rank} exposes neutral and both nodes`);
+    }
+
+    // Wave 3 finding 20: a ring off to one side of neutral (the months manifold) opened zoomed past
+    // the fit, so its farthest nodes and their labels fell off the canvas. At the opening zoom,
+    // neutral stays at the centre and, in any orientation, every node and every drawn label fits.
+    const months = ["january", "february", "march", "april", "may", "june", "july", "august",
+      "september", "october", "november", "december"];
+    const ring = months.map((_, i) => [3 + Math.cos((2 * Math.PI * i) / 12), Math.sin((2 * Math.PI * i) / 12), 0.4 * Math.cos((4 * Math.PI * i) / 12)]);
+    const ringInput = {
+      geom: { rank: 3, node_white: ring, neutral_white: [0, 0, 0], overlay: null, pca_rotation: [[1, 0, 0], [0, 1, 0], [0, 0, 1]] },
+      nodeLabels: months, live: null, trail: [], orbit: { q: DEFAULT_ORBIT_QUAT, zoom: DEFAULT_ORBIT_ZOOM },
+    };
+    const turns = [DEFAULT_ORBIT_QUAT, [1, 0, 0, 0], [0.5, 0.5, 0.5, 0.5], [0.92, 0, 0.38, 0], [0.7, 0.7, 0, 0], [0.27, 0.65, 0.27, 0.65]];
+    for (const size of [[360, 360], [520, 300], [300, 520]]) {
+      [width, height] = size;
+      for (const q of turns) {
+        textCalls.length = 0;
+        const hits = renderProbeGeometry(canvas, { ...ringInput, orbit: { q, zoom: DEFAULT_ORBIT_ZOOM } });
+        const neutral = hits.find((hit) => hit.label === "neutral");
+        assert.ok(Math.abs(neutral.screen[0] - width / 2) < 1e-9 && Math.abs(neutral.screen[1] - height / 2) < 1e-9, "neutral stays at the centre");
+        for (const hit of hits) {
+          assert.ok(hit.screen[0] >= 6 && hit.screen[0] <= width - 6 && hit.screen[1] >= 6 && hit.screen[1] <= height - 6,
+            `${hit.label} is drawn inside the ${width}x${height} plot`);
+        }
+        for (const call of textCalls) {
+          assert.ok(call.x >= 0 && call.x + call.text.length * 6 <= width && call.y - 11 >= 0 && call.y <= height,
+            `the label ${call.text} fits the ${width}x${height} plot`);
+        }
+      }
     }
   } finally {
     if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;

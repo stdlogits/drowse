@@ -113,6 +113,11 @@ try {
     [1.015625, "1.01562"], [0.01953125, "0.0195312"], [1234565, "1.23456e+06"], [-1.015625, "-1.01562"],
     [-0, "-0"], [5e-324, "4.94066e-324"],
   ]) assert.equal(formatCoeff(value), text, `formatCoeff(${value})`);
+
+  // Wave 3 finding 26: on a phone a tap shows a tip (Ledger's touch rule), and the read-only recipe
+  // chip's tip stayed over the reason the opened panel gives. The tip goes while the panel shows.
+  const recipeBar = readFileSync(new URL("../src/panels/RecipeBar.svelte", import.meta.url), "utf8");
+  assert.match(recipeBar, /class="dw-term held" aria-expanded=\{recipeOpen\} data-tip=\{recipeOpen \? undefined : "A recipe from elsewhere, as it was written"\}/);
 } finally {
   await server.close();
 }

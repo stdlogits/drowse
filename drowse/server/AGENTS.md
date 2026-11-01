@@ -395,9 +395,11 @@ Outbound frames:
   toggle decides what appears.
 - `done {result: {text, tokens, finish_reason, applied_steering, usage,
   measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,
-  sibling_count}`, with the engine's aggregate-scope envelope. After a client
-  `stop`, `finish_reason: "stop"` reads `"cancelled"` on the wire only; the
-  loom recipe keeps the engine's reason. A commit-only `submit` sends one
+  sibling_count}`, with the engine's aggregate-scope envelope. A client
+  `stop` or a disconnect that cuts the reply ends it `finish_reason:
+  "cancelled"`, which the engine reports and the loom node records; a stop
+  that races the reply's own end keeps its natural reason, and the request's
+  `request_complete` still says `cancelled`. A commit-only `submit` sends one
   `started` and one `done` (`{role, text, node_id, ...}`), no tokens.
 - `tree_mutated {op, rev, added, removed, updated, active_node_id, cast}`
   forwards every `LoomMutated`, from any source. `done` waits until its node's

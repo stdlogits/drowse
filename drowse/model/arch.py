@@ -152,17 +152,36 @@ def workspace_layer_indices(
     return band or available
 
 
+def _config_width(config: Any, name: str) -> int | None:
+    """A config's per-layer width ``name``; the widest when it is per layer, else ``None``."""
+    value = getattr(config, name, None)
+    if isinstance(value, (list, tuple)):
+        value = max(value, default=None)
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return int(value)
+
+
 def get_model_info(model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase) -> dict[str, Any]:
-    """Summary dict: model_type, num_layers, hidden_dim, device, dtype, vram_used_gb, param_count."""
+    """Summary dict: model_type, num_layers, hidden_dim, mlp_width, num_heads, device,
+    dtype, vram_used_gb, param_count.
+
+    ``mlp_width`` (neurons per layer, the widest when the config varies it by
+    layer) and ``num_heads`` (attention heads per layer) are the text config's,
+    ``None`` when it does not name them; read from metadata, never the device.
+    """
     layers = get_layers(model)
     first_param = next(model.parameters())
     model_id = getattr(model.config, "_name_or_path", "unknown")
     param_count = model.num_parameters()
+    config = text_config(model)
     return {
         "model_id": model_id,
         "model_type": model.config.model_type,
         "num_layers": len(layers),
-        "hidden_dim": text_config(model).hidden_size,
+        "hidden_dim": config.hidden_size,
+        "mlp_width": _config_width(config, "intermediate_size"),
+        "num_heads": _config_width(config, "num_attention_heads"),
         "device": str(first_param.device),
         "dtype": str(first_param.dtype),
         "vram_used_gb": memory_gb(str(first_param.device)),

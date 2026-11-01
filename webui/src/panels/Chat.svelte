@@ -1480,6 +1480,9 @@
       {:else if turn.generated && (turn.tokens?.length ?? 0) > 0}
         <span>{turn.tokens?.length} tokens</span>
       {/if}
+      {#if !generating && turn.finishReason === "cancelled"}
+        <span class="dw-cut" data-tip="A Stop or a closed page ended this reply before the model finished">stopped early</span>
+      {/if}
       {#if turn.meanLogprob != null && Number.isFinite(turn.meanLogprob)}
         <span data-tip="Sequence perplexity">perplexity <MorphText text={Math.exp(-turn.meanLogprob).toFixed(1)} /></span>
       {/if}

@@ -480,7 +480,7 @@ export interface LoomNodeDetailJSON {
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
   applied_steering: string | null;
-  finish_reason: string | null;
+  finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
   notes: string;
   created_at: number;
@@ -514,7 +514,7 @@ export interface LoomNodeJSON {
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
   applied_steering: string | null;
-  finish_reason: string | null;
+  finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
   notes: string;
   created_at: number;
@@ -656,6 +656,20 @@ export interface MeasurementsEnvelopeJSON {
 /** The replay endpoints' response body. */
 export interface MeasurementsReplayJSON {
   measurements: MeasurementsEnvelopeJSON | null;
+}
+
+/**
+ * The loaded model's shape, for the Model room: its decoder layers, residual
+ * width, neurons and attention heads per layer (``None`` when the config does
+ * not name them; the widest when it varies by layer) and parameter count.
+ */
+export interface ModelArchitectureJSON {
+  model_type: string;
+  layers: number;
+  hidden_size: number;
+  neurons_per_layer: number | null;
+  heads_per_layer: number | null;
+  parameters: number;
 }
 
 /**
@@ -1008,7 +1022,12 @@ export interface ScoreTemplateResponse {
   contexts: ChoiceScores[];
 }
 
-/** ``session_info()`` — the single session's full descriptor. */
+/**
+ * ``session_info()`` — the single session's full descriptor.
+ *
+ * ``architecture`` is optional on the wire: a runtime that does not describe
+ * its model (the browser runtime, until it does) leaves it out.
+ */
 export interface SessionInfo {
   id: string;
   model_id: string;
@@ -1032,6 +1051,7 @@ export interface SessionInfo {
   scene_mode: boolean;
   thinking_input_supported: boolean;
   strips_history_thinking: boolean;
+  architecture?: ModelArchitectureJSON;
 }
 
 export interface SessionListResponse {

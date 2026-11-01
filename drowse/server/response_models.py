@@ -36,6 +36,8 @@ from typing import Any, Literal
 from pydantic import ConfigDict
 from typing_extensions import NotRequired, TypedDict
 
+from drowse.generation.results import FinishReason
+
 #: Response-model config for shapes whose payload is produced outside this
 #: module.  Extra keys are preserved rather than silently dropped by the
 #: response validator; the generator turns it into a TS index signature.
@@ -108,8 +110,24 @@ class InstrumentFamilyBlock(TypedDict):
     capabilities: InstrumentCapabilities
 
 
+class ModelArchitectureJSON(TypedDict):
+    """The loaded model's shape, for the Model room: its decoder layers, residual
+    width, neurons and attention heads per layer (``None`` when the config does
+    not name them; the widest when it varies by layer) and parameter count."""
+
+    model_type: str
+    layers: int
+    hidden_size: int
+    neurons_per_layer: int | None
+    heads_per_layer: int | None
+    parameters: int
+
+
 class SessionInfo(TypedDict):
-    """``session_info()`` — the single session's full descriptor."""
+    """``session_info()`` — the single session's full descriptor.
+
+    ``architecture`` is optional on the wire: a runtime that does not describe
+    its model (the browser runtime, until it does) leaves it out."""
 
     id: str
     model_id: str
@@ -133,6 +151,7 @@ class SessionInfo(TypedDict):
     scene_mode: bool
     thinking_input_supported: bool
     strips_history_thinking: bool
+    architecture: NotRequired[ModelArchitectureJSON]
 
 
 class SessionListResponse(TypedDict):
@@ -265,7 +284,7 @@ class LoomNodeJSON(TypedDict):
     thinking_text: str | None
     aggregate_readings: dict[str, float]
     applied_steering: str | None
-    finish_reason: str | None
+    finish_reason: FinishReason | None
     starred: bool
     notes: str
     created_at: float

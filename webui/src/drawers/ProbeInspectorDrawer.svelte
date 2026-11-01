@@ -45,6 +45,7 @@
     renderProbeGeometry,
     orbitDrag,
     DEFAULT_ORBIT_QUAT,
+    DEFAULT_ORBIT_ZOOM,
     type OrbitState,
     type GeometryHitPoint,
   } from "../lib/charts/probeGeometry";
@@ -89,7 +90,7 @@
   let loading = $state(false);
   let error = $state<string | null>(null);
   let selectedLayer = $state<number | null>(null);
-  const orbit = $state<OrbitState>({ q: DEFAULT_ORBIT_QUAT, zoom: 1.6 });
+  const orbit = $state<OrbitState>({ q: DEFAULT_ORBIT_QUAT, zoom: DEFAULT_ORBIT_ZOOM });
 
   let canvasEl = $state<HTMLCanvasElement | null>(null);
   let rafId = 0;
@@ -479,7 +480,7 @@
 
   function resetView(): void {
     orbit.q = DEFAULT_ORBIT_QUAT;
-    orbit.zoom = 1.6;
+    orbit.zoom = DEFAULT_ORBIT_ZOOM;
   }
 
   function formatPoint(point: number[] | null): string {
