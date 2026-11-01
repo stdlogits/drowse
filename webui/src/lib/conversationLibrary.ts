@@ -634,17 +634,10 @@ export function defaultConversationName(timestamp = Date.now()): string {
   return `New Chat - ${parts.month} ${parts.day} - ${Number(parts.hour)}:${parts.minute} ${parts.timeZoneName}`;
 }
 
+/** A model's name as the rest of the dashboard writes it: the repository's own name, verbatim
+ *  (``HuggingFaceTB/SmolLM2-360M-Instruct`` → ``SmolLM2-360M-Instruct``). */
 export function displayModelName(modelId: string): string {
-  const raw = modelId.split("/").at(-1) ?? modelId;
-  return raw
-    .replace(/[-_]+/gu, " ")
-    .replace(/\b(qwen|gemma|llama|mistral)(\d)/giu, (_, name: string, digit: string) =>
-      `${name.charAt(0).toUpperCase()}${name.slice(1).toLowerCase()}${digit}`)
-    .replace(/\b(qwen|gemma|llama|mistral)\b/giu, (name) =>
-      `${name.charAt(0).toUpperCase()}${name.slice(1).toLowerCase()}`)
-    .replace(/\b(\d+(?:\.\d+)?)b\b/giu, "$1B")
-    .replace(/\s+/gu, " ")
-    .trim();
+  return modelId.split("/").at(-1) || modelId;
 }
 
 export function randomAvatarSeed(): string {
