@@ -53,20 +53,25 @@ a wide screen and fold into one column on a phone, with the Inspector as a
 sheet.
 
 The Inspector shows what you selected. With nothing selected it holds the
-instruments: the probe rack, the live lens readout, the SAE's features,
-sampling, and one line for each source the lens and SAE read through.
+instruments, neurons first: the unit probes, the live lens readout, the
+geometry probes, the SAE's features, sampling, and one line for each source the
+lens and SAE read through.
 
 - **A token.** Click any token for its alternatives with logprobs (and a fork
-  from any of them), its probe and feature readings, and its anatomy: what the
-  residual reads as through both lenses layer by layer, what attention and the
-  MLP (and the steering) added, and the neurons and heads that pushed it. The
-  readings can be replayed without the steering for comparison.
+  from any of them), its anatomy (the neurons and heads that pushed it, each
+  pushed or silenced in a click, then what the residual reads as through both
+  lenses layer by layer and what attention and the MLP, and the steering,
+  added) and its probe and feature readings. The readings can be replayed
+  without the steering for comparison.
 - **A probe** opens its fitted geometry, layer by layer.
 - **A unit** (a neuron or head) opens what it writes and fires on, its label
   and its activity over the reply.
 - **A steering term** opens its editor in place under the chips.
 
-**Steering** is built from chips. A chip's editor sets a signed strength, the
+**Steering** is built from chips, in one place over the composer. **+ Steer**
+adds a neuron or head (by ID or by a word it writes), a lens token, a concept,
+a manifold position or an SAE feature; the instruments' **Push** and
+**Silence** add one in a click. A chip's editor sets a signed strength, the
 layers it acts at (a depth strip), when it acts (the prompt, the response, the
 first or all-but-the-first N tokens) and "Only while…", a gate on an attached
 probe's reading; a concept can also be kept along, or removed from, another

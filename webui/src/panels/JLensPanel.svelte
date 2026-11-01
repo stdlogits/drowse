@@ -3,18 +3,19 @@
   // on; with it on, three depths show what the lens reads there (the top words at an early, a
   // middle and a late layer), then the words it reads most strongly across the fitted layers,
   // pinned ones (persistent probes, gate-able) with the rest, in one sort. One field takes a word
-  // to watch (pin a probe) or to steer by, each as said (``jlens/<word>``: toward saying it, the R
-  // lens) or as read (``slens/<word>``: toward having read it, the S lens), through the one pair
-  // the token view shares; a found word pins the same way. A model with one lens family offers it
-  // alone. While a token is hovered, everything here reads that token.
+  // to watch (pin a probe), as said (``jlens/<word>``: the R lens) or as read (``slens/<word>``: the
+  // S lens), through the one pair the token view shares; a found word pins the same way. Every row's
+  // Push adds a push toward its word to the recipe's strip, the one place steering is edited
+  // (lib/steerActions.ts). A model with one lens family offers it alone. While a token is hovered,
+  // everything here reads that token.
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Segmented, Switch, Token, ease, reducedMotion } from "@stdlogits/ledger";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
   import { foundLensRows, lensReadoutCells, mergeInstrumentProbeRows, pairLensPins } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
   import { depthTint, layerDepth } from "../lib/charts/depth";
-  import { apiInstruments, apiSessions, describeError } from "../lib/runtime/services";
-  import { ApiError } from "../lib/runtime/errors";
+  import { apiInstruments, describeError } from "../lib/runtime/services";
+  import { pushLensToken } from "../lib/steerActions";
   import {
     LENS_NAMESPACES,
     lensNamespaceInUse,
@@ -24,8 +25,6 @@
   } from "../lib/stores/instruments.svelte";
   import { goto } from "../lib/stores/rooms.svelte";
   import {
-    addJLensToRack,
-    addSLensToRack,
     activeProbeNames,
     attachProbe,
     lensState,
@@ -208,32 +207,11 @@
     if ((await pinWord(submitted)) && word === submitted) word = "";
   }
 
-  /** Steer by the word, as the pair says: toward saying it (``jlens/``) or toward having read it
-   *  (``slens/``). The atom is checked as composition would resolve it; a busy model cannot check
-   *  it now, so it is added and the reply (or its chip's editor) says if it does not resolve. */
-  async function steer(): Promise<void> {
-    const submitted = word;
-    const bare = bareWord(submitted);
-    const namespace = inUse;
-    if (!bare || busy) return;
-    busy = true;
-    try {
-      const validated = await apiInstruments.validateLensToken(bare);
-      const atom = `${namespace}/${validated.word}`;
-      try {
-        const check = await apiSessions.validateSteering(`0.3 ${atom}@response`);
-        if (!check.valid) throw new Error(check.error ?? `${atom} does not resolve`);
-      } catch (e) {
-        if (!(e instanceof ApiError && e.status === 409)) throw e;
-      }
-      if (namespace === "jlens") addJLensToRack(validated.word);
-      else addSLensToRack(validated.word);
-      if (word === submitted) word = "";
-    } catch (e) {
-      pushToast(`Couldn't steer by ${namespace}/${bare}: ${describeError(e)}`, { kind: "error" });
-    } finally {
-      busy = false;
-    }
+  /** Push toward a row's word, its chip opened in the recipe's strip: a pinned word as its probe
+   *  reads it, a found one as the pair says, by vocabulary id when the row has one. */
+  function push(row: WorkspaceRow): void {
+    const namespace = row.pinned ? row.namespace : inUse;
+    pushLensToken(row.id !== null ? { id: row.id, text: row.token } : { word: row.token }, namespace);
   }
 </script>
 
@@ -284,6 +262,7 @@
               pinned={row.pinned}
               {busy}
               onpin={row.pinned || row.id === null ? pinWord : () => void pinFound(row.id as number)}
+              onpush={() => push(row)}
             />
           </div>
         {/each}
@@ -298,14 +277,13 @@
           onchange={(value: LensNamespace) => (lensPairState.namespace = value)} />
       {/if}
       <button type="submit" class="dw-text" disabled={busy || !word.trim()} data-tip={`Pin a probe on it: ${pair.hint}`}>Watch</button>
-      <button type="button" class="dw-text" disabled={busy || !word.trim()} data-tip={pair.hint} onclick={() => void steer()}>Steer</button>
       {#if words.length > 1}
         <button type="button" class="dw-text sort" onclick={() => setLensWorkspaceSortMode(nextSort)}
           aria-label={`Sorted by ${lensState.workspaceSortMode}. Sort by ${nextSort}`}>by <MorphText text={lensState.workspaceSortMode} /></button>
       {/if}
     </form>
   {:else}
-    <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose a lens</button></div>
+    <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "lenses")}>Choose a lens</button></div>
   {/if}
 </div>
 

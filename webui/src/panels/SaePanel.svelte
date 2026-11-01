@@ -2,8 +2,8 @@
   // The resident SAE's features (the Instruments canvas's Features section): a switch turns the
   // live readout on; the features it finds most active and the pinned ones (persistent ``sae/<id>``
   // probes, gate-able) are one roster of unit rows in one sort. One field takes a feature number to
-  // watch (pin) or to steer with (an ``α sae/<id>`` term in the recipe, edited from its chip). While
-  // a token is hovered, the rows read that token.
+  // watch (pin). Every row's Push adds an ``α sae/<id>`` term to the recipe's strip, where its chip
+  // opens for the strength (lib/steerActions.ts). While a token is hovered, the rows read that token.
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Switch, ease, reducedMotion } from "@stdlogits/ledger";
   import RuntimeSaeSourceSection from "@runtime-sae-source";
@@ -12,9 +12,9 @@
   import type { InstrumentProbeRow } from "./rack/probeRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { apiInstruments } from "../lib/runtime/services";
+  import { pushFeature } from "../lib/steerActions";
   import {
     activeProbeNames,
-    addSaeToRack,
     attachProbe,
     probeRack,
     probeEntryForDisplay,
@@ -143,21 +143,6 @@
     }
   }
 
-  async function steer(): Promise<void> {
-    if (busy) return;
-    busy = true;
-    try {
-      const id = await validated(field);
-      if (id !== null) {
-        addSaeToRack(id);
-        field = "";
-      }
-    } catch (error) {
-      pushToast(userFacingError(error, "Unable to add that feature control. Try again."), { kind: "error" });
-    } finally {
-      busy = false;
-    }
-  }
 </script>
 
 <div class="sae" aria-label="Features">
@@ -195,6 +180,7 @@
                 valueIsStrength={reading?.unit === "activation_over_max"}
                 {fallbackScale}
                 pinned={true}
+                onpush={() => pushFeature(probe.feature_id)}
               />
             {:else}
               <SaeProbeCard
@@ -207,6 +193,7 @@
                 pinned={false}
                 {busy}
                 onpin={(id) => void pin(id)}
+                onpush={() => pushFeature(row.feature.id)}
               />
             {/if}
           </div>
@@ -218,7 +205,6 @@
       <label class="sr-only" for="sae-feature">A feature number</label>
       <input id="sae-feature" type="text" inputmode="numeric" placeholder="A feature number" autocomplete="off" bind:value={field} />
       <button type="submit" class="dw-text" disabled={busy || !field.trim()}>Watch</button>
-      <button type="button" class="dw-text" disabled={busy || !field.trim()} onclick={() => void steer()}>Steer</button>
       {#if rows.length > 1}
         <button type="button" class="dw-text sort" onclick={() => setSaeSortMode(nextSort)}
           aria-label={`Sorted by ${saeState.sortMode}. Sort by ${nextSort}`}>by <MorphText text={saeState.sortMode} /></button>

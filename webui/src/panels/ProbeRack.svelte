@@ -1,10 +1,12 @@
 <script lang="ts">
-  // The geometry probes, as rows (the Instruments canvas): flat ones (a concept axis, a flat fan
-  // like personas) and curved ones (a fitted surface like emotions), sorted by name, value or
-  // change, then the unit probes (a neuron or a head; UnitProbeCard). Beneath them: + Probe (a
-  // concept, a manifold or a unit, found in the Units room), the sort, and Live, the one switch for
-  // per-token scoring (off, readings land when the reply ends). With ``family`` it shows one
-  // geometry kind. Lens and SAE probes have their own rows in their own sections.
+  // The probes, as rows (the Instruments canvas): the unit probes first (a neuron or a head;
+  // UnitProbeCard), then the geometry probes, flat ones (a concept axis, a flat fan like personas)
+  // and curved ones (a fitted surface like emotions), sorted by name, value or change. Beneath them:
+  // + Probe (a unit, found in the Units room, a concept or a manifold), the sort, and Live, the one
+  // switch for per-token scoring (off, readings land when the reply ends). ``family`` narrows it:
+  // ``units`` to the unit probes (no Live: the geometry rack beside it carries it), ``geometry`` to
+  // the geometry probes, ``subspace`` or ``manifold`` to one geometry kind. Lens and SAE probes
+  // have their own rows in their own sections.
   import { Switch, expand } from "@stdlogits/ledger";
   import { MorphText } from "@stdlogits/ledger";
   import ProbeCard from "./rack/ProbeCard.svelte";
@@ -23,7 +25,7 @@
     sessionState,
   } from "../lib/stores.svelte";
 
-  let { family }: { family?: "subspace" | "manifold" } = $props();
+  let { family }: { family?: "units" | "geometry" | "subspace" | "manifold" } = $props();
 
   const liveOn = $derived(probesLiveState.enabled);
   const outputNoun = $derived(sessionState.info?.is_base_model ? "completion" : "reply");
@@ -38,14 +40,16 @@
   const probes = $derived.by(() =>
     activeProbeNames().filter((n) => {
       const kind = kindOf(probeRack.entries.get(n)?.info);
-      return kind !== null && (family === undefined || kind === family);
+      return kind !== null && family !== "units" && (family === undefined || family === "geometry" || kind === family);
     }),
   );
 
-  /** Unit probes, shown with the full rack only. */
-  const units = $derived(family === undefined
+  /** Unit probes: with the full rack (first) or alone. */
+  const units = $derived(family === undefined || family === "units"
     ? activeProbeNames().filter((n) => probeRack.entries.get(n)?.info.family === "units")
     : []);
+  /** Whether + Probe offers a unit (only where the unit rows are not a rack of their own). */
+  const offersUnits = $derived(family === undefined && unitsAvailable());
 
   const SORTS: ProbeSortMode[] = ["name", "value", "change"];
   function cycleSort(): void {
@@ -59,52 +63,56 @@
     else openDrawer(kind);
   }
   function onAdd(): void {
-    if (family === "subspace") add("subspace");
+    if (family === "units") add("units");
+    else if (family === "subspace") add("subspace");
     else if (family === "manifold") add("manifolds");
     else adding = !adding;
   }
+  const addLabel = $derived(family === "units" ? "Unit probe" : family === "manifold" ? "Manifold probe" : family === "subspace" ? "Concept probe" : "Probe");
+  /** Whether + Probe opens a choice (the full rack and the geometry rack) rather than one place. */
+  const chooses = $derived(family === undefined || family === "geometry");
 </script>
 
 <div class="rack" aria-label="Probes">
   {#if probes.length > 0 || units.length > 0}
     <div class="rows" role="list">
-      {#each probes as name (name)}
-        {@const entry = probeEntryForDisplay(name)}
-        {#if entry}
-          <div role="listitem"><ProbeCard {name} {entry} /></div>
-        {/if}
-      {/each}
       {#each units as name (name)}
         {@const entry = probeEntryForDisplay(name)}
         {#if entry}
           <div role="listitem"><UnitProbeCard {name} {entry} /></div>
         {/if}
       {/each}
+      {#each probes as name (name)}
+        {@const entry = probeEntryForDisplay(name)}
+        {#if entry}
+          <div role="listitem"><ProbeCard {name} {entry} /></div>
+        {/if}
+      {/each}
     </div>
   {/if}
 
   <div class="foot">
-    <button type="button" class="dw-add" aria-expanded={family === undefined ? adding : undefined} onclick={onAdd}>
-      + {family === "manifold" ? "Manifold probe" : family === "subspace" ? "Concept probe" : "Probe"}
-    </button>
+    <button type="button" class="dw-add" aria-expanded={chooses ? adding : undefined} onclick={onAdd}>+ {addLabel}</button>
     <span class="end">
       {#if probes.length + units.length > 1}
         <button type="button" class="dw-text sort" onclick={cycleSort} aria-label={`Sorted by ${probeRack.sortMode}. Sort by ${SORTS[(SORTS.indexOf(probeRack.sortMode) + 1) % SORTS.length]}`}>
           by <MorphText text={probeRack.sortMode} />
         </button>
       {/if}
-      <span class="live" inert={probesLiveState.busy}>
-        <Switch checked={liveOn} onchange={() => void setLiveProbes(!liveOn)} label="Live"
-          hint={liveOn ? `Reading every word as it is written. Off, readings land when the ${outputNoun} ends.` : `Read every word as it is written`} />
-      </span>
+      {#if family !== "units"}
+        <span class="live" inert={probesLiveState.busy}>
+          <Switch checked={liveOn} onchange={() => void setLiveProbes(!liveOn)} label="Live"
+            hint={liveOn ? `Reading every word as it is written. Off, readings land when the ${outputNoun} ends.` : `Read every word as it is written`} />
+        </span>
+      {/if}
     </span>
   </div>
 
   {#if adding}
     <div class="dw-row" transition:expand>
+      {#if offersUnits}<button type="button" class="dw-quiet" onclick={() => add("units")}>A unit</button>{/if}
       <button type="button" class="dw-quiet" onclick={() => add("subspace")}>A concept</button>
       <button type="button" class="dw-quiet" onclick={() => add("manifolds")}>A manifold</button>
-      {#if unitsAvailable()}<button type="button" class="dw-quiet" onclick={() => add("units")}>A unit</button>{/if}
     </div>
   {/if}
 </div>

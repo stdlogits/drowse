@@ -9,7 +9,7 @@ const server = await createServer({
 });
 try {
   const { installRuntimeClient } = await server.ssrLoadModule("/src/lib/runtime/registry.ts");
-  installRuntimeClient({ mode: "http" });
+  installRuntimeClient({ mode: "http", instruments: {} });
   const { render } = await server.ssrLoadModule("svelte/server");
   const { createRawSnippet } = await server.ssrLoadModule("svelte");
   const label = (text) => createRawSnippet(() => ({ render: () => `<span>${text}</span>` }));

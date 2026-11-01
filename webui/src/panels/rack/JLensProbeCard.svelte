@@ -5,7 +5,8 @@
   // said: its probability, the mean over the fitted layers. An ``slens/`` row reads it as read: its
   // footprint z, signed, weighted toward the early layers where the S lens is faithful. Pinned (a
   // persistent probe), the row can be chosen: the reply is tinted by it and the Inspector shows its
-  // trace. Unpinned (a word the live readout found), its marker pins it.
+  // trace. Unpinned (a word the live readout found), its marker pins it. Push (``onpush``) adds a
+  // push toward the word to the recipe's strip.
   import { tokenParts } from "@stdlogits/ledger";
   import { depthTint, layerDepth, readingText } from "../../lib/charts/depth";
   import Trace from "../../lib/charts/Trace.svelte";
@@ -14,6 +15,7 @@
   import { userFacingError } from "../../lib/runtime/userFacingError";
   import InstrumentRow from "./InstrumentRow.svelte";
   import ProbePinButton from "./ProbePinButton.svelte";
+  import SteerButton from "./SteerButton.svelte";
   import type { LensNamespace } from "../../lib/stores/instruments.svelte";
 
   interface Props {
@@ -40,9 +42,11 @@
     pinAs?: LensNamespace;
     /** Unpinned rows only: the panel owns validation and attach. */
     onpin?: (word: string) => void;
+    /** Push toward the word: its chip lands in the recipe's strip (lib/steerActions.ts). */
+    onpush?: () => void;
   }
 
-  let { token, strength, namespace = "jlens", pinAs = "jlens", pairWord = null, com, spread, cells, pinned, probeName, busy = false, onpin }: Props = $props();
+  let { token, strength, namespace = "jlens", pinAs = "jlens", pairWord = null, com, spread, cells, pinned, probeName, busy = false, onpin, onpush }: Props = $props();
 
   const parts = $derived(tokenParts(token));
   const wordStart = $derived(parts.lead);
@@ -97,6 +101,10 @@
     {#if strength === null}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>{:else}{readingText(strength, { percent })}{/if}
   {/snippet}
   {#snippet action()}
+    {#if onpush}
+      <SteerButton label="Push" aria={`Push toward ${display}, ${(pinned ? namespace : pinAs) === "slens" ? "as read" : "as said"}`}
+        tip={(pinned ? namespace : pinAs) === "slens" ? "Toward having read it" : "Toward saying it"} onclick={onpush} />
+    {/if}
     <ProbePinButton
       shape="square"
       {pinned}

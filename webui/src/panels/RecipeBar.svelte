@@ -3,12 +3,16 @@
   // term is a chip: its strength (or "without", for a removal), its name, where it comes from, a
   // span over the model's depth where it acts, its layers when it is scoped and its trigger. A chip
   // selects its term and opens its editor in place, right under the chips (TermEditor, the Steering
-  // canvas); the selected chip closes it. "+ Steer" adds a concept or a manifold position. Recipes
-  // are written with the chips, never typed: a recipe from elsewhere (an agent's, a saved
-  // conversation's, the command line's) becomes chips when they can hold it, and otherwise shows
-  // as one read-only chip that says why and can be cleared.
+  // canvas); the selected chip closes it. This strip is the one place steering lives: "+ Steer"
+  // (SteerPicker) adds a neuron or head, a lens token, a concept, a manifold position or an SAE
+  // feature, and the instruments' one-click Push and Silence (lib/steerActions.ts) land here too,
+  // their chip opened. The chips sort the same way, units first. Recipes are written with the chips,
+  // never typed: a recipe from elsewhere (an agent's, a saved conversation's, the command line's)
+  // becomes chips when they can hold it, and otherwise shows as one read-only chip that says why and
+  // can be cleared.
   import { MorphText, expand, reducedMotion } from "@stdlogits/ledger";
   import TermEditor from "./rack/TermEditor.svelte";
+  import SteerPicker from "./rack/SteerPicker.svelte";
   import {
     steerRack,
     applyRecipe,
@@ -17,17 +21,32 @@
     manifoldByName,
     lensTokenText,
   } from "../lib/stores/steering.svelte";
-  import { openDrawer } from "../lib/stores/drawers.svelte";
   import { clearSelection, select, selection } from "../lib/stores/selection.svelte";
   import { sessionState } from "../lib/stores/session.svelte";
   import { unitTermLabel } from "../lib/stores/units.svelte";
+  import { rackEditQueued } from "../lib/stores/pending.svelte";
+  import { UnitLabels } from "../drawers/token/labels.svelte";
   import { depthSpan, layerRunsText } from "../lib/steering/layers";
   import { placeOf } from "../lib/steering/termLayers.svelte";
   import { chipStrength, termSource, termTitle, triggerWord, unitLayer, wrapPieces } from "../lib/steering/terms";
   import type { SteerEntry } from "../lib/types";
 
-  /** The order families show in: flat terms, curved terms, then atoms and units. */
-  const ORDER: Record<SteerEntry["mode"], number> = { subspace: 0, projection: 0, manifold: 1, jlens: 2, slens: 2, sae: 2, unit: 3 };
+  /** The order families show in, as everywhere an order is chosen: units (neurons and heads), lens
+   *  tokens, flat terms, curved terms, then SAE features. */
+  const ORDER: Record<SteerEntry["mode"], number> = { unit: 0, jlens: 1, slens: 1, subspace: 2, projection: 2, manifold: 3, sae: 4 };
+
+  /** The catalog's labels for the unit chips (each unit asked once). */
+  const unitLabels = new UnitLabels();
+  const unitNames = $derived([...steerRack.entries.keys()].filter((name) => steerRack.entries.get(name)?.mode === "unit"));
+  $effect(() => {
+    if (unitNames.length > 0) unitLabels.want(unitNames.map((unit) => ({ unit })));
+  });
+  function unitChipLabel(name: string, entry: SteerEntry): string | null {
+    if (entry.mode !== "unit") return null;
+    const head = name.startsWith("head/");
+    const pole = head || entry.ablate || entry.alpha >= 0 ? "+" : "-";
+    return unitLabels.label(name, head ? "head" : "neuron", pole)?.text ?? unitTermLabel(name, entry);
+  }
 
   const model = $derived(sessionState.info?.model_id);
   const chips = $derived([...steerRack.entries.entries()]
@@ -42,7 +61,8 @@
         enabled: entry.enabled,
         strength: chipStrength(name, entry, steerRack.subspaceAlong),
         title: termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null, lensTokenText),
-        source: (entry.mode === "unit" ? unitTermLabel(name, entry) : null) ?? termSource(name, entry),
+        unit: entry.mode === "unit",
+        source: unitChipLabel(name, entry) ?? termSource(name, entry),
         span: place.where ? depthSpan(place.selected, place.where.nLayers) : null,
         meta: [layers, triggerWord(entry)].filter(Boolean).join(" · "),
       };
@@ -53,9 +73,10 @@
   const openEntry = $derived(open === null ? undefined : steerRack.entries.get(open));
 
   $effect(() => {
-    // A term taken off the rack elsewhere (a recipe from an agent, a tool) leaves nothing to edit.
+    // A term taken off the rack elsewhere (a recipe from an agent, a tool) leaves nothing to edit. A
+    // term still queued behind a running reply (a unit pushed from an instrument) opens once it lands.
     const current = selection.current;
-    if (current.kind === "term" && !steerRack.entries.has(current.name)) clearSelection();
+    if (current.kind === "term" && !steerRack.entries.has(current.name) && !rackEditQueued()) clearSelection();
   });
 
   let adding = $state(false);
@@ -103,11 +124,16 @@
     copied = false;
   });
 
-  function add(kind: "subspace" | "manifolds"): void {
-    adding = false;
+  function toggleAdding(): void {
+    adding = !adding;
+    recipeOpen = false;
     removed = null;
-    openDrawer(kind);
+    // The picker and an open term share the space under the chips: opening one closes the other.
+    if (adding && selection.current.kind === "term") clearSelection();
   }
+  $effect(() => {
+    if (open !== null) adding = false;
+  });
 </script>
 
 <div class="recipe">
@@ -121,7 +147,7 @@
       </button>
     {:else}
       {#each chips as chip (chip.name)}
-        <button type="button" class="dw-term" class:is-off={!chip.enabled} aria-pressed={open === chip.name}
+        <button type="button" class="dw-term" class:is-off={!chip.enabled} class:is-unit={chip.unit} aria-pressed={open === chip.name}
           aria-expanded={open === chip.name} data-tip={chip.name} onclick={() => toggle(chip.name)}>
           <span class="dw-alpha"><MorphText text={chip.strength} /></span>
           <span class="dw-term-name">{chip.title}</span>
@@ -135,7 +161,7 @@
         <button type="button" class="dw-text undo" onclick={undo}>Undo</button>
       {/if}
     {/if}
-    <button type="button" class="dw-add" aria-expanded={adding} onclick={() => { adding = !adding; recipeOpen = false; removed = null; }}>+ Steer</button>
+    <button type="button" class="dw-add" aria-expanded={adding} onclick={toggleAdding}>+ Steer</button>
   </div>
 
   {#if open !== null && openEntry}
@@ -161,9 +187,8 @@
   {/if}
 
   {#if adding}
-    <div class="dw-row more" transition:expand>
-      <button type="button" class="dw-quiet" onclick={() => add("subspace")}>A concept</button>
-      <button type="button" class="dw-quiet" onclick={() => add("manifolds")}>A manifold position</button>
+    <div class="adding" transition:expand>
+      <SteerPicker onpicked={() => (adding = false)} />
     </div>
   {/if}
 </div>
@@ -171,11 +196,13 @@
 <style>
   .recipe { display: grid; gap: var(--s2); min-width: 0; }
   .held .dw-term-name { max-width: 48ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* A unit's chip names it by its ID, as every unit row does. */
+  .is-unit .dw-term-name { font: 600 14px/20px var(--display); letter-spacing: -0.01em; font-variant-numeric: tabular-nums; }
   .gone { padding: 0 var(--s2) 0 var(--s3); white-space: nowrap; }
   .undo { height: 36px; padding: 0 var(--s2); }
   .dw-span > i { transition: left var(--glide) var(--ease), width var(--glide) var(--ease); }
   .editor { min-width: 0; padding-top: var(--s2); }
-  .more { padding: var(--s1) 0; }
+  .adding { min-width: 0; padding-top: var(--s2); }
   /* The read-only recipe, open: the term editor's surface, its expression on paper. */
   .held-recipe { display: grid; gap: var(--s3); min-width: 0; padding: var(--s5); border-radius: var(--r-row); background: var(--wash); }
   .held-recipe .meta { margin: 0; overflow-wrap: anywhere; }

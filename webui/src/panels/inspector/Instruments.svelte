@@ -1,7 +1,9 @@
 <script lang="ts">
-  // The Inspector with nothing selected: the instruments (the Instruments canvas). Probes as rows,
-  // the lens live, the SAE's features, sampling, and the sources the lens and SAE read through,
-  // one line each (they are chosen in the Lens room).
+  // The Inspector with nothing selected: the instruments (the Instruments canvas), in the order
+  // every surface keeps: the unit probes (neurons and heads), the lens live, the geometry probes and
+  // the SAE's features; then sampling, and the sources the lens and SAE read through, one line each
+  // (they are chosen in the Artifacts room). A row's Push adds its term to the recipe's strip, the
+  // one place a strength is edited.
   //
   // Sampling is the canvas's three range rows (temperature, top-p, max tokens; each moves the local
   // value as it slides and patches the session default when it settles), the thinking switch when
@@ -13,6 +15,7 @@
   import SaePanel from "../SaePanel.svelte";
   import { onMount } from "svelte";
   import { saeLoaded, sessionState } from "../../lib/stores/session.svelte";
+  import { unitsAvailable } from "../../lib/stores/units.svelte";
   import { lensSourceState, refreshLensSources } from "../../lib/stores/instruments.svelte";
   import { sitesText, unloaded } from "../../lib/lensRoom";
   import {
@@ -33,6 +36,8 @@
   import { SAMPLING_HELP } from "../../lib/parameterHelp";
 
   const saeOn = $derived(saeLoaded());
+  /** The units lead (a runtime without unit reads has none: its probes are geometry alone). */
+  const unitsOn = $derived(unitsAvailable());
   const hovered = $derived(tokenHoverState.active ? tokenParts(tokenHoverState.tokenText) : null);
 
   // The sources, one line each: the R family's from the session (the source every lens reading is
@@ -131,14 +136,21 @@
 {/snippet}
 
 <div class="instruments">
-  <section class="dw-sec" id="instrument-probes" aria-labelledby="instrument-probes-head">
-    <div class="dw-sec-head"><span class="head" id="instrument-probes-head">Probes</span>{@render at()}</div>
-    <ProbeRack />
-  </section>
+  {#if unitsOn}
+    <section class="dw-sec" id="instrument-units" aria-labelledby="instrument-units-head">
+      <div class="dw-sec-head"><span class="head" id="instrument-units-head">Units</span>{@render at()}</div>
+      <ProbeRack family="units" />
+    </section>
+  {/if}
 
   <section class="dw-sec" id="instrument-lens" aria-labelledby="instrument-lens-head">
-    <div class="dw-sec-head"><span class="head" id="instrument-lens-head">Live</span>{@render at()}</div>
+    <div class="dw-sec-head"><span class="head" id="instrument-lens-head">Lens</span>{@render at()}</div>
     <JLensPanel />
+  </section>
+
+  <section class="dw-sec" id="instrument-probes" aria-labelledby="instrument-probes-head">
+    <div class="dw-sec-head"><span class="head" id="instrument-probes-head">Probes</span>{@render at()}</div>
+    <ProbeRack family={unitsOn ? "geometry" : undefined} />
   </section>
 
   <section class="dw-sec" id="instrument-sae" aria-labelledby="instrument-sae-head">
@@ -146,7 +158,7 @@
     {#if saeOn}
       <SaePanel sources={false} />
     {:else}
-      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose an SAE</button></div>
+      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "saes")}>Choose an SAE</button></div>
     {/if}
   </section>
 
@@ -192,7 +204,7 @@
         </div>
       {/each}
     </div>
-    <button type="button" class="dw-text room" onclick={() => goto("lens")}>Lens room</button>
+    <button type="button" class="dw-text room" onclick={() => goto("artifacts", "lenses")}>Lenses and SAEs</button>
   </section>
 </div>
 

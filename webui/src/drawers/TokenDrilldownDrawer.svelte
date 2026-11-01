@@ -19,6 +19,7 @@
   import { IconButton, MorphText, Segmented, expand, tokenParts } from "@stdlogits/ledger";
   import { onDestroy, onMount, tick } from "svelte";
   import { showLoom } from "../lib/stores/workbench.svelte";
+  import { pushLensToken } from "../lib/steerActions";
   import { tokenInspectorSchema } from "../lib/interfaceSchemas";
   import { registerInterfaceController } from "../lib/workspaceController";
   import { ToolError } from "../lib/webmcp/types";
@@ -39,9 +40,6 @@
     genStatus,
     sendFork,
     sendTextFork,
-    addJLensToRack,
-    lensTokenText,
-    addSLensToRack,
     attachProbe,
     refreshLensSources,
   } from "../lib/stores.svelte";
@@ -690,10 +688,8 @@
   function steerTowardToken(): void {
     const id = token?.tokenId;
     if (id == null) return;
-    // The atom names the exact id; its chip reads the token's text.
-    lensTokenText.set(id, token?.text ?? "");
-    if (lensAs === "jlens") addJLensToRack(`#${id}`);
-    else addSLensToRack(`#${id}`);
+    // The atom names the exact id; its chip reads the token's text and opens in the strip.
+    pushLensToken({ id, text: token?.text ?? "" }, lensAs);
   }
 </script>
 

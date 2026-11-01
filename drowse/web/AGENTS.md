@@ -259,7 +259,10 @@ panels/rooms/         RoomSections (a room's tabs: Artifacts, Model), ModelFacts
                       panel sections, UnitCatalog, LensSources, SaeSources)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/ (the probe
-                      cards; TermEditor and LayerStrip, the term editor under the chips)
+                      cards; TermEditor and LayerStrip, the term editor under the chips;
+                      SteerPicker, "+ Steer"; SteerButton, a row's Push or Silence)
+lib/steerActions.ts   the one way into the recipe: pushUnit, silenceUnit, pushLensToken,
+                      pushFeature, pushConcept, pushPosition (each adds its chip and selects it)
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
 lib/api.ts            HTTP + SSE + WS client (imported only by runtime/http-client.ts)
 lib/runtime/          RuntimeClient contract, registry, HTTP impl, errors, capability gating
@@ -424,8 +427,8 @@ drowse.ai too.
   `pca`/`baked` to subspace, `spectral`/`authored` to manifold, and an unfitted `auto` to
   unresolved. Subspace terms share one `subspaceAlong` because the composer merges them
   into one affine subspace that slides once. Lens token atoms (`jlens/<word>`, toward saying
-  it; `slens/<word>`, toward having read it; the Lens panel and the token view offer both,
-  through the one "As said | As read" pair) and SAE atoms carry their own α
+  it; `slens/<word>`, toward having read it; "+ Steer", the Lens panel and the token view offer
+  both, through the one "As said | As read" pair) and SAE atoms carry their own α
   (`ATOM_DEFAULT_ALPHA = 0.3`): a single token or feature direction runs hotter than a
   concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
   keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed
@@ -480,6 +483,28 @@ drowse.ai too.
   negative) mixed with transparent in oklch up to 22%, with a 2px spread in the same mix.
   Popups, menus and toasts are wash2 fills with no shadow; a dialog and the command palette
   are paper over a wash2 scrim.
+- **Steering in one place.** Every term is made through `lib/steerActions.ts` and lands as a chip
+  in the composer's strip, selected, so its editor opens for the strength; nothing else edits a
+  strength or takes a term out (the chip's Remove does). "+ Steer" (`panels/rack/SteerPicker.svelte`)
+  offers the kinds in the one priority order, each with its picker, a kind this runtime cannot read
+  left out: a neuron or head (`L20 n512` by ID, checked against session info's `architecture`; a
+  word, its writers through `unitsForWord`; else, once the picker rests on an empty search, the
+  latest reply's most active units, a replay), a lens token (a word through `validateLensToken`, or
+  one the live lens reads), a concept (a flat fit's node), a manifold position (a curved fit's node)
+  and an SAE feature (its number, or a label among the features seen). Enter takes the first pick.
+  The instruments keep one-click shortcuts only (`SteerButton`): Push on the Lens panel's and the
+  SAE panel's rows, Push (a neuron, on the side that fired) and Silence on the token anatomy's units
+  and Silence on its heads, Push +, Push − and Silence in the unit view, the token view's "Steer
+  toward it". A neuron is pushed or silenced, a head only silenced; pushing a held push keeps it
+  (a strength and its pole), silencing a silenced unit keeps its blend. A unit's term queues behind a
+  running reply like every rack edit: its selection holds while a rack edit is queued
+  (`pending.svelte.ts::rackEditQueued`) and opens when the queue lands it. **The order** wherever
+  one is chosen: neurons and heads, lens tokens, linear probes and vectors, manifolds, SAEs. The
+  chips sort by it (`RecipeBar`'s `ORDER`; a unit chip names its unit by its ID and catalog label);
+  the expression keeps its canonical order, which `tests/fixtures/recipe_chips.json` pins. The
+  Instruments read Units (the unit probes, `ProbeRack family="units"`), Lens, Probes (the geometry
+  probes, with Live), Features; the full rack lists its unit probes first; the token view leads with
+  the units that pushed the token and the heads it read from, then the lens's reads by depth.
 - **The term editor.** A chip selects its term (`{kind: "term"}`) and opens
   `panels/rack/TermEditor.svelte` in place under the chips, as the Steering artboard draws it:
   the name and what it is, Push or Without (a rank-one direction or a neuron), On, the

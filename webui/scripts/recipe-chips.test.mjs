@@ -161,10 +161,11 @@ try {
   // chip's tip stayed over the reason the opened panel gives. The tip goes while the panel shows.
   const recipeBar = readFileSync(new URL("../src/panels/RecipeBar.svelte", import.meta.url), "utf8");
   assert.match(recipeBar, /class="dw-term held" aria-expanded=\{recipeOpen\} data-tip=\{recipeOpen \? undefined : "A recipe from elsewhere, as it was written"\}/);
-  // Regression (a9, unnecessary text): "+ Steer" offered its two kinds and a line saying where
-  // the other kinds steer from. The menu is its two buttons.
+  // Regression (a9, unnecessary text): "+ Steer" offered its kinds and a line saying where the
+  // other kinds steer from. Wave 6 (a9: all steering in one place): "+ Steer" is the picker of every
+  // kind, with no caption beside it (scripts/steer-actions.test.mjs renders it).
   const steerMenu = recipeBar.slice(recipeBar.indexOf("{#if adding}"), recipeBar.indexOf("{/if}", recipeBar.indexOf("{#if adding}")));
-  assert.match(steerMenu, />A concept</);
+  assert.match(steerMenu, /<SteerPicker /);
   assert.doesNotMatch(steerMenu, /class="meta"|steer from the instruments/);
 } finally {
   await server.close();
