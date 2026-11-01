@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, cast
 
 import torch
@@ -330,6 +332,19 @@ class Monitor:
     def reset_curved_feet(self) -> None:
         """Cold-start every curved probe's per-token foot (call per generation)."""
         self._curved_feet.clear()
+
+    @contextmanager
+    def cold_reads(self) -> Iterator[None]:
+        """Curved feet solved cold inside, the live path's warm state restored
+        after: reads that are not that path's next decode step (an authored
+        prompt's tokens, which a replay's cold one-off read must reproduce)
+        neither start from nor move its feet."""
+        warm = self._curved_warm
+        self._curved_warm = False
+        try:
+            yield
+        finally:
+            self._curved_warm = warm
 
     # ------------------------------------------------------------ factors
 

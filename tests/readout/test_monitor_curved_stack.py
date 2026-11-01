@@ -170,3 +170,27 @@ def test_a_surface_stack_holds_one_rank() -> None:
     subs = list(_curved().layers.values())
     with pytest.raises(ValueError, match="one rank"):
         StackedRbf.build(subs, torch.device("cpu"))
+
+
+def test_cold_reads_neither_start_from_nor_move_the_warm_feet() -> None:
+    """Regression: authored prompt tokens were scored on the decode loop's
+    warm-started curved feet, so their rows disagreed with a replay's cold
+    one-off read and moved the feet the next decoded token starts from.
+    Inside ``cold_reads`` a read is the cold read, and the warm path resumes
+    from where it was."""
+    m = _curved(periodic=True)
+    gen = torch.Generator().manual_seed(11)
+    tokens = [_hidden(m, gen) for _ in range(4)]
+    cold = _monitor(m)
+    want = [cold.score_single_token(h)["curve"].coords for h in tokens]
+    mon = _monitor(m)
+    mon.enable_curved_warm(True)
+    mon.score_single_token(tokens[0])
+    feet = {key: foot.clone() for key, foot in mon._curved_feet.items()}
+    with mon.cold_reads():
+        got = [mon.score_single_token(h)["curve"].coords for h in tokens]
+    assert got == want
+    assert mon._curved_warm
+    assert set(mon._curved_feet) == set(feet)
+    for key, foot in feet.items():
+        assert torch.equal(mon._curved_feet[key], foot)

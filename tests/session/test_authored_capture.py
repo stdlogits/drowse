@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -221,13 +223,25 @@ def test_persist_writes_all_measurement_channels(matched: bool, per_layer: bool)
             {"sae/12": ScalarReading(value=0.5, unit="activation_over_max")},
         )
 
+    cold = [False]
+
+    @contextmanager
+    def _cold_reads() -> Iterator[None]:
+        cold[0] = True
+        yield
+        cold[0] = False
+
+    def _score(_hidden: Any) -> Any:
+        # Regression: authored tokens were scored on the decode's warm-started
+        # curved feet, so a replay's cold read of a curved probe disagreed.
+        assert cold[0], "an authored prompt token is a cold one-off read"
+        return {"formal": _reading(0.25)}
+
     capture = AuthoredPromptCapture(
         tree=tree,
         tokenizer=_OffsetEchoTokenizer(),
         targets=[AuthoredPromptTarget(user_id, False, (120,), ("x",))],
-        monitor=cast(Any, SimpleNamespace(
-            score_single_token=lambda _hidden: {"formal": _reading(0.25)},
-        )),
+        monitor=cast(Any, SimpleNamespace(score_single_token=_score, cold_reads=_cold_reads)),
         lens=cast(Any, SimpleNamespace(
             measurement_sources=lambda: {"R": "local:default"},
             authored_capture=_lens_capture,

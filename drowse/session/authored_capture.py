@@ -38,6 +38,7 @@ import torch
 from drowse.generation.token_payloads import TokenProbePayload
 from drowse.loom.tree import PromptCapture, prompt_digest
 from drowse.readout.measurements import (
+    EnvelopeSources,
     envelope_sources,
     summary_measurements,
     token_row_measurements,
@@ -380,6 +381,23 @@ class AuthoredPromptCapture:
                     ordered.append((token_position, match_index, token_index, column))
 
         populated_matches: set[int] = set()
+        # Each prompt token is a one-off read: a curved probe's foot solves
+        # cold, as the token's replay solves it, rather than from the token
+        # before (the decode loop's warm start), and the decode's own feet
+        # stay as they were.
+        with self.monitor.cold_reads():
+            self._score(prompt_rows, ordered, output_rows, populated_matches, sources)
+        self._attach(output_rows, populated_matches)
+
+    def _score(
+        self,
+        prompt_rows: dict[int, torch.Tensor],
+        ordered: list[tuple[int, int, int, int]],
+        output_rows: list[list[dict[str, Any]]],
+        populated_matches: set[int],
+        sources: EnvelopeSources,
+    ) -> None:
+        """Score the retained rows in prompt order into ``output_rows``."""
         for _position, match_index, token_index, column in sorted(ordered):
             hidden = {
                 layer: rows[column]
@@ -437,6 +455,11 @@ class AuthoredPromptCapture:
             )
             populated_matches.add(match_index)
 
+    def _attach(
+        self, output_rows: list[list[dict[str, Any]]], populated_matches: set[int],
+    ) -> None:
+        """Write each measured node's rows and anchor to the tree."""
+        matches = self.matches
         # One capture per node, both channels at once (a matched channel
         # whose rows the prefix cache left unscored still gets its rows: the
         # anchor replays them).
