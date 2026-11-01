@@ -26,7 +26,7 @@ import { clearSelection, selection } from "../stores/selection.svelte";
 import type { WorkbenchPage } from "../stores/workbench.svelte";
 import { settingsResetState, resetSettings } from "../stores/settingsReset.svelte";
 import { healthState, readHealth, refreshHealth } from "../stores/health.svelte";
-import { autoRegenState, comparisonPending, disableAutoRegen, toggleAutoRegen, setAutoRegenMode, setAutoRegenCustom } from "../stores/ab.svelte";
+import { autoRegenState, comparisonPending, disableAutoRegen, toggleAutoRegen, setAutoRegenMode, setAutoRegenCustom, customComparisonProblem } from "../stores/ab.svelte";
 import { conversationLibrary, savedConversationState, flushConversationAutosave, requestPersistentConversationStorage, notifyConversationLibraryChanged } from "../stores/savedConversations.svelte";
 import { defaultConversationName, randomAvatarSeed, summarizeConversation, type SavedConversationRecord } from "../conversationLibrary";
 import { captureConversationSnapshot, restoreConversationSnapshot } from "../conversationWorkspace";
@@ -414,7 +414,7 @@ export function createWorkspaceTools(): AppTool[] {
       return result({ highlighting: copy(highlightState), sort: probeRack.sortMode });
     }, { surfaces: ["Chat", "RawBuffer", "ProbeRack"] }),
     tool("drowse_set_comparison", "Set automatic comparison", "Configure the visible automatic comparison. Enabling or changing mode may immediately replay the latest reply and repeats after future replies. Returns settings and scheduling state, not a finished comparison. Use compare_generations for a tracked matched experiment.", objectSchema({
-      enabled: boolean("Enable automatic comparisons; false cancels a scheduled comparison but does not stop one already running."), mode: choice(["unsteered", "inverted", "reseed", "cool", "hot", "custom"], "Original behavior, opposite steering, new seed, temperature 0.3/1.2, or custom recipe."), custom: string("Partial recipe expression for custom mode; for example seed=42, temperature=0.5.", 100000),
+      enabled: boolean("Enable automatic comparisons; false cancels a scheduled comparison but does not stop one already running."), mode: choice(["unsteered", "inverted", "reseed", "cool", "hot", "custom"], "Original behavior, opposite steering, new seed, temperature 0.3/1.2, or custom recipe."), custom: string("Sampling fields for custom mode; for example seed=42, temperature=0.5. No steering: the comparison's steering comes from the rack.", 100000),
     }), (input, context) => {
       noEmptyChange(input);
       if (input.enabled === false && input.mode === undefined && input.custom === undefined) { disableAutoRegen(); return result({ comparison: copy(autoRegenState), scheduled: comparisonPending() }); }
@@ -423,6 +423,8 @@ export function createWorkspaceTools(): AppTool[] {
       const mode = input.mode as typeof autoRegenState.mode ?? autoRegenState.mode;
       const custom = input.custom as string ?? autoRegenState.custom;
       if (mode === "custom" && !custom.trim()) throw new ToolError("INVALID_INPUT", "Custom comparison mode requires a partial recipe expression.");
+      const customProblem = mode === "custom" ? customComparisonProblem(custom) : null;
+      if (customProblem) throw new ToolError("INVALID_INPUT", customProblem);
       const enable = input.enabled as boolean ?? autoRegenState.enabled;
       disableAutoRegen();
       setAutoRegenCustom(custom); setAutoRegenMode(mode);

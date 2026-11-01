@@ -121,5 +121,21 @@ try {
     assert.equal(highlightState.smoothBlend, true);
     assert.equal(probeRack.sortMode, "value");
   }
+  // Regression (a9's decision: no recipe typed as text): the automatic comparison's custom field
+  // took steering=<expression> and the server applied it. It changes sampling only now.
+  {
+    const { autoRegenState, currentRecipeOverride, customComparisonProblem } = await server.ssrLoadModule("/src/lib/stores/ab.svelte.ts");
+    autoRegenState.enabled = true;
+    autoRegenState.mode = "custom";
+    autoRegenState.custom = "seed=42, temperature=1.5";
+    assert.equal(currentRecipeOverride(), "seed=42, temperature=1.5");
+    for (const text of ["steering=0.5 !formal.casual", "seed=4, steering = 0.2 calm", " steering="]) {
+      autoRegenState.custom = text;
+      assert.ok(customComparisonProblem(text), text);
+      assert.equal(currentRecipeOverride(), null, `${text} is never sent`);
+    }
+    assert.equal(customComparisonProblem("seed=42"), null);
+    autoRegenState.enabled = false;
+  }
   console.log("Steering rack: one patch path for every term, label binding, mode guards, queued edits, and correlation freshness passed");
 } finally { await server.close(); }

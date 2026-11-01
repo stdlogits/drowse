@@ -83,6 +83,7 @@
     disableAutoRegen,
     setAutoRegenMode,
     setAutoRegenCustom,
+    customComparisonProblem,
     effectiveRawMode,
     genUiMode,
     roleDisplayLabel,
@@ -1269,9 +1270,12 @@
             <Select value={autoRegenState.mode} options={AUTO_REGEN_MODES} onchange={onAutoRegenModeChange}
               disabled={abState.processingAb} ariaLabel="Automatic comparison style" />
             {#if autoRegenState.mode === "custom"}
+              {@const customProblem = customComparisonProblem(autoRegenState.custom)}
               <input type="text" class="ctl-input" value={autoRegenState.custom} disabled={abState.processingAb}
                 oninput={(ev) => setAutoRegenCustom((ev.currentTarget as HTMLInputElement).value)}
-                placeholder="seed=42, temperature=1.5" aria-label="Custom automatic comparison recipe" />
+                placeholder="seed=42, temperature=1.5" aria-label="Custom automatic comparison sampling"
+                aria-invalid={customProblem !== null} aria-describedby={customProblem ? "custom-comparison-problem" : undefined} />
+              {#if customProblem}<span id="custom-comparison-problem" class="ctl-label" role="alert">{customProblem}</span>{/if}
             {/if}
           {/if}
         {/if}

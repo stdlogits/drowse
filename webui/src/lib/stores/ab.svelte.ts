@@ -253,7 +253,16 @@ export function currentRecipeOverride(): string | null {
   if (!autoRegenState.enabled) return null;
   if (autoRegenState.mode === "custom") {
     const v = autoRegenState.custom.trim();
-    return v || null;
+    return v && customComparisonProblem(v) === null ? v : null;
   }
   return autoRegenState.mode;
+}
+
+/** Why a custom comparison recipe is refused, or null. It changes sampling only (``seed=42,
+ *  temperature=1.5``): the dashboard takes no steering typed as text, since the chips build it, so
+ *  a comparison's steering comes from the rack or the Original / Opposite modes. */
+export function customComparisonProblem(text: string): string | null {
+  return /(?:^|,)\s*steering\s*=/u.test(text)
+    ? "A custom comparison changes sampling only, such as seed=42, temperature=1.5. Its steering comes from the steer rack."
+    : null;
 }
