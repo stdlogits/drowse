@@ -269,7 +269,7 @@ def test_a_mid_only_output_fit_leaves_the_output_source_and_readout_alone() -> N
     assert harness.lens.resident_lens is resident and live is not None
     mid_only = harness.lens.fit(_DOCS[:2], kind="R", sites=["mid"], force=True)
     assert mid_only.sites == ("mid",)
-    assert LENS_SOURCES.active(TOY_MODEL_ID, "output") == SourceRef(LOCAL, "j")
+    assert LENS_SOURCES.active(TOY_MODEL_ID, "R") == SourceRef(LOCAL, "j")
     assert harness.lens.resident_lens is resident
     assert harness.lens.live_config() == live
     assert harness.lens.readout(_DOCS[0], top_k=1)

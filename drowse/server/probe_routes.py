@@ -82,8 +82,8 @@ def _probe_info(name: str, probe: AttachedManifoldProbe) -> GeometryProbeInfo:
     }
 
 
-#: A lens probe's side (``LensInstrument.attach``) as its selector namespace.
-_LENS_NAMESPACES: dict[str, Literal["jlens", "slens"]] = {"output": "jlens", "input": "slens"}
+#: A lens probe's family (``LensInstrument.attach``) as its selector namespace.
+_LENS_NAMESPACES: dict[str, Literal["jlens", "slens"]] = {"R": "jlens", "S": "slens"}
 
 
 def _lens_probe_info(name: str, spec: dict[str, Any]) -> LensProbeInfo:
@@ -100,7 +100,7 @@ def _lens_probe_info(name: str, spec: dict[str, Any]) -> LensProbeInfo:
     """
     return {
         "family": "lens",
-        "namespace": _LENS_NAMESPACES[spec["side"]],
+        "namespace": _LENS_NAMESPACES[spec["family"]],
         "name": name,
         "layers": sorted(int(l) for l in spec.get("layers", ())),
         "intrinsic_dim": 1,

@@ -10,7 +10,8 @@ Sources are addressed ``local:<kind>[-<tag>]`` (``local:r``, ``local:s``) or by
 a provider binding's bare name (``rs-r``, ``rs-s``, ``workspace-r``,
 ``neuronpedia``, ``workspace-j``).  The selection holds one active R-family
 (J/R) and one S-family (K/S) lens, so the two are resident together; on disk
-the two slots keep their side names (``output``, ``input``).  A source carries
+``active.json`` keys the two by the family's direction (``output``,
+``input``: :data:`~drowse.lens.key.FAMILY_DIRECTION`).  A source carries
 one or both sites (``out``, ``mid``), and a read at a site the selected source
 lacks says so rather than falling back to the other site.
 """
@@ -34,7 +35,10 @@ from drowse.base.hf import HFError, _hf_api, _hf_hub_download, _hf_snapshot_down
 from drowse.base.integrity import hash_file
 from drowse.base.source_registry import LOCAL, SourceFamily, SourceRef
 from drowse.lens.jlens import JacobianLens
-from drowse.lens.key import LENS_SIDES, LENS_SITES, LOCAL_LENS_NAME, LensKey, local_lens_kind
+from drowse.lens.key import (
+    FAMILY_DIRECTION, LENS_FAMILIES, LENS_SITES, LOCAL_LENS_NAME, LensFamily, LensKey,
+    local_lens_kind,
+)
 from drowse.errors import RequestError, SourceSpecError
 
 LENS_SOURCE_FORMAT_VERSION = 2
@@ -75,8 +79,8 @@ class _Provider:
         return tuple(LensKey(self.kind, site) for site in LENS_SITES if site in sites)
 
     @property
-    def side(self) -> str:
-        return LensKey(self.kind).side
+    def family(self) -> LensFamily:
+        return LensKey(self.kind).family
 
 
 #: Every fetchable source name.  The binding name is the public source token
@@ -109,37 +113,32 @@ _PROVENANCE_FIELDS = {
 }
 #: Automatic attachment and source-picker order, per family.  The provider
 #: tier first: rs-lenses' R-lens (both sites), the workspace R-lens, the
-#: official paper lens, the matched workspace J-lens; on the S side rs-lenses'
+#: official paper lens, the matched workspace J-lens; in the S family rs-lenses'
 #: S-lens.  Drowse-fitted local artifacts are the fallback tier (R before J,
 #: S before K).
-DEFAULT_LENS_SOURCE_ORDER: dict[str, tuple[str, ...]] = {
-    "output": ("rs-r", "workspace-r", "neuronpedia", "workspace-j"),
-    "input": ("rs-s",),
+DEFAULT_LENS_SOURCE_ORDER: dict[LensFamily, tuple[str, ...]] = {
+    "R": ("rs-r", "workspace-r", "neuronpedia", "workspace-j"),
+    "S": ("rs-s",),
 }
-_LOCAL_KIND_ORDER = {"output": ("r", "j"), "input": ("s", "k")}
+_LOCAL_KIND_ORDER: dict[LensFamily, tuple[str, ...]] = {"R": ("r", "j"), "S": ("s", "k")}
 
 
-def lens_source_side(ref: SourceRef) -> str:
-    """The selection slot of a source: ``output`` (J/R) or ``input`` (K/S)."""
+def lens_source_family(ref: SourceRef) -> LensFamily:
+    """The family a source selects into: ``R`` (J/R, what a vector is
+    disposed to say) or ``S`` (K/S, what it has read)."""
     if ref.local:
-        return LensKey(local_lens_kind(ref.name)).side
-    return LENS_PROVIDERS[ref.name].side
+        return LensKey(local_lens_kind(ref.name)).family
+    return LENS_PROVIDERS[ref.name].family
 
 
-def lens_family(kind: str) -> str:
-    """A kind's family as users see it: ``R`` (J/R, what a vector is
-    disposed to say) or ``S`` (K/S, what it has read).  ``output``/``input``
-    is the internal slot name (:func:`lens_source_side`)."""
-    return "R" if LensKey(kind).side == "output" else "S"
-
-
-def _lens_side(model_id: str, ref: SourceRef) -> str:
+def _lens_slot(model_id: str, ref: SourceRef) -> str:
     del model_id
-    return lens_source_side(ref)
+    return lens_source_family(ref)
 
 
 #: The lens source family: ``local:<kind>[-<tag>]`` artifacts and bare
-#: provider bindings, one active source per family slot.
+#: provider bindings, one active source per family (``active.json`` keys
+#: each by its direction).
 LENS_SOURCES = SourceFamily(
     label="lens",
     dirname="lens",
@@ -148,8 +147,8 @@ LENS_SOURCES = SourceFamily(
     provider_prefix=None,
     local_name=LOCAL_LENS_NAME,
     provider_name_ok=lambda name: name in LENS_PROVIDERS,
-    slots=LENS_SIDES,
-    slot_of=_lens_side,
+    slots=FAMILY_DIRECTION,
+    slot_of=_lens_slot,
 )
 
 
@@ -161,18 +160,18 @@ def lens_source_preference_key(source: str) -> tuple[int, int, int, str]:
     the local fits (``local:r``, ``local:j``; ``local:s``, ``local:k``), then
     any tagged fit; unknown names sort last.
     """
-    unknown = (len(LENS_SIDES), 0, 0, source)
+    unknown = (len(LENS_FAMILIES), 0, 0, source)
     try:
         ref = LENS_SOURCES.parse(source)
     except ValueError:
         return unknown
-    side = lens_source_side(ref)
-    side_rank = LENS_SIDES.index(side)
+    family = lens_source_family(ref)
+    family_rank = LENS_FAMILIES.index(family)
     if not ref.local:
-        return (side_rank, 0, DEFAULT_LENS_SOURCE_ORDER[side].index(ref.name), source)
-    order = _LOCAL_KIND_ORDER[side]
+        return (family_rank, 0, DEFAULT_LENS_SOURCE_ORDER[family].index(ref.name), source)
+    order = _LOCAL_KIND_ORDER[family]
     rank = order.index(ref.name) if ref.name in order else len(order)
-    return (side_rank, 1, rank, ref.name)
+    return (family_rank, 1, rank, ref.name)
 
 
 # -- bindings ---------------------------------------------------------------
@@ -373,19 +372,19 @@ def load_external_lens_binding(model_id: str, name: str) -> LensBinding | None:
 
 # -- provider checkpoints ---------------------------------------------------
 
-#: A provider file's dictionary, by the side its kind reads.  Output kinds
-#: follow the workspace layout (``J`` by ``source_layers``), input kinds
+#: A provider file's dictionary, by its kind's family.  R-family kinds
+#: follow the workspace layout (``J`` by ``source_layers``), S-family kinds
 #: rs-lenses' S files (``K`` by ``layers``).  ``provenance`` is optional.
-_CHECKPOINT_KEYS = {
-    "output": ("J", "source_layers"),
-    "input": ("K", "layers"),
+_CHECKPOINT_KEYS: dict[LensFamily, tuple[str, str]] = {
+    "R": ("J", "source_layers"),
+    "S": ("K", "layers"),
 }
 
 
 def _load_provider_checkpoint(path: str, kind: str) -> dict[str, Any]:
     """One provider ``.pt`` (memory-mapped: a multi-GB fp32 lens is paged on
     demand rather than read whole), with its exact key set checked."""
-    matrices, layers = _CHECKPOINT_KEYS[LensKey(kind).side]
+    matrices, layers = _CHECKPOINT_KEYS[LensKey(kind).family]
     payload = torch.load(path, map_location="cpu", weights_only=True, mmap=True)
     required = {matrices, "n_prompts", layers, "d_model"}
     if (
@@ -408,7 +407,7 @@ def _validated_site_matrices(
     expected_layers: int | None = None,
 ) -> tuple[dict[int, torch.Tensor], int, int]:
     """``(matrices by layer, n_prompts, d_model)`` of one checked provider file."""
-    matrices_key, layers_key = _CHECKPOINT_KEYS[LensKey(kind).side]
+    matrices_key, layers_key = _CHECKPOINT_KEYS[LensKey(kind).family]
     matrices = payload.get(matrices_key)
     layers = payload.get(layers_key)
     d_model = payload.get("d_model")
@@ -905,13 +904,13 @@ def lens_providers() -> list[dict[str, Any]]:
     """Every fetchable provider source, R family first, in picker order:
     its name, kind, family, the sites it publishes and its repository."""
     rows: list[dict[str, Any]] = []
-    for side in LENS_SIDES:
-        for name in DEFAULT_LENS_SOURCE_ORDER[side]:
+    for family in LENS_FAMILIES:
+        for name in DEFAULT_LENS_SOURCE_ORDER[family]:
             provider = LENS_PROVIDERS[name]
             rows.append({
                 "source": name,
                 "lens": provider.kind,
-                "family": lens_family(provider.kind),
+                "family": provider.family,
                 "sites": [key.site for key in provider.keys],
                 "repo_id": provider.repo,
             })
@@ -928,7 +927,7 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
     the fit recorded one, each site's split-half difference by layer
     (``split_half``).
     """
-    actives = {LENS_SOURCES.active(model_id, side) for side in LENS_SIDES}
+    actives = {LENS_SOURCES.active(model_id, family) for family in LENS_FAMILIES}
     rows: list[dict[str, Any]] = []
     for name in LENS_SOURCES.local_names(model_id):
         from drowse.lens.store import load_local_lens_sidecar
@@ -941,7 +940,7 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
             "kind": LOCAL,
             "name": name,
             "lens": kind,
-            "family": lens_family(kind),
+            "family": LensKey(kind).family,
             "sites": _sidecar_sites(sidecar),
             **_sidecar_coverage(sidecar),
             "active": ref in actives,
@@ -957,7 +956,7 @@ def list_lens_sources(model_id: str) -> list[dict[str, Any]]:
             "kind": HUGGINGFACE,
             "name": name,
             "lens": binding.kind,
-            "family": lens_family(binding.kind),
+            "family": LensKey(binding.kind).family,
             "sites": list(binding.sites),
             "layers": {site: list(binding.file(site).layers) for site in binding.sites},
             "n_prompts": binding.n_prompts,

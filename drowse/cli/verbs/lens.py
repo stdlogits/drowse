@@ -247,7 +247,7 @@ def _lens_source(model_id: str, source: str | None) -> Any:
     from drowse.lens.sources import LENS_SOURCES
 
     if source is None:
-        ref = LENS_SOURCES.active(model_id, "output") or LENS_SOURCES.active(model_id, "input")
+        ref = LENS_SOURCES.active(model_id, "R") or LENS_SOURCES.active(model_id, "S")
         if ref is None:
             raise CliError(f"no lens source for {model_id}", exit_code=1)
         return ref
@@ -298,11 +298,11 @@ def run_ls(args: argparse.Namespace) -> None:
 
 
 def run_use(args: argparse.Namespace) -> None:
-    from drowse.lens.sources import lens_source_side, use_lens_source
+    from drowse.lens.sources import lens_source_family, use_lens_source
 
     with user_errors(ValueError, exit_code=2):
         ref = use_lens_source(args.model, args.source)
-    family = "R" if lens_source_side(ref) == "output" else "S"
+    family = lens_source_family(ref)
     print(f"Active {family}-family lens for {args.model}: {args.source}")
 
 
@@ -316,7 +316,8 @@ def _token_mask(model_id: str) -> dict[str, str]:
 
 
 def run_show(args: argparse.Namespace) -> None:
-    from drowse.lens.sources import LENS_SOURCES, lens_family, load_lens_source_sidecar
+    from drowse.lens.key import LENS_FAMILIES, LensKey
+    from drowse.lens.sources import LENS_SOURCES, load_lens_source_sidecar
     from drowse.lens.store import lens_artifact_size, lens_layers
 
     ref = _lens_source(args.model, args.source)
@@ -326,20 +327,20 @@ def run_show(args: argparse.Namespace) -> None:
         raise CliError(f"no lens source {label} for {args.model}", exit_code=1)
     path = LENS_SOURCES.path_of(args.model, ref)
     size_mb = lens_artifact_size(args.model, name=ref.name) / 1024**2 if ref.local else None
-    is_active = ref in {LENS_SOURCES.active(args.model, side) for side in ("output", "input")}
+    is_active = ref in {LENS_SOURCES.active(args.model, family) for family in LENS_FAMILIES}
     if args.json_output:
         emit_json({
             "model": args.model, "source": label, "path": str(path),
             "size_mb": None if size_mb is None else round(size_mb, 1),
             "active": is_active, **sidecar,
-            **({"token_mask": _token_mask(args.model)} if lens_family(sidecar["kind"]) == "S" else {}),
+            **({"token_mask": _token_mask(args.model)} if LensKey(sidecar["kind"]).family == "S" else {}),
         })
         return
     skip_first = (
         sidecar["estimator_policy"]["skip_first_positions"] if ref.local
         else sidecar.get("skip_first_positions", "?")
     )
-    family = lens_family(sidecar["kind"])
+    family = LensKey(sidecar["kind"]).family
     print(
         f"{sidecar['kind']}-lens {label} for {args.model} ({family} family)"
         f"{' (active)' if is_active else ''}"
@@ -371,7 +372,7 @@ def _s_lens_corpus(model_id: str) -> str | None:
     """The selected S-family lens's recorded corpus spec, if any."""
     from drowse.lens.sources import LENS_SOURCES, load_lens_source_sidecar
 
-    ref = LENS_SOURCES.active(model_id, "input")
+    ref = LENS_SOURCES.active(model_id, "S")
     sidecar = None if ref is None else load_lens_source_sidecar(model_id, ref)
     spec = None if sidecar is None else sidecar.get("corpus_spec")
     return spec if isinstance(spec, str) and spec else None

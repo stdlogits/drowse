@@ -1317,7 +1317,7 @@ class TestWSTokenEventLens:
 class TestLensProbeRoutes:
     """Lens (readout-channel) probes on the unified ``/probes`` routes."""
 
-    _SPEC = {"word": "fake", "token_id": 42, "layers": [12, 14, 18], "side": "output"}
+    _SPEC = {"word": "fake", "token_id": 42, "layers": [12, 14, 18], "family": "R"}
 
     def test_list_includes_lens_probes(self, session_and_client: Any) -> None:
         session, client = session_and_client
@@ -1345,7 +1345,7 @@ class TestLensProbeRoutes:
         session, client = session_and_client
         session.monitor.attached_probes.return_value = {}
         session.lens.specs.return_value = {
-            "slens/fake": {**self._SPEC, "side": "input"},
+            "slens/fake": {**self._SPEC, "family": "S"},
         }
         (row,) = client.get("/drowse/v1/sessions/default/probes").json()["probes"]
         assert row["namespace"] == "slens"

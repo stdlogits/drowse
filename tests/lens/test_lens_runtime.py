@@ -704,7 +704,7 @@ def test_prepare_pins_a_mid_only_lens_with_no_probe_layers(
         None, mid={0: torch.eye(4)}, n_prompts=1, d_model=4, key=LensKey("R"),
     )
     monkeypatch.setattr(inst, "resident", lambda: mid_only)
-    inst.probes["jlens/a"] = {"word": "a", "token_id": 1, "layers": [], "side": "output"}
+    inst.probes["jlens/a"] = {"word": "a", "token_id": 1, "layers": [], "family": "R"}
     prep = inst.prepare(ReadRequest(final_aggregate=True, live=False))
     assert prep.pinned and prep.lens is mid_only
     assert prep.specs["jlens/a"]["layers"] == []
@@ -775,8 +775,8 @@ def test_jlens_property_rechecks_loaded_pointer_fingerprint(
         "n_prompts": 1,
     }
     replaced = {**compatible, "model_fingerprint": "different-weights"}
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _family="R": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _family="R": (lens, replaced))
 
     assert session.lens.resident() is None
 
@@ -799,8 +799,8 @@ def test_resident_rechecks_loaded_pointer_fingerprint(
     replaced = {**compatible, "model_fingerprint": "different-weights"}
     session.lens.runtime.lens = lens
     session.lens.runtime.identity = cast(Any, ("old",))
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _family="R": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _family="R": (lens, replaced))
 
     assert session.lens.has_compatible()
     assert session.lens.runtime.lens is lens

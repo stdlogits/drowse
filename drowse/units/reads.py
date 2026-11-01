@@ -1141,7 +1141,7 @@ class UnitReader:
 
     def _head_kept(self) -> torch.Tensor:
         """The kept token ids a head read ranks (the mask's, inside the
-        unembedding the R side reads), on the device."""
+        unembedding the R lens reads), on the device."""
         kept = self._kept()
         return kept[kept < int(self._unembed().shape[0])]
 
@@ -1323,7 +1323,7 @@ class UnitReader:
 
     def _ov_maps(
         self,
-        sides: Mapping[Family, tuple[RowKind, torch.Tensor, str]],
+        a_factors: Mapping[Family, tuple[RowKind, torch.Tensor, str]],
         b_factor: torch.Tensor,
         ids: torch.Tensor,
         hd: int,
@@ -1337,15 +1337,15 @@ class UnitReader:
         takes each token's z from them.  ``A`` and ``B`` exist one chunk at a
         time."""
         n_heads = int(b_factor.shape[1]) // hd
-        width = int(b_factor.shape[1]) * (1 + len(sides))
-        gain = self._final_gain() if any(kind == "unembed" for kind, _f, _l in sides.values()) else None
+        width = int(b_factor.shape[1]) * (1 + len(a_factors))
+        gain = self._final_gain() if any(kind == "unembed" for kind, _f, _l in a_factors.values()) else None
 
         def products(chunk: torch.Tensor) -> tuple[torch.Tensor, dict[Family, torch.Tensor]]:
             embedded = self._vocab_rows("embed", chunk)
             unembedded: torch.Tensor | None = None
             B = (embedded @ b_factor).view(-1, n_heads, hd)
             out: dict[Family, torch.Tensor] = {}
-            for family, (kind, factor, _label) in sides.items():
+            for family, (kind, factor, _label) in a_factors.items():
                 if kind == "unembed":
                     if unembedded is None:
                         unembedded = self._vocab_rows("unembed", chunk, gain)
@@ -1357,8 +1357,8 @@ class UnitReader:
 
         zeros = torch.zeros(n_heads, hd, dtype=torch.float32, device=self.device)
         count = 0
-        mean = dict.fromkeys(sides, zeros)
-        scatter = dict.fromkeys(sides, zeros[:, :, None] * zeros[:, None, :])
+        mean = dict.fromkeys(a_factors, zeros)
+        scatter = dict.fromkeys(a_factors, zeros[:, :, None] * zeros[:, None, :])
         bta = dict(scatter)
         for chunk in self._chunks(ids, width):
             B, As = products(chunk)
@@ -1375,15 +1375,15 @@ class UnitReader:
                 )
                 bta[family] = bta[family] + torch.einsum("vhi,vhj->hij", B, A)
             count = total
-        cov = {family: scatter[family] / count for family in sides}
-        zs: dict[Family, list[torch.Tensor]] = {family: [] for family in sides}
+        cov = {family: scatter[family] / count for family in a_factors}
+        zs: dict[Family, list[torch.Tensor]] = {family: [] for family in a_factors}
         for chunk in self._chunks(ids, width):
             B, As = products(chunk)
             for family, A in As.items():
                 own = (A * B).sum(-1) - (B * mean[family]).sum(-1)
                 var = torch.einsum("vhi,hij,vhj->vh", B, cov[family], B)
                 zs[family].append(own / var.clamp_min(1e-30).sqrt())
-        return {family: (torch.cat(zs[family]).T.contiguous(), bta[family]) for family in sides}
+        return {family: (torch.cat(zs[family]).T.contiguous(), bta[family]) for family in a_factors}
 
     def _head_contrast(
         self, lenses: _Lenses, block: BlockSpec, family: Family,
@@ -1397,10 +1397,10 @@ class UnitReader:
 
         def build() -> dict[str, torch.Tensor]:
             heads = range(block.n_heads)
-            side = self._a_factor(lenses, block, heads, family)
+            a_factor = self._a_factor(lenses, block, heads, family)
             b_factor = self._b_factor(lenses, block, heads, norms)
-            assert side is not None and b_factor is not None
-            per_head = self._ov_maps({family: side}, b_factor, self._head_kept(), block.attn.head_dim)[family][0]
+            assert a_factor is not None and b_factor is not None
+            per_head = self._ov_maps({family: a_factor}, b_factor, self._head_kept(), block.attn.head_dim)[family][0]
             _drain(self.device)
             return {
                 "ov.mean": per_head.mean(0),
@@ -1432,20 +1432,20 @@ class UnitReader:
                 f"a head's input side reads through the S lens at L{layer - 1} out, "
                 f"and {'no S-family lens is selected' if lenses.s is None else 'it holds no such matrix'}"
             )
-            sides: dict[Family, tuple[RowKind, torch.Tensor, str]] = {}
+            a_factors: dict[Family, tuple[RowKind, torch.Tensor, str]] = {}
             for family in ("R", "S"):
-                side = self._a_factor(lenses, block, (head,), family)
-                if side is not None:
-                    sides[family] = side
-            maps = {} if b_factor is None or not sides else self._ov_maps(
-                sides, b_factor, ids, block.attn.head_dim,
+                a_factor = self._a_factor(lenses, block, (head,), family)
+                if a_factor is not None:
+                    a_factors[family] = a_factor
+            maps = {} if b_factor is None or not a_factors else self._ov_maps(
+                a_factors, b_factor, ids, block.attn.head_dim,
             )
             copies: dict[Family, UnitHalf] = {}
             suppresses: dict[Family, UnitHalf] = {}
             scores: dict[str, float | None] = {"R": None, "S": None}
             families: tuple[tuple[Family, float], ...] = (("R", w_r), ("S", w_s))
             for family, weight in families:
-                label = sides[family][2] if family in sides else None
+                label = a_factors[family][2] if family in a_factors else None
                 if family not in maps:
                     why = b_absent if b_factor is None else self._no_lens(lenses, family, layer, "mid")
                     copies[family] = suppresses[family] = UnitHalf(
@@ -1703,7 +1703,7 @@ class UnitReader:
         for layer in selected:
             if not 0 <= int(layer) < self.n_layers:
                 raise RequestError(f"layer {layer} is outside the model's {self.n_layers} layers")
-        token_id = self.lens.resolve_token(token, side="input")
+        token_id = self.lens.resolve_token(token, family="S")
         site = "out" if by == "writes" else "mid"
         candidates: list[tuple[float, int, int, int, dict[str, Any], dict[str, Any]]] = []
         info: dict[int, dict[str, Any]] = {}

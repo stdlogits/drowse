@@ -1,9 +1,9 @@
 """Which lens kind reads a place, by depth: S early, R late, both in a band.
 
-The input-side lens (S) is the faithful read of what a vector at a shallow
-layer has *read*; the output-side lens (R) of what a deep one will make the
-model *say*.  Between them is a crossover band where both reads show,
-weighted.  The band is a per-model prior (neuron-lens §6–7 put Qwen3-8B's S
+The S lens (input Jacobians) is the faithful read of what a vector at a
+shallow layer has *read*; the R lens (output Jacobians) of what a deep one
+will make the model *say*.  Between them is a crossover band where both reads
+show, weighted.  The band is a per-model prior (neuron-lens §6–7 put Qwen3-8B's S
 reads through about L8 and R reads from about L4 on writes, L9 on reads); until
 it is measured per model the default is 15–35% of depth.
 

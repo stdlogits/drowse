@@ -3,19 +3,20 @@
 A lens is one estimator run's per-layer matrices.  Its **kind** is the
 direction of the Jacobian crossed with the backward rules it was taken under:
 
-====  =========  ========  =====================================================
-kind  side       rules     matrix
-====  =========  ========  =====================================================
-J     output     standard  ``J_L = E[Σ_{t'≥t} ∂h_final(t')/∂h_L(t)]`` (reverse)
-R     output     RelP      J under the LN / identity / half rules
-K     input      standard  ``K_L = E[Σ_{s≤t} ∂h_L(t)/∂e(s)]`` (forward)
-S     input      RelP      K under the same rules
-====  =========  ========  =====================================================
+====  ======  ========  =====================================================
+kind  family  rules     matrix
+====  ======  ========  =====================================================
+J     R       standard  ``J_L = E[Σ_{t'≥t} ∂h_final(t')/∂h_L(t)]`` (reverse)
+R     R       RelP      J under the LN / identity / half rules
+K     S       standard  ``K_L = E[Σ_{s≤t} ∂h_L(t)/∂e(s)]`` (forward)
+S     S       RelP      K under the same rules
+====  ======  ========  =====================================================
 
 Its **site** is the residual read: ``out`` (a block's output) or ``mid`` (the
-residual after the attention add — the MLP's input).  Output-side lenses read
-an activation as what it is disposed to make the model *say*; input-side
-lenses read it as what it has *read*.  One estimator (transport, in
+residual after the attention add — the MLP's input).  The R family (J, R:
+output Jacobians, read through ``W_U``) reads an activation as what it is
+disposed to make the model *say*; the S family (K, S: input Jacobians, read
+against the input embedding) reads it as what it has *read*.  One estimator (transport, in
 :mod:`drowse.lens.transport`) fits every kind at both sites; every store,
 binding and selection path is keyed on :class:`LensKey`.
 
@@ -27,12 +28,21 @@ from __future__ import annotations
 from collections.abc import Iterable
 from dataclasses import dataclass
 import re
+from typing import Literal
 
 LENS_KINDS = ("J", "R", "K", "S")
 LENS_SITES = ("out", "mid")
-#: Selection slots: one active lens per side, so an output-side (J/R) and an
-#: input-side (K/S) lens can be resident together.
-LENS_SIDES = ("output", "input")
+#: A lens family: ``R`` (J/R) or ``S`` (K/S).
+LensFamily = Literal["R", "S"]
+#: The families, R first.  Selection holds one active source per family, so
+#: an R-family and an S-family lens can be resident together.
+LENS_FAMILIES: tuple[LensFamily, ...] = ("R", "S")
+#: A family's Jacobian direction: ``output`` (reverse, J/R) or ``input``
+#: (forward, K/S).  It is the estimator's mode and the family's on-disk
+#: spelling, frozen in two formats: lens format v7's
+#: ``estimator_policy.direction`` and the source selection's slot keys
+#: (``active.json``).  Nothing else spells a family this way.
+FAMILY_DIRECTION: dict[str, str] = {"R": "output", "S": "input"}
 #: Kinds the transport estimator fits: all four, at either or both sites.
 FITTABLE_KINDS = LENS_KINDS
 #: Documents a local fit averages over unless asked otherwise.  Measured on
@@ -82,9 +92,9 @@ class LensKey:
             )
 
     @property
-    def side(self) -> str:
-        """``output`` for J/R (read through ``W_U``), ``input`` for K/S."""
-        return "output" if self.kind in ("J", "R") else "input"
+    def family(self) -> LensFamily:
+        """``R`` for J/R (read through ``W_U``), ``S`` for K/S."""
+        return "R" if self.kind in ("J", "R") else "S"
 
     @property
     def relp(self) -> bool:
@@ -112,7 +122,7 @@ def site_layers(kind: str, site: str, n_layers: int) -> list[int]:
     every block.
     """
     key = LensKey(kind, site)
-    top = n_layers - 1 if (key.side == "output" and site == "out") else n_layers
+    top = n_layers - 1 if (key.family == "R" and site == "out") else n_layers
     return list(range(max(top, 0)))
 
 

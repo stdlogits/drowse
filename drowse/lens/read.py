@@ -58,9 +58,8 @@ import torch
 from drowse.lens.depth import LensBand, kind_weights, layer_depth
 from drowse.lens.footprint import TokenEmbeddings
 from drowse.lens.jlens import JacobianLens, LensNotFittedError, topk_probabilities
-from drowse.lens.key import LENS_SITES
+from drowse.lens.key import LENS_SITES, LensFamily
 
-LensFamily = Literal["R", "S"]
 ReadUnit = Literal["probability", "footprint_z"]
 #: What a read reads: a ``residual`` (its S half is centred on the neutral
 #: mean at its site) or a ``direction`` (read as given).
@@ -198,7 +197,7 @@ def output_transport(
     :class:`~drowse.lens.jlens.LensNotFittedError`, as :meth:`JacobianLens.matrix`
     does.  The one place a read meets the last layer: :func:`plan_reads` and
     the unit reads' population statistics both ask here."""
-    if lens.key.side != "output":
+    if lens.key.family != "R":
         raise ValueError(f"a {lens.kind} lens has no output transport")
     if site == "out" and int(layer) == int(n_layers) - 1:
         lens.matrices("out")
@@ -338,9 +337,9 @@ def plan_reads(
     called only for the S half of a residual read, and a residual read with
     an S half and no ``centre`` is a broken invariant (``ValueError``).
     """
-    for lens, side in ((r_lens, "output"), (s_lens, "input")):
-        if lens is not None and lens.key.side != side:
-            raise ValueError(f"a {lens.kind} lens cannot read the {side}-family half")
+    for lens, family in ((r_lens, "R"), (s_lens, "S")):
+        if lens is not None and lens.key.family != family:
+            raise ValueError(f"a {lens.kind} lens cannot read the {family}-family half")
     weights = kind_weights(n_layers, band)
     parts: list[torch.Tensor] = []
     planned: list[_Planned] = []

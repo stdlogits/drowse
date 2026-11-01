@@ -179,21 +179,21 @@ def test_a_fit_drives_its_own_familys_residency_only(make_tiny_session: Any) -> 
 
     # A fit without out selects and adopts nothing in either family.
     lens.fit(_TINY_PROMPTS, kind="K", sites=("mid",))
-    assert LENS_SOURCES.active(session.model_id, "input") == SourceRef(LOCAL, "s")
+    assert LENS_SOURCES.active(session.model_id, "S") == SourceRef(LOCAL, "s")
     assert lens.input_runtime.lens is s_resident
     assert "slens/a" in session.registry.profiles
 
 
-def _family_slot(lens: Any, side: str) -> tuple[Any, Any]:
+def _family_slot(lens: Any, family: str) -> tuple[Any, Any]:
     """``(runtime, resident refresh)`` of one family's slot."""
-    if side == "input":
+    if family == "S":
         return lens.input_runtime, lens.resident_input
     return lens.runtime, lens.resident
 
 
-@pytest.mark.parametrize(("kind", "other", "side"), [("S", "K", "input"), ("R", "J", "output")])
+@pytest.mark.parametrize(("kind", "other", "family"), [("S", "K", "S"), ("R", "J", "R")])
 def test_a_noop_fit_selects_the_lens_it_adopts(
-    make_tiny_session: Any, kind: str, other: str, side: str,
+    make_tiny_session: Any, kind: str, other: str, family: str,
 ) -> None:
     """Regression: a cache-hit fit adopted its artifact without selecting
     it, so the resident was stamped with the other source's label and the
@@ -204,22 +204,22 @@ def test_a_noop_fit_selects_the_lens_it_adopts(
 
     session = make_tiny_session(warm=False)
     lens = session.lens
-    runtime, refresh = _family_slot(lens, side)
+    runtime, refresh = _family_slot(lens, family)
     lens.fit(_TINY_PROMPTS, kind=kind, sites=("out",))
     lens.fit(_TINY_PROMPTS, kind=other, sites=("out",))
-    assert LENS_SOURCES.active(session.model_id, side) == SourceRef(LOCAL, other.lower())
+    assert LENS_SOURCES.active(session.model_id, family) == SourceRef(LOCAL, other.lower())
     assert runtime.lens.key.kind == other
 
     lens.fit(_TINY_PROMPTS, kind=kind, sites=("out",))  # identical: a no-op
-    assert LENS_SOURCES.active(session.model_id, side) == SourceRef(LOCAL, kind.lower())
+    assert LENS_SOURCES.active(session.model_id, family) == SourceRef(LOCAL, kind.lower())
     assert runtime.lens.key.kind == kind
     assert runtime.source == f"local:{kind.lower()}"
     assert refresh().key.kind == kind
 
 
-@pytest.mark.parametrize(("kind", "other", "side"), [("S", "K", "input"), ("R", "J", "output")])
+@pytest.mark.parametrize(("kind", "other", "family"), [("S", "K", "S"), ("R", "J", "R")])
 def test_a_mid_only_top_up_leaves_selection_with_residency(
-    make_tiny_session: Any, kind: str, other: str, side: str,
+    make_tiny_session: Any, kind: str, other: str, family: str,
 ) -> None:
     """Regression: a mid-only top-up of an artifact holding ``out`` was
     selected (``save_lens`` judged the merged artifact) while the fitter,
@@ -231,7 +231,7 @@ def test_a_mid_only_top_up_leaves_selection_with_residency(
 
     session = make_tiny_session(warm=False)
     lens = session.lens
-    runtime, refresh = _family_slot(lens, side)
+    runtime, refresh = _family_slot(lens, family)
     lens.fit(_TINY_PROMPTS, kind=kind, sites=("out",))
     lens.fit(_TINY_PROMPTS, kind=other, sites=("out",))
     resident = runtime.lens
@@ -240,7 +240,7 @@ def test_a_mid_only_top_up_leaves_selection_with_residency(
     lens.fit(_TINY_PROMPTS, kind=kind, sites=("mid",))  # tops up local:<kind>
     sidecar = load_local_lens_sidecar(session.model_id, kind.lower())
     assert sidecar is not None and set(sidecar["sites"]) == {"out", "mid"}
-    assert LENS_SOURCES.active(session.model_id, side) == SourceRef(LOCAL, other.lower())
+    assert LENS_SOURCES.active(session.model_id, family) == SourceRef(LOCAL, other.lower())
     assert runtime.lens is resident
     assert runtime.source == f"local:{other.lower()}"
     assert refresh().key.kind == other
@@ -256,7 +256,7 @@ def test_slens_probe_reads_footprint_z(make_tiny_session: Any) -> None:
     assert session.add_probe("slens/a") == "slens/a"
     spec = session.lens.probes["slens/a"]
     assert spec == {
-        "word": "a", "token_id": a, "layers": list(range(len(session.layers))), "side": "input",
+        "word": "a", "token_id": a, "layers": list(range(len(session.layers))), "family": "S",
     }
     gen = torch.Generator().manual_seed(4)
     d = lens.d_model
@@ -650,15 +650,16 @@ def test_a_gate_on_both_families_makes_one_host_transfer(
 
 
 def _count_sidecar_reads(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    """Count lens sidecar reads (the per-refresh disk hit) by family slot."""
+    """Count lens sidecar reads (the per-refresh disk hit) by family."""
+    from drowse.lens.key import LensFamily
     from drowse.lens import store
 
     reads: dict[str, int] = {}
     original = store.load_lens_sidecar
 
-    def counting(model_id: str, side: str = "output") -> Any:
-        reads[side] = reads.get(side, 0) + 1
-        return original(model_id, side)
+    def counting(model_id: str, family: LensFamily = "R") -> Any:
+        reads[family] = reads.get(family, 0) + 1
+        return original(model_id, family)
 
     monkeypatch.setattr(store, "load_lens_sidecar", counting)
     return reads
@@ -686,7 +687,7 @@ def test_a_gate_on_one_slens_probe_keeps_the_others_in_the_step_readings(
     assert len(calls) == 2
 
     # A gate naming only a jlens/ probe reads no slens/ probe at all.
-    harness.lens.probes["jlens/x"] = {"word": "x", "token_id": 1, "layers": [], "side": "output"}
+    harness.lens.probes["jlens/x"] = {"word": "x", "token_id": 1, "layers": [], "family": "R"}
     calls.clear()
     assert harness.lens.gate_scalars({"jlens/x"}, step_id=4) == {}
     assert calls == []
@@ -718,7 +719,7 @@ def test_an_slens_only_gate_never_refreshes_the_r_lens_per_token(
     run(2)  # the first run also resolves the slens/a atom
     short, long = run(2), run(8)
     assert short == long  # nothing scales with the token count
-    assert long.get("output", 0) <= 1
+    assert long.get("R", 0) <= 1
 
 
 def test_live_readout_pins_and_captures_the_s_family(

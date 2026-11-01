@@ -224,7 +224,7 @@ class LensFetchRequest(NativeRequest):
 
 class LensFitRequest(NativeRequest):
     """Defaults mirror CLI ``lens fit``.  ``kind`` is the lens (``r`` the RelP
-    R-lens, ``j`` the standard J-lens, ``s``/``k`` their input-side S and K),
+    R-lens, ``j`` the standard J-lens, ``s``/``k`` the S family's S and K),
     fitted at ``local:<kind>``; ``sites`` picks ``out``, ``mid`` or both.  A
     matching partial fit resumes unless ``force``; ``hf_corpus`` lists
     ``REPO[:CONFIG][@REV][,KEY=VALUE…]`` sources (several make a weighted
@@ -334,10 +334,10 @@ def register_instrument_routes(app: FastAPI) -> None:
         source that cannot load for this model's weights raises
         ``LensNotFittedError`` (the caller's 409), as the R family's live
         enable does."""
-        from drowse.lens.sources import LENS_SOURCES, lens_source_side
+        from drowse.lens.sources import LENS_SOURCES, lens_source_family
 
         async with session_lock(app):
-            if lens_source_side(LENS_SOURCES.parse(source)) == "input":
+            if lens_source_family(LENS_SOURCES.parse(source)) == "S":
                 await select_lens_source(source, live_off=False)
                 if await run_in_thread(session.lens.resident_input) is None:
                     raise LensNotFittedError(
@@ -460,7 +460,7 @@ def register_instrument_routes(app: FastAPI) -> None:
         # (``key.lens_selectable``); a ``mid``-only fit leaves the family's
         # source and resident lens alone.  The live readout is the R family's.
         selects = lens_selectable(body.sites)
-        reads_out = selects and LensKey(kind).side == "output"
+        reads_out = selects and LensKey(kind).family == "R"
 
         async def enable() -> None:
             lens_fit.state["live_layers"] = await enable_lens_live()

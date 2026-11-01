@@ -617,8 +617,8 @@ class LensFitter:
 
     The caller holds the fit lock and the model-exclusive guard, unsteered:
     the fit verifies the model's block description and runs transport
-    passes through it.  ``residency`` maps each family's slot (``output`` for
-    J/R, ``input`` for K/S) to its resident lens: a fit drives its own
+    passes through it.  ``residency`` maps each family (``R`` for J/R, ``S``
+    for K/S) to its resident lens: a fit drives its own
     family's and never touches the other's, and a fit without the ``out``
     site adopts nothing.
     """
@@ -686,7 +686,7 @@ class LensFitter:
             policy=lens_estimator_policy(request.kind),
         )
         residency = (
-            self._residency[LensKey(request.kind).side]
+            self._residency[LensKey(request.kind).family]
             if lens_selectable(request.sites)
             else _NoResidency()
         )

@@ -157,7 +157,7 @@ class JacobianLens:
       residual direction a token leaves at layer ``L``).
 
     ``source_layers`` and the token-direction / atom-norm readers default to
-    the ``out`` site, so the output-side readout code keeps reading ``out``.
+    the ``out`` site, so the R family's readout code keeps reading ``out``.
     A read at a site the lens does not hold raises
     :class:`LensNotFittedError`; it never falls back to the other site.
     """
@@ -181,7 +181,7 @@ class JacobianLens:
         self.n_prompts = int(n_prompts)
         self.d_model = int(d_model)
         self.d_emb = self.d_model if d_emb is None else int(d_emb)
-        if key.side == "output" and self.d_emb != self.d_model:
+        if key.family == "R" and self.d_emb != self.d_model:
             raise ValueError(f"an output-kind ({key.kind}) lens has no separate d_emb")
         self._sites: dict[str, dict[int, torch.Tensor]] = {}
         for site, given in (("out", jacobians), ("mid", mid)):
@@ -216,7 +216,7 @@ class JacobianLens:
     @property
     def matrix_shape(self) -> tuple[int, int]:
         """``(d, d)`` for an output kind, ``(d, d_emb)`` for an input kind."""
-        return (self.d_model, self.d_model if self.key.side == "output" else self.d_emb)
+        return (self.d_model, self.d_model if self.key.family == "R" else self.d_emb)
 
     def matrices(self, site: str = "out") -> dict[int, torch.Tensor]:
         """``{layer: matrix}`` at ``site`` (the live dict, not a copy)."""
@@ -268,29 +268,29 @@ class JacobianLens:
 
     # -- reads ----------------------------------------------------------------
 
-    def _require_side(self, side: str, read: str) -> None:
-        if self.key.side != side:
-            other = "pullback or footprint" if side == "output" else "transport"
+    def _require_family(self, family: str, read: str) -> None:
+        if self.key.family != family:
+            other = "pullback or footprint" if family == "R" else "transport"
             raise JacobianLensError(
-                f"{read} reads an {side}-kind lens; this is a {self.kind} lens "
+                f"{read} reads an {family}-family lens; this is a {self.kind} lens "
                 f"(read it by {other})"
             )
 
     def transport(self, hidden: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
         """Output kinds: map a residual ``[..., d]`` into the final basis, ``h @ J_Lᵀ``."""
-        self._require_side("output", "transport")
+        self._require_family("R", "transport")
         J = self.matrix(layer, site).to(hidden.device)
         return hidden.to(torch.float32) @ J.T
 
     def pullback(self, covector: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
         """Input kinds: a residual covector ``[..., d]`` into the embedding basis, ``c @ K_L``."""
-        self._require_side("input", "pullback")
+        self._require_family("S", "pullback")
         K = self.matrix(layer, site).to(covector.device)
         return covector.to(torch.float32) @ K
 
     def footprint(self, embedding: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
         """Input kinds: an embedding-space ``[..., d_emb]`` into the residual, ``K_L ẽ``."""
-        self._require_side("input", "footprint")
+        self._require_family("S", "footprint")
         K = self.matrix(layer, site).to(embedding.device)
         return embedding.to(torch.float32) @ K.T
 
@@ -310,7 +310,7 @@ class JacobianLens:
         ``Profile``) expects. With an output projection P (OPT), use
         ``W_U[v] @ P @ J_l`` without materializing the full vocabulary map.
         """
-        self._require_side("output", "a token direction")
+        self._require_family("R", "a token direction")
         w = unembed[token_id].detach().to(torch.float32).cpu()
         if output_projection is not None:
             w = w @ output_projection.detach().to(device="cpu", dtype=torch.float32)

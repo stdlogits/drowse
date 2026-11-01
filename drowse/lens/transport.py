@@ -616,11 +616,11 @@ def document_estimate(
     for input kinds.  The reference unit of the fit (``fit_lens`` sums these
     over documents); tests compare it to brute-force autograd.
     """
-    from drowse.lens.key import LensKey
+    from drowse.lens.key import FAMILY_DIRECTION, LensKey
 
     key = LensKey(kind)
     rules = rules_for(kind)
-    direction = key.side
+    direction = FAMILY_DIRECTION[key.family]
     maps = linearize(
         spec, ids, rules=rules, skip_first=skip_first,
         blocks=blocks_needed(direction, spec.n_layers, layers),

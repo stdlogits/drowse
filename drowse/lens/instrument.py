@@ -75,7 +75,7 @@ from drowse.lens.footprint import (
     pullback_rows,
     token_mask,
 )
-from drowse.lens.key import LENS_SITES
+from drowse.lens.key import LENS_SITES, LensFamily
 from drowse.lens.lifecycle import LensFitRequest, LensFitter, LiveConfig
 from drowse.lens.read import LensRead, PendingReads, ReadOf, VectorRead, plan_reads
 from drowse.lens.runtime import CaptureHidden, LensRuntime, select_rows
@@ -84,9 +84,9 @@ from drowse.errors import RequestError
 
 _log = logging.getLogger(__name__)
 
-#: A probe spec's ``side``: ``output`` reads the R family (``jlens/``),
-#: ``input`` the S family (``slens/``).
-_ATOM_SIDES = {"jlens": "output", "slens": "input"}
+#: A probe spec's ``family``: ``R`` reads the R lens (``jlens/``), ``S`` the
+#: S lens (``slens/``).
+_ATOM_FAMILIES: dict[str, LensFamily] = {"jlens": "R", "slens": "S"}
 #: Footprint-norm tables kept for the ``tokens-in`` dictionary (``[vocab]``
 #: fp32 per (lens, layer)).
 FOOTPRINT_NORM_CACHE_MAX = 64
@@ -109,8 +109,8 @@ def _out_layers(lens: Any) -> list[int]:
     return [int(layer) for layer in lens.layers("out")]
 
 
-def _spec_side(spec: Mapping[str, Any]) -> str:
-    return str(spec.get("side", "output"))
+def _spec_family(spec: Mapping[str, Any]) -> str:
+    return str(spec.get("family", "R"))
 
 
 class _InputBlock(NamedTuple):
@@ -436,7 +436,7 @@ class LensInstrument:
         self._replay = replay
         self._fitter = LensFitter(
             model=model, tokenizer=tokenizer, model_id=model_id,
-            residency={"output": self, "input": _InputResidency(self)},
+            residency={"R": self, "S": _InputResidency(self)},
         )
         # Pinned J-lens token probes: name -> {word, token_id, layers}.  NOT
         # monitor probes — they read the lens readout channel (per-layer
@@ -547,7 +547,7 @@ class LensInstrument:
         # mean: make it resident now, before the decode loop (and outside
         # the leaf state lock), so no per-step read builds it.  Without one
         # the generation refuses (``NeutralMeansError``), never reads raw.
-        if any(_spec_side(spec) == "input" for spec in list(self.probes.values())):
+        if any(_spec_family(spec) == "S" for spec in list(self.probes.values())):
             self._neutral_means("out")
         # Token counts that changed since the S statistics were built (a
         # catalog bound, a corpus counted) reach this run: rebuild them now,
@@ -566,8 +566,8 @@ class LensInstrument:
         # demand from the captured roster.
         with self.state_lock:
             all_items = list(self.probes.items())
-            items = [(n, s) for n, s in all_items if _spec_side(s) == "output"]
-            input_items = [(n, s) for n, s in all_items if _spec_side(s) == "input"]
+            items = [(n, s) for n, s in all_items if _spec_family(s) == "R"]
+            input_items = [(n, s) for n, s in all_items if _spec_family(s) == "S"]
             names = {name for name, _spec in all_items}
             gate_hit = any(
                 parse_gate_ref(key).probe in names
@@ -805,7 +805,7 @@ class LensInstrument:
             run = self.current_run
             if run.input_pinned:
                 return run.input_lens
-            self._refresh(load=True, side="input")
+            self._refresh(load=True, family="S")
             return self.input_runtime.lens
 
     def has_compatible(self) -> bool:
@@ -831,12 +831,12 @@ class LensInstrument:
             run = self.current_run
             if run.input_pinned:
                 return run.input_lens is not None
-            return self._refresh(load=False, side="input")
+            return self._refresh(load=False, family="S")
 
-    def _side_runtime(self, side: str) -> LensRuntime:
-        return self.input_runtime if side == "input" else self.runtime
+    def _family_runtime(self, family: str) -> LensRuntime:
+        return self.input_runtime if family == "S" else self.runtime
 
-    def _refresh(self, *, load: bool, side: str = "output") -> bool:
+    def _refresh(self, *, load: bool, family: LensFamily = "R") -> bool:
         """Reconcile one family's resident lens with its active source.
 
         Returns whether the active source is compatible.  Without ``load`` it
@@ -848,8 +848,8 @@ class LensInstrument:
         """
         from drowse.lens.store import lens_identity, load_lens, load_lens_sidecar
 
-        runtime = self._side_runtime(side)
-        sidecar = load_lens_sidecar(self.model_id, side)
+        runtime = self._family_runtime(family)
+        sidecar = load_lens_sidecar(self.model_id, family)
         compatible = runtime.matches(sidecar)
         if not load:
             return compatible
@@ -857,8 +857,7 @@ class LensInstrument:
             return True
         if not compatible and runtime.lens is None and sidecar is None:
             return False
-        evict = self.evict_input if side == "input" else self.evict
-        family = "S" if side == "input" else "R"
+        evict = self.evict_input if family == "S" else self.evict
         with self._exclusive(
             f"the {family}-family lens was reloaded from disk while another "
             "model use is in flight; retry shortly",
@@ -873,7 +872,7 @@ class LensInstrument:
                         sidecar.get("kind", "?"), self.model_id,
                     )
                 return False
-            loaded = load_lens(self.model_id, side)
+            loaded = load_lens(self.model_id, family)
             if loaded is None:
                 evict()
                 return False
@@ -926,10 +925,10 @@ class LensInstrument:
     def _drop_directions(self) -> None:
         self._registry.evict_prefix("jlens/")
 
-    def _side_probes(self, side: str) -> dict[str, dict[str, Any]]:
+    def _family_probes(self, family: str) -> dict[str, dict[str, Any]]:
         return {
             name: spec for name, spec in self.probes.items()
-            if _spec_side(spec) == side
+            if _spec_family(spec) == family
         }
 
     def evict(self) -> None:
@@ -941,7 +940,7 @@ class LensInstrument:
             self.step_stash = None
             self.last_step_readings = None
             self._drop_directions()
-            for spec in self._side_probes("output").values():
+            for spec in self._family_probes("R").values():
                 spec["layers"] = []
             self.live = None
             self._on_change(list(self.probes))
@@ -953,7 +952,7 @@ class LensInstrument:
             self.input_runtime.clear()
             self.current_run.input_stash = None
             self._registry.evict_prefix("slens/")
-            for spec in self._side_probes("input").values():
+            for spec in self._family_probes("S").values():
                 spec["layers"] = []
             self._on_change(list(self.probes))
 
@@ -975,16 +974,16 @@ class LensInstrument:
         evicted).  An S-family (K/S) lens goes to :meth:`adopt_input`.
         """
         key = getattr(lens, "key", None)
-        if key is not None and key.side == "input":
+        if key is not None and key.family == "S":
             return self.adopt_input(lens, sidecar)
         with self.state_lock:
             previous = live if restore_live else self.live_config()
-            self.runtime.install(lens, sidecar, source=self._active_label("output"))
+            self.runtime.install(lens, sidecar, source=self._active_label("R"))
             self.step_stash = None
             self.last_step_readings = None
             self._drop_directions()
             readout_layers = _out_layers(lens)
-            output_probes = self._side_probes("output")
+            output_probes = self._family_probes("R")
             for spec in output_probes.values():
                 spec["layers"] = list(readout_layers)
             if output_probes and readout_layers:
@@ -1005,11 +1004,11 @@ class LensInstrument:
         (they re-resolve against it) and ``slens/`` probes take its ``out``
         layers."""
         with self.state_lock:
-            self.input_runtime.install(lens, sidecar, source=self._active_label("input"))
+            self.input_runtime.install(lens, sidecar, source=self._active_label("S"))
             self.current_run.input_stash = None
             self._registry.evict_prefix("slens/")
             layers = _out_layers(lens)
-            for spec in self._side_probes("input").values():
+            for spec in self._family_probes("S").values():
                 spec["layers"] = list(layers)
             self._on_change(list(self.probes))
             return lens
@@ -1018,10 +1017,10 @@ class LensInstrument:
         """Select a prepared local/external lens source into its family's
         slot and evict that family's resident lens.  Prepare the source first
         (fit or fetch)."""
-        from drowse.lens.sources import lens_source_side, use_lens_source
+        from drowse.lens.sources import lens_source_family, use_lens_source
 
         ref = use_lens_source(self.model_id, source)
-        if lens_source_side(ref) == "input":
+        if lens_source_family(ref) == "S":
             self.evict_input()
         else:
             self.evict()
@@ -1412,7 +1411,7 @@ class LensInstrument:
         a footprint z for it measures nothing the read can show."""
         from drowse.lens.jlens import InvalidTokenIdError
 
-        token_id = self.resolve_token(word, side="input")
+        token_id = self.resolve_token(word, family="S")
         if not bool(embeddings.keep[token_id]):
             raise InvalidTokenIdError(
                 f"slens/{word} names token {token_id}, which the S read's token "
@@ -1507,7 +1506,7 @@ class LensInstrument:
         """
         self._registry.evict_prefix("slens/")
         self.current_run.input_stash = None
-        inputs = self._side_probes("input")
+        inputs = self._family_probes("S")
         dropped = [
             name for name, spec in inputs.items()
             if not bool(keep[int(spec["token_id"])])
@@ -1680,7 +1679,7 @@ class LensInstrument:
             for lens in (self.resident(), self.resident_input()):
                 if lens is not None and site in getattr(lens, "sites", ("out",)):
                     held.update(int(layer) for layer in lens.layers(site))
-                    if lens.key.side == "output" and site == "out":
+                    if lens.key.family == "R" and site == "out":
                         held.add(runtime.n_layers - 1)
             if not held:
                 from drowse.lens.jlens import LensNotFittedError
@@ -1761,13 +1760,13 @@ class LensInstrument:
         (:class:`~drowse.readout.roster.ProbeRoster`).
         """
         namespace, _, word = selector.partition("/")
-        side = _ATOM_SIDES.get(namespace)
-        if side is None:
+        family = _ATOM_FAMILIES.get(namespace)
+        if family is None:
             raise RequestError(f"{selector!r} is not a jlens/ or slens/ probe")
         if not word:
             raise RequestError(f"empty {namespace} probe word")
         name = as_name if as_name is not None else selector
-        runtime = self._side_runtime(side)
+        runtime = self._family_runtime(family)
         with self._exclusive(
             "add_probe called while another model operation is in "
             "flight; retry shortly"
@@ -1776,7 +1775,7 @@ class LensInstrument:
             # outer→leaf lock order): the lens read and the registry write
             # land in one lens-state transaction.
             with self.state_lock:
-                if side == "input":
+                if family == "S":
                     lens = self._require_input()
                     readout_layers = [int(layer) for layer in lens.layers("out")]
                     token_id = self._input_token(word, self._token_embeddings())
@@ -1785,24 +1784,24 @@ class LensInstrument:
                     self._neutral_means("out")
                 else:
                     lens = self._require()
-                    token_id = self.resolve_token(word, side=side)
+                    token_id = self.resolve_token(word, family=family)
                     readout_layers = [int(l) for l in lens.source_layers]
                 runtime.transport_stack(lens, sorted(readout_layers))
                 self.probes[name] = {
                     "word": word,
                     "token_id": int(token_id),
                     "layers": readout_layers,
-                    "side": side,
+                    "family": family,
                 }
         return name
 
-    def resolve_token(self, word: str, *, side: str = "output") -> int:
-        """The vocab id a ``jlens/<word>`` (``side="output"``) or
-        ``slens/<word>`` (``side="input"``) atom names: a single-token word,
+    def resolve_token(self, word: str, *, family: LensFamily = "R") -> int:
+        """The vocab id a ``jlens/<word>`` (``family="R"``) or
+        ``slens/<word>`` (``family="S"``) atom names: a single-token word,
         or ``#<id>`` addressing the id directly (the steering-atom contract),
         bounds-checked against the unembedding or the input embedding."""
         runtime = self.runtime
-        if side == "input":
+        if family == "S":
             rows = int(self.runtime.model.get_input_embeddings().weight.shape[0])
         else:
             rows = int(runtime.readout_modules()[0].shape[0])
@@ -1901,7 +1900,7 @@ class LensInstrument:
             # The live step also reads every ``slens/`` probe, over its own
             # S lens's layers, not the R live selection.
             latest.update(_band({
-                name for name, spec in probes.items() if _spec_side(spec) == "input"
+                name for name, spec in probes.items() if _spec_family(spec) == "S"
             }))
         if probes and request.final_aggregate:
             band = _band()
@@ -1939,7 +1938,7 @@ class LensInstrument:
             word, token_id = spec["word"], spec["token_id"]
             layers = tuple(int(layer) for layer in spec["layers"])
             identity: Any
-            if _spec_side(spec) == "input":
+            if _spec_family(spec) == "S":
                 # The footprint channel: the S lens identity and the token
                 # mask the z divides by (its counts; the tokenizer is the
                 # model's).
@@ -1987,7 +1986,7 @@ class LensInstrument:
         """
         lens, all_probes = self._measurement_state()
         out = self._input_readings(all_probes, hidden, only=only)
-        probes = {n: s for n, s in all_probes.items() if _spec_side(s) == "output"}
+        probes = {n: s for n, s in all_probes.items() if _spec_family(s) == "R"}
         if not probes or lens is None:
             return out
         readout_layers: set[int] = set()
@@ -2029,7 +2028,7 @@ class LensInstrument:
         """
         names = [
             name for name, spec in probes.items()
-            if _spec_side(spec) == "input" and (only is None or name in only)
+            if _spec_family(spec) == "S" and (only is None or name in only)
         ]
         if not names:
             return None
@@ -2109,7 +2108,7 @@ class LensInstrument:
         only the rest, never drops it."""
         wanted = {
             name for name, spec in probes.items()
-            if _spec_side(spec) == "input" and (only is None or name in only)
+            if _spec_family(spec) == "S" and (only is None or name in only)
         }
         stash = self.current_run.input_stash
         if stash is None or step_id < 0 or stash.get("step") != step_id:
@@ -2171,7 +2170,7 @@ class LensInstrument:
         _lens, all_probes = self._measurement_state()
         # R-family rows score ``jlens/`` probes only; ``slens/`` probes read
         # the footprint channel (:meth:`_input_readings`).
-        probes = {n: s for n, s in all_probes.items() if _spec_side(s) == "output"}
+        probes = {n: s for n, s in all_probes.items() if _spec_family(s) == "R"}
         if not probes:
             return {}
         readout_layers: set[int] = set()
@@ -2286,7 +2285,7 @@ class LensInstrument:
             self._measurement_live() is not None
             and self.active_for_generation
         )
-        input_names = {n for n, s in specs.items() if _spec_side(s) == "input"}
+        input_names = {n for n, s in specs.items() if _spec_family(s) == "S"}
         input_only = input_names if only is None else only & input_names
         # ``slens/`` probes: the stash's readings from this forward, and the
         # device block of the rest.  The live display step reads every
@@ -2346,7 +2345,7 @@ class LensInstrument:
         want them) and the probes' device block, with the gated subset.
         ``None`` when no R-family probe can be read on this forward."""
         lens, all_probes = self._measurement_state()
-        probes = {n: s for n, s in all_probes.items() if _spec_side(s) == "output"}
+        probes = {n: s for n, s in all_probes.items() if _spec_family(s) == "R"}
         if only is not None:
             only = {name for name in only if name in probes}
             if not only:
@@ -2490,14 +2489,13 @@ class LensInstrument:
         pointer whose artifact is gone while persisted rows still carry its
         label.
         """
-        return self._active_label("output")
+        return self._active_label("R")
 
-    def _active_label(self, side: str) -> str | None:
-        """The active source of ``side``'s slot (``output``: R family,
-        ``input``: S family) in the public source syntax."""
+    def _active_label(self, family: LensFamily) -> str | None:
+        """The active source of ``family`` in the public source syntax."""
         from drowse.lens.sources import LENS_SOURCES
 
-        active = LENS_SOURCES.active(self.model_id, side)
+        active = LENS_SOURCES.active(self.model_id, family)
         return None if active is None else LENS_SOURCES.format(active)
 
     @property

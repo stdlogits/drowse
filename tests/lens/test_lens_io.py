@@ -631,16 +631,16 @@ def test_remove_lens_keeps_a_different_active_local_lens() -> None:
         corpus_spec="test-corpus", corpus_sha256=_digest("abc123"),
         seq_len=128, dim_batch=8, skip_first=16,
     )
-    active = LENS_SOURCES.active(_MODEL, "output")
+    active = LENS_SOURCES.active(_MODEL, "R")
     assert active is not None and active.name == "r"
 
     assert remove_lens(_MODEL, "j") is True
-    active = LENS_SOURCES.active(_MODEL, "output")
+    active = LENS_SOURCES.active(_MODEL, "R")
     assert active is not None and active.name == "r"
     assert load_lens(_MODEL) is not None
 
     assert remove_lens(_MODEL, "r") is True
-    assert LENS_SOURCES.active(_MODEL, "output") is None
+    assert LENS_SOURCES.active(_MODEL, "R") is None
 
 
 def test_remove_lens_reaps_crash_left_streaming_temp() -> None:

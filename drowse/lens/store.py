@@ -62,7 +62,9 @@ from drowse.base.shards import (
 from drowse.base.source_registry import LOCAL, SourceRef
 from drowse.lens.corpus import LENS_CORPUS_PREPROCESS_VERSION, LENS_DOC_CHARS
 from drowse.lens.jlens import SKIP_FIRST_POSITIONS, JacobianLens, LensNotFittedError
-from drowse.lens.key import LENS_KINDS, LENS_SITES, LensKey, lens_selectable, local_lens_kind
+from drowse.lens.key import (
+    FAMILY_DIRECTION, LENS_KINDS, LENS_SITES, LensFamily, LensKey, lens_selectable, local_lens_kind,
+)
 
 log = logging.getLogger(__name__)
 
@@ -158,7 +160,7 @@ def lens_estimator_policy(
 
         rules = dict(RELP_RULES)
     return {
-        "direction": key.side,
+        "direction": FAMILY_DIRECTION[key.family],
         "rules": rules,
         "skip_first_positions": int(skip_first),
         "corpus_preprocess_version": LENS_CORPUS_PREPROCESS_VERSION,
@@ -584,11 +586,11 @@ def load_lens_checkpoint_sidecar(model_id: str, name: str) -> dict[str, Any] | N
         )
 
 
-def load_lens_sidecar(model_id: str, side: str = "output") -> dict[str, Any] | None:
-    """Metadata for the active lens source of ``side`` (``output``: J/R, ``input``: K/S)."""
+def load_lens_sidecar(model_id: str, family: LensFamily = "R") -> dict[str, Any] | None:
+    """Metadata for the active lens source of ``family`` (``R``: J/R, ``S``: K/S)."""
     from drowse.lens.sources import LENS_SOURCES, load_external_lens_sidecar
 
-    active = LENS_SOURCES.active(model_id, side)
+    active = LENS_SOURCES.active(model_id, family)
     if active is None:
         return None
     if active.local:
@@ -967,12 +969,12 @@ def load_local_lens(
 
 
 def load_lens(
-    model_id: str, side: str = "output",
+    model_id: str, family: LensFamily = "R",
 ) -> tuple[JacobianLens, dict[str, Any]] | None:
-    """Load the active lens source of ``side`` (``output``: J/R, ``input``: K/S)."""
+    """Load the active lens source of ``family`` (``R``: J/R, ``S``: K/S)."""
     from drowse.lens.sources import LENS_SOURCES, load_external_lens
 
-    active = LENS_SOURCES.active(model_id, side)
+    active = LENS_SOURCES.active(model_id, family)
     if active is None:
         return None
     if active.local:

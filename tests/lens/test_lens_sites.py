@@ -104,9 +104,9 @@ def test_output_kinds_transport_and_input_kinds_pull_back() -> None:
     torch.testing.assert_close(
         (c * S.footprint(e, 0)).sum(-1), (S.pullback(c, 0) * e).sum(-1),
     )
-    with pytest.raises(JacobianLensError, match="transport reads an output-kind lens"):
+    with pytest.raises(JacobianLensError, match="transport reads an R-family lens"):
         S.transport(c, 0)
-    with pytest.raises(JacobianLensError, match="pullback reads an input-kind lens"):
+    with pytest.raises(JacobianLensError, match="pullback reads an S-family lens"):
         J.pullback(c, 0)
     with pytest.raises(JacobianLensError):
         S.token_direction(0, torch.randn(10, _D))
@@ -178,19 +178,19 @@ def test_two_site_lenses_round_trip_under_kind_carrying_names(kind: str) -> None
 def test_input_kinds_publish_into_the_input_selection() -> None:
     save_lens(_two_site("R"), _MODEL, _PROV)
     save_lens(_two_site("S"), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "r")
-    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "s")
-    output, inp = load_lens(_MODEL), load_lens(_MODEL, "input")
+    assert LENS_SOURCES.active(_MODEL, "R") == SourceRef(LOCAL, "r")
+    assert LENS_SOURCES.active(_MODEL, "S") == SourceRef(LOCAL, "s")
+    output, inp = load_lens(_MODEL), load_lens(_MODEL, "S")
     assert output is not None and inp is not None
     assert (output[0].kind, inp[0].kind) == ("R", "S")
-    sidecar = load_lens_sidecar(_MODEL, "input")
+    sidecar = load_lens_sidecar(_MODEL, "S")
     assert sidecar is not None and sidecar["kind"] == "S"
 
 
 def test_save_lens_at_writes_every_site_without_selecting(tmp_path: Path) -> None:
     path = save_lens_at(_two_site("S"), tmp_path / "pack", _PROV)
     assert set(json.loads(path.read_text())["sites"]) == {"out", "mid"}
-    assert LENS_SOURCES.active(_MODEL, "input") is None
+    assert LENS_SOURCES.active(_MODEL, "S") is None
 
 
 def test_save_lens_at_keeps_an_out_only_pack_in_the_browser_readers_shape(tmp_path: Path) -> None:
@@ -213,9 +213,9 @@ def test_publishing_a_lens_without_out_leaves_the_selection_alone() -> None:
     family fitted at ``mid`` only publishes, but never displaces (or
     becomes) its family's selected source."""
     save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("J")), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    assert LENS_SOURCES.active(_MODEL, "R") == SourceRef(LOCAL, "j")
     save_lens(_mid_only("R"), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    assert LENS_SOURCES.active(_MODEL, "R") == SourceRef(LOCAL, "j")
     loaded = load_local_lens(_MODEL, "r")
     assert loaded is not None and loaded[0].sites == ("mid",)
     # The promotion path follows the same rule.
@@ -225,16 +225,16 @@ def test_publishing_a_lens_without_out_leaves_the_selection_alone() -> None:
         corpus_sha256=_PROV.corpus_sha256, corpus_hash_kind="token_ids_v1",
         seq_len=64, d_model=_D, model_fingerprint=cast(str, None),
     )
-    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    assert LENS_SOURCES.active(_MODEL, "R") == SourceRef(LOCAL, "j")
     # The S family follows the same rule: a mid-only S lens selects nothing,
     # and never displaces an S-family source that holds out.
     save_lens(_mid_only("S"), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "input") is None
+    assert LENS_SOURCES.active(_MODEL, "S") is None
     save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("K")), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "k")
+    assert LENS_SOURCES.active(_MODEL, "S") == SourceRef(LOCAL, "k")
     save_lens(_mid_only("S"), _MODEL, _PROV)
-    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "k")
-    assert LENS_SOURCES.active(_MODEL, "output") == SourceRef(LOCAL, "j")
+    assert LENS_SOURCES.active(_MODEL, "S") == SourceRef(LOCAL, "k")
+    assert LENS_SOURCES.active(_MODEL, "R") == SourceRef(LOCAL, "j")
 
 
 def test_a_d_emb_v7_cannot_record_is_refused() -> None:
@@ -316,7 +316,7 @@ def test_a_two_site_checkpoint_round_trips_and_promotes() -> None:
     assert not lens_manifest_path(_MODEL, "s", checkpoint=True).exists()
     final = load_local_lens(_MODEL, "s")
     assert final is not None and final[0].layers("mid") == [0, 1, 2, 3]
-    assert LENS_SOURCES.active(_MODEL, "input") == SourceRef(LOCAL, "s")
+    assert LENS_SOURCES.active(_MODEL, "S") == SourceRef(LOCAL, "s")
 
 
 def test_a_checkpoint_is_subsumed_only_when_every_site_is() -> None:

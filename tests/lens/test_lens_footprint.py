@@ -273,7 +273,7 @@ def test_read_refuses_bad_places_and_crossed_families() -> None:
         _read(vectors=torch.ones(D), layer=0, site="pre", r_lens=None, s_lens=None)
     with pytest.raises(ValueError, match="outside the model"):
         _read(vectors=torch.ones(D), layer=11, site="out", r_lens=None, s_lens=None)
-    with pytest.raises(ValueError, match="cannot read the output-family half"):
+    with pytest.raises(ValueError, match="cannot read the R-family half"):
         _read(vectors=torch.ones(D), layer=0, site="out", r_lens=lens, s_lens=None)
 
 

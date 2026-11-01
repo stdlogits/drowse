@@ -225,7 +225,7 @@ def oracle_estimate(
         for start in range(0, d, batch):
             rows = list(range(start, min(start + batch, d)))
             b = len(rows)
-            if key.side == "output":
+            if key.family == "R":
                 _output_rows(
                     decoder, blocks, model, ids, valid, rows, out,
                     n_layers=n_layers, d=d, dtype=dtype, work=work, b=b,

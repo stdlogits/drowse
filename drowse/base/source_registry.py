@@ -25,7 +25,7 @@ artifact, and the listing rows each surface shows.
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import json
 from pathlib import Path
@@ -62,9 +62,10 @@ class SourceFamily:
 
     ``slots=None`` keeps one selection per model, stored flat as
     ``{format_version, model_id, kind, name}``.  A slotted family (the lens:
-    one ``output`` and one ``input`` side) stores
-    ``{format_version, model_id, <slot>: {kind, name} | null, ...}`` and
-    routes each source to its slot with ``slot_of(model_id, ref)``.
+    one R-family and one S-family source) maps each slot to the key it is
+    stored under, stores ``{format_version, model_id, <key>: {kind, name} |
+    null, ...}`` and routes each source to its slot with
+    ``slot_of(model_id, ref)``.
     """
 
     def __init__(
@@ -78,7 +79,7 @@ class SourceFamily:
         local_name: re.Pattern[str],
         provider_name_ok: Callable[[str], bool],
         binding_stem: Callable[[str], str] = lambda name: name,
-        slots: tuple[str, ...] | None = None,
+        slots: Mapping[str, str] | None = None,
         slot_of: Callable[[str, SourceRef], str] | None = None,
     ) -> None:
         if (slots is None) != (slot_of is None):
@@ -91,7 +92,7 @@ class SourceFamily:
         self.local_name = local_name
         self._provider_name_ok = provider_name_ok
         self._binding_stem = binding_stem
-        self.slots = slots
+        self.slots = None if slots is None else dict(slots)
         self._slot_of = slot_of
 
     # -- paths -------------------------------------------------------------
@@ -234,14 +235,14 @@ class SourceFamily:
                 return None
             ref = self._ref_from({"kind": data["kind"], "name": data["name"]})
             return None if ref is None else {"": ref}
-        if set(data) != {"format_version", "model_id", *self.slots}:
+        if set(data) != {"format_version", "model_id", *self.slots.values()}:
             return None
         out: dict[str, SourceRef | None] = {}
-        for slot in self.slots:
-            if data[slot] is None:
+        for slot, key in self.slots.items():
+            if data[key] is None:
                 out[slot] = None
                 continue
-            ref = self._ref_from(data[slot])
+            ref = self._ref_from(data[key])
             if ref is None:
                 return None
             out[slot] = ref
@@ -260,11 +261,11 @@ class SourceFamily:
         return {
             **head,
             **{
-                slot: (
+                key: (
                     None if selection.get(slot) is None
                     else {"kind": selection[slot].kind, "name": selection[slot].name}  # type: ignore[union-attr]
                 )
-                for slot in self.slots
+                for slot, key in self.slots.items()
             },
         }
 
@@ -278,13 +279,16 @@ class SourceFamily:
         return slot
 
     def active(self, model_id: str, slot: str | None = None) -> SourceRef | None:
-        """The selected source (in ``slot`` for a slotted family)."""
+        """The selected source (in ``slot`` for a slotted family; a slot the
+        family does not have is a broken invariant)."""
+        if self.slots is not None and slot is not None and slot not in self.slots:
+            raise ValueError(f"{self.label} sources have no slot {slot!r}")
         selection = self._read(model_id)
         if selection is None:
             return None
         if self.slots is None:
             return selection[""]
-        return selection.get(slot or self.slots[0])
+        return selection.get(slot or next(iter(self.slots)))
 
     def select(self, model_id: str, ref: SourceRef) -> Path:
         """Select a source, validating its grammar and on-disk existence."""

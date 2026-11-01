@@ -42,7 +42,7 @@ def _install_lens(session: Any, kind: str, *, seed: int) -> JacobianLens:
     d = int(session.model.get_input_embeddings().weight.shape[1])
     gen = torch.Generator().manual_seed(seed)
     mats = {L: torch.eye(d) + 0.2 * torch.randn(d, d, generator=gen) for L in range(n)}
-    out = {L: m for L, m in mats.items() if not (LensKey(kind).side == "output" and L == n - 1)}
+    out = {L: m for L, m in mats.items() if not (LensKey(kind).family == "R" and L == n - 1)}
     lens = JacobianLens(out, mid=dict(mats), n_prompts=3, d_model=d, key=LensKey(kind))
     save_lens(lens, session.model_id, LensProvenance(
         corpus_spec="test", corpus_sha256="a" * 64, seq_len=8, dim_batch=1,

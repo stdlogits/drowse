@@ -57,7 +57,7 @@ from drowse.lens.jlens import (
     JacobianLensCancelled,
     JacobianLensError,
 )
-from drowse.lens.key import FITTABLE_KINDS, LENS_SITES, LensKey, site_layers
+from drowse.lens.key import FAMILY_DIRECTION, FITTABLE_KINDS, LENS_SITES, LensKey, site_layers
 from drowse.lens.transport import (
     blocks_needed,
     forward_sweep,
@@ -130,7 +130,7 @@ def fit_site_layers(
 
 
 def _output_out(kind: str, site: str) -> bool:
-    return LensKey(kind, site).side == "output" and site == "out"
+    return LensKey(kind, site).family == "R" and site == "out"
 
 
 @dataclass
@@ -444,7 +444,7 @@ def _run(
     device = spec.embed.weight.device
     work = torch.promote_types(spec.embed.weight.dtype, torch.float32)
     d = spec.d_model
-    direction = key.side
+    direction = FAMILY_DIRECTION[key.family]
     rules = rules_for(key.kind)
     blocks = blocks_needed(direction, spec.n_layers, plan)
     slots = [(site, layer) for site in plan for layer in plan[site]]

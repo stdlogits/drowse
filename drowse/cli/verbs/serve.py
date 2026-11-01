@@ -77,11 +77,11 @@ def enable_live_lens(session: Any) -> bool:
 
     The policy, in full:
 
-    - **An output-side source is selected** (``lens use``): it is the user's
+    - **An R-family source is selected** (``lens use``): it is the user's
       choice and is never rewritten.  Compatible with the loaded weights → live readout on;
       incompatible → live readout off, with a ``lens use`` hint.
     - **Nothing is selected**: serve adopts the best compatible prepared
-      output-side source, in
+      R-family source, in
       :func:`~drowse.lens.sources.lens_source_preference_key` order, and that
       adoption **persists** — the lens runtime reads its
       selection from ``active.json`` only, so there is no in-memory choice to
@@ -93,7 +93,7 @@ def enable_live_lens(session: Any) -> bool:
         from drowse.lens.sources import LENS_SOURCES, list_lens_sources
 
         model_id = session.model_id
-        active = LENS_SOURCES.active(model_id, "output")
+        active = LENS_SOURCES.active(model_id, "R")
         if active is not None:
             if not session.lens.has_compatible():
                 note(
@@ -105,7 +105,7 @@ def enable_live_lens(session: Any) -> bool:
         else:
             compatible = False
             for row in list_lens_sources(model_id):
-                if LensKey(str(row["lens"])).side != "output":
+                if LensKey(str(row["lens"])).family != "R":
                     continue
                 try:
                     session.lens.select_source(str(row["source"]))
@@ -115,12 +115,12 @@ def enable_live_lens(session: Any) -> bool:
                 if compatible:
                     break
             if not compatible:
-                tried = LENS_SOURCES.active(model_id, "output")
+                tried = LENS_SOURCES.active(model_id, "R")
                 if tried is not None:
                     LENS_SOURCES.clear_if_active(model_id, tried)
                 return False
         layers = session.lens.set_live(True).layers or ()
-        chosen = LENS_SOURCES.active(model_id, "output")
+        chosen = LENS_SOURCES.active(model_id, "R")
         label = "" if chosen is None else f" {LENS_SOURCES.format(chosen)}"
         note(f"R-family lens{label}: live readout on ({len(layers)} fitted layers)")
         return True
@@ -150,7 +150,7 @@ def select_s_lens(session: Any) -> bool:
         from drowse.lens.sources import LENS_SOURCES, list_lens_sources
 
         model_id = session.model_id
-        active = LENS_SOURCES.active(model_id, "input")
+        active = LENS_SOURCES.active(model_id, "S")
         if active is not None:
             label = LENS_SOURCES.format(active)
             if not session.lens.has_compatible_input():
@@ -163,7 +163,7 @@ def select_s_lens(session: Any) -> bool:
             note(f"S-family lens {label}: slens/ reads, probes and atoms")
             return True
         for row in list_lens_sources(model_id):
-            if LensKey(str(row["lens"])).side != "input" or "out" not in row["sites"]:
+            if LensKey(str(row["lens"])).family != "S" or "out" not in row["sites"]:
                 continue
             try:
                 session.lens.select_source(str(row["source"]))
@@ -173,7 +173,7 @@ def select_s_lens(session: Any) -> bool:
             if compatible:
                 note(f"S-family lens {row['source']}: slens/ reads, probes and atoms")
                 return True
-        tried = LENS_SOURCES.active(model_id, "input")
+        tried = LENS_SOURCES.active(model_id, "S")
         if tried is not None:
             LENS_SOURCES.clear_if_active(model_id, tried)
         return False

@@ -50,7 +50,7 @@ is `out`; `kind`) and fp32 per-layer matrices at one or both sites:
 site explicitly with `matrices(site)`, `layers(site)` or `matrix(layer, site)`;
 `sites` lists what it holds and `site_key(site)` gives `R:mid`.
 `jacobians`/`source_layers` and the `token_direction`/`atom_norms` readers
-default to `out`, so the output-side readout code reads `out` unchanged. A
+default to `out`, so the R family's readout code reads `out` unchanged. A
 read at a site the lens lacks raises `LensNotFittedError` (404) naming the
 sites it holds; it never falls back to the other site. `select_layers` takes
 per-site requests (`{"out": [...], "mid": [...]}`), keeps exactly the sites it
@@ -198,7 +198,7 @@ every footprint z.
 
 ```
 models/<safe_model_id>/lens/
-  active.json            per-side selection {format_version: 2, model_id, output, input}
+  active.json            per-family selection {format_version: 2, model_id, output, input}
   bindings/<name>.json   commit-pinned provider binding (format 2)
   local/<kind>[-<tag>]/
     manifest.json        atomic pointer;  checkpoint.json only during a resumable fit
@@ -252,7 +252,7 @@ rule before it reads a 6.0 local fit (the external-callers note below).
   per-site raw sums (`{site: {layer: sum}}`) and `promote_lens_checkpoint`
   per-site layers (`site_layers`); a checkpoint is subsumed only when the final
   artifact covers it at every site. `load_lens` and `load_lens_sidecar` take a
-  `side` (`output` by default, `input` for K/S).
+  `family` (`R` by default, `S` for K/S).
 - **The policy is checked by equality on every load.** Editing `RELP_RULES`,
   `LENS_CORPUS_PREPROCESS_VERSION` or `LENS_DOC_CHARS` makes every stored lens
   of the affected kinds load as "no lens". Change them only for a genuinely new
@@ -284,9 +284,13 @@ rule before it reads a 6.0 local fit (the external-callers note below).
 ## Sources and selection (`sources.py`)
 
 `LENS_SOURCES` is a `base.source_registry.SourceFamily` with one active source
-per family: the R family (J/R) in the `output` slot, the S family (K/S) in the
-`input` slot (`lens_source_side(ref)`). A source is `local:<name>` or a bare
-provider name, and carries one or both sites.
+per family (`LensKey.family`, `lens_source_family(ref)`): `R` (J/R) and `S`
+(K/S). `active.json` stores the two under the family's Jacobian direction,
+`output` and `input` (`key.FAMILY_DIRECTION`, frozen with the file's format 2;
+lens format v7's `estimator_policy.direction` spells it the same way). Nothing
+else in code or on the wire names a family by direction, and asking the
+selection for a slot it lacks (`"output"`) is a `ValueError`. A source is
+`local:<name>` or a bare provider name, and carries one or both sites.
 
 | Source | Kind, sites | Repository |
 |---|---|---|
@@ -475,8 +479,8 @@ documents of the same corpus (which tops up the missing site), or pass
 a caller can offer the forced fit for them alone. When a payload fails to
 load, the executor drops it and re-plans.
 
-A fit drives its own family's slot (`LensFitter(residency={"output": …,
-"input": …})`; the instrument's `_InputResidency` is the S family's): an R/J
+A fit drives its own family's slot (`LensFitter(residency={"R": …,
+"S": …})`; the instrument's `_InputResidency` is the S family's): an R/J
 fit evicts and adopts the R resident and its live readout, an S/K fit the S
 resident, its `slens/` directions and probe layers, and neither touches the
 other family. Selection follows the same request: a fit holding `out`
@@ -517,8 +521,8 @@ mean}`, the residual centring means; raises when a site has none).
   `jlens/` probes' layers, the live stack and the stash in one transaction and
   evict every `jlens/` profile; `adopt_input` and `evict_input` do the same
   for `slens/` probes, profiles and the input stash. A probe spec carries
-  `side` (`output` for `jlens/`, `input` for `slens/`; absent reads as
-  `output`). A source without `out` leaves its family's probes and atoms
+  `family` (`R` for `jlens/`, `S` for `slens/`; absent reads as `R`). A
+  source without `out` leaves its family's probes and atoms
   without layers rather than reading `mid`.
 - **Per generation:** `prepare` → `plan` → `bind` → `close_run`. `prepare`
   refuses while a run is bound, because a stale pin would suppress its
@@ -594,7 +598,7 @@ the per-layer softmax probability `p_l(v)`.
   a different probe. The final aggregate pools the same last-content-token
   slice as the Monitor and SAE.
 - **`slens/` probe.** `add_probe("slens/…")` routes to the same `attach`
-  (`side: input`) and builds the embedding statistics and the neutral `out`
+  (`family: S`) and builds the embedding statistics and the neutral `out`
   means (no means: `NeutralMeansError`, nothing attached). Per layer `z_L` of
   the token, read from the residual centred on the neutral block-output mean
   (`u_L = K_Lᵀ (h_L − μ_L)`: one batched pullback over the S lens's `out`

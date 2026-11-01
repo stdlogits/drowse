@@ -53,7 +53,7 @@
     <div class="lenses">
       {#each lenses as row (row.source)}
         <div class="lens">
-          <span class="top"><span class="uid">{row.source}</span><span class="what">{lensKindName(row.lens ?? row.family)}, {row.family === "S" ? "input side" : "output side"}</span></span>
+          <span class="top"><span class="uid">{row.source}</span><span class="what">{lensKindName(row.lens ?? row.family)}, {row.family} family</span></span>
           <span class="meta">{lensMeta(row)}</span>
         </div>
       {/each}

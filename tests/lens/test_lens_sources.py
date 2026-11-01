@@ -104,7 +104,7 @@ def test_external_lens_stays_in_provider_cache(
     assert sources.remove_lens_source(
         "org/model", SourceRef("huggingface", "neuronpedia"),
     )
-    assert sources.LENS_SOURCES.active("org/model", "output") is None
+    assert sources.LENS_SOURCES.active("org/model", "R") is None
     assert checkpoint.exists()  # provider cache ownership is preserved
 
 
@@ -192,15 +192,15 @@ def test_selection_is_per_side_so_output_and_input_lenses_coexist() -> None:
             "org/model", _PROV,
         )
     # The last publication of each side wins its own slot only.
-    assert LENS_SOURCES.active("org/model", "output") == SourceRef("local", "j")
-    assert LENS_SOURCES.active("org/model", "input") == SourceRef("local", "s")
+    assert LENS_SOURCES.active("org/model", "R") == SourceRef("local", "j")
+    assert LENS_SOURCES.active("org/model", "S") == SourceRef("local", "s")
     use_lens_source("org/model", "local:r")
-    assert LENS_SOURCES.active("org/model", "output") == SourceRef("local", "r")
-    assert LENS_SOURCES.active("org/model", "input") == SourceRef("local", "s")
+    assert LENS_SOURCES.active("org/model", "R") == SourceRef("local", "r")
+    assert LENS_SOURCES.active("org/model", "S") == SourceRef("local", "s")
 
     assert remove_lens_source("org/model", SourceRef("local", "s"))
-    assert LENS_SOURCES.active("org/model", "input") is None
-    assert LENS_SOURCES.active("org/model", "output") == SourceRef("local", "r")
+    assert LENS_SOURCES.active("org/model", "S") is None
+    assert LENS_SOURCES.active("org/model", "R") == SourceRef("local", "r")
 
 
 def test_lens_source_default_preference_order() -> None:
@@ -319,7 +319,7 @@ def test_neuronpedia_fetch_pins_the_resolved_model_commit(
     assert bound.sha256 == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     assert config_reads == [{"trust_remote_code": False, "revision": commit}]
     assert sources.load_external_lens_binding("org/model", "neuronpedia") == binding
-    assert sources.LENS_SOURCES.active("org/model", "output") == SourceRef(
+    assert sources.LENS_SOURCES.active("org/model", "R") == SourceRef(
         "huggingface", "neuronpedia",
     )
 
@@ -453,7 +453,7 @@ def test_workspace_lens_fetch_binds_loads_and_switches(
     assert not by_name["workspace-r"]["active"]
 
     sources.use_lens_source("org/model", "workspace-r")
-    assert sources.LENS_SOURCES.active("org/model", "output") == SourceRef(
+    assert sources.LENS_SOURCES.active("org/model", "R") == SourceRef(
         "huggingface", "workspace-r",
     )
 

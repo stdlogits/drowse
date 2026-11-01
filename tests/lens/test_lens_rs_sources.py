@@ -116,8 +116,8 @@ def test_rs_r_binds_both_sites_and_loads_them(
     assert set(on_disk["files"]) == {"R:out", "R:mid"}
     assert sources.load_external_lens_binding("org/model", "rs-r") == binding
 
-    assert sources.LENS_SOURCES.active("org/model", "output") == SourceRef("huggingface", "rs-r")
-    assert sources.LENS_SOURCES.active("org/model", "input") is None
+    assert sources.LENS_SOURCES.active("org/model", "R") == SourceRef("huggingface", "rs-r")
+    assert sources.LENS_SOURCES.active("org/model", "S") is None
     sidecar = load_lens_sidecar("org/model")
     assert sidecar is not None and sidecar["kind"] == "R"
     assert sidecar["sites"] == {"out": {"layers": [0, 1, 2]}, "mid": {"layers": [0, 1, 2]}}
@@ -142,10 +142,10 @@ def test_rs_s_with_one_site_binds_it_and_reads_never_fall_back(
     assert binding.kind == "S" and binding.sites == ("out",)
     assert set(binding.files) == {LensKey("S", "out")}
     # The S family's slot, leaving the R family's alone.
-    assert sources.LENS_SOURCES.active("org/model", "input") == SourceRef("huggingface", "rs-s")
-    assert sources.LENS_SOURCES.active("org/model", "output") is None
+    assert sources.LENS_SOURCES.active("org/model", "S") == SourceRef("huggingface", "rs-s")
+    assert sources.LENS_SOURCES.active("org/model", "R") is None
     assert load_lens("org/model") is None
-    loaded = load_lens("org/model", side="input")
+    loaded = load_lens("org/model", family="S")
     assert loaded is not None
     lens, sidecar = loaded
     assert lens.kind == "S" and lens.sites == ("out",)

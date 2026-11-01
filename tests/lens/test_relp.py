@@ -174,10 +174,10 @@ def test_relp_fit_lands_beside_standard_and_switches() -> None:
     assert {"local:j", "local:r"} <= sources
 
     # save_lens activates the name it saved: the relp fit ran last.
-    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "output") == SourceRef("local", "r")
+    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "R") == SourceRef("local", "r")
 
     use_lens_source(_DENSE_MODEL_ID, "local:j")
-    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "output") == SourceRef("local", "j")
+    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "R") == SourceRef("local", "j")
 
     with pytest.raises(ValueError, match="lens kind"):
         s.lens.fit(_PROMPTS, corpus_spec="test", kind="nonsense")

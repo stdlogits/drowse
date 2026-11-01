@@ -936,7 +936,7 @@ export interface JLensSteerEntry extends SteerTiming {
   enabled: boolean;
 }
 
-/** S-lens token steering term (``α slens/<word>``): pushes along the input-side lens direction
+/** S-lens token steering term (``α slens/<word>``): pushes along the S lens's direction
  *  for the token, toward having read it (``jlens/`` pushes toward saying it), over the S lens's
  *  fitted layers.  The same shape and dial as a ``jlens/`` term; the rack key is the full atom. */
 export interface SLensSteerEntry extends SteerTiming {

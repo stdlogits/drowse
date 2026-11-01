@@ -15,8 +15,8 @@ drowse 5.4 reads only lens format v7.  This rewrites every
   keys.  A v1 Neuronpedia binding recorded no checkpoint digest; it is hashed
   from the local Hugging Face cache when present, and otherwise dropped with
   a note to re-fetch (bindings are small; the payload never left the cache).
-- ``active.json`` becomes the per-side selection (the old source lands on the
-  output side).
+- ``active.json`` becomes the per-family selection (the old source lands in
+  the R family's slot, stored as ``output``).
 
 Shards are hard-linked into a staging tree that replaces ``jlens/`` only once
 it is complete, so an interrupted run leaves the v6 tree intact.  Run with

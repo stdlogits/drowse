@@ -346,13 +346,13 @@ def _lens_session(compatible: set[str]) -> Any:
         def has_compatible(self) -> bool:
             from drowse.lens.sources import LENS_SOURCES
 
-            active = LENS_SOURCES.active("org/model", "output")
+            active = LENS_SOURCES.active("org/model", "R")
             return active is not None and LENS_SOURCES.format(active) in compatible
 
         def has_compatible_input(self) -> bool:
             from drowse.lens.sources import LENS_SOURCES
 
-            active = LENS_SOURCES.active("org/model", "input")
+            active = LENS_SOURCES.active("org/model", "S")
             return active is not None and LENS_SOURCES.format(active) in compatible
 
         def select_source(self, source: str) -> None:
@@ -383,7 +383,7 @@ def _prepare_local_lenses(model_id: str, *names: str) -> None:
 def _active_lens(model_id: str) -> str | None:
     from drowse.lens.sources import LENS_SOURCES
 
-    ref = LENS_SOURCES.active(model_id, "output")
+    ref = LENS_SOURCES.active(model_id, "R")
     return None if ref is None else LENS_SOURCES.format(ref)
 
 
@@ -455,7 +455,7 @@ def _save_s_family(model_id: str, kind: str, sites: tuple[str, ...]) -> None:
         model_id,
         LensProvenance(corpus_spec="t", corpus_sha256="a" * 64, seq_len=8, dim_batch=1),
     )
-    active = LENS_SOURCES.active(model_id, "input")
+    active = LENS_SOURCES.active(model_id, "S")
     if active is not None:
         LENS_SOURCES.clear_if_active(model_id, active)
 
@@ -463,7 +463,7 @@ def _save_s_family(model_id: str, kind: str, sites: tuple[str, ...]) -> None:
 def _active_s_lens(model_id: str) -> str | None:
     from drowse.lens.sources import LENS_SOURCES
 
-    ref = LENS_SOURCES.active(model_id, "input")
+    ref = LENS_SOURCES.active(model_id, "S")
     return None if ref is None else LENS_SOURCES.format(ref)
 
 
