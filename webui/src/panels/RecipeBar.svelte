@@ -188,6 +188,12 @@
     .dw-recipe::-webkit-scrollbar { display: none; }
     .dw-recipe > * { flex: none; }
     .dw-recipe .dw-term, .dw-recipe .dw-add, .undo { height: 44px; }
+    /* "+ Steer" stays at the strip's end in view while the chips scroll under it. */
+    .dw-recipe > .dw-add { position: sticky; right: 0; z-index: 1; background: var(--paper); }
+    .dw-recipe > .dw-add:hover, .dw-recipe > .dw-add[aria-expanded="true"] { background: var(--wash); }
+    /* The open editor is taller than a phone's dock can hold, and the workbench does not scroll:
+     * it scrolls on its own, so Where, the expression, Remove and Done stay reachable. */
+    .editor { max-height: 52dvh; overflow-y: auto; overscroll-behavior: contain; }
     .held-recipe { padding: var(--s4); }
     .held-recipe .dw-text { position: relative; }
     .held-recipe .dw-text::after { content: ""; position: absolute; inset: -14px -8px; }

@@ -368,5 +368,14 @@ try {
   const style = editor.slice(editor.indexOf("<style>"));
   assert.deepEqual([...style.matchAll(/^\s*\.dial \{([^}]*)\}/gm)].map((m) => m[1].trim()), ["display: flex; align-items: center; gap: var(--s4); min-width: 0;"]);
   assert.match(style, /\.position \.dial \{ display: grid;/);
+  // Wave 5, at 375 px: the open editor ran past the screen in a workbench that does not scroll
+  // (Done unreachable), and "+ Steer" sat past the chip strip's scrolled edge. At phone width the
+  // editor scrolls on its own and "+ Steer" sticks to the strip's end.
+  {
+    const bar = readFileSync(new URL("../src/panels/RecipeBar.svelte", import.meta.url), "utf8");
+    const phone = bar.slice(bar.indexOf("@media (max-width: 720px)"));
+    assert.match(phone, /\.editor \{[^}]*max-height: \d+dvh;[^}]*overflow-y: auto;/);
+    assert.match(phone, /\.dw-recipe > \.dw-add \{[^}]*position: sticky; right: 0;/);
+  }
   console.log("Term editor: the layer clause, unit terms, slens terms, where a term acts, the chips' words, the snapshot rows and Escape's order passed");
 } finally { await server.close(); }
