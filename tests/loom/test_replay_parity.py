@@ -49,7 +49,8 @@ def test_unit_token_readout_matches_generation_and_activity(
         replayed = session.units.token_readout(node.id, raw_index)[
             "measurements"]["instruments"]["units"]["readings"][_UNIT]["value"]
         captured = _captured(node, raw_index)
-        assert replayed == pytest.approx(captured, rel=1e-4, abs=1e-5), raw_index
+        # The row keeps ROW_DECIMALS places: half a unit in the last one.
+        assert replayed == pytest.approx(captured, rel=1e-4, abs=6e-5), raw_index
         assert activity[raw_index] == pytest.approx(captured, rel=1e-3, abs=1e-4), raw_index
 
 

@@ -254,7 +254,7 @@ export class JobRegistry {
 function compactSnapshot(snapshot: JobSnapshot): JobSnapshot {
   const omitted = [...(snapshot.persistedDetailOmissions ?? [])];
   const visit = (value: unknown, path: string, key = ""): unknown => {
-    if (["measurements", "hidden_states", "per_layer_scores", "top_alts", "raw_token_ids", "thinking_tokens"].includes(key) || (key === "tokens" && Array.isArray(value))) {
+    if (["measurements", "hidden_states", "top_alts", "raw_token_ids", "thinking_tokens"].includes(key) || (key === "tokens" && Array.isArray(value))) {
       omitted.push(path);
       return undefined;
     }

@@ -50,7 +50,11 @@ from drowse.loom.errors import (
 )
 from drowse.loom.recipe import CastMember, Recipe
 from drowse.model.role_templates import InvalidRoleError, validate_role
-from drowse.readout.measurements import MEASUREMENTS_VERSION
+from drowse.readout.measurements import (
+    GEOMETRY_SUMMARY_KEYS,
+    GEOMETRY_TRACE_KEYS,
+    MEASUREMENTS_VERSION,
+)
 
 # ---------------------------------------------------------------------------
 # ulid — tiny inline implementation
@@ -111,21 +115,44 @@ def _copy_list(value: list[Any] | None) -> list[Any] | None:
     return list(value) if value is not None else None
 
 
+#: The keys a token row may carry (``TokenTap``, authored capture, the
+#: browser runtime's ``sampler_entropy``).
+_TOKEN_ROW_FIELDS = frozenset({
+    "token_id", "text", "logprob", "sampler_entropy", "perplexity",
+    "raw_index", "top_alts", "measurements",
+})
+
+_PRE_6_ROW = (
+    "a loom token row in the pre-6.0 shape ({detail}) is not read: this build "
+    "reads rows that keep each reading's summary once "
+    "(readout.measurements.token_row_measurements)"
+)
+
+
 def _check_row_measurements(rows: list[Any] | None) -> None:
-    """Refuse token rows whose measurement envelope is another version, or
-    whose lens readout lacks its vocabulary ids.
+    """Refuse token rows of another shape: an envelope of another version,
+    a pre-6.0 row, or a lens readout without its vocabulary ids.
 
     Rows reach a tree through the token sidecar and through ``PUT /tree``
-    (the dashboard's restore, which carries them inline); an envelope of
-    another version has another wire shape, so it is refused rather than
-    handed to a reader that expects this one.  Version 2 was never released
-    with a lens readout that lacked ids (5.4.0 wrote version 1), so an entry
-    without one is an unreleased pre-6.0 row or an outdated producer, and is
-    refused too: readers key the readout by id.
+    (the dashboard's restore, which carries them inline); a row of another
+    shape is refused rather than handed to a reader that expects this one.
+    Token sidecar 3 and envelope version 2 were never released before 6.0
+    (5.4.0 wrote sidecar 2 and envelope 1), so their earlier unreleased
+    shapes are refused by what they carry: a row-level ``probes`` or
+    ``per_layer_scores`` copy, an envelope ``per_layer_scores`` map, a
+    geometry reading with the inspector's ``subspace_coords_per_layer`` or
+    half of its per-layer traces, and a lens readout entry without its id
+    (readers key the readout by id).
     """
     for row in rows or ():
         if not isinstance(row, dict):
             raise LoomTreeError("loom token rows must be objects")
+        retired = sorted({"probes", "per_layer_scores"} & row.keys())
+        if retired:
+            raise LoomTreeError(_PRE_6_ROW.format(detail=f"row field {retired[0]!r}"))
+        unknown = sorted(row.keys() - _TOKEN_ROW_FIELDS)
+        if unknown:
+            raise LoomTreeError(f"unknown loom token row field {unknown[0]!r}")
         envelope = row.get("measurements")
         if envelope is None:
             continue
@@ -136,7 +163,33 @@ def _check_row_measurements(rows: list[Any] | None) -> None:
                 f"unsupported token measurements version {envelope.get('version')!r} "
                 f"(this build reads {MEASUREMENTS_VERSION})"
             )
+        if "per_layer_scores" in envelope:
+            raise LoomTreeError(_PRE_6_ROW.format(detail="an envelope per_layer_scores map"))
+        _check_geometry_readings(envelope)
         _check_lens_readout_ids(envelope)
+
+
+def _check_geometry_readings(envelope: dict[str, Any]) -> None:
+    instruments = envelope.get("instruments")
+    geometry = instruments.get("geometry") if isinstance(instruments, dict) else None
+    readings = geometry.get("readings") if isinstance(geometry, dict) else None
+    if not isinstance(readings, dict):
+        return
+    summary = frozenset(GEOMETRY_SUMMARY_KEYS)
+    traced = summary | frozenset(GEOMETRY_TRACE_KEYS)
+    for name, reading in readings.items():
+        if not isinstance(reading, dict):
+            raise LoomTreeError(f"token row reading {name!r} must be an object")
+        if "subspace_coords_per_layer" in reading:
+            raise LoomTreeError(_PRE_6_ROW.format(
+                detail=f"subspace coordinates on reading {name!r}",
+            ))
+        if reading.keys() != summary and reading.keys() != traced:
+            raise LoomTreeError(
+                f"token row reading {name!r} carries {sorted(reading)}; a row's "
+                f"geometry reading is {sorted(summary)}, plus all of "
+                f"{sorted(GEOMETRY_TRACE_KEYS)} or none"
+            )
 
 
 def _check_lens_readout_ids(envelope: dict[str, Any]) -> None:

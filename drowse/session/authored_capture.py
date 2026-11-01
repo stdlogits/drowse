@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import torch
 
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import envelope_sources
+from drowse.readout.measurements import envelope_sources, token_row_measurements
 
 if TYPE_CHECKING:
     from drowse.lens.instrument import LensInstrument
@@ -348,9 +348,7 @@ class AuthoredPromptCapture:
             payload = TokenProbePayload()
             if self.monitor_active:
                 payload.merge_readings(
-                    self.monitor.score_single_token(hidden),
-                    family="geometry",
-                    per_layer=self.persist_per_layer_scores,
+                    self.monitor.score_single_token(hidden), family="geometry",
                 )
 
             lens_payload = lens_aggregate = lens_token_ids = None
@@ -365,11 +363,7 @@ class AuthoredPromptCapture:
                         lens_token_ids,
                         lens_readings,
                     ) = lens_capture
-                    payload.merge_readings(
-                        lens_readings,
-                        family="lens",
-                        per_layer=self.persist_per_layer_scores,
-                    )
+                    payload.merge_readings(lens_readings, family="lens")
 
             sae_payload = None
             if self.sae_active:
@@ -378,11 +372,7 @@ class AuthoredPromptCapture:
                 )
                 if sae_capture is not None:
                     sae_payload, sae_readings = sae_capture
-                    payload.merge_readings(
-                        sae_readings,
-                        family="sae",
-                        per_layer=self.persist_per_layer_scores,
-                    )
+                    payload.merge_readings(sae_readings, family="sae")
 
             shaped = payload.to_token_payload(
                 lens=lens_payload,
@@ -396,14 +386,9 @@ class AuthoredPromptCapture:
             if not measurements:
                 continue
             row = output_rows[match_index][token_index]
-            if payload.scores:
-                row["probes"] = {
-                    name: round(float(value), 6)
-                    for name, value in payload.scores.items()
-                }
-            if payload.per_layer_scores:
-                row["per_layer_scores"] = payload.per_layer_scores
-            row["measurements"] = measurements
+            row["measurements"] = token_row_measurements(
+                measurements, per_layer=self.persist_per_layer_scores,
+            )
             populated_matches.add(match_index)
 
         for match_index in sorted(populated_matches):

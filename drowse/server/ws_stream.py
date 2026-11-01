@@ -865,7 +865,6 @@ async def _ws_stream_generation(
                 _on_event,
                 TokenConsumerOptions(
                     live_scores=True,
-                    per_layer_scores=True,
                     lens_readout=True,
                     sae_readout=True,
                     perplexity=True,

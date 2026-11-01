@@ -178,18 +178,17 @@ class TestTreeGet:
         u1 = session.tree.add_user_turn("hi")
         a1 = session.tree.begin_assistant(u1)
         # Two response tokens carrying the same per-token shape the
-        # engine's ``_token_tap`` stamps: token_id + text + logprob +
-        # the probe / per-layer blobs the highlight tint depends on.
+        # engine's ``TokenTap`` stamps: token_id + text + logprob + the
+        # row envelope whose flat scores the highlight tint depends on.
         session.tree.append_token(a1, {
             "token_id": 100,
             "text": "he",
             "logprob": -1.5,
-            "probes": {"calm": 0.42},
-            "per_layer_scores": {"5": {"calm": 0.38}, "10": {"calm": 0.45}},
             "measurements": {
                 "version": MEASUREMENTS_VERSION,
                 "scope": "token",
                 "provenance": "captured",
+                "scores": {"calm": 0.42},
                 "instruments": {
                     "lens": {
                         "readout": {
@@ -201,7 +200,9 @@ class TestTreeGet:
                             }],
                             "aggregate": [],
                         },
-                        "binding": {"source": "local:default", "steering": None},
+                        "binding": {
+                            "sources": {"R": "local:default"}, "steering": None,
+                        },
                     },
                 },
             },
@@ -210,7 +211,6 @@ class TestTreeGet:
             "token_id": 101,
             "text": "llo",
             "logprob": -0.9,
-            "probes": {"calm": 0.39},
         })
         session.tree.finalize_assistant(
             a1, text="hello", aggregate_readings={"calm": 0.40},
@@ -226,10 +226,8 @@ class TestTreeGet:
         assert first["text"] == "he"
         assert first["token_id"] == 100
         assert first["logprob"] == -1.5
-        assert first["probes"] == {"calm": 0.42}
-        assert first["per_layer_scores"] == {
-            "5": {"calm": 0.38}, "10": {"calm": 0.45},
-        }
+        assert set(first) == {"token_id", "text", "logprob", "measurements"}
+        assert first["measurements"]["scores"] == {"calm": 0.42}
         lens_readout = (
             first["measurements"]["instruments"]["lens"]["readout"]
         )

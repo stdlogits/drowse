@@ -17,7 +17,8 @@
   //
   // The share-by-layer bars (or, on a touch screen, the layer stepper beside them) choose the plotted
   // layer; geometry is fetched once (all layers) and reprojected client-side. The live point and its trail ride the probe's per-token
-  // ``subspace_coords_per_layer``, stored across all layers so changing layer is a pure read.
+  // ``subspace_coords_per_layer``, stored across all layers so changing layer is a pure read. They come from the live token stream
+  // only: a loom row keeps each reading's summary, so a saved reply draws no trail, and its "By layer" view replays the token.
   // Everything draws at the probe's depth on the ramp (--tint), which only fills.
 
   import {
@@ -28,8 +29,11 @@
     setHighlightTarget,
   } from "../lib/stores.svelte";
   import { clearSelection } from "../lib/stores/selection.svelte";
+  import { effectiveRawMode } from "../lib/stores/chat.svelte";
   import { pushToast } from "../lib/stores/toasts.svelte";
   import { apiProbes } from "../lib/runtime/services";
+  import { cachedTokenReadout } from "../lib/runtime/tokenReadoutCache";
+  import { readingLayers } from "../lib/tokenRows";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import Bar from "../lib/charts/Bar.svelte";
@@ -53,7 +57,7 @@
   import { polesOf } from "../lib/concepts";
   import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
   import { probeTitle } from "../panels/rack/probeRows";
-  import { readsShare, replyLayers, replyTrace } from "../panels/rack/probeTrace";
+  import { readsShare, replyLayers, replyToken, replyTrace } from "../panels/rack/probeTrace";
   import type {
     GeometryProbeInfo,
     ProbeGeometryResponse,
@@ -105,11 +109,54 @@
   const tokenTrace = $derived((probeName ? replyTrace(probeName, { share }) : null) ?? sparkline);
   /** The token the By-token scrubber rests on (null: the latest). */
   let pickedToken = $state<number | null>(null);
-  /** By layer: the picked token's per-layer reading from the reply, else the live latest. */
+  /** A reply token's layers from a replay: a saved reply keeps a geometry probe's summary, not its
+   *  per-layer trace, so its layers replay the token (steered, as it was generated). */
+  let tokenLayers = $state<{ key: string | null; layers: Record<string, number> | null; replayed: boolean; note: string | null; failed: boolean }>({
+    key: null, layers: null, replayed: false, note: null, failed: false,
+  });
+  const geometryReplay = $derived(instrumentFamily("geometry")?.capabilities.token_readout === true);
+  const liveLayers = $derived(entry?.perLayer ?? {});
+  /** The token whose layers show: the picked one, or the latest when nothing live has layers. */
+  const layerToken = $derived(
+    probeName && (pickedToken !== null || Object.keys(liveLayers).length === 0) ? replyToken(pickedToken) : null,
+  );
+  const savedLayers = $derived(layerToken && probeName ? replyLayers(probeName, pickedToken, { share }) : null);
+  $effect(() => {
+    const picked = layerToken;
+    const name = probeName;
+    if (!picked || !name || savedLayers !== null || !geometric) {
+      tokenLayers = { key: null, layers: null, replayed: false, note: null, failed: false };
+      return;
+    }
+    const { nodeId, rawIndex } = picked;
+    if (!geometryReplay || nodeId === null || rawIndex === null) {
+      tokenLayers = {
+        key: null, layers: null, replayed: false, failed: false,
+        note: "A saved reply keeps each probe's reading, not its layers. They replay while this model is loaded and the probe is attached.",
+      };
+      return;
+    }
+    const key = `${nodeId}:${rawIndex}:${name}:${share}`;
+    if (tokenLayers.key === key) return;
+    tokenLayers = { key, layers: null, replayed: false, note: "Replaying this token's layers…", failed: false };
+    cachedTokenReadout("geometry", nodeId, rawIndex, { steered: true, raw: effectiveRawMode() }).then(
+      (res) => {
+        if (tokenLayers.key !== key) return;
+        const layers = readingLayers(res.measurements.instruments.geometry?.readings?.[name], share);
+        tokenLayers = layers && Object.keys(layers).length > 0
+          ? { key, layers, replayed: true, note: null, failed: false }
+          : { key, layers: null, replayed: false, note: "The replay read no layers of this probe. Check that it is attached.", failed: true };
+      },
+      (error: unknown) => {
+        if (tokenLayers.key !== key) return;
+        tokenLayers = { key, layers: null, replayed: false, failed: true, note: userFacingError(error, "This token's layers could not be replayed. Try again, or close and reopen the model.") };
+      },
+    );
+  });
+  /** By layer: the picked token's per-layer reading (its own, else replayed), else the live latest. */
   const perLayer = $derived.by((): Record<string, number> => {
-    const live = entry?.perLayer ?? {};
-    if (pickedToken === null && Object.keys(live).length > 0) return live;
-    return (probeName ? replyLayers(probeName, pickedToken, { share }) : null) ?? live;
+    if (layerToken === null) return liveLayers;
+    return savedLayers ?? tokenLayers.layers ?? (pickedToken === null ? liveLayers : {});
   });
   const layerKeys = $derived(Object.keys(perLayer).map(Number).filter(Number.isFinite).sort((a, b) => a - b));
   const deepest = $derived(Math.max(0, ...(geo?.layers ?? []), ...layerKeys));
@@ -488,13 +535,18 @@
 
     {#if layerKeys.length > 1}
       <section class="dw-sec">
-        <div class="dw-sec-head"><span class="head">By layer</span><span class="meta">{pickedToken === null ? "" : `token ${pickedToken + 1} · `}{peak === null ? "" : `peaks at L${peak}`}</span></div>
+        <div class="dw-sec-head"><span class="head">By layer</span><span class="meta">{pickedToken === null ? "" : `token ${pickedToken + 1} · `}{tokenLayers.replayed ? "replayed · " : ""}{peak === null ? "" : `peaks at L${peak}`}</span></div>
         <div class="depth">
           <Trace values={layerKeys.map((l) => perLayer[String(l)])} limit={0} height={56} scale={layerScale}
             colors={layerKeys.map((l) => depthTint(layerDepth(l, deepest)))} cursor={peak === null ? null : layerKeys.indexOf(peak)}
             label={`${displayName} by layer`} />
           <div class="ends"><span>L{layerKeys[0]}</span><span>L{layerKeys[layerKeys.length - 1]}</span></div>
         </div>
+      </section>
+    {:else if tokenLayers.note}
+      <section class="dw-sec">
+        <div class="dw-sec-head"><span class="head">By layer</span>{#if pickedToken !== null}<span class="meta">token {pickedToken + 1}</span>{/if}</div>
+        <p class="meta" role={tokenLayers.failed ? "alert" : undefined}>{tokenLayers.note}</p>
       </section>
     {/if}
 
@@ -571,6 +623,8 @@
               <span class="meta"><MorphText text={`${trailPoints.length} trail points`} /></span>
             {:else if !liveTrailAvailability.available}
               <span class="meta" {...{ "aria-description": (liveTrailAvailability.reason ?? undefined) }}>live trail unavailable here</span>
+            {:else}
+              <span class="meta">the trail draws while a reply streams</span>
             {/if}
             {#if canOrbit}
               <span class="meta">drag · scroll or pinch</span>

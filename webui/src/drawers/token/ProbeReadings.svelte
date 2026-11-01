@@ -92,6 +92,10 @@
     return out;
   });
   const deepest = $derived(Math.max(0, ...rows.flatMap(row => row.bars.map(bar => bar.layer))));
+  /** A saved reply's capture shows where nothing replays it: each reading's summary, no layers. */
+  const layersNotSaved = $derived(
+    readout.origin === "captured" && rows.some(row => row.geometry !== null && row.geometry.coords_per_layer === undefined),
+  );
 
   let open = $state<string | null>(null);
   let pickedLayer = $state<number | null>(null);
@@ -191,6 +195,9 @@
     <ReadingWait progress={readout.progress} label="Probe readings" blocks={[44, 44]} />
   {:else if readout.error}
     <p class="meta" role="alert">{readout.error}</p>
+  {/if}
+  {#if layersNotSaved}
+    <p class="meta">A saved reply keeps each probe's reading, not its layers. They replay while this model is loaded and the probe is attached.</p>
   {/if}
   {#if rows.length > 0}
     <div class="rows" role="list">

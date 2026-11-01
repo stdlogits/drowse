@@ -80,15 +80,12 @@
             "sampler_entropy": 0.2,
             "perplexity": 1.2214027581601699,
             "raw_index": 0,
-            "probes": {"local/calm.alert": 0.8},
-            "per_layer_scores": {"9": {"local/calm.alert": 0.8}},
             "measurements": {
               "version": 2,
               "scope": "token",
               "provenance": "captured",
               "instruments": {},
-              "scores": {"local/calm.alert": 0.8},
-              "per_layer_scores": {"9": {"local/calm.alert": 0.8}}
+              "scores": {"local/calm.alert": 0.8}
             }
           }
         ],
@@ -144,8 +141,7 @@
       "scope": "token",
       "provenance": "captured",
       "instruments": {},
-      "scores": {"local/calm.alert": 0.8},
-      "per_layer_scores": {"9": {"local/calm.alert": 0.8}}
+      "scores": {"local/calm.alert": 0.8}
     },
     "final": {
       "rev": 9,

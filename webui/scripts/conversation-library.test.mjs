@@ -254,7 +254,7 @@ try {
   originalSnapshot.tree.nodes.push({
     id: "answer-1", parent_id: "user-1", role: "assistant", text: "One path.",
     recipe: { steering: "0.2 jlens/bright", seed: 12 },
-    tokens: [{ text: "One", id: 17, logprob: -0.2, raw_index: 0 }],
+    tokens: [{ text: "One", token_id: 17, logprob: -0.2, raw_index: 0 }],
     raw_token_ids: [17], starred: true, notes: "Keep this path",
   }, {
     id: "answer-2", parent_id: "user-1", role: "assistant", text: "Another path.", recipe: null,

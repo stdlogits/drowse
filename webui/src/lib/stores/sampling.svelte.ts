@@ -315,7 +315,8 @@ export function buildSamplingPayload(): WSSampling | null {
       samplingState.max_tokens,
       outputTokenLimit(),
     ),
-    persist_per_layer_scores: true,
+    // No ``persist_per_layer_scores``: a loom row keeps each reading's
+    // summary, and the per-layer views replay the token (token view, hover).
     // Exact per-layer whitened subspace coordinates are optional runtime data.
     // The Python dashboard supports them; hosted mode advertises their absence
     // and must not ask the GPU runtime to approximate them.

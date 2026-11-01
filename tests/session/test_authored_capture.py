@@ -211,7 +211,10 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
 
     def _sae_capture(_hidden: Any, *, top_k: int) -> Any:
         seen_top_k["sae"] = top_k
-        return ([(12, 1.5, "feature", 3.0)], {"sae/12": _reading(0.5)})
+        return (
+            [(12, 1.5, "feature", 3.0)],
+            {"sae/12": ScalarReading(value=0.5, unit="activation_over_max")},
+        )
 
     capture = AuthoredPromptCapture(
         tree=tree,
@@ -251,7 +254,8 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
     assert tokens is not None
     row = tokens[0]
     assert row["text"] == "x"
-    assert row["probes"] == {"formal": 0.25, "jlens/yes": 0.8, "sae/12": 0.5}
+    assert set(row) == {"token_id", "text", "logprob", "perplexity", "measurements"}
+    assert row["measurements"]["scores"] == {"formal": 0.25, "jlens/yes": 0.8, "sae/12": 0.5}
     instruments = row["measurements"]["instruments"]
     assert set(instruments) == {"geometry", "lens", "sae"}
     assert instruments["geometry"]["readings"]["formal"]["coords"] == [0.25]

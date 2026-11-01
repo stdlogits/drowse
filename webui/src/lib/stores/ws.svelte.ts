@@ -568,8 +568,8 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       }
       // The 5.x measurement envelope is the single read-side record.  Probe
       // readings merge the three families (the rack keys by name); ``scores``
-      // is the flat cross-family axis-0 view (highlight tint);
-      // ``per_layer_scores`` the heatmap; the native lens/sae ``readout``
+      // is the flat cross-family axis-0 view (highlight tint); each reading
+      // carries its own per-layer trace; the native lens/sae ``readout``
       // blocks feed the workspace/discovery cards.
       const m = msg.measurements;
       const stepReadings = mergedReadings(m);
@@ -582,7 +582,6 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
         text: msg.text,
         thinking: msg.thinking,
         tokenId: msg.token_id,
-        perLayerScores: m?.per_layer_scores,
         // ``scores`` is the magnitude-weighted aggregate probe row. Using
         // it instead of a deepest-layer slice makes live highlighting match the
         // post-generation projected pass. Absent when no probes are loaded.
@@ -634,8 +633,8 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       // three families' ``readings`` (a 2-node concept axis is the rank-1
       // case), merged by name; the field is omitted when no probe is attached,
       // so the helper no-ops on undefined.  Skip shadow runs so the rack stays
-      // anchored to the steered branch.  ``scores`` / ``per_layer_scores``
-      // above still feed highlight tinting + the token-drilldown heatmap.
+      // anchored to the steered branch.  ``scores`` above still feeds
+      // highlight tinting.
       if (!abState.processingAb) {
         updateProbesFromReadings(stepReadings);
         // J-LENS tab — the live all-layer readout. Present only while

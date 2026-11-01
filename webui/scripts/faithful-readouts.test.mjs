@@ -103,7 +103,6 @@ try {
 
   const { highlightScoreFor } = await server.ssrLoadModule("/src/lib/highlight.ts");
   assert.equal(highlightScoreFor({ text: "x", score: 0.9, probes: { old: 0.9 } }, "new"), undefined);
-  assert.equal(highlightScoreFor({ text: "x", perLayerScores: { 9: { probe: 0.8 } } }, "probe"), undefined);
   assert.equal(highlightScoreFor({ text: "x", probes: { probe: 0 } }, "probe"), 0);
   assert.equal(highlightScoreFor({ text: "x", coordsByProbe: { probe: [0.1, -0.2] } }, "probe[1]"), -0.2);
 
@@ -128,6 +127,20 @@ try {
   tokenHoverState.saeReadout = [{ id: 7, activation: 3, max_act: null }];
   assert.equal(probeEntryForDisplay("feature alias").reading.unit, "raw_activation");
   assert.equal(probeEntryForDisplay("feature alias").reading.value, 3, "historical rows are not normalized using current metadata");
+  // A saved row keeps a geometry reading's summary: the hovered card shows its captured value and
+  // draws its layer strip from the token's replay, never from the capture alone.
+  probeRack.entries.set("calm", { info: { family: "geometry", name: "calm", is_affine: true, layers: [3, 7] },
+    current: 0, previous: 0, sparkline: [], reading: null, aggregate: null });
+  const calmSummary = { fraction: 0.4, nearest: [["calm", 1]], coords: [0.25], residual: 0, assignment: [], membership: 1, depth_com: [], depth_spread: [] };
+  tokenHoverState.probeReadings = { calm: calmSummary };
+  tokenHoverState.replayedLayers = null;
+  assert.deepEqual(probeEntryForDisplay("calm").perLayer, {}, "a saved summary has no strip of its own");
+  assert.equal(probeEntryForDisplay("calm").current, 0.25);
+  tokenHoverState.replayedLayers = { calm: { ...calmSummary, coords: [0.3], coords_per_layer: { 3: [0.1], 7: [0.3] }, fraction_per_layer: {}, residual_per_layer: {} } };
+  assert.deepEqual(probeEntryForDisplay("calm").perLayer, { 3: 0.1, 7: 0.3 }, "the strip comes from the replay");
+  assert.equal(probeEntryForDisplay("calm").current, 0.25, "the value stays the capture's");
+  tokenHoverState.probeReadings = null;
+  tokenHoverState.replayedLayers = null;
   tokenHoverState.active = false;
   probeRack.active = [];
   probeRack.entries.clear();
@@ -281,36 +294,49 @@ try {
     "what the numbers are goes in the title's tip, not a line in the working view");
 
   // A probe's trace is the latest generated reply's token rows (what the reply is tinted by), so it
-  // covers the whole reply and survives a reload; its layers follow the token asked for.
+  // covers the whole reply and survives a reload; its layers follow the token asked for, from the
+  // token's own reading. A saved row keeps a geometry reading's summary only (no per-layer trace):
+  // there the layers are null and the inspector replays the token (``replyToken`` is its anchor).
   const { chatLog } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
-  const { replyTrace, replyLayers } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
+  const { replyTrace, replyLayers, replyToken } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
+  const flatReading = (coord, coordsPerLayer) => ({ version: 2, scope: "token", provenance: "captured", instruments: {
+    geometry: { readings: { calm: {
+      fraction: 0.4, nearest: [], coords: [coord], residual: 0, assignment: [], membership: 1, depth_com: [], depth_spread: [],
+      ...(coordsPerLayer ? { coords_per_layer: coordsPerLayer, fraction_per_layer: {}, residual_per_layer: {} } : {}),
+    } } },
+    lens: { binding: { sources: { R: "local:r" }, steering: null }, readings: {
+      "jlens/sky": { value: 0.3, unit: "mean_token_probability", per_layer: { 5: 0.1, 6: 0.5 }, depth: null },
+    } },
+  } });
   chatLog.turns = [
     { role: "assistant", text: "older", generated: true, tokens: [{ text: "a", probes: { calm: 9 } }] },
     { role: "user", text: "hi", tokens: [{ text: "hi", probes: { calm: 7 } }] },
-    { role: "assistant", text: "abc", generated: true, tokens: [
-      { text: "a", probes: { calm: 0.5 }, perLayerScores: { 3: { calm: 0.2 }, 7: { calm: -0.4, other: 1 } } },
-      { text: "b", coordsByProbe: { calm: [-0.25, 1] } },
-      { text: "c", probes: { calm: NaN }, perLayerScores: { 3: { calm: 0.9 } } },
+    { role: "assistant", text: "abc", generated: true, nodeId: "n1", tokens: [
+      { text: "a", rawIndex: 0, probes: { calm: 0.5 }, measurements: flatReading(0.5, { 3: [0.2, 9], 7: [-0.4, 9] }) },
+      { text: "b", rawIndex: 1, coordsByProbe: { calm: [-0.25, 1] } },
+      { text: "c", rawIndex: 2, probes: { calm: NaN }, measurements: flatReading(0.9, null) },
     ] },
   ];
   assert.deepEqual(replyTrace("calm"), [0.5, -0.25, null], "the latest reply only, coordinates first, non-finite as gaps");
   assert.deepEqual(replyTrace("calm[1]"), [null, 1, null], "an axis target reads that coordinate");
   assert.equal(replyTrace("absent"), null, "a reply without the probe gives no trace");
-  assert.deepEqual(replyLayers("calm"), { 3: 0.9 }, "layers default to the last token");
-  assert.deepEqual(replyLayers("calm", 0), { 3: 0.2, 7: -0.4 });
+  assert.deepEqual(replyLayers("calm", 0), { 3: 0.2, 7: -0.4 }, "a live token's layers are its reading's axis 0");
+  assert.equal(replyLayers("calm"), null, "a saved summary keeps no layers: they replay");
+  assert.deepEqual(replyToken(), { token: chatLog.turns[2].tokens[2], nodeId: "n1", rawIndex: 2 }, "the replay anchor defaults to the last token");
   assert.equal(replyLayers("calm", 1), null);
+  assert.deepEqual(replyLayers("jlens/sky"), { 5: 0.1, 6: 0.5 }, "a scalar reading keeps its few layers on the row");
 
   // A curved probe reads the share on its surface: its trace and layers come from each token's
   // geometry reading, never from the rows' axis-0 views (which would draw a coordinate against the
   // share's 0..1 scale). A token without that reading is a gap; an axis target still reads its axis.
   const { readsShare } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
-  const shareReading = (fraction, perLayer) => ({ version: 1, scope: "token", provenance: "captured", instruments: {
-    geometry: { readings: { "default/months": { fraction, fraction_per_layer: perLayer, coords: [2.64, -1], nearest: [], residual: 0, coords_per_layer: {}, residual_per_layer: {} } } },
+  const shareReading = (fraction, perLayer) => ({ version: 2, scope: "token", provenance: "captured", instruments: {
+    geometry: { readings: { "default/months": { fraction, fraction_per_layer: perLayer, coords: [2.64, -1], nearest: [], residual: 0, coords_per_layer: { 3: [2.1, 0] }, residual_per_layer: {}, assignment: [], membership: 1, depth_com: [], depth_spread: [] } } },
   } });
   chatLog.turns = [
     { role: "assistant", text: "abc", generated: true, tokens: [
       { text: "a", probes: { "default/months": 2.64 }, coordsByProbe: { "default/months": [2.64, -1] },
-        perLayerScores: { 3: { "default/months": 2.1 } }, measurements: shareReading(0.39, { 3: 0.2, 7: 0.41 }) },
+        measurements: shareReading(0.39, { 3: 0.2, 7: 0.41 }) },
       { text: "b", probes: { "default/months": 1.5 } },
       { text: "c", probes: { "default/months": 3 }, measurements: shareReading(0.5, { 3: 0.25 }) },
     ] },

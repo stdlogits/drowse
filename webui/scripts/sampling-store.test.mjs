@@ -175,7 +175,8 @@ const hostedProbe = await samplingFor("browser", 8, {
   activeProbe: true,
   probeSubspaceTrails: false,
 });
-assert.equal(hostedProbe.payload.persist_per_layer_scores, true);
+assert.equal("persist_per_layer_scores" in hostedProbe.payload, false,
+  "a loom row keeps each reading's summary; the per-layer views replay the token");
 assert.equal("persist_subspace_coords" in hostedProbe.payload, false);
 
 const hostedProbeWithExactTrails = await samplingFor("browser", 8, {

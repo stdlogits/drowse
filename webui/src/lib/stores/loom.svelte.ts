@@ -119,10 +119,7 @@ export function tokenRowToScore(row: NonNullable<LoomNodeJSON["tokens"]>[number]
   if (row.perplexity !== undefined) out.perplexity = row.perplexity;
   if (row.top_alts) out.topAlts = row.top_alts;
   if (row.raw_index !== undefined) out.rawIndex = row.raw_index;
-  const scores = m?.scores ?? row.probes;
-  if (scores) out.probes = scores;
-  const perLayer = m?.per_layer_scores ?? row.per_layer_scores;
-  if (perLayer) out.perLayerScores = perLayer;
+  if (m?.scores) out.probes = m.scores;
   if (m) out.measurements = m;
   const readings = mergedReadings(m);
   if (readings) {

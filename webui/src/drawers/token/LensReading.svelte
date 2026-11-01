@@ -68,6 +68,13 @@
   </section>
 {:else if readout.error}
   <section class="dw-sec" aria-label="Lens"><p class="meta" role="alert">{readout.error}</p></section>
+{:else if data && layers.length === 0}
+  <!-- A saved reply keeps the readout's chips, not its layer rows (the token view replays them while
+       the lens is loaded); this is that capture where nothing can replay it. -->
+  <section class="dw-sec" aria-label="Layer by layer">
+    <div class="dw-sec-head"><span class="head">Layer by layer</span></div>
+    <p class="meta">A saved reply keeps the lens's reading across layers, not each layer's. They replay while this model's lens is loaded.</p>
+  </section>
 {:else if data}
   <section class="dw-sec" aria-label="By depth">
     <div class="dw-sec-head">

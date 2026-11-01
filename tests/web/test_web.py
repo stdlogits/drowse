@@ -4,7 +4,7 @@ Covers:
 * ``drowse.web.register_web_routes`` mounts the SPA bundle at ``/`` with
   a fallback to index.html for client-side routes.
 * GET /drowse/v1/sessions/{id}/correlation returns the right matrix shape.
-* The WS token event surfaces per_layer_scores when probes are loaded.
+* A full single-token reading carries each probe's per-layer trace.
 
 CPU-only.  No npm build runs here — the committed dist/ bundle is the
 artifact under test.
@@ -273,16 +273,19 @@ class TestRemovedDashboardSurfaces:
         assert set(data) == {"name", "layers", "metadata"}
 
 # ---------------------------------------------------------------------------
-# The un-aggregated per-layer heatmap view: the token payload's
-# ``per_layer_scores``, derived from a full reading's ``coords_per_layer``.
+# The un-aggregated per-layer view: each reading's own ``coords_per_layer``
+# (there is no layer-major copy beside it).
 # ---------------------------------------------------------------------------
 
 
 def _per_layer_scores(monitor: Any, hidden: dict[int, Any]) -> dict[str, Any]:
-    """The heatmap row the token tap writes, from a live single-token read."""
-    from drowse.generation.token_payloads import _per_layer_axis0
-
-    return _per_layer_axis0(monitor.score_single_token(hidden)) or {}
+    """Axis 0 of each probe's per-layer trace, layer-major, from a live
+    single-token read."""
+    by_layer: dict[str, dict[str, float]] = {}
+    for name, reading in monitor.score_single_token(hidden).items():
+        for layer, coords in reading.coords_per_layer.items():
+            by_layer.setdefault(str(layer), {})[name] = coords[0]
+    return by_layer
 
 
 class TestPerLayerScores:
