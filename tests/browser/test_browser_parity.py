@@ -350,8 +350,7 @@ def test_browser_dls_fixture_matches_python_source_of_truth() -> None:
         layer: values.abs() + 1.0
         for layer, values in centroids.items()
     }
-    with pytest.warns(UserWarning, match="no layers pass"):
-        fallback = compute_dls_axes(positive, bases, means)
+    fallback = compute_dls_axes(positive, bases, means)
     assert {str(layer): sorted(axes) for layer, axes in fallback.items()} == fixture["allFailExpected"]
 
 

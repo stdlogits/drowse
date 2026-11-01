@@ -12,7 +12,6 @@
 from __future__ import annotations
 
 import json
-import warnings
 from collections.abc import Callable, Sequence
 from importlib import resources as _resources
 from pathlib import Path
@@ -677,7 +676,9 @@ def compute_dls_axes(
     keeps every checkable axis conservatively (over-include rather than drop a
     real discriminative axis for missing data).  Degenerate (zero-norm) rows
     are dropped and excluded from the all-fail fallback; when no axis anywhere
-    passes, falls back to the full checkable set with a one-time warning.
+    passes, falls back to the full checkable set.  The fit narrates that
+    fallback (``fit.pipeline.dls_fit_note``); this function stays silent, so
+    the degenerate axis is reported once.
 
     Args:
         node_centroids: per-layer ``[K, D]`` stack of node mean activations.
@@ -734,16 +735,9 @@ def compute_dls_axes(
             keep[L] = layer_keep
             any_pass = True
     if not any_pass:
-        # Every checkable axis failed — probe degenerate on this model (the
-        # diagnostics warning fires separately).  Keep the checkable set
-        # rather than every layer; when nothing is checkable the fallback is
-        # empty and the share-bake all-zero handler kicks in.
-        warnings.warn(
-            "DLS: no layers pass the discriminative check; falling back "
-            "to keep-all-checkable.  Probe likely degenerate on this "
-            "model — review the diagnostics warning above.",
-            UserWarning,
-            stacklevel=3,
-        )
+        # Every checkable axis failed: the axis is degenerate on this model,
+        # which the fit's DLS line says.  Keep the checkable set rather than
+        # every layer; when nothing is checkable the fallback is empty and the
+        # share-bake all-zero handler kicks in.
         return checkable
     return keep

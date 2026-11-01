@@ -198,11 +198,12 @@ axis `d̂_r` at layer L iff `{(c_i − ν_L)·d̂_r}` straddles zero. Same-side 
 encode intensity, not polarity, and at K=2 this is exactly the bipolar
 opposite-sign test. Edge cases: `layer_means=None` (`dls=False`) keeps every
 axis; a zero-norm axis drops; a layer with no ν keeps every checkable axis; if
-nothing passes anywhere, every checkable axis is kept with a `UserWarning`; a
-layer left empty drops. `tests/fixtures/browser/dls-axes-v1.json` pins this
-and drowse.ai replays it, so a semantic change means regenerating the golden.
+nothing passes anywhere, every checkable axis is kept (silently: the fit's DLS
+line reports it); a layer left empty drops. `tests/fixtures/browser/dls-axes-v1.json`
+pins this and drowse.ai replays it, so a semantic change means regenerating the golden.
 The fit narrates the result through `progress` (`dls_fit_note`: the kept and
-dropped layers, or the all-fail fallback), and serve's startup roster repeats
+dropped layers, or the all-fail fallback, the one report of a degenerate axis),
+and serve's startup roster repeats
 the kept/dropped line for a cached probe from its sidecar (`dls_load_note`:
 `fitted_layers` against the pre-DLS `node_spread_per_layer`, no tensor read),
 so a probe DLS cut to a few layers is visible (`tests/fit/test_dls_narration.py`).
