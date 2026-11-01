@@ -193,3 +193,24 @@ def test_lens_counts_counts_a_corpus_file(
     assert "Already counted" in capsys.readouterr().out
     main(["lens", "counts", "org/m", "--remove"])
     assert tc.load_corpus_counts("org/m") is None
+
+
+def test_a_recorded_corpus_spec_streams_again() -> None:
+    """``lens counts`` streams the S lens's own corpus: a local fit's
+    ``hf:…`` / ``mix:…`` spec and an import's plain ``REPO@COMMIT`` read back
+    to the corpus; a file corpus (or anything else) does not."""
+    from drowse.lens.corpus import HfLensCorpus, LensCorpusMix, corpus_from_spec
+
+    sha = "87f09149ef4734204d70ed1d046ddc9ca3f2b8f9"
+    one = HfLensCorpus("HuggingFaceFW/fineweb-edu", "sample-10BT", sha)
+    spread = HfLensCorpus("HuggingFaceFW/fineweb-2", "cmn_Hani", sha, "content", 64, 3)
+    assert corpus_from_spec(one.spec) == one
+    assert corpus_from_spec(spread.spec) == spread
+    mix = LensCorpusMix((one, spread), (3, 1))
+    assert corpus_from_spec(mix.spec) == mix
+    imported = corpus_from_spec("HuggingFaceFW/dclm_100BT-shuffled@2fa015e4044ec442a0734e89658cdcc538d10dd4")
+    assert imported == HfLensCorpus(
+        "HuggingFaceFW/dclm_100BT-shuffled", None, "2fa015e4044ec442a0734e89658cdcc538d10dd4",
+    )
+    for unreadable in ("file:corpus.txt", "hf:broken", "HuggingFaceFW/dclm_100BT-shuffled", "mix:x*y"):
+        assert corpus_from_spec(unreadable) is None, unreadable

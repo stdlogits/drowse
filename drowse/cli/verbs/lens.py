@@ -343,7 +343,8 @@ def run_counts(args: argparse.Namespace) -> None:
     from transformers import AutoTokenizer
 
     from drowse.lens.corpus import (
-        parse_lens_corpus, pin_lens_corpus, read_corpus_file, stream_lens_corpus,
+        corpus_from_spec, parse_lens_corpus, pin_lens_corpus, read_corpus_file,
+        stream_lens_corpus,
     )
 
     if args.corpus is not None:
@@ -351,12 +352,17 @@ def run_counts(args: argparse.Namespace) -> None:
             documents = read_corpus_file(Path(args.corpus), args.documents)
         spec = f"file:{Path(args.corpus).name}"
     else:
-        sources = args.hf_corpus
-        if sources is None:
-            recorded = _s_lens_corpus(args.model)
-            sources = [recorded] if recorded is not None else None
         with user_errors(ValueError, exit_code=2):
-            corpus = pin_lens_corpus(parse_lens_corpus(sources))
+            chosen = parse_lens_corpus(args.hf_corpus)
+        if args.hf_corpus is None:
+            recorded = _s_lens_corpus(args.model)
+            again = None if recorded is None else corpus_from_spec(recorded)
+            if again is not None:
+                chosen = again
+            elif recorded is not None:
+                note(f"The S lens's corpus ({recorded}) cannot be streamed again; counting the default corpus")
+        with user_errors(ValueError, exit_code=2):
+            corpus = pin_lens_corpus(chosen)
         note(f"Streaming {args.documents} documents of {corpus} through the tokenizer...")
         documents, spec = stream_lens_corpus(args.documents, corpus)
     trust = os.environ.get("DROWSE_TRUST_REMOTE_CODE", "").strip().lower() in {"1", "true", "yes", "on"}
