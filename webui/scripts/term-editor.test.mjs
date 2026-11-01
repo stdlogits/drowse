@@ -70,7 +70,7 @@ try {
     ["default/emotions", { mode: "manifold", blend: 0.35, onto: 0, coords: [0], label: "wonder", variant: "raw", trigger: "RESPONSE", enabled: true, layers: "workspace" }],
   ]);
   assert.equal(serializeExpression(rack, 0.5),
-    "0.5 default/honest%honest{12-14,20} + 1 !jlens/storm{20-22} - 0.2 neuron/L31n4410@response + 1 !head/L28h12 + 0.35 default/emotions%wonder{workspace}@response",
+    "0.5 default/honest%honest{12-14,20} + !jlens/storm{20-22} - 0.2 neuron/L31n4410@response + !head/L28h12 + 0.35 default/emotions%wonder{workspace}@response",
     "the clause follows the selector and precedes the trigger; a term at no layer sits out; a unit takes no clause");
   assert.equal(formatTerm("sae/7", rack.get("sae/7"), 0.5), "0.3 sae/7", "on its own, an inert term writes no clause");
 
@@ -102,9 +102,9 @@ try {
   setSteerLayers("jlens/storm", [4, 5]);
   setSteerLayers("neuron/L1n3", [1]);
   assert.equal(steerRack.entries.get("neuron/L1n3").layers, undefined, "a unit takes no clause");
-  assert.equal(currentSteeringExpression(), "0.3 jlens/storm{4-5} + 1 !head/L2h0 + 0.2 neuron/L1n3");
+  assert.equal(currentSteeringExpression(), "0.3 jlens/storm{4-5} + !head/L2h0 + 0.2 neuron/L1n3");
   setSteerLayers("jlens/storm", null);
-  assert.equal(currentSteeringExpression(), "0.3 jlens/storm + 1 !head/L2h0 + 0.2 neuron/L1n3");
+  assert.equal(currentSteeringExpression(), "0.3 jlens/storm + !head/L2h0 + 0.2 neuron/L1n3");
   for (const name of ["jlens/storm", "neuron/L1n3", "head/L2h0"]) removeSteerEntry(name);
 
   // ---- where a term acts, as the server says

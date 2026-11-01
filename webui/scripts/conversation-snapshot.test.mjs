@@ -182,7 +182,7 @@ try {
   );
   assert.equal(isConversationSnapshot(unitRows, Object.keys(samplingState)), true);
   const unitPlan = buildConversationImportPlan(unitRows);
-  assert.match(unitPlan.steeringExpression, /- 0\.2 neuron\/L31n4410 \+ 1 !head\/L28h12@response/);
+  assert.match(unitPlan.steeringExpression, /- 0\.2 neuron\/L31n4410 \+ !head\/L28h12@response/);
   for (const [name, ablate, alpha] of [
     ["head/L28h12", false, 0.2], ["neuron/L31h4", true, 0.2], ["neuron/L031n4", false, 0.2], ["unit/L1n2", true, 0.2],
     // An ablation blends toward the neutral mean; a negative α would amplify the unit instead.
