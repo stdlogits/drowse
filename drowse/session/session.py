@@ -938,7 +938,7 @@ class DrowseSession:
 
     @property
     def lens(self) -> "LensInstrument":
-        """The J-lens instrument — the public face of the lens family
+        """The lens instrument (R and S lenses) — the public face of the lens family
         (``session.instruments["lens"]``): the resident lens and its source
         (``resident`` / ``select_source``), ``fit``, the offline reads
         (``readout`` / ``decompose`` / ``register_direction`` /

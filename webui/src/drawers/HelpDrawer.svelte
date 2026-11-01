@@ -29,7 +29,8 @@
     { term: "Sampler entropy", def: "How spread out the next-token probabilities were after the sampling settings. Restrictive settings can make it low even when the reply is wrong." },
     { term: "Direction", def: "An internal pattern used to steer a reply toward or away from a trait." },
     { term: "Reading", def: "A measurement of an internal pattern. It observes the reply without changing it." },
-    { term: "J-lens", def: "A fitted projection of a layer's activations into token probabilities. Aggregate strength is the mean across fitted layers, not the sampler's probability or a record of the model's thoughts." },
+    { term: "R lens", def: "A fitted projection of a layer's activations onto the tokens the model is disposed to say, as probabilities. Aggregate strength is the mean across fitted layers, not the sampler's probability or a record of the model's thoughts." },
+    { term: "S lens", def: "A fitted projection of a layer's activations onto the tokens it has taken in from the input. It reads early layers, where the R lens is weakest; it describes what was read, not what will be said." },
     { term: "SAE feature", def: "A learned activation pattern. Its label is an interpretation, not proof of a concept or cause. Normalized strength compares activation with a reference maximum and can exceed 1." },
     { term: "Captured or replayed", def: "Captured readings were recorded during the original run. Replayed ones are computed later, with their source and steering beside them; an unsteered replay is a separate measurement." },
   ];

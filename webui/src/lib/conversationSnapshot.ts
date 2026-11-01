@@ -167,7 +167,7 @@ export function validateConversationSnapshot(
     if (row.mode === "jlens" || row.mode === "slens" || row.mode === "sae") {
       finite(row.alpha, `steering row ${name} alpha`);
       if (typeof row.ablate !== "boolean") invalid(`steering row ${name} ablation`);
-      if (row.mode === "jlens" && !name.startsWith("jlens/")) invalid(`J-lens row ${name}`);
+      if (row.mode === "jlens" && !name.startsWith("jlens/")) invalid(`R-lens row ${name}`);
       if (row.mode === "slens" && !name.startsWith("slens/")) invalid(`S-lens row ${name}`);
       if (row.mode === "sae" && !/^sae\/(?:0|[1-9]\d*)$/u.test(name)) invalid(`SAE row ${name}`);
       continue;

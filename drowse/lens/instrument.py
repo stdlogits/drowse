@@ -1,4 +1,4 @@
-"""The J-lens instrument: the lens family's residency, lifecycle and reads.
+"""The lens instrument: the R and S families' residency, lifecycle and reads.
 
 :class:`LensInstrument` is the one public face of the lens family
 (``session.lens``).  It owns:
@@ -337,7 +337,7 @@ class _InputResidency:
         return self._lens.adopt_input(lens, sidecar)
 
 class LensInstrument:
-    """Session-lifetime handle for the J-lens read family."""
+    """Session-lifetime handle for the lens read family (R and S lenses)."""
 
     family: InstrumentFamily = "lens"
 
@@ -879,7 +879,7 @@ class LensInstrument:
         lens = self.resident()
         if lens is None:
             raise LensNotFittedError(
-                f"no Jacobian lens available for {self.model_id} — run "
+                f"no R-lens available for {self.model_id} — run "
                 f"`drowse lens fetch {self.model_id}` for a supported official "
                 f"lens, or `drowse lens fit {self.model_id}`"
             )

@@ -537,21 +537,21 @@ class TestSourceSwitch:
         from drowse.lens.jlens import LensNotFittedError
 
         session, client = session_and_client
-        session.lens.enable_error = LensNotFittedError("no fitted J-lens for test/model")
+        session.lens.enable_error = LensNotFittedError("no R-lens available for test/model")
         resp = client.put(f"{_BASE}/lens/source", json={"source": "local:j"})
         assert resp.status_code == 409
-        assert resp.json() == {"detail": "no fitted J-lens for test/model"}
+        assert resp.json() == {"detail": "no R-lens available for test/model"}
 
     def test_unavailable_source_keeps_its_message(self, session_and_client: Any) -> None:
         """Regression: the registry's path-free "not available" text was
         scrubbed to the generic filesystem message."""
         session, client = session_and_client
         session.lens.select_source.side_effect = FileNotFoundError(
-            "J-lens source local:r-gone is not available",
+            "lens source local:r-gone is not available",
         )
         resp = client.put(f"{_BASE}/lens/source", json={"source": "local:r-gone"})
         assert resp.status_code == 404
-        assert resp.json() == {"detail": "J-lens source local:r-gone is not available"}
+        assert resp.json() == {"detail": "lens source local:r-gone is not available"}
 
     def test_os_level_miss_on_switch_stays_scrubbed(self, session_and_client: Any) -> None:
         session, client = session_and_client
