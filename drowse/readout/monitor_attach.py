@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import torch
 
 from drowse.errors import WhitenerError
+from drowse.geometry.domains import BoxDomain
 from drowse.geometry.packing import pack_to_device
 
 if TYPE_CHECKING:
@@ -236,11 +237,15 @@ class AttachedManifoldProbe:
     # Per-layer Mahalanobis-share weight, normalized to sum to 1 across
     # attached layers.
     share_weights: dict[int, float] = field(default_factory=dict)
-    # The authoring node coords ``(K, n)``, a host copy taken at attach for the
-    # lock-free probe listing: reading the resident ``manifold.node_coords``
+    # Host-side state taken at attach for the lock-free readers (the probe
+    # listing and the inspector plot): the authoring node coords ``(K, n)``
+    # and the geometry payload (:func:`probe_geometry_payload`, its arrays
+    # fp32 host tensors that the upload skips).  Reading the resident tensors
     # there copies off the MPS device while another thread's model op holds
-    # its one command buffer, which aborts the process.
+    # its one command buffer, which aborts the process; taking the model lock
+    # instead would stall the inspector for a whole reply.
     node_coords_host: list[list[float]] = field(default_factory=list)
+    geometry: dict[str, Any] = field(default_factory=dict)
     # Per-candidate soft-assignment bandwidth ``τ`` ``(Kc,)`` in the **whitened**
     # metric (the metric the nearest-node distances live in), share-weighted across
     # layers, candidate order = nodes then the neutral anchor (when injected).
@@ -484,6 +489,126 @@ def _build_whitened_factors(
     return out
 
 
+def probe_geometry_payload(
+    probe: "AttachedManifoldProbe", *, grid_resolution: int = 24,
+) -> dict[str, Any]:
+    """Static geometry payload for one probe (inspector plot).
+
+    Everything in the **whitened frame** the reads use: per-layer node
+    centroids (``wh.node_white``), the neutral anchor (``wh.neutral_white``),
+    a top-3 PCA rotation of the node cloud when ``rank >= 3``, and — for a
+    curved fit of intrinsic dim 1/2 embedded in a higher-rank subspace — the
+    manifold curve/surface sampled and whitened into the same frame.  Pairs
+    with the per-token ``ProbeReading.subspace_coords_per_layer`` (the live
+    point + trail), which carries the same ``cdist_query`` whitened coord.
+    Attach builds it from the host factors before the upload, CPU/fp32 for
+    the SVD + grid; the arrays stay host tensors until
+    :meth:`~drowse.readout.monitor.Monitor.probe_geometry` lists them.
+    """
+    manifold = probe.manifold
+    domain = manifold.domain
+    n = int(domain.intrinsic_dim)
+    layers_out: dict[str, Any] = {}
+    ranks: set[int] = set()
+    for layer_idx in sorted(manifold.layers):
+        wh = probe.whitened.get(layer_idx)
+        if wh is None:
+            continue
+        sub = manifold.layers[layer_idx]
+        node_white = wh.node_white.detach().to(torch.float32).cpu()   # (K, R)
+        R = int(node_white.shape[1])
+        ranks.add(R)
+        neutral_white = (
+            wh.neutral_white.detach().to(torch.float32).cpu().reshape(-1)
+        )
+        pca_rotation: list[list[float]] | None = None
+        ev_pcs: list[float] | None = None
+        if R >= 3 and node_white.shape[0] >= 2:
+            centered = node_white - node_white.mean(dim=0, keepdim=True)
+            try:
+                _u, s, vh = torch.linalg.svd(centered, full_matrices=False)
+                pca_rotation = vh[:3].transpose(0, 1).contiguous().tolist()
+                var = s ** 2
+                tot = float(var.sum().clamp(min=1e-12))
+                ev_pcs = [float(v) / tot for v in var[:3].tolist()]
+            except Exception:
+                pca_rotation, ev_pcs = None, None
+        overlay: dict[str, Any] | None = None
+        if (
+            (not sub.is_affine)
+            and n in (1, 2)
+            and n < R
+            and isinstance(domain, BoxDomain)
+        ):
+            overlay = _sample_overlay(sub, domain, wh, n, grid_resolution)
+        layers_out[str(layer_idx)] = {
+            "layer": layer_idx,
+            "rank": R,
+            "intrinsic_dim": n,
+            "is_affine": bool(sub.is_affine),
+            "node_white": node_white,
+            "neutral_white": neutral_white,
+            "pca_rotation": pca_rotation,
+            "explained_variance_pcs": ev_pcs,
+            "mahalanobis_share": float(
+                manifold.mahalanobis_share[layer_idx],
+            ),
+            "overlay": overlay,
+        }
+    return {
+        "name": probe.name,
+        "manifold": manifold.name,
+        "intrinsic_dim": n,
+        "is_affine": bool(probe.is_affine),
+        "node_labels": list(manifold.node_labels),
+        "rank_uniform": len(ranks) <= 1,
+        "layers": layers_out,
+    }
+
+
+def _sample_overlay(
+    sub: Any, domain: BoxDomain, wh: Any, n: int, res: int,
+) -> dict[str, Any]:
+    """Sample a curved manifold's curve (n=1) / surface (n=2), whitened.
+
+    Returns the sampled points already in the ``node_white`` frame
+    (``r @ chol``), so the frontend overlays them on the same plot without a
+    second transform.  CPU/fp32 throughout.
+    """
+    cpu = torch.device("cpu")
+    sub_c = sub.to(device=cpu, dtype=torch.float32)
+    chol = wh.chol.detach().to(torch.float32).cpu()       # (R, R)
+    basis = sub_c.basis                                   # (R, D)
+    mean = sub_c.mean                                     # (D,)
+    axes = domain.axes
+
+    def _axis_grid(ax: Any) -> torch.Tensor:
+        if ax.periodic:
+            return torch.linspace(
+                0.0, float(ax.period), res + 1, dtype=torch.float32,
+            )[:-1]
+        return torch.linspace(
+            float(ax.lo), float(ax.hi), res, dtype=torch.float32,
+        )
+
+    def _whiten(coords: torch.Tensor) -> torch.Tensor:
+        world = sub_c.eval_at(domain.embed(domain.clamp_position(coords)))
+        reduced = (world - mean) @ basis.transpose(0, 1)  # (.., R)
+        return reduced @ chol                             # (.., R) whitened
+
+    if n == 1:
+        g = _axis_grid(axes[0]).reshape(-1, 1)            # (S, 1)
+        return {"kind": "curve", "points": _whiten(g)}
+    gu, gv = _axis_grid(axes[0]), _axis_grid(axes[1])
+    uu, vv = torch.meshgrid(gu, gv, indexing="ij")
+    grid = torch.stack([uu.reshape(-1), vv.reshape(-1)], dim=1)  # (nu*nv, 2)
+    return {
+        "kind": "surface",
+        "points": _whiten(grid),
+        "grid_shape": [int(gu.numel()), int(gv.numel())],
+    }
+
+
 def _attach_manifold_probe(
     name: str,
     manifold: "Manifold",
@@ -510,7 +635,7 @@ def _attach_manifold_probe(
         top_n=top_n, whitener=whitener, stack_for=stack_for,
     )
     probe.manifold = manifold
-    pack_to_device(probe, device, skip=("manifold",))
+    pack_to_device(probe, device, skip=("manifold", "geometry"))
     return probe
 
 
@@ -597,6 +722,7 @@ def _attach_on_host(
         ],
     )
     probe.whitened = _build_whitened_factors(whitener, probe, stack_for)
+    probe.geometry = probe_geometry_payload(probe)
     bw, lvb = _compute_assign_bandwidth(probe, embedded)
     # Park the soft-assignment factors on the scoring device once, so
     # the per-token ``probe.assign_bandwidth.to(dist_acc_t.device, fp32)`` in the

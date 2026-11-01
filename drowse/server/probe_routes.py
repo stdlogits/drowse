@@ -23,8 +23,6 @@ from drowse.readout.monitor_attach import AttachedManifoldProbe
 from drowse.server.runtime import (
     NativeRequest,
     attached_probe_names,
-    run_in_thread,
-    session_lock,
     session_router,
 )
 from drowse.server.response_models import (
@@ -162,22 +160,19 @@ def register_probe_routes(app: FastAPI) -> None:
         return {"probes": rows}
 
     @router.get("/probes/{name:path}/geometry")
-    async def probe_geometry(name: str) -> ProbeGeometryResponse:
+    def probe_geometry(name: str) -> ProbeGeometryResponse:
         """Static geometry for the dashboard probe-inspector plot.
 
         Per-layer node centroids + neutral + (rank>=3) a top-3 PCA rotation +
         the curve/surface overlay for a curved fit — all in the whitened frame
         the reads use, so the per-token live point (the reading's
-        ``subspace_coords_per_layer``) overlays directly.  The factors are
-        resident on the model's device, so the copy off it runs under the
-        session lock and inside the exclusive-GPU section.
+        ``subspace_coords_per_layer``) overlays directly.  Lock-free: attach
+        built the payload on the host, so it answers mid-generation and never
+        copies off the device.
         """
         try:
-            async with session_lock(app):
-                return await run_in_thread(session.probe_geometry, name)
+            return session.monitor.probe_geometry(name)
         except KeyError as e:
-            if isinstance(e, DrowseError):
-                raise
             raise HTTPException(404, f"probe '{name}' not attached") from e
 
     @router.post("/probes", status_code=201)

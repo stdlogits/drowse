@@ -200,6 +200,49 @@ def test_add_probe_registers_and_precaches():
     assert sum(p.share_weights.values()) == pytest.approx(1.0, abs=1e-5)
 
 
+def test_probe_geometry_is_the_host_payload_taken_at_attach():
+    """The inspector payload, a curved probe's overlay included, is built at
+    attach and served without reading the probe's working factors (on MPS a
+    copy off them races the model op holding the device)."""
+    # Three nodes on an arc: a 1-D curve in a rank-2 subspace, so the plot
+    # samples the curve as an overlay.
+    domain = BoxDomain([BoxAxis("u", periodic=False, lo=-1.0, hi=1.0)])
+    coords = torch.tensor([[-1.0], [0.0], [1.0]])
+    arc = torch.zeros(3, 8)
+    arc[:, 0] = torch.tensor([-1.0, 0.0, 1.0])
+    arc[:, 1] = torch.tensor([0.0, 1.0, 0.0])
+    sub = fit_curved_subspace(arc, domain.embed(coords)).subspace
+    sub.sigma_rbf_weights = torch.zeros(3, 1)
+    sub.sigma_poly_coeffs = torch.zeros(2, 1)
+    m = Manifold(
+        name="toy", domain=domain, node_labels=["a", "b", "c"],
+        node_coords=coords, layers={0: sub, 1: sub},
+        mahalanobis_share={0: 1.0, 1: 1.0}, origin={0: torch.zeros(1), 1: torch.zeros(1)},
+    )
+    monitor = _iso_monitor(m)
+    monitor.add_probe("toy", m)
+    expected = monitor.probe_geometry("toy")
+    layer = expected["layers"]["0"]
+    assert layer["overlay"]["kind"] == "curve"
+    assert len(layer["overlay"]["points"]) == 24
+    assert isinstance(layer["node_white"], list)
+    assert isinstance(layer["neutral_white"], list)
+
+    probe = monitor.attached_probes()["toy"]
+    for sub in probe.manifold.layers.values():
+        for attr in ("mean", "basis"):
+            object.__setattr__(
+                sub, attr, torch.empty(getattr(sub, attr).shape, device="meta"),
+            )
+    for wh in probe.whitened.values():
+        for attr in ("node_white", "neutral_white", "chol"):
+            setattr(wh, attr, torch.empty(getattr(wh, attr).shape, device="meta"))
+
+    assert monitor.probe_geometry("toy") == expected
+    with pytest.raises(KeyError):
+        monitor.probe_geometry("nope")
+
+
 def test_probe_layers_is_union():
     m = _toy_manifold(n_layers=3)
     mon = _iso_monitor(m)
