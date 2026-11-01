@@ -413,8 +413,9 @@ units that pushed the token (`AnatomyUnit`: its contribution, its raw
 family's number for the same unit, over its soft neutral scale, `None` without
 unit statistics and in the cross-layer list), the top heads' attention rows
 (`AnatomyPattern`), the decoded `context` and a lens `binding`. An anatomy
-envelope may have empty `instruments`; it sits beside them because it records
-the replay forward, not a probe.
+envelope's `instruments` hold only the attached lens probes' readings of the
+same residual (a lens channel, empty without lens probes); the anatomy sits
+beside them because it records the replay forward, not a probe.
 
 Wire drift is a test failure: `tests/readout/test_measurements_envelope.py`
 pins key sets for every scope (the anatomy record's included); `tests/browser/test_browser_parity.py` compares
