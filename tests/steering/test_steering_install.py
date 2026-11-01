@@ -274,3 +274,24 @@ def test_unknown_vector_raises_before_the_scope_is_entered() -> None:
     with pytest.raises(ProfileNotRegisteredError):
         session.steering("0.5 missing")
     assert session.composer._stack == []
+
+
+def test_scope_role_resolution_runs_inside_the_model_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression: open_scope resolved under the lock but released it before
+    # the role pass, whose nearest-node search for a coordinate ``%``
+    # position runs on the resident manifold's device and syncs the host.
+    from drowse.geometry.manifold import Manifold
+
+    rig = SteeringRig(manifolds={"mood": _manifold(layers=(0, 1))})
+    held: list[bool] = []
+    original = Manifold.nearest_node_index
+
+    def spy(self: Manifold, position: Any) -> int:
+        held.append(rig.lock._is_owned())  # type: ignore[attr-defined]
+        return original(self, position)
+
+    monkeypatch.setattr(Manifold, "nearest_node_index", spy)
+    rig.steering("0.5 mood%0.25")
+    assert held == [True]

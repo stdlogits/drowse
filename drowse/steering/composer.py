@@ -567,9 +567,13 @@ class SteeringComposer:
                 "session.steering() requires a non-None expression string "
                 "or Steering instance"
             )
+        # The role pass reads a resident manifold on its device (a coordinate
+        # ``%`` position's nearest node), so it runs in the section too.
         with self._lock:
             entries = self.resolve(steering)
-        role, notes = resolve_scope_role(entries, self._artifacts.manifolds)
+            role, notes = resolve_scope_role(
+                entries, self._artifacts.manifolds,
+            )
         for note in notes:
             warnings.warn(
                 note, RoleBaselineMismatchWarning, stacklevel=stacklevel + 1,
