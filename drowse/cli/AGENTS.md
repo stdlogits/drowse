@@ -272,6 +272,13 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   `-f`, a fit that would replace a local lens over more documents, or one
   holding a site or layer the request omits, exits 2 (a 5.4 default fit
   holds 100 documents; ask for `--prompts 100`).
+  Checkpoints land every `--checkpoint-every` documents (default 25) and at
+  the first document boundary ten minutes after the last one
+  (`lens.jlens.CHECKPOINT_SECONDS`, a fixed rule). The first SIGINT or
+  SIGTERM (`stop_on_signals`) finishes the document in flight, writes a
+  checkpoint and exits `128 + signal` with a note to rerun the same command;
+  a second stops at once, keeping the last checkpoint, and restores the
+  previous handlers.
 - `fetch` never loads the model: the payload stays in the Hugging Face cache and
   Drowse writes, and activates in its family's slot, a commit-pinned binding
   (`rs-r`/`rs-s` bind every site the repository holds). `show` / `rm` default

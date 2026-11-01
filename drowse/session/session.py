@@ -4,6 +4,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, cast, overload
 
@@ -15,6 +16,7 @@ from transformers import (
 
 from drowse.fit.capture import _capture_all_hidden_states
 from drowse.fit.corpus import RESPONSE_MAX_TOKENS, CorpusGenerator
+from drowse.fit.pipeline import dls_load_note
 from drowse.session.extraction import Extraction
 from drowse.errors import GenerationRequestError
 from drowse.events import (
@@ -36,6 +38,7 @@ from drowse.session.neutral import NeutralBaseline
 from drowse.errors import (
     ConcurrentExtractionError,
     ManifoldNotRegisteredError,
+    RequestError,
 )
 from drowse.generation.token_callback import TokenSink
 from drowse.model.scene import TurnGrammar
@@ -596,10 +599,27 @@ class DrowseSession:
             # bundled multi-node manifolds).  The neutral baseline comes first:
             # fitting needs the whitener.  An explicit ``probes=[]`` skips both.
             self._neutral.ensure(on_progress=on_progress)
+            # A probe DLS left with a few layers is narrated: a fit says so
+            # itself, and a cached load reads it from the sidecar here.
+            fitted_now: set[str] = set()
+
+            def fit_probe(folder: Any, progress: Any) -> Manifold:
+                path = Path(folder)
+                fitted_now.add(f"{path.parent.name}/{path.name}")
+                return self.fit(folder, on_progress=progress)
+
+            def load_probe(key: str) -> Manifold:
+                manifold = self._registry.ensure_manifold_loaded(key)
+                if on_progress is not None and key not in fitted_now:
+                    note = dls_load_note(key, manifold)
+                    if note is not None:
+                        on_progress(note)
+                return manifold
+
             roster = bootstrap_probe_roster(
                 probe_categories, model_id=self.model_id,
-                load=self._registry.ensure_manifold_loaded,
-                fit=lambda folder, progress: self.fit(folder, on_progress=progress),
+                load=load_probe,
+                fit=fit_probe,
                 include_fitted_defaults=probes is None,
                 on_progress=on_progress,
             )
@@ -918,7 +938,7 @@ class DrowseSession:
 
     @property
     def lens(self) -> "LensInstrument":
-        """The J-lens instrument — the public face of the lens family
+        """The lens instrument (R and S lenses) — the public face of the lens family
         (``session.instruments["lens"]``): the resident lens and its source
         (``resident`` / ``select_source``), ``fit``, the offline reads
         (``readout`` / ``decompose`` / ``register_direction`` /
@@ -1286,10 +1306,21 @@ class DrowseSession:
         registered ``Profile``, a fold cached by an earlier steer) → folded
         into a 1-node neutral-anchored ray; (2) a fitted manifold on disk
         (``[ns/]name[:variant]``) → loaded directly, so a 2-node ``pca`` reads
-        rank-1 and a discover / curved fit reads rank-R; (3) a bare concept
-        with neither → extracted, then folded.  Folds go through
+        rank-1 and a discover / curved fit reads rank-R; (3) an installed
+        manifold that is not fitted (or is stale) for this model → fitted in
+        place, then loaded as (2), the way serve's startup fits a missing
+        default probe; (4) a bare raw name that names no installed manifold →
+        extracted (authored under ``local/``), then folded.  Folds go through
         :meth:`ArtifactRegistry.fold_probe`, which tracks them, so evicting
         or re-fitting the artifact reaches these probes too.
+
+        The resolver never substitutes another concept: a typed namespace or
+        a variant names an installed artifact, so a miss there raises
+        :class:`ManifoldNotRegisteredError` (404) instead of extracting a slug
+        of the selector, and a variant a fit cannot produce here (``sae-`` or
+        ``from-``) raises :class:`RequestError` (400) naming the command that
+        does.  It runs inside the geometry attach's exclusive section, which
+        the fit re-enters.
 
         ``jlens/<word>`` selectors never reach this resolver — ``add_probe``
         routes them to the lens-probe registry (the readout channel), so the
@@ -1297,12 +1328,48 @@ class DrowseSession:
         nonsense manifold named "jlens/<word>".
         """
         profile = self._registry.profiles.get(selector)
-        if profile is None:
-            try:
+        if profile is not None:
+            return self._registry.fold_probe(selector, profile)
+        try:
+            return self._registry.ensure_manifold_loaded(selector)
+        except ManifoldNotRegisteredError:
+            pass
+        from drowse.session.registry import split_key
+        from drowse.store.selectors import Selector, resolve
+
+        namespace, name, variant = split_key(selector)
+        installed = resolve(Selector(kind="name", value=name, namespace=namespace))
+        if installed:
+            (match,) = installed
+            qualified = f"{match.namespace}/{match.name}"
+            if variant == "raw" or variant.startswith("role-"):
+                self.fit(match.folder)
                 return self._registry.ensure_manifold_loaded(selector)
-            except ManifoldNotRegisteredError:
-                pass
-            _, profile = self.extract(selector)
+            if variant.startswith("sae-"):
+                how = (
+                    f"produce it with `drowse manifold fit {qualified} "
+                    f"-m {self.model_id} --sae {variant[len('sae-'):]}`"
+                )
+            elif variant.startswith("from-"):
+                how = (
+                    f"produce it with `drowse manifold transfer {qualified} "
+                    f"--from <source model> --to {self.model_id}`"
+                )
+            else:
+                how = "name a release or a role (`:sae-<release>`, `:role-<id>`)"
+            raise RequestError(
+                f"probe {selector!r}: manifold {qualified} has no {variant!r} "
+                f"fit for {self.model_id}, and attaching a probe fits only the "
+                f"residual stream; {how}, then attach again"
+            )
+        if namespace is not None or variant != "raw":
+            raise ManifoldNotRegisteredError(
+                f"probe {selector!r}: no manifold "
+                f"{namespace + '/' if namespace else ''}{name} is installed; "
+                f"install it (`drowse pack install`) or attach a bare concept "
+                f"name to extract one"
+            )
+        _, profile = self.extract(selector)
         return self._registry.fold_probe(selector, profile)
 
     def _fold_profile_probe(self, name: str, profile: Any) -> "Manifold":

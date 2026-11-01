@@ -5,6 +5,10 @@ and the two readouts (``top``, ``decompose``)."""
 from __future__ import annotations
 
 import argparse
+import signal
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -134,6 +138,51 @@ def _print_fitted(sidecar: dict[str, Any]) -> None:
         print(line)
 
 
+_STOP_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+
+
+@contextmanager
+def stop_on_signals() -> Iterator[tuple[threading.Event, threading.Event, list[int]]]:
+    """SIGINT/SIGTERM handlers for a lens fit: ``(stop, cancel, received)``.
+
+    The first signal sets ``stop`` (the fit finishes the document in flight,
+    writes a checkpoint and raises), the second sets ``cancel`` (abandon the
+    document now; the last checkpoint stands) and restores the previous
+    handlers, so a third acts as it would have.  ``received`` lists the
+    signal numbers.  Outside the main thread nothing is installed.
+    """
+    stop, cancel = threading.Event(), threading.Event()
+    received: list[int] = []
+    if threading.current_thread() is not threading.main_thread():
+        yield stop, cancel, received
+        return
+    previous = {sig: signal.getsignal(sig) for sig in _STOP_SIGNALS}
+
+    def restore() -> None:
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+    def handle(signum: int, _frame: Any) -> None:
+        received.append(signum)
+        if not stop.is_set():
+            stop.set()
+            note(
+                "Stopping after the document in flight, then saving a checkpoint; "
+                "send the signal again to stop now without saving it."
+            )
+            return
+        cancel.set()
+        restore()
+        note("Stopping now; the last checkpoint stands.")
+
+    for sig in _STOP_SIGNALS:
+        signal.signal(sig, handle)
+    try:
+        yield stop, cancel, received
+    finally:
+        restore()
+
+
 def run_fit(args: argparse.Namespace) -> None:
     from drowse.lens.corpus import read_corpus_file, stream_lens_corpus
     from drowse.lens.store import (
@@ -160,15 +209,25 @@ def run_fit(args: argparse.Namespace) -> None:
         note(f"Streaming {args.prompts} documents from {hf_corpus}...")
         docs, spec = stream_lens_corpus(args.prompts, hf_corpus)
 
+    from drowse.lens.jlens import JacobianLensCancelled
+
     with open_session(args) as session:
         note(f"Fitting the {_KIND_TITLES[LensKey(kind).kind]} at "
              f"{' and '.join(args.sites)}{' from zero (-f)' if args.force else ''}.")
-        session.lens.fit(
-            docs, kind=kind, sites=args.sites, corpus_spec=spec, layers=requested,
-            dim_batch=args.dim_batch, seq_len=args.seq_len, force=args.force,
-            checkpoint_every=args.checkpoint_every, split_half=not args.no_split_half,
-            on_progress=progress,
-        )
+        with stop_on_signals() as (stop, cancel, received):
+            try:
+                session.lens.fit(
+                    docs, kind=kind, sites=args.sites, corpus_spec=spec, layers=requested,
+                    dim_batch=args.dim_batch, seq_len=args.seq_len, force=args.force,
+                    checkpoint_every=args.checkpoint_every,
+                    split_half=not args.no_split_half, on_progress=progress,
+                    cancel_event=cancel, stop_event=stop,
+                )
+            except JacobianLensCancelled as exc:
+                if not received:
+                    raise
+                note(f"{exc}. Run the same command again to resume from the checkpoint.")
+                raise SystemExit(128 + received[0]) from None
     sidecar = load_local_lens_sidecar(args.model, args.kind)
     if sidecar is not None:
         _print_fitted(sidecar)
@@ -449,7 +508,7 @@ GROUP = Verb(
                 arg("--dim-batch", type=positive_int, default=None, metavar="K",
                     help="Basis seeds per transport pass (default 256; halves on OOM)"),
                 arg("--checkpoint-every", type=positive_int, default=None, metavar="N",
-                    help="Resumable checkpoint every N usable prompts (default 25)"),
+                    help="Resumable checkpoint every N usable prompts (default 25; also every 10 minutes)"),
                 arg("--no-split-half", action="store_true",
                     help="Skip the split-half check (saves one lens of RAM)"),
                 layers_arg("Fit only these layers, per site (default: every layer; "

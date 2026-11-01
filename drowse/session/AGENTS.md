@@ -295,8 +295,14 @@ routing gate. `generate_batch` with unit probes and readings runs serially.
 `jlens/…` → lens, `sae/…` → SAE, `neuron/…`/`head/…` → units, anything else →
 geometry. Geometry resolution
 (`_resolve_probe_manifold`) tries a registered profile (folded to a 1-node ray),
-then a fitted manifold on disk, and as a last resort **extracts** the bare
-concept (generates a corpus and fits it under `local/`). Lens/SAE detaches are
+then a fitted manifold on disk, then an installed manifold that is not fitted
+(or is stale) for the model, which it **fits in place** inside the attach's
+exclusive section (raw and `:role-<id>` only; an `:sae-`/`:from-` variant is a
+`RequestError` naming the command that produces it), and as a last resort
+**extracts** a bare raw name that names nothing installed (generates a corpus
+and fits it under `local/`). It never substitutes another concept: a typed
+namespace or a variant that names nothing installed is a
+`ManifoldNotRegisteredError` (404), never a slugged `local/ns_name` extract. Lens/SAE detaches are
 safe mid-generation (bound runs keep a frozen roster). A roster change only
 invalidates analytics snapshots. Node recipes stamp the Monitor (geometry)
 probes and their hashes; lens and SAE probes are not in the receipt.

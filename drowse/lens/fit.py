@@ -48,6 +48,7 @@ import torch
 
 from drowse.errors import RequestError, is_out_of_memory_error
 from drowse.lens.jlens import (
+    CHECKPOINT_SECONDS,
     DEFAULT_CHECKPOINT_EVERY,
     DEFAULT_DIM_BATCH,
     DEFAULT_SEQ_LEN,
@@ -335,6 +336,7 @@ def fit_lens(
     progress_base: int = 0,
     input_id_rows: Sequence[Sequence[int]] | None = None,
     cancel_event: Any | None = None,
+    stop_event: Any | None = None,
     initial: LensSums | None = None,
     spec: ModelSpec | None = None,
 ) -> LensFit:
@@ -346,8 +348,18 @@ def fit_lens(
     become the accumulator and must name exactly the requested sites and
     layers; documents continue its count, so the split-half parity follows
     the corpus index.  ``on_checkpoint`` receives the live sums after every
-    ``checkpoint_every`` documents (and on a stop between documents); it
-    must not keep them.  ``input_id_rows`` is the pre-tokenized sibling of
+    ``checkpoint_every`` documents, at the first document boundary
+    :data:`~drowse.lens.jlens.CHECKPOINT_SECONDS` after the last checkpoint
+    (or the start), and on a stop between documents; it must not keep them,
+    and it is never called twice for one document count.
+
+    Two stops: ``cancel_event`` is prompt (a set event abandons a document in
+    flight, whose partial sums are not a checkpoint, and raises
+    :class:`JacobianLensCancelled`; between documents it checkpoints the
+    completed prefix first), and ``stop_event`` is graceful (the document in
+    flight finishes, the completed prefix is checkpointed, then
+    :class:`JacobianLensCancelled` is raised), which is what the CLI's
+    SIGTERM/SIGINT handler sets so an interrupted fit always saves.  ``input_id_rows`` is the pre-tokenized sibling of
     ``prompts`` (still cut at ``max_seq_len``).  ``spec`` is a verified
     :class:`~drowse.model.blocks.ModelSpec`; without one the model is
     verified first (:func:`~drowse.model.blocks.verify_model_spec`), so the
@@ -409,6 +421,7 @@ def fit_lens(
         skip_first=int(skip_first), checkpoint_every=int(checkpoint_every),
         on_checkpoint=on_checkpoint, on_progress=on_progress,
         progress_base=int(progress_base), cancel_event=cancel_event,
+        stop_event=stop_event,
     )
 
 
@@ -426,6 +439,7 @@ def _run(
     on_progress: Callable[[str], None] | None,
     progress_base: int,
     cancel_event: Any | None,
+    stop_event: Any | None,
 ) -> LensFit:
     device = spec.embed.weight.device
     work = torch.promote_types(spec.embed.weight.dtype, torch.float32)
@@ -441,13 +455,21 @@ def _run(
     n_done = 0
     next_checkpoint = checkpoint_every
     started = time.perf_counter()
+    last_checkpoint = time.monotonic()
+    checkpointed_at = sums.n_prompts
 
     def checkpoint() -> None:
-        if on_checkpoint is not None:
+        nonlocal last_checkpoint, checkpointed_at
+        if on_checkpoint is not None and sums.n_prompts != checkpointed_at:
             on_checkpoint(sums)
+        checkpointed_at = sums.n_prompts
+        last_checkpoint = time.monotonic()
 
     def cancelled() -> bool:
         return cancel_event is not None and cancel_event.is_set()
+
+    def stopping() -> bool:
+        return stop_event is not None and stop_event.is_set()
 
     maps: Any = None
     try:
@@ -457,6 +479,10 @@ def _run(
                     if n_done:
                         checkpoint()
                     raise JacobianLensCancelled(f"lens fit cancelled after {n_done} prompts")
+                if stopping():
+                    if n_done:
+                        checkpoint()
+                    raise JacobianLensCancelled(f"lens fit stopped after {n_done} prompts")
                 odd = sums.n_prompts % 2 == 1
                 maps = linearize(spec, ids, rules=rules, skip_first=skip_first, blocks=blocks)
                 n_rows = next(iter(maps.values())).n_rows
@@ -508,7 +534,10 @@ def _run(
                 if cancelled():
                     checkpoint()
                     raise JacobianLensCancelled(f"lens fit cancelled after {n_done} prompts")
-                if n_done >= next_checkpoint:
+                if (
+                    n_done >= next_checkpoint
+                    or time.monotonic() - last_checkpoint >= CHECKPOINT_SECONDS
+                ):
                     checkpoint()
                     # Allocator hygiene at checkpoint cadence only.
                     if device.type == "mps":

@@ -180,9 +180,18 @@ extension of a durable artifact, `split_half=False`) lack it;
 (`{tensor_files, tensor_sha256}`) appears only in a checkpoint: the odd-half
 mean shards (`<site>.odd.partial.layer-L…`) a resumed fit continues its
 split-half check from (`load_lens_checkpoint_odd`). Promotion drops it and
-generation GC collects the shards. drowse.ai's browser reader checks exact key
-sets, so a pack carrying `split_half` (or a `mid` site) waits on its reader
-(the external-callers note below).
+generation GC collects the shards.
+
+**v7 reader rule (decided for 6.0; the format freezes with it).** The format
+stays v7, and these optional fields are part of v7, not a v8. A v7 reader
+must accept `sites.<site>.split_half` on any site of a manifest or a
+checkpoint (validating it as above, or ignoring it), and must accept
+`sites.<site>.odd` only in `checkpoint.json`: `odd` in a durable
+`manifest.json` is malformed and reads as no lens. A reader's exact-key check
+is therefore "the required site keys, plus at most these optional ones"
+(`store.py::_validate_manifest`; `tests/lens/test_fit_split_half.py` pins both halves).
+drowse.ai's browser reader checks exact key sets today, so it must adopt this
+rule before it reads a 6.0 local fit (the external-callers note below).
 
 - **Every kind and site.** `save_lens`, `save_lens_at` and `load_local_lens`
   write and read every site the lens holds; local names carry the kind
@@ -346,9 +355,20 @@ neuron-lens's hand-written maps and generalized over
   `dim_batch` (kept down for the rest of the fit) and retries the pass.
   `empty_cache` runs at checkpoint cadence; teardown drains, collects and
   flushes the allocator.
-- **Cancellation** is checked between passes and documents. A stop between
-  documents checkpoints the completed prefix; one inside a document abandons
-  its partial sums (the lifecycle reloads from the last checkpoint).
+- **Checkpoint cadence.** `on_checkpoint` fires every `checkpoint_every`
+  documents and at the first document boundary `CHECKPOINT_SECONDS` (600)
+  after the last checkpoint or the start, never twice for one document
+  count. At 8B on MPS a document takes about four minutes, so the count
+  alone saved once every 1.7 hours.
+- **Cancellation** has two tiers. `cancel_event` is prompt: checked between
+  passes and documents, a stop between documents checkpoints the completed
+  prefix and one inside a document abandons its partial sums (the lifecycle
+  reloads from the last checkpoint). `stop_event` is graceful: checked only
+  before a document, so the document in flight finishes, is checkpointed,
+  and the fit raises `JacobianLensCancelled`. `LensInstrument.fit` takes
+  both; the CLI's SIGINT/SIGTERM handler sets `stop_event` on the first
+  signal and `cancel_event` on the second
+  (`tests/lens/test_fit_checkpoint_cadence.py`).
 - `initial=LensSums.from_means(lens, odd)` takes ownership of an averaged
   base and scales it to sums in place, so don't reuse the passed lens.
 - The autograd estimator lives on as the test oracle
@@ -617,8 +637,10 @@ the per-layer softmax probability `p_l(v)`.
   v7 packs only, and only J/R with a single `sites.out` and exactly the
   required site keys. **Pending drowse.ai follow-up** (before it advances its
   submodule pin past this fit): move the hosted fit to `fit_lens(kind=,
-  sites=("out",))` and keep calling `save_lens_at` without `split_half`
-  until the reader accepts the optional field and validates or skips `mid`.
+  sites=("out",))`; make the reader accept the optional `split_half` (and
+  refuse `odd` outside a checkpoint) per the v7 reader rule above, and
+  validate or skip `mid`. Until then, keep calling `save_lens_at` without
+  `split_half`.
   That out-only shape is unchanged from 5.4
   (`test_save_lens_at_keeps_an_out_only_pack_in_the_browser_readers_shape`),
   so v7 is not bumped: its new fields are optional, and a bump would

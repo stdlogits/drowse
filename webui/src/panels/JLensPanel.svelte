@@ -268,7 +268,7 @@
     {/if}
 
     {#if words.length > 0}
-      <div class="rows" role="list" aria-label="J-lens probe tokens">
+      <div class="rows" role="list" aria-label="Lens probe tokens">
         {#each words as row (row.key)}
           <div role="listitem" animate:flip={{ duration: reducedMotion() ? 0 : GLIDE, easing: ease }}>
             <JLensProbeCard

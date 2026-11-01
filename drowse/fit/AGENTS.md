@@ -201,6 +201,23 @@ axis; a zero-norm axis drops; a layer with no ν keeps every checkable axis; if
 nothing passes anywhere, every checkable axis is kept with a `UserWarning`; a
 layer left empty drops. `tests/fixtures/browser/dls-axes-v1.json` pins this
 and drowse.ai replays it, so a semantic change means regenerating the golden.
+The fit narrates the result through `progress` (`dls_fit_note`: the kept and
+dropped layers, or the all-fail fallback), and serve's startup roster repeats
+the kept/dropped line for a cached probe from its sidecar (`dls_load_note`:
+`fitted_layers` against the pre-DLS `node_spread_per_layer`, no tensor read),
+so a probe DLS cut to a few layers is visible (`tests/fit/test_dls_narration.py`).
+
+Known limit: ν is the model's default answers, so on an axis whose one pole is
+the default (honest, compliant, sincere) ν sits on that pole and the near
+pole's sign is noise. Measured as ν's position along the axis (0 at the − pole,
+1 at the + pole): `honest.deceptive` 1.03–1.13 at Qwen3-8B L3–35 (kept L1–2) and
+1.01–1.20 at every SmolLM2-360M layer (all-fail fallback);
+`refusing.compliant` −0.04–0.06; `sincere.manipulative` 0.82–1.03. A `%pole`
+push targets the pole's neutral-anchored coordinate, so where ν lies past the
+near pole that push points at the far pole: on SmolLM2 the all-fail fallback
+keeps every layer and `0.5 honest` pushes deceptive-ward at all 32. Loosening
+the test would spread that to more layers; the remedy is the axis's shape or
+corpus, which is a9's call (open as of Wave 4).
 
 ## Publish and concurrency
 
