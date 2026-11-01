@@ -14,7 +14,7 @@
 import type { ChatTurn, TokenScore } from "../types";
 import { chatLog } from "./chat.svelte";
 import { loomTree } from "./loom.svelte";
-import { clearSelection, select, selection, tokenRest, tokenTurnHolds } from "./selection.svelte";
+import { bindTurnNodes, clearSelection, select, selection, tokenRest, tokenTurnHolds } from "./selection.svelte";
 import { replayIndex } from "../tokenRows";
 import {
   clampCursor,
@@ -26,6 +26,9 @@ import {
 } from "../../drawers/token/cursor";
 
 export type { TokenCursor } from "../../drawers/token/cursor";
+
+// A token selection holds while its turn holds the node it was made on (selection.svelte.ts).
+bindTurnNodes((turnIdx) => chatLog.turns[turnIdx]?.nodeId ?? null);
 
 /** The token under the cursor, with where it replays. */
 export interface CursorToken {

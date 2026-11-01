@@ -8,7 +8,14 @@
 // (``openDrawer("token_drilldown" | "probe_inspector", params)``) selects instead of opening a
 // dialog, so every older entry point lands in the Inspector.
 
-import { chatLog } from "./chat.svelte";
+/** The loom node of a conversation turn, bound by lib/stores/tokenCursor.svelte.ts (which reads the
+ *  chat log): this store stays free of the chat log's imports, so it loads before a runtime is
+ *  installed. Unbound, no turn names a node and a token selection is never dropped. */
+let turnNode: (turnIdx: number) => string | null = () => null;
+
+export function bindTurnNodes(read: (turnIdx: number) => string | null): void {
+  turnNode = read;
+}
 
 export type Selection =
   | { kind: "none" }
@@ -51,7 +58,7 @@ function paramsTurn(params: unknown): number | null {
 /** Whether turn ``turnIdx`` still holds the node the token selection was made on (a turn with no
  *  node when it was selected, a reply still streaming, cannot tell and holds). */
 export function tokenTurnHolds(turnIdx: number): boolean {
-  return tokenRest.nodeId === null || chatLog.turns[turnIdx]?.nodeId === tokenRest.nodeId;
+  return tokenRest.nodeId === null || turnNode(turnIdx) === tokenRest.nodeId;
 }
 
 /** Whether the latest selection change was a step of the token cursor (the Inspector keeps its
@@ -64,7 +71,7 @@ export function select(next: Selection, options: { step?: boolean } = {}): void 
   if (next.kind === "token") {
     tokenRest.params = next.params;
     const turn = paramsTurn(next.params);
-    tokenRest.nodeId = turn === null ? null : chatLog.turns[turn]?.nodeId ?? null;
+    tokenRest.nodeId = turn === null ? null : turnNode(turn);
   }
 }
 
