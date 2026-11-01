@@ -519,7 +519,10 @@ class GeometryInstrument:
         full roster at the producing position through
         :meth:`Monitor.score_single_token`, so a reading has the shape of the
         live per-token read there (coords / fraction / nearest / residual /
-        assignment / membership and the per-layer traces).  It reads
+        assignment / membership and the per-layer traces), each reading
+        with its per-layer whitened coordinates (``subspace_coords_per_layer``:
+        where the token sits in the probe's plotted geometry, the live trail's
+        frame) whether or not a generation streamed them.  It reads
         generations that ran aggregate-only and probes attached after the
         fact; ``apply_steering=False`` reads the unsteered counterfactual.
         Curved probes score with a cold foot solve: warm-start is the
@@ -565,7 +568,8 @@ class GeometryInstrument:
 
         def read(hidden: dict[int, torch.Tensor]) -> dict[str, Any]:
             monitor.enable_curved_warm(False)
-            return monitor.score_single_token(hidden)
+            with monitor.subspace_coords_emitted():
+                return monitor.score_single_token(hidden)
 
         token, readings = self._replay(
             node_id, raw_index, layers=roster_layers, read=read,

@@ -401,9 +401,31 @@ try {
   assert.doesNotMatch(html, /Push/, "a head has no push");
   assert.doesNotMatch(html, /\+ side/);
 
-  store.requestNodeActivity("n1", { top: 1024, rawIndex: 4 });
+  // The room reads at the token cursor (lib/stores/tokenCursor): with no token selected, the whole
+  // reply, each unit at its peak over it; at a token, the strongest units there (its population).
+  const selection = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
+  const { default: TokenStrip } = await server.ssrLoadModule("/src/panels/rooms/TokenStrip.svelte");
+  store.requestNodeActivity("n1", { top: 1024 });
   store.requestUnitRead("neuron/L3n3", true);
   store.requestNodeActivity("n1", { units: ["neuron/L3n3"], top: 1 });
+  await settle();
+  html = render(UnitsRoom, {}).body;
+  assert.match(html, /aria-pressed="true"[^>]*>Whole reply</, "no token selected: the whole reply");
+  assert.match(html, /Most active in this reply/);
+  assert.match(html, />L3 n3</);
+  assert.match(html, /−2\.2/, "a unit at its peak over the reply");
+  assert.match(html, /This reply, at each unit.s peak/);
+  assert.ok(asked.some(([kind, , top, , raw]) => kind === "activity" && top === 1024 && raw === null), "whole, no population");
+  // The strip: the reply's tokens on one line, the whole reply lit, its seat opening it.
+  let strip = render(TokenStrip, {}).body;
+  assert.equal((strip.match(/class="t [^"]*\blit\b/g) ?? []).length, 5);
+  assert.match(strip, /class="seat[^"]*"[^>]*>assistant</);
+  // The workbench selects the reply's last token: the cursor is there, and the strip marks it.
+  selection.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 4 } });
+  strip = render(TokenStrip, {}).body;
+  assert.match(strip, /class="t [^"]*\bon\b[^"]*"[^>]*aria-label="\. \(token 5\)"/);
+  assert.match(strip, /token 5 of 5/);
+  store.requestNodeActivity("n1", { top: 1024, rawIndex: 4 });
   await settle();
   html = render(UnitsRoom, {}).body;
   assert.match(html, /Most active here/);
@@ -412,7 +434,7 @@ try {
   // and value, pressed when it is the unit shown; one place in the atlas takes the Tab key.
   {
     const atlas = html.slice(html.indexOf('aria-label="Layers"'), html.indexOf('aria-label="Results"'));
-    assert.match(atlas, /<button[^>]*class="u\b[^"]*\bsel\b[^"]*"[^>]*aria-label="L3 n3, 3\.9"[^>]*aria-pressed="true"[^>]*data-tip="L3 n3"[^>]*data-tip-sub="3\.9"/, "the selected unit's bar");
+    assert.match(atlas, /<button[^>]*class="u\b[^"]*\bsel\b[^"]*"[^>]*aria-label="L3 n3, 3\.5"[^>]*aria-pressed="true"[^>]*data-tip="L3 n3"[^>]*data-tip-sub="3\.5"/, "the selected unit's bar, its value at the token");
     assert.ok((atlas.match(/<button[^>]*class="u\b/g) ?? []).length >= 2, "every bar a button");
     assert.match(atlas, /<button[^>]*class="lay[^"]*"[^>]*aria-label="Layer 3"[^>]*aria-pressed="true"/, "the layer the unit is on");
     assert.equal((atlas.match(/tabindex="0"/g) ?? []).length, 1, "one keyboard stop");
@@ -425,7 +447,7 @@ try {
   }
   assert.match(html, />L3 n3</);
   assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");
-  assert.match(html, /−2\.2/);
+  assert.doesNotMatch(html, /−2\.2/, "at the token, not at the peak");
   assert.match(html, />Labelled</, "a bound catalog offers the labelled units");
   assert.match(html, /Values over each unit&#39;s typical firing in text \(Neuron Lens\)|Values over each unit.s typical firing in text \(Neuron Lens\)/, "the room names the scale source");
   assert.match(html, new RegExp(CREDIT));
@@ -434,6 +456,7 @@ try {
   assert.match(html, /Open in workbench/);
   let summary = html.slice(html.indexOf('aria-label="Selected unit"'));
   assert.match(summary, /peak here <b[^>]*>3\.9<\/b>/);
+  assert.match(summary, />at [^]*?<b[^>]*>−0\.30<\/b>/, "its value at the cursor's token");
   assert.match(summary, /night-sky and starlight words/);
   assert.match(summary, /moonlight/, "the + side's writes");
   assert.equal(store.unitLabelFor("neuron/L3n3", "-"), "daylight words", "labels are kept per pole");
@@ -441,9 +464,10 @@ try {
   // A neuron that fired on its − pole: the summary reads that side (its writes, label, link and
   // rate), the side the unit view opens on, and the row and the summary wear the one label.
   flip = true;
+  selection.clearSelection();
   store.forgetUnits();
   await store.loadCatalog();
-  store.requestNodeActivity("n1", { top: 1024, rawIndex: 4 });
+  store.requestNodeActivity("n1", { top: 1024 });
   store.requestUnitRead("neuron/L3n3", true);
   store.requestNodeActivity("n1", { units: ["neuron/L3n3"], top: 1 });
   await settle();

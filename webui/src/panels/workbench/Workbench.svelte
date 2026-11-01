@@ -15,7 +15,7 @@
   import ConversationFormat from "./ConversationFormat.svelte";
   import Inspector from "../inspector/Inspector.svelte";
   import { workbenchUi, showConversation } from "../../lib/stores/workbench.svelte";
-  import { clearSelection, selection, selectionIdentity } from "../../lib/stores/selection.svelte";
+  import { clearSelection, selection, selectionIdentity, selectionStep } from "../../lib/stores/selection.svelte";
   import { loomUiState } from "../../lib/stores/loomUi.svelte";
 
   let { phone = false, active = true }: { phone?: boolean; active?: boolean } = $props();
@@ -38,13 +38,14 @@
   });
 
   // A new token or unit opens its view at the top (its header, p and alternatives), not at the
-  // scroll the Inspector last had for something else.
+  // scroll the Inspector last had for something else. A step of the token cursor keeps the scroll.
   let inspector: HTMLElement | null = $state(null);
   let sheetBody: HTMLElement | null = $state(null);
   const selectionKey = $derived(selectionIdentity(selection.current));
   $effect(() => {
     if (selectionKey === null) return;
     untrack(() => {
+      if (selectionStep.stepped) return;
       if (inspector) inspector.scrollTop = 0;
       if (sheetBody) sheetBody.scrollTop = 0;
     });

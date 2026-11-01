@@ -4,10 +4,12 @@
   // by depth and layer by layer, the probes, the SAE features. Branching from the token is one
   // quiet action at the end. (The Main and Phone canvases, token selected.)
   //
-  // Navigation is a cursor that walks the conversation (drawers/token/cursor.ts): ←/→ step tokens
-  // and roll across segment and turn boundaries, ↑/↓ jump turns, Home/End jump to the segment's
-  // ends, and a fresh selection snaps the cursor back to it. The selection's params are
-  // { turnIdx, tokenIdx, isThinking? } into chatLog.turns.
+  // Navigation is the shared token cursor (lib/stores/tokenCursor.svelte.ts, walking the
+  // conversation as drawers/token/cursor.ts does): ←/→ step tokens and roll across segment and turn
+  // boundaries, ↑/↓ jump turns, Home/End jump to the segment's ends. The selected token is the
+  // cursor, so a step selects the token it lands on (the thread marks it, and the Units, Lens and
+  // Probes rooms read it). The selection's params are { turnIdx, tokenIdx, isThinking? } into
+  // chatLog.turns. Hidden behind another room, the view replays nothing (the room reads instead).
   //
   // Each reading prefers the token's loom-owned measurements envelope (what was captured) and
   // otherwise replays through the family's token-readout route (keyed and shared, one at a time).
@@ -66,6 +68,8 @@
   import TokenAnatomy from "./token/TokenAnatomy.svelte";
   import { UnitLabels } from "./token/labels.svelte";
   import { clampCursor, jumpTurn, segmentTokens, segmentsOf, stepCursor, type SegmentKind, type TokenCursor } from "./token/cursor";
+  import { moveCursor, turnNodeId } from "../lib/stores/tokenCursor.svelte";
+  import { route } from "../lib/stores/rooms.svelte";
   import { ReplayReadout, type GeometryTokenReadout } from "./token/readout.svelte";
   import { drilldownUi, type DrilldownTab } from "./token/drilldown.svelte";
   import Alternatives from "./token/Alternatives.svelte";
@@ -88,7 +92,9 @@
     initialTab?: DrilldownTab;
   }
 
-  let { params: inputParams, docked = false, active = true, mobile = false, onclose }: { params?: unknown; docked?: boolean; active?: boolean; mobile?: boolean; onclose?: () => void } = $props();
+  let { params: inputParams, docked = false, active: shown = true, mobile = false, onclose }: { params?: unknown; docked?: boolean; active?: boolean; mobile?: boolean; onclose?: () => void } = $props();
+  /** Shown and in the workbench: another room reads the cursor's token itself. */
+  const active = $derived(shown && route.room === "workbench");
   let inspectorEl: HTMLElement | null = $state(null);
   const params = $derived(inputParams as DrawerParams | null);
 
@@ -100,24 +106,17 @@
 
   // ---- the cursor ---------------------------------------------------------
 
-  /** The token the user selected: a fresh selection snaps the cursor back here. */
+  /** The selected token: the cursor (a step selects the token it lands on). */
   const anchor = $derived.by<TokenCursor | null>(() => {
     if (!params) return null;
     return { turnIdx: params.turnIdx, seg: params.isThinking ? "thinking" : "response", tokenIdx: params.tokenIdx };
   });
-
-  let cursor = $state<TokenCursor | null>(null);
+  const cursor = $derived(anchor);
 
   /** "primary" is the turn as generated; "shadow" its A/B twin, when it has one. Per turn: walking
    *  into another turn resets it. */
   type Branch = "primary" | "shadow";
   let branch: Branch = $state<Branch>("primary");
-
-  $effect(() => {
-    const a = anchor;
-    cursor = a ? { ...a } : null;
-    branch = "primary";
-  });
 
   const turnsView = $derived<ChatTurn[]>(
     chatLog.turns.map((t, i) => (i === (cursor?.turnIdx ?? -1) && branch === "shadow" && t.abPair ? t.abPair : t)),
@@ -149,13 +148,7 @@
   const loomNodeId = $derived.by(() => {
     if (!effCursor) return null;
     if (branch === "shadow") return inspected?.nodeId ?? null;
-    if (turn?.nodeId) return turn.nodeId;
-    if (effCursor.turnIdx < 0 || loomTree.activePath.length === 0) return null;
-    const visible = loomTree.activePath
-      .map((id) => loomTree.nodes.get(id))
-      .filter(Boolean)
-      .filter((n) => !(n!.parent_id === null && n!.role === "system" && !n!.text));
-    return visible[effCursor.turnIdx]?.id ?? null;
+    return turnNodeId(effCursor.turnIdx);
   });
 
   /** Where the token replays and under which steering (``replayAnchor``): a generated token at
@@ -277,7 +270,7 @@
   // ---- navigation ---------------------------------------------------------
 
   function moveTo(next: TokenCursor | null): void {
-    if (next) cursor = next;
+    moveCursor(next);
   }
   const canStepBack = $derived(effCursor != null && stepCursor(segments, effCursor, -1) !== null);
   const canStepFwd = $derived(effCursor != null && stepCursor(segments, effCursor, 1) !== null);
@@ -289,13 +282,7 @@
   }
   function segEdge(where: "home" | "end"): void {
     if (!effCursor) return;
-    cursor = { ...effCursor, tokenIdx: where === "home" ? 0 : Math.max(0, tokenList.length - 1) };
-  }
-  const atAnchor = $derived(
-    effCursor != null && anchor != null && effCursor.turnIdx === anchor.turnIdx && effCursor.seg === anchor.seg && effCursor.tokenIdx === anchor.tokenIdx,
-  );
-  function resetToAnchor(): void {
-    if (anchor) cursor = { ...anchor };
+    moveCursor({ ...effCursor, tokenIdx: where === "home" ? 0 : Math.max(0, tokenList.length - 1) });
   }
   /** The turn's other segment (thinking or response), when it has one. */
   const otherSeg = $derived.by<SegmentKind | null>(() => {
@@ -305,7 +292,7 @@
   });
   function toggleSeg(): void {
     if (!effCursor || !otherSeg) return;
-    cursor = { turnIdx: effCursor.turnIdx, seg: otherSeg, tokenIdx: 0 };
+    moveCursor({ turnIdx: effCursor.turnIdx, seg: otherSeg, tokenIdx: 0 });
   }
 
   function onKeydown(ev: KeyboardEvent): void {
@@ -645,7 +632,7 @@
           else if (otherSeg) moved = { ...target, seg: otherSeg, tokenIdx: 0 };
           if (!moved) throw new ToolError("NOT_FOUND", "There is no token in that direction.");
         }
-        if (change.cursor || moved) { cursor = moved ?? { ...target }; await tick(); }
+        if (change.cursor || moved) { moveCursor(moved ?? { ...target }); await tick(); }
         if (change.branch !== undefined) branch = nextBranch;
         if (recipe?.geometry !== undefined) geometrySteered = recipe.geometry;
         if (recipe?.lens !== undefined) lensSteered = recipe.lens;
@@ -720,14 +707,13 @@
         {:else if effCursor.seg === "thinking"}<span>thinking</span>{/if}
         {#if hasAbPair}<button type="button" class="fact" aria-pressed={branch === "shadow"} data-tip="The same turn, generated without steering" onclick={() => (branch = branch === "shadow" ? "primary" : "shadow")}>A/B twin</button>{/if}
         {#if replayAt == null}<span data-tip="The generation record is missing, so this token cannot be replayed or branched">not replayable</span>{/if}
-        {#if !atAnchor}<button type="button" class="fact" onclick={resetToAnchor}>Back</button>{/if}
       </div>
       {#if recipeSteering || recipeLine}
         <p class="recipe meta">{#if recipeSteering}<span class="expr">{recipeSteering}</span>{/if}{#if recipeSteering && recipeLine}<span aria-hidden="true">{" · "}</span>{/if}{recipeLine}</p>
       {/if}
       {#if context.length > 1}
         <!-- Mouse targets only (the arrow keys walk the same tokens), so focus stays on the view. -->
-        <p class="ctx" aria-hidden="true">{#each context as item (item.i)}{#if item.i === effCursor.tokenIdx && item.text.startsWith(" ")}{" "}{/if}<button type="button" class="ctok" class:here={item.i === effCursor.tokenIdx} tabindex="-1" onclick={() => { if (effCursor) cursor = { ...effCursor, tokenIdx: item.i }; }}>{item.i === effCursor.tokenIdx && item.text.startsWith(" ") ? item.text.slice(1) : item.text}</button>{/each}</p>
+        <p class="ctx" aria-hidden="true">{#each context as item (item.i)}{#if item.i === effCursor.tokenIdx && item.text.startsWith(" ")}{" "}{/if}<button type="button" class="ctok" class:here={item.i === effCursor.tokenIdx} tabindex="-1" onclick={() => { if (effCursor) moveCursor({ ...effCursor, tokenIdx: item.i }); }}>{item.i === effCursor.tokenIdx && item.text.startsWith(" ") ? item.text.slice(1) : item.text}</button>{/each}</p>
       {/if}
       <Alternatives {token} canBranch={canBranch} busy={branching} onbranch={(id) => void branchWith(id)} />
     </section>

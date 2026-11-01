@@ -17,11 +17,30 @@ export type SelectionKind = Selection["kind"];
 
 export const selection: { current: Selection } = $state({ current: { kind: "none" } });
 
-export function select(next: Selection): void {
+/** Where the rooms' token cursor (lib/stores/tokenCursor.svelte.ts) rests while the selection holds
+ *  no token: the last token selected (``params``), kept while a probe, unit or term is selected;
+ *  ``null`` once a token selection is cleared, which reads the whole reply of ``turnIdx`` (the
+ *  cleared token's turn; null: the latest reply). */
+export const tokenRest: { params: unknown; turnIdx: number | null } = $state({ params: null, turnIdx: null });
+
+/** Whether the latest selection change was a step of the token cursor (the Inspector keeps its
+ *  scroll for a step; a fresh selection opens at the top). */
+export const selectionStep: { stepped: boolean } = $state({ stepped: false });
+
+export function select(next: Selection, options: { step?: boolean } = {}): void {
+  selectionStep.stepped = options.step === true;
   selection.current = next;
+  if (next.kind === "token") tokenRest.params = next.params;
 }
 
 export function clearSelection(): void {
+  const current = selection.current;
+  if (current.kind === "token") {
+    const turn = (current.params as { turnIdx?: unknown } | null)?.turnIdx;
+    tokenRest.params = null;
+    tokenRest.turnIdx = typeof turn === "number" ? turn : null;
+  }
+  selectionStep.stepped = false;
   selection.current = { kind: "none" };
 }
 

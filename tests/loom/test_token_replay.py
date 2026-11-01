@@ -556,6 +556,35 @@ def test_an_edit_reads_the_original_and_an_edited_earlier_turn_refuses(
         _replay(session, "geometry", second.id, 0)
 
 
+def test_a_geometry_replay_places_its_token_in_the_probe_geometry(
+    make_tiny_session: TinySessionFactory,
+) -> None:
+    """The geometry replay carries each reading's per-layer whitened
+    coordinates (where the Probes room's plot places the token): the live
+    trail's, which a generation streams only when asked, and a replay leaves
+    the trail's flag as it found it."""
+    session, _script = make_tiny_session.scripted("Hi there, friend.")
+    register_vectors(session, "mood")
+    session.add_probe("mood")
+    events: list[TokenEvent] = []
+    session.generate(
+        "Say hi.", on_token=_live_consumer(events),
+        sampling=SamplingConfig(max_tokens=4, persist_subspace_coords=True),
+    )
+    node = session.tree.get(session.tree.active_node_id)
+    for event in events:
+        live = cast(Any, event.measurements)["instruments"]["geometry"]["readings"]["mood"]
+        want = live["subspace_coords_per_layer"]
+        assert want, "the live trail streams them when asked"
+        session.monitor.set_subspace_coords(False)
+        got = _replay(session, "geometry", node.id, int(cast(int, event.raw_index)))
+        assert session.monitor._emit_subspace_coords is False
+        coords = got["readings"]["mood"]["subspace_coords_per_layer"]
+        assert set(coords) == set(want)
+        for layer, value in want.items():
+            assert coords[layer] == pytest.approx(value, rel=1e-4, abs=1e-5)
+
+
 _UNITS = ("neuron/L1n3", "head/L2h1")
 
 
