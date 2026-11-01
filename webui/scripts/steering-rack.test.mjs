@@ -141,6 +141,37 @@ try {
   assert.equal(steerRack.entries.get("default/deceptive").label, "deceptive");
   removeSteerEntry("default/deceptive");
 
+  // Regression: the side of a pole came from the catalog's display coordinate, whose sign is the
+  // layout's own. SmolLM2 draws ``formal`` at -4.1 and ``casual`` at +21.6, so "Not along" turned
+  // ``0.5`` toward formal into ``-0.5``, a push toward casual. A projection's positive strength is
+  // toward the first pole (each layer's axis is oriented to node 0), so the side is the pole order,
+  // and a free position's side is its coordinate's against the first pole's.
+  steerRack.catalog = [...steerRack.catalog, {
+    namespace: "default", name: "warm.clinical", node_count: 2, node_labels: ["warm", "clinical"],
+    node_coords: [[-4.1], [21.6]], intrinsic_dim: 1, domain: { type: "custom" },
+  }];
+  const { strengthSays } = await server.ssrLoadModule("/src/lib/steering/terms.ts");
+  const mirrored = steerRack.catalog.at(-1);
+  const flipAlong = steerRack.subspaceAlong;
+  steerRack.subspaceAlong = 0.5;
+  for (const [place, side, pole] of [
+    [() => setSteerLabel("default/warm.clinical", "warm"), 1, "warm"],
+    [() => setSteerLabel("default/warm.clinical", "clinical"), -1, "clinical"],
+    [() => setSteerCoords("default/warm.clinical", [-2]), 1, "warm"],
+    [() => setSteerCoords("default/warm.clinical", [10]), -1, "clinical"],
+  ]) {
+    addSubspaceToRack("default/warm.clinical");
+    place();
+    relateSteerEntry("default/warm.clinical", { operator: "|", onto: "default/formal.casual" });
+    const projection = steerRack.entries.get("default/warm.clinical|default/formal.casual");
+    assert.equal(projection.alpha, side * 0.5, `${pole}: the projection pushes toward ${pole}`);
+    assert.equal(strengthSays("default/warm.clinical|default/formal.casual", projection, projection.alpha, mirrored), `Toward ${pole}`);
+    relateSteerEntry("default/warm.clinical|default/formal.casual", null);
+    assert.equal(steerRack.entries.get("default/warm.clinical").label, pole, `${pole}: and back at ${pole}`);
+    removeSteerEntry("default/warm.clinical");
+  }
+  steerRack.subspaceAlong = flipAlong;
+
   // Regression: the round trip kept its direction only at a positive shared strength and a labelled
   // pole. Back from a projection the pole is the side of its strength over the shared one's sign;
   // forward, a free coordinate's side signs the strength (it pushed toward the first pole before).

@@ -234,26 +234,24 @@ export function setSteerTiming(name: string, timing: SteerTiming): void {
 }
 
 /** The side of a flat concept's axis a position sits on: ``+1`` toward its first pole, ``-1``
- *  toward its second, ``0`` at the middle. A label takes its node's coordinate sign (the pole
- *  order when the catalog has no coordinates); a free position its coordinate's sign. */
+ *  toward its second, ``0`` at neutral. A projection's positive strength pushes toward the first
+ *  pole (the fit orients every layer's axis so node 0 projects non-negative), whatever sign the
+ *  catalog's display layout gives it: that layout is neutral-centred but its sign is the layout's
+ *  own (SmolLM2 draws ``formal`` at −4.1 and ``casual`` at +21.6). So a label takes its pole's
+ *  side, and a free position its coordinate's side measured against the first pole's. */
 function flatPositionSign(info: ManifoldInfo | null, label: string | null, coords: readonly number[]): number {
-  if (label !== null) {
-    const index = info ? info.node_labels.indexOf(label) : -1;
-    const coord = index >= 0 ? info?.node_coords[index]?.[0] : undefined;
-    if (coord !== undefined && coord !== 0) return Math.sign(coord);
-    return index === 1 ? -1 : 1;
-  }
+  if (label !== null) return info?.node_labels.indexOf(label) === 1 ? -1 : 1;
   const coord = coords[0];
-  return coord === undefined ? 1 : Math.sign(coord);
+  if (coord === undefined) return 1;
+  const first = info?.node_coords[0]?.[0];
+  return Math.sign(coord) * (first !== undefined && first !== 0 ? Math.sign(first) : 1);
 }
 
-/** The pole of a flat concept on the ``sign`` side of its axis (the first pole for ``0``). */
+/** The pole of a flat concept on the ``sign`` side of its axis: the first for ``+1`` (and ``0``),
+ *  the second for ``-1``, by pole order, as a projection's strength reads it. */
 function flatPoleOnSide(info: ManifoldInfo | null, sign: number): number {
   const count = info?.node_labels.length ?? 0;
-  if (count < 2) return 0;
-  const wanted = sign < 0 ? -1 : 1;
-  const index = info!.node_coords.findIndex((coord) => Math.sign(coord?.[0] ?? 0) === wanted);
-  return index >= 0 ? index : wanted < 0 ? 1 : 0;
+  return count >= 2 && sign < 0 ? 1 : 0;
 }
 
 /** A flat concept's relation to a second one: push only the part of it along ``onto``
