@@ -142,7 +142,7 @@
 {#snippet unitActs(unit: string, kind: "neuron" | "head", pole: "+" | "-" | null)}
   <span class="uacts">
     {#if kind === "neuron"}
-      <SteerButton label="Push" aria={`Push ${unitShort(unit)}${pole === "-" ? " on its − pole" : ""}`}
+      <SteerButton label={pole === "-" ? "Push −" : "Push"} aria={`Push ${unitShort(unit)}${pole === "-" ? " on its − pole" : ""}`}
         tip={pole === "-" ? "Push on its − pole, the side that fired here" : "Push along its write"} onclick={() => pushUnit(unit, pole ?? "+")} />
     {/if}
     <SteerButton label="Silence" aria={`Silence ${unitShort(unit)}`} tip="Hold it at its neutral mean" onclick={() => silenceUnit(unit)} />

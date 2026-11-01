@@ -130,6 +130,12 @@
     });
   });
 
+  /** A strip token or the track takes no focus from a click: the arrow keys move the cursor (the
+   *  window's handler), so a focused token would draw its ring on a token the cursor has left. */
+  function keepFocus(event: MouseEvent): void {
+    event.preventDefault();
+  }
+
   function onKey(event: KeyboardEvent): void {
     if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
     const target = event.target as HTMLElement | null;
@@ -163,12 +169,12 @@
       {#each items as item (item.key)}
         {#if item.opens !== null}<span class="seat" aria-hidden="true">{item.opens}</span>{/if}
         <button type="button" class="t" class:on={here(item)} class:lit={inReply(item)} class:prompt={chatLog.turns[item.at.turnIdx]?.generated !== true}
-          tabindex="-1" aria-label={`${item.text} (token ${item.ordinal + 1})`} onclick={() => moveCursor(item.at)}>{item.text}</button>
+          tabindex="-1" aria-label={`${item.text} (token ${item.ordinal + 1})`} onmousedown={keepFocus} onclick={() => moveCursor(item.at)}>{item.text}</button>
       {/each}
       {#if (items.at(-1)?.ordinal ?? total - 1) < total - 1}<span class="more" aria-hidden="true">…</span>{/if}
     </div>
     <!-- The whole conversation, a turn a stretch: a click lands on the token at that place. -->
-    <button type="button" class="track" tabindex="-1" aria-label="The conversation's tokens; choose a place to jump there" onclick={onTrack}>
+    <button type="button" class="track" tabindex="-1" aria-label="The conversation's tokens; choose a place to jump there" onmousedown={keepFocus} onclick={onTrack}>
       {#each stretches as stretch (stretch.turnIdx)}
         <i class:prompt={stretch.prompt} class:lit={whole && reply?.turnIdx === stretch.turnIdx} style:left={pct(stretch.from)} style:width={pct(stretch.size)}></i>
       {/each}

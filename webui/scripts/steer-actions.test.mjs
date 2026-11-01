@@ -145,6 +145,14 @@ try {
   assert.ok(markup.indexOf('aria-label="Where the top heads read from"') < markup.indexOf('aria-label="By depth"'));
   assert.match(anatomy, /pushUnit\(unit, pole \?\? "\+"\)/);
   assert.match(anatomy, /\{@render unitActs\(row\.unit, "head", null\)\}/);
+  // W6 review: a − pole push read "Push" here and "Push −" in + Steer and the Units room.
+  assert.match(anatomy, /<SteerButton label=\{pole === "-" \? "Push −" : "Push"\}/);
+  // W6 review (live): a clicked strip token kept focus while the arrows moved the cursor, so its
+  // focus ring marked a second token. A strip token and the track take no focus from a click.
+  const tokenStrip = readFileSync(new URL("../src/panels/rooms/TokenStrip.svelte", import.meta.url), "utf8");
+  assert.match(tokenStrip, /class="t"[^>]*onmousedown=\{keepFocus\}/);
+  assert.match(tokenStrip, /class="track"[^>]*onmousedown=\{keepFocus\}/);
+  assert.match(tokenStrip, /function keepFocus\(event: MouseEvent\): void \{\s*event\.preventDefault\(\);/);
   // The unit view's actions put a term in and open it; only the strip takes one out.
   const unitView = readFileSync(new URL("../src/panels/inspector/UnitView.svelte", import.meta.url), "utf8");
   assert.doesNotMatch(unitView, /toggleUnitTerm/);
