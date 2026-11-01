@@ -121,6 +121,19 @@ try {
   assert.equal(selection.selection.current.kind, "none", "the stale token selection drops");
   chatLog.turns = [];
 
+  // Regression (W6 review): with the A/B twin open, clicking another token of the same turn kept
+  // the twin, so the Inspector read the twin's token for the primary token the thread marked. A
+  // fresh selection or another turn opens the turn as generated; a step within the turn keeps the
+  // side.
+  const { branchAfter } = await server.ssrLoadModule("/src/drawers/token/cursor.ts");
+  assert.equal(branchAfter("shadow", { sameTurn: true, stepped: false }), "primary", "another token clicked in the same turn");
+  assert.equal(branchAfter("shadow", { sameTurn: true, stepped: true }), "shadow", "an arrow, Home/End or a context step");
+  assert.equal(branchAfter("shadow", { sameTurn: false, stepped: true }), "primary", "a step into another turn");
+  const { readFileSync } = await import("node:fs");
+  const drawer = readFileSync(new URL("../src/drawers/TokenDrilldownDrawer.svelte", import.meta.url), "utf8");
+  assert.match(drawer, /branchAfter\(untrack\(\(\) => branch\), \{ sameTurn, stepped: untrack\(\(\) => selectionStep\.stepped\) \}\)/);
+  assert.match(drawer, /const p = inputParams;/, "the reset follows each selection, not only a turn change");
+
   console.log("token cursor: walk, prompt tokens, whole reply, selection follow, steps and clamping passed");
 } finally {
   await server.close();

@@ -19,7 +19,7 @@
   // "Unsteered" replays everything without the recipe's steering; the alternatives stay as
   // sampled, since a replay has no sampler.
   import { IconButton, MorphText, Segmented, expand, tokenParts } from "@stdlogits/ledger";
-  import { onDestroy, onMount, tick } from "svelte";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
   import { showLoom } from "../lib/stores/workbench.svelte";
   import { pushLensToken } from "../lib/steerActions";
   import { tokenInspectorSchema } from "../lib/interfaceSchemas";
@@ -65,8 +65,9 @@
   import { getRuntimeClient } from "../lib/runtime/registry";
   import TokenAnatomy from "./token/TokenAnatomy.svelte";
   import { UnitLabels } from "./token/labels.svelte";
-  import { clampCursor, jumpTurn, segmentTokens, segmentsOf, stepCursor, type SegmentKind, type TokenCursor } from "./token/cursor";
+  import { branchAfter, clampCursor, jumpTurn, segmentTokens, segmentsOf, stepCursor, type SegmentKind, type TokenCursor } from "./token/cursor";
   import { moveCursor, turnNodeId } from "../lib/stores/tokenCursor.svelte";
+  import { selectionStep } from "../lib/stores/selection.svelte";
   import { route } from "../lib/stores/rooms.svelte";
   import { ReplayReadout, type GeometryTokenReadout } from "./token/readout.svelte";
   import { drilldownUi, type DrilldownTab } from "./token/drilldown.svelte";
@@ -111,8 +112,9 @@
   });
   const cursor = $derived(anchor);
 
-  /** "primary" is the turn as generated; "shadow" its A/B twin, when it has one. Per turn: walking
-   *  into another turn resets it. */
+  /** "primary" is the turn as generated; "shadow" its A/B twin, when it has one. A fresh selection
+   *  (a click in the thread) or walking into another turn resets it; a step within the turn keeps
+   *  it (``branchAfter``). */
   type Branch = "primary" | "shadow";
   let branch: Branch = $state<Branch>("primary");
 
@@ -124,12 +126,16 @@
   const effCursor = $derived(cursor ? clampCursor(segments, cursor) : null);
 
   let lastBranchTurn = -1;
+  let lastBranchParams: unknown = undefined;
   $effect(() => {
     const t = effCursor?.turnIdx ?? -1;
-    if (t !== lastBranchTurn) {
-      lastBranchTurn = t;
-      if (branch !== "primary") branch = "primary";
-    }
+    const p = inputParams;
+    if (t === lastBranchTurn && p === lastBranchParams) return;
+    const sameTurn = t === lastBranchTurn;
+    lastBranchTurn = t;
+    lastBranchParams = p;
+    const next = branchAfter(untrack(() => branch), { sameTurn, stepped: untrack(() => selectionStep.stepped) });
+    if (next !== untrack(() => branch)) branch = next;
   });
 
   const turn = $derived<ChatTurn | null>(
