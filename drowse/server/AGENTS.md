@@ -390,9 +390,11 @@ Outbound frames:
 - `token {text, thinking, token_id, node_id, raw_index?, logprob?,
   perplexity?, top_alts?, measurements?}`. `measurements` is the token-scope
   envelope the tap built, forwarded verbatim and whole
-  (`ws_events.build_token_event`); the loom row keeps its projection
-  (`readout/measurements.py::token_row_measurements`: summaries, rounded, the
-  per-layer traces only under `persist_per_layer_scores`). The consumer opts into every live channel; each family's live
+  (`ws_events.build_token_event`); a generated loom row keeps its scores and
+  each geometry share and coordinates
+  (`readout/measurements.py::token_row_measurements`), every reading whole
+  with its traces only under `persist_per_layer_scores`
+  (`summary_measurements`). The consumer opts into every live channel; each family's live
   toggle decides what appears.
 - `done {result: {text, tokens, finish_reason, applied_steering, usage,
   measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,

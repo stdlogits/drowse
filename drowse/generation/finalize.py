@@ -22,7 +22,7 @@ from drowse.readout.types import (
     as_probe_reading,
     reading_axis0,
 )
-from drowse.readout.measurements import build_measurements
+from drowse.readout.measurements import aggregate_measurements, build_measurements
 from drowse.generation.results import GenerationResult
 from drowse.readout.types import ProbeReading
 
@@ -175,6 +175,10 @@ def finalize_generation(
                 name: reading_axis0(reading)
                 for name, reading in manifold_aggregates.items()
             },
+            aggregate_measurements=(
+                aggregate_measurements(measurement_envelope)
+                if measurement_envelope is not None else None
+            ),
             applied_steering=applied_steering,
             finish_reason=state.finish_reason,
             mean_logprob=mean_logprob,

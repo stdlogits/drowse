@@ -23,7 +23,7 @@ _UNIT = "neuron/L1n3"
 
 def _captured(node: Any, raw_index: int) -> float:
     return next(
-        row["measurements"]["instruments"]["units"]["readings"][_UNIT]["value"]
+        row["measurements"]["scores"][_UNIT]
         for row in node.tokens if row["raw_index"] == raw_index
     )
 

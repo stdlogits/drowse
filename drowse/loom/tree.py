@@ -55,6 +55,8 @@ from drowse.readout.measurements import (
     GEOMETRY_SUMMARY_KEYS,
     GEOMETRY_TRACE_KEYS,
     MEASUREMENTS_VERSION,
+    ROW_GEOMETRY_KEYS,
+    Measurements,
 )
 
 # ---------------------------------------------------------------------------
@@ -93,7 +95,8 @@ def _read_json_bounded(stream: BinaryIO | gzip.GzipFile, max_bytes: int, label: 
 
 _NODE_FIELDS = frozenset({
     "id", "parent_id", "role", "text", "role_label", "thinking_text",
-    "recipe", "aggregate_readings", "applied_steering", "finish_reason",
+    "recipe", "aggregate_readings", "aggregate_measurements",
+    "applied_steering", "finish_reason",
     "starred", "notes", "created_at", "edited_at", "edit_count",
     "mean_logprob", "mean_surprise",
 })
@@ -125,25 +128,35 @@ _TOKEN_ROW_FIELDS = frozenset({
 
 _PRE_6_ROW = (
     "a loom token row in the pre-6.0 shape ({detail}) is not read: this build "
-    "reads rows that keep each reading's summary once "
-    "(readout.measurements.token_row_measurements)"
+    "reads a generated row's scores and geometry shares and coordinates "
+    "(readout.measurements.token_row_measurements), or a row kept whole with "
+    "its traces (readout.measurements.summary_measurements)"
 )
+
+#: The envelope channels a generated (slim) token row carries.
+_SLIM_ROW_CHANNELS = frozenset({"geometry"})
 
 
 def _check_row_measurements(rows: list[Any] | None) -> None:
     """Refuse token rows of another shape: an envelope of another version,
     a pre-6.0 row, or a lens readout without its vocabulary ids.
 
-    Rows reach a tree through the token sidecar and through ``PUT /tree``
-    (the dashboard's restore, which carries them inline); a row of another
-    shape is refused rather than handed to a reader that expects this one.
-    Token sidecar 3 and envelope version 2 were never released before 6.0
-    (5.4.0 wrote sidecar 2 and envelope 1), so their earlier unreleased
-    shapes are refused by what they carry: a row-level ``probes`` or
-    ``per_layer_scores`` copy, an envelope ``per_layer_scores`` map, a
-    geometry reading with the inspector's ``subspace_coords_per_layer`` or
-    half of its per-layer traces, and a lens readout entry without its id
-    (readers key the readout by id).
+    A row is one of two shapes: a generated row
+    (``token_row_measurements``: ``scores`` and each geometry reading's
+    ``fraction`` and ``coords``, no other channel), or a row kept whole
+    (``summary_measurements(per_layer=True)``: authored capture, or a call
+    that set ``persist_per_layer_scores``), each geometry reading carrying
+    its summary and all three traces.  Rows reach a tree through the token
+    sidecar and through ``PUT /tree`` (the dashboard's restore, which
+    carries them inline); a row of another shape is refused rather than
+    handed to a reader that expects this one.  Token sidecar 3 and envelope
+    version 2 were never released before 6.0 (5.4.0 wrote sidecar 2 and
+    envelope 1), so their earlier unreleased shapes are refused by what they
+    carry: a row-level ``probes`` or ``per_layer_scores`` copy, an envelope
+    ``per_layer_scores`` map, a geometry reading with the inspector's
+    ``subspace_coords_per_layer``, with its summary but not all of its
+    traces, and a lens readout entry without its id (readers key the
+    readout by id).
     """
     for row in rows or ():
         if not isinstance(row, dict):
@@ -172,12 +185,16 @@ def _check_row_measurements(rows: list[Any] | None) -> None:
 
 def _check_geometry_readings(envelope: dict[str, Any]) -> None:
     instruments = envelope.get("instruments")
-    geometry = instruments.get("geometry") if isinstance(instruments, dict) else None
+    if not isinstance(instruments, dict):
+        return
+    geometry = instruments.get("geometry")
     readings = geometry.get("readings") if isinstance(geometry, dict) else None
     if not isinstance(readings, dict):
         return
+    slim = frozenset(ROW_GEOMETRY_KEYS)
     summary = frozenset(GEOMETRY_SUMMARY_KEYS)
-    traced = summary | frozenset(GEOMETRY_TRACE_KEYS)
+    whole = summary | frozenset(GEOMETRY_TRACE_KEYS)
+    shapes: set[str] = set()
     for name, reading in readings.items():
         if not isinstance(reading, dict):
             raise LoomTreeError(f"token row reading {name!r} must be an object")
@@ -185,12 +202,59 @@ def _check_geometry_readings(envelope: dict[str, Any]) -> None:
             raise LoomTreeError(_PRE_6_ROW.format(
                 detail=f"subspace coordinates on reading {name!r}",
             ))
-        if reading.keys() != summary and reading.keys() != traced:
+        keys = reading.keys()
+        if keys == slim or keys == whole:
+            shapes.add("generated" if keys == slim else "whole")
+            continue
+        if summary <= keys:
+            raise LoomTreeError(_PRE_6_ROW.format(
+                detail=f"reading {name!r} keeps its summary without all its traces",
+            ))
+        raise LoomTreeError(
+            f"token row reading {name!r} carries {sorted(reading)}; a generated "
+            f"row's geometry reading is {sorted(slim)}, a row kept whole carries "
+            f"{sorted(whole)}"
+        )
+    # A generated row carries no channel but geometry; a row with another
+    # family's channel was kept whole.
+    if "generated" in shapes and ("whole" in shapes or instruments.keys() - _SLIM_ROW_CHANNELS):
+        raise LoomTreeError(
+            "a token row mixes a generated row's geometry readings with readings "
+            "kept whole"
+        )
+
+
+def _check_aggregate_measurements(envelope: Any) -> None:
+    """A node's ``aggregate_measurements``: null, or an aggregate envelope of
+    this version whose geometry readings carry exactly their summary and
+    which keeps no ``scores`` (``readout.measurements.aggregate_measurements``)."""
+    if envelope is None:
+        return
+    if not isinstance(envelope, dict):
+        raise LoomTreeError("loom node field 'aggregate_measurements' must be an object or null")
+    if envelope.get("version") != MEASUREMENTS_VERSION:
+        raise LoomTreeError(
+            f"unsupported aggregate measurements version {envelope.get('version')!r} "
+            f"(this build reads {MEASUREMENTS_VERSION})"
+        )
+    if envelope.get("scope") != "aggregate" or "scores" in envelope:
+        raise LoomTreeError(
+            "loom node field 'aggregate_measurements' must be an aggregate envelope "
+            "without scores (aggregate_readings is its flat view)"
+        )
+    instruments = envelope.get("instruments")
+    if not isinstance(instruments, dict):
+        raise LoomTreeError("loom node aggregate_measurements must carry its instruments")
+    geometry = instruments.get("geometry")
+    readings = geometry.get("readings") if isinstance(geometry, dict) else {}
+    summary = frozenset(GEOMETRY_SUMMARY_KEYS)
+    for name, reading in (readings or {}).items():
+        if not isinstance(reading, dict) or reading.keys() != summary:
             raise LoomTreeError(
-                f"token row reading {name!r} carries {sorted(reading)}; a row's "
-                f"geometry reading is {sorted(summary)}, plus all of "
-                f"{sorted(GEOMETRY_TRACE_KEYS)} or none"
+                f"loom node aggregate reading {name!r} must carry exactly "
+                f"{sorted(summary)}"
             )
+    _check_lens_readout_ids(envelope)
 
 
 def _check_lens_readout_ids(envelope: dict[str, Any]) -> None:
@@ -252,6 +316,13 @@ class LoomNode:
     thinking_tokens: list[TokenRow] | None = None
     recipe: Recipe | None = None
     aggregate_readings: dict[str, float] = field(default_factory=dict)
+    # The reply's settled aggregate envelope as a node keeps it
+    # (``readout.measurements.aggregate_measurements``: each reading's
+    # summary, no traces, no scores; ``aggregate_readings`` is its flat
+    # view), stamped at finalize.  The rack and the probe inspector draw it
+    # after a reload; ``None`` for an authored or imported turn and a reply
+    # that measured nothing.
+    aggregate_measurements: Measurements | None = None
     applied_steering: str | None = None
     # Why the generation ended (``FinishReason``); ``None`` for an authored
     # or imported turn and while a reply streams.  ``"cancelled"`` marks a
@@ -304,6 +375,7 @@ class LoomNode:
             "role_label": self.role_label,
             "thinking_text": self.thinking_text,
             "aggregate_readings": dict(self.aggregate_readings),
+            "aggregate_measurements": self.aggregate_measurements,
             "applied_steering": self.applied_steering,
             "finish_reason": self.finish_reason,
             "starred": self.starred,
@@ -360,6 +432,7 @@ class LoomNode:
             raise LoomTreeError(
                 "loom node field 'aggregate_readings' must map strings to numbers"
             )
+        _check_aggregate_measurements(data["aggregate_measurements"])
         if not isinstance(data["starred"], bool):
             raise LoomTreeError("loom node field 'starred' must be a boolean")
         if not is_number(data["created_at"]):
@@ -400,6 +473,7 @@ class LoomNode:
             thinking_tokens=data.get("thinking_tokens"),
             recipe=recipe,
             aggregate_readings=dict(data["aggregate_readings"]),
+            aggregate_measurements=data["aggregate_measurements"],
             applied_steering=data["applied_steering"],
             finish_reason=data["finish_reason"],
             starred=data["starred"],
@@ -846,6 +920,7 @@ class LoomTree:
             node.thinking_tokens = []
             node.recipe = recipe
             node.aggregate_readings = {}
+            node.aggregate_measurements = None
             node.applied_steering = None
             node.finish_reason = None
             node.mean_logprob = None
@@ -928,6 +1003,7 @@ class LoomTree:
         *,
         text: str,
         aggregate_readings: dict[str, float] | None = None,
+        aggregate_measurements: Measurements | None = None,
         applied_steering: str | None = None,
         finish_reason: FinishReason | None = None,
         mean_logprob: float | None = None,
@@ -950,6 +1026,10 @@ class LoomTree:
         ``raw_token_ids`` is the engine's exact ``generated_ids`` decode
         sequence (delimiters included) — the forceable prefix a logit
         fork replays.  ``None`` leaves the node's prior value untouched.
+
+        ``aggregate_measurements`` is the reply's aggregate envelope as a
+        node keeps it (``readout.measurements.aggregate_measurements``),
+        ``None`` when the reply measured nothing.
         """
         with self._lock:
             node = self.nodes.get(node_id)
@@ -958,6 +1038,7 @@ class LoomTree:
             node.text = text
             if aggregate_readings is not None:
                 node.aggregate_readings = dict(aggregate_readings)
+            node.aggregate_measurements = aggregate_measurements
             node.applied_steering = applied_steering
             node.finish_reason = finish_reason
             node.mean_logprob = mean_logprob
@@ -1030,6 +1111,7 @@ class LoomTree:
             node.thinking_tokens = None
             node.recipe = None
             node.aggregate_readings = {}
+            node.aggregate_measurements = None
             node.applied_steering = None
             node.finish_reason = "stop"
             node.mean_logprob = None

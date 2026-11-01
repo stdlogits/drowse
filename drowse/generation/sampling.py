@@ -70,11 +70,12 @@ class SamplingConfig:
     # prompt so steer baseline matches extract baseline.
     user_role: str | None = None
     assistant_role: str | None = None
-    # Keep each token reading's per-layer traces (and the lens readout's
-    # per-layer rows) on the loom token rows.  A row always keeps each
-    # reading's summary (``token_row_measurements``); the traces are the heavy
-    # part (a probe × layer grid per token), so they are opt-in: without them
-    # the per-layer views replay the token while a model is loaded.
+    # Keep every token reading whole on the loom token rows, its per-layer
+    # traces and the lens readout's per-layer rows included
+    # (``summary_measurements``).  A generated row otherwise keeps only what
+    # the transcript, the reply trace and the filter read per token
+    # (``token_row_measurements``: the scores, a geometry probe's share and
+    # coordinates); the token view replays the rest while a model is loaded.
     persist_per_layer_scores: bool = False
     # Compute per-layer whitened subspace coords on each token's live probe
     # reading (``ProbeReading.subspace_coords_per_layer``): the live point and

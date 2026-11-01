@@ -46,16 +46,22 @@ binding names a source per family that produced its data
 ``sources.S``: the ``slens/`` readings), told apart by the reading's unit.
 
 A loom token row persists the token envelope through
-:func:`token_row_measurements`, the one row projection: each geometry
-reading's summary (no per-layer traces, never the inspector's subspace
-coordinates), the scalar readings whole, the lens readout's layer-aggregated
-chips without its per-layer matrix, and every float rounded to
+:func:`token_row_measurements`, the generated row's projection: what the
+transcript's tint, the reply trace and the tree filter read per token and
+nothing else, the flat ``scores`` and each geometry reading's ``fraction``
+and ``coords`` (:class:`TokenRowMeasurements`), every float rounded to
 :data:`~drowse.readout.types.READING_DIGITS` significant digits, the
-envelope's own precision (a probability of 3e-05 keeps its value).  A generation that sets
-``persist_per_layer_scores`` keeps the geometry traces and the readout's
-layer rows on its rows too; otherwise the per-layer views replay the token
-(``token_readout``, ``token_anatomy``) while a model is loaded.  The live
-``token`` frame carries the whole envelope.
+envelope's own precision (a probability of 3e-05 keeps its value).  The rest
+of a token's reading (a geometry reading's nearest nodes, assignment,
+residual, membership and depth; the lens and SAE readings, readouts and
+bindings; the unit readings) is the token view's, which replays the token
+(``token_readout``, ``token_anatomy``) while a model is loaded.  A row
+nothing can replay (an authored prompt row has no ``raw_index``), and a row
+whose generation set ``persist_per_layer_scores``, keeps
+:func:`summary_measurements` with its traces instead: every reading whole
+but the inspector's live trail.  The node keeps its reply's settled aggregate
+once (:func:`aggregate_measurements`), which the rack and the probe inspector
+read.  The live ``token`` frame carries the whole envelope.
 
 ``anatomy`` rides only a ``replay`` envelope (``session.token_anatomy``,
 :mod:`drowse.loom.node_replay`): one token's layers read through both lens
@@ -163,10 +169,10 @@ class ProbeReadingDict(TypedDict):
     is what lets the generated dashboard types name the geometry reading
     instead of falling back to an opaque record.
 
-    A loom token row keeps the summary (:func:`token_row_measurements`): the
-    three per-layer traces only when its generation set
-    ``persist_per_layer_scores``, and ``subspace_coords_per_layer`` (the
-    probe inspector's live trail) never.
+    :func:`summary_measurements` keeps the summary, plus the three per-layer
+    traces on request, and never ``subspace_coords_per_layer`` (the probe
+    inspector's live trail); a generated token row keeps only
+    :class:`RowProbeReadingDict`.
     """
 
     fraction: float
@@ -207,8 +213,8 @@ class LensAggregateToken(TypedDict):
 
 class LensReadout(TypedDict):
     """The native readout: the per-layer top-k matrix and its
-    layer-aggregated chips.  A loom token row keeps ``layers`` only when its
-    generation set ``persist_per_layer_scores``."""
+    layer-aggregated chips.  :func:`summary_measurements` keeps ``layers``
+    only on request."""
 
     layers: NotRequired[list[LensReadoutLayer]]
     aggregate: list[LensAggregateToken]
@@ -381,6 +387,40 @@ class Measurements(TypedDict):
     instruments: Instruments
     scores: NotRequired[dict[str, float]]
     anatomy: NotRequired[TokenAnatomy]
+
+
+class RowProbeReadingDict(TypedDict):
+    """A generated token row's geometry reading: the share on the probe's
+    subspace and its domain coordinates, what the transcript's tint (a
+    multi-axis probe's ``name[i]``) and the reply trace (a curved probe's
+    share) read per token.  The rest of the reading replays."""
+
+    fraction: float
+    coords: list[float]
+
+
+class RowGeometryChannel(TypedDict):
+    readings: dict[str, RowProbeReadingDict]
+
+
+class RowInstruments(TypedDict):
+    """A generated token row's channels: geometry only.  Every other
+    family's per-token value is its ``scores`` entry; its readings, readout
+    and binding replay."""
+
+    geometry: NotRequired[RowGeometryChannel]
+
+
+class TokenRowMeasurements(TypedDict):
+    """A generated loom token row's ``measurements``
+    (:func:`token_row_measurements`): the envelope header, the flat
+    ``scores`` and each geometry probe's share and coordinates."""
+
+    version: int
+    scope: MeasurementScope
+    provenance: MeasurementProvenance
+    instruments: RowInstruments
+    scores: NotRequired[dict[str, float]]
 
 
 class MeasurementsEnvelope(TypedDict):
@@ -631,23 +671,24 @@ def _row_scalar_reading(reading: Mapping[str, Any]) -> dict[str, Any]:
     return out
 
 
-def token_row_measurements(
+def summary_measurements(
     envelope: Measurements, *, per_layer: bool,
 ) -> Measurements:
-    """The loom token row's form of a token envelope: the one row projection.
+    """An envelope's persisted summary: every reading whole but its traces.
 
-    A row keeps what the transcript, the reply trace and the token view's
-    summary read, once: each geometry reading's summary (without its
-    per-layer traces), each scalar reading whole (its trace is a few values),
-    the lens readout's layer-aggregated chips, the SAE features, the bindings
-    and the flat ``scores``, every float at ``READING_DIGITS`` significant
-    digits (the envelope's own rounding, so a scalar is never rounded twice
-    into a different value).
-    ``per_layer`` (the generation's ``persist_per_layer_scores``) also keeps
-    the geometry traces and the lens readout's ``layers``.  The probe
-    inspector's ``subspace_coords_per_layer`` is a live trail and is never
-    kept.  Without the traces, the per-layer views replay the token while a
-    model is loaded.
+    Each geometry reading's summary (:data:`GEOMETRY_SUMMARY_KEYS`), each
+    scalar reading whole (its trace is a few values), the lens readout's
+    layer-aggregated chips, the SAE features, the bindings and the flat
+    ``scores``, every float at ``READING_DIGITS`` significant digits (the
+    envelope's own rounding, so a scalar is never rounded twice into a
+    different value).  ``per_layer`` also keeps the geometry traces and the
+    lens readout's ``layers``.  The probe inspector's
+    ``subspace_coords_per_layer`` is a live trail and is never kept.
+
+    A token row nothing can replay (authored capture: no ``raw_index``) and
+    a row of a generation that set ``persist_per_layer_scores`` keep this
+    with ``per_layer=True``; a node keeps its aggregate through
+    :func:`aggregate_measurements`.
     """
     instruments = envelope["instruments"]
     out: dict[str, Any] = {}
@@ -746,6 +787,56 @@ def token_row_measurements(
     return row
 
 
+#: The keys a generated token row's geometry reading keeps
+#: (:class:`RowProbeReadingDict`).
+ROW_GEOMETRY_KEYS = ("fraction", "coords")
+
+
+def token_row_measurements(envelope: Measurements) -> TokenRowMeasurements:
+    """A generated loom token row's form of its token envelope.
+
+    The row keeps what the transcript's tint, the reply trace and the tree
+    filter read per token without a model: the flat ``scores`` (every
+    family's axis 0) and each geometry reading's ``fraction`` and ``coords``
+    (a curved probe's trace reads its share, a multi-axis probe's tint its
+    other coordinates), at ``READING_DIGITS`` significant digits.  Everything
+    else is the token view's, which replays the token
+    (``token_readout``, ``token_anatomy``); the reply's settled reading rides
+    the node (:func:`aggregate_measurements`).
+    """
+    instruments: dict[str, Any] = {}
+    geometry = envelope["instruments"].get("geometry")
+    if geometry is not None:
+        instruments["geometry"] = {
+            "readings": {
+                name: {
+                    "fraction": _r(reading["fraction"]),
+                    "coords": [_r(c) for c in reading["coords"]],
+                }
+                for name, reading in geometry["readings"].items()
+            },
+        }
+    row: TokenRowMeasurements = {
+        "version": envelope["version"],
+        "scope": envelope["scope"],
+        "provenance": envelope["provenance"],
+        "instruments": cast(RowInstruments, instruments),
+    }
+    if "scores" in envelope:
+        row["scores"] = {name: _r(v) for name, v in envelope["scores"].items()}
+    return row
+
+
+def aggregate_measurements(envelope: Measurements) -> Measurements:
+    """What a loom node keeps of its reply's aggregate envelope: the reply's
+    settled reading, as the rack and the probe inspector draw it after a
+    reload.  :func:`summary_measurements` without the traces and without
+    ``scores``: the node's ``aggregate_readings`` is its flat view."""
+    out = summary_measurements(envelope, per_layer=False)
+    out.pop("scores", None)
+    return out
+
+
 class EnvelopeSources(TypedDict):
     """The source fields an envelope binds: :func:`build_measurements`'
     ``lens_sources`` / ``sae_source`` / ``sae_layer`` keywords."""
@@ -808,14 +899,21 @@ __all__ = [
     "MeasurementsEnvelope",
     "ProbeReadingDict",
     "READING_DIGITS",
+    "ROW_GEOMETRY_KEYS",
+    "RowGeometryChannel",
+    "RowInstruments",
+    "RowProbeReadingDict",
     "SaeChannel",
     "SaeFeature",
     "SaeReadout",
     "ScalarReadingDict",
     "TokenAnatomy",
+    "TokenRowMeasurements",
     "TokenScoreDict",
     "UnitsChannel",
+    "aggregate_measurements",
     "build_measurements",
     "envelope_sources",
+    "summary_measurements",
     "token_row_measurements",
 ]

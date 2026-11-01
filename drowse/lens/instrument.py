@@ -2545,11 +2545,14 @@ class LensInstrument:
         steering when ``apply_steering``; ``raw`` selects the flat render) and
         reads ``softmax(W_U · norm(J_l h))`` at the producing position for
         each selected layer (default: every fitted layer), plus the
-        layer-aggregated chips from the same logits.  The read yields
-        per-layer *probabilities*, which is exactly what
-        ``build_measurements`` takes, so there is no exp/log round-trip on
-        this hop.  Raises :class:`~drowse.lens.jlens.LensNotFittedError` with
-        no lens, ``RequestError`` on a bad ``top_k`` or an unfitted layer, and
+        layer-aggregated chips from the same logits, and the attached
+        ``jlens/`` and ``slens/`` probes' readings from the same capture
+        (:meth:`score_probes`, as a live token scores them: a loom row keeps
+        only their values).  The read yields per-layer *probabilities*,
+        which is exactly what ``build_measurements`` takes, so there is no
+        exp/log round-trip on this hop.  Raises
+        :class:`~drowse.lens.jlens.LensNotFittedError` with no lens,
+        ``RequestError`` on a bad ``top_k`` or an unfitted layer, and
         ``UnknownNodeError`` / ``InvalidNodeOperationError`` on a bad anchor.
         """
         from drowse.readout.measurements import build_measurements
@@ -2566,6 +2569,7 @@ class LensInstrument:
         ) -> tuple[
             dict[int, list[tuple[str, float, int]]],
             list[LensAggregateRow],
+            dict[str, ScalarReading],
         ]:
             pair_rows = [(layer, hidden[layer]) for layer in req]
             logits = runtime.logits_rows(lens, pair_rows)
@@ -2573,11 +2577,15 @@ class LensInstrument:
             return (
                 dict(zip(req, decoded)),
                 runtime.aggregate_rows(logits, req, top_k=width),
+                self.score_probes(hidden),
             )
 
-        token, (readout, aggregate) = self._replay(
-            node_id, raw_index, layers=req, read=read,
-            apply_steering=apply_steering, raw=raw,
+        token, (readout, aggregate, probe_readings) = self._replay(
+            node_id, raw_index,
+            # The probes' layers resolve inside the section, beside the
+            # roster the read scores.
+            layers=lambda: sorted(set(req) | self.probe_layers()),
+            read=read, apply_steering=apply_steering, raw=raw,
             label="session.lens.token_readout",
         )
         measurements = build_measurements(
@@ -2595,7 +2603,8 @@ class LensInstrument:
                 (str(tok), float(strength), float(com), float(spread), int(tid))
                 for tok, strength, com, spread, tid in aggregate
             ],
-            lens_sources={"R": runtime.source},
+            lens_readings=probe_readings or None,
+            lens_sources=self.measurement_sources(),
             steering=token.steering,
         )
         return {"measurements": measurements}

@@ -391,10 +391,10 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
 
     ((node_id, row, thinking),) = rows
     assert (node_id, thinking) == ("node-1", False)
-    # The row keeps the envelope's projection; the event carries it whole.
-    assert row["measurements"] == token_row_measurements(
-        cast(Any, event.measurements), per_layer=False,
-    )
+    # The row keeps the generated row's projection (the lens probe's value
+    # as its score, nothing of the lens channel); the event carries it whole.
+    assert row["measurements"] == token_row_measurements(cast(Any, event.measurements))
+    assert row["measurements"]["instruments"] == {}
     assert row["raw_index"] == 4
     assert row["top_alts"] == [{"id": 7, "text": " a", "logprob": -0.1}]
     assert set(row) == {

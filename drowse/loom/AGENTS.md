@@ -60,7 +60,12 @@ duck-typed `session`: it uses `tree`, `model_id`, `config.system_prompt`,
   replays, joined to rows by `raw_index`. Authored and imported turns have
   `tokens=None` until authored capture adds rows (which have no `raw_index`).
 - **Readings.** `aggregate_readings` holds axis-0 finalize aggregates from all
-  four read families; `mean_logprob`/`mean_surprise` cover the response span.
+  four read families; `aggregate_measurements` the same aggregate envelope as
+  a node keeps it (`readout/measurements.py::aggregate_measurements`: each
+  reading's summary, no traces, no `scores`), which the rack and the probe
+  inspector draw after a reload, `None` for an authored or imported turn and
+  a reply that measured nothing; `mean_logprob`/`mean_surprise` cover the
+  response span.
 - **Edits.** `edit` rewrites `text` only. The recipe, rows and
   `raw_token_ids` keep the original decode, so forks, replay and joint
   logprobs read the original; `edit_count`/`edited_at` are the only signal.
@@ -113,12 +118,20 @@ row whose lens readout entry (aggregate or per-layer) lacks its vocabulary
 id, and an unreleased pre-6.0 row or an outdated producer would collide.
 A row's keys are exactly `token_id`, `text`, `logprob`, `sampler_entropy`
 (the browser runtime's), `perplexity`, `raw_index`, `top_alts` and
-`measurements` (each optional); its envelope is
-`readout/measurements.py::token_row_measurements` of the token's envelope.
-The reader refuses the earlier unreleased sidecar-3 shapes by what they
-carry: a row-level `probes` or `per_layer_scores` copy, an envelope
-`per_layer_scores` map, a geometry reading with `subspace_coords_per_layer`
-or with some but not all of its three per-layer traces.
+`measurements` (each optional). A generated row's envelope is
+`readout/measurements.py::token_row_measurements` of the token's envelope:
+`scores` and each geometry reading's `fraction` and `coords`, no other
+channel (the token view replays the rest). A row kept whole (authored
+capture, or a call that set `persist_per_layer_scores`) is
+`summary_measurements(per_layer=True)`: each geometry reading carries its
+summary and all three traces. The reader refuses the earlier unreleased
+sidecar-3 shapes by what they carry: a row-level `probes` or
+`per_layer_scores` copy, an envelope `per_layer_scores` map, a geometry
+reading with `subspace_coords_per_layer` or with its summary but not all of
+its traces, and a row mixing generated readings with whole ones. A node's
+`aggregate_measurements` is null or an `aggregate`-scope envelope of this
+version, without `scores`, whose geometry readings carry exactly their
+summary.
 
 A node's `finish_reason` is `null` (authored, imported without one, or still
 streaming) or one of `generation.results.FINISH_REASONS`; the reader refuses
@@ -315,7 +328,9 @@ without the node's own terms. Pinned against the live unit readings of
   `units/stats.py::UnitScales`; `units_scale` names which), so a unit shows the
   number its probe, unit activity and the unit view show. No R lens:
   `units_absent`.
-  It returns the `scope="replay"` envelope's `anatomy`.
+  It returns the `scope="replay"` envelope's `anatomy`, beside a lens channel
+  with the attached `jlens/`/`slens/` probes' readings of the same residual
+  (a loom row keeps only their values).
 - **Unit activity** (`unit_activity(node_id, top=32, units=(), raw_index=None,
   layers=None)`): anchored at the node's last token, so one forward covers
   every token's producing position; per-layer hooks reduce on the device
@@ -432,10 +447,11 @@ The browser edition (`stdlogits/drowse.ai`) ports the tree ops,
 `compose_call`, the filter grammar, diff and transcripts.
 `tests/fixtures/browser/loom-operation-transcript-v1.json` (checked by
 `tests/browser/test_browser_parity.py`) pins a shared script's events (`op`,
-`rev`, ids, `active_node_id`) and final tree; token rows carry the envelope
-pinned by `measurement-envelope-v2.json`. Changing an event, the recipe, node
-or tree JSON, the composition rule or the filter grammar is an interface
-change there.
+`rev`, ids, `active_node_id`) and final tree; token rows carry the generated
+row's projection and nodes their `aggregate_measurements`, both pinned by
+`measurement-envelope-v2.json` (`expectedRow`, `expectedNodeAggregate`).
+Changing an event, the recipe, node or tree JSON, the composition rule or the
+filter grammar is an interface change there.
 
 ## Testing
 

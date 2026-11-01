@@ -29,7 +29,7 @@ other three families (`drowse/units/AGENTS.md`);
 | `monitor_flat.py` | `_FlatEngine`: the batched read over every flat probe |
 | `geometry.py` | `GeometryInstrument`, `GeometryRun` |
 | `roster.py` | `ProbeRoster` and its `GeometryFamily`/`ReadoutFamily` protocols |
-| `measurements.py` | `build_measurements`, `token_row_measurements` (the loom row's projection at `types.READING_DIGITS`), `envelope_sources`, `LENS_FAMILY_BY_UNIT`, the envelope TypedDicts |
+| `measurements.py` | `build_measurements`, the persisted projections at `types.READING_DIGITS` (`token_row_measurements`, `summary_measurements`, `aggregate_measurements`), `envelope_sources`, `LENS_FAMILY_BY_UNIT`, the envelope TypedDicts |
 | `analytics.py` | `cross_layer_cosine`, `cosine_matrix` (whitened; used by `server/profile_routes.py`) |
 
 ## Layering
@@ -354,32 +354,49 @@ reading's unit (`LENS_FAMILY_BY_UNIT`; any other unit is a broken invariant).
 `units` `units` (`UnitsChannel`) is exactly `{binding:
 {source: null, steering}, readings}`, present only with readings; `readings` are each family's native
 `to_dict()`; `readout` is the native discovery surface; `scores` is the axis-0
-join rounded to 6 places; there is no layer-major `per_layer_scores` copy (a
+join at 6 significant digits; there is no layer-major `per_layer_scores` copy (a
 reading's trace lives in the reading). The lens readout holds `p_l`, and this
 is the one place it becomes the wire's `logprob` (floored at `1e-45` so JSON
 stays finite).
 
-`token_row_measurements(envelope, per_layer=)` is the one projection a loom
-token row persists (the engine's `TokenTap` and authored capture call it; the
-live frame keeps the whole envelope). It keeps each geometry reading's summary
-(`GEOMETRY_SUMMARY_KEYS`: fraction, nearest, coords, residual, assignment,
-membership, depth_com, depth_spread), each scalar reading whole (its
-`per_layer` is a lens probe's band or one unit or SAE layer, and no replay
-returns a lens probe's), the lens readout's `aggregate` without `layers`, the
-SAE features, the bindings and `scores`, every float rounded to
+Three projections persist an envelope, every float rounded to
 `READING_DIGITS` (6) significant digits (`types.round_reading`: `%g`'s
-correctly rounded form, `FLT_DIG`, what an fp32 reading reliably carries;
-the envelope's scalar readings and `scores` use the same rule, so the row
-never rounds a value twice). Significant digits, not
-decimal places: a `jlens/` probability is often below 1e-4 and is read on a
-log scale, so fixed places would zero it. `per_layer=True` (the
-call's `persist_per_layer_scores`) adds `GEOMETRY_TRACE_KEYS` and the
-readout's `layers`. `subspace_coords_per_layer` (the inspector's live trail)
-is never kept. Authored-prompt rows (`session/authored_capture.py`) always
-pass `per_layer=True`: they carry no `raw_index`, so nothing could replay
-their layers, and a prompt's rows are few. That is why the geometry per-layer keys and
-`LensReadout.layers` are `NotRequired` in the TypedDicts. The loom reader
-refuses rows of the earlier unreleased shapes (`loom/tree.py`). `envelope_sources` is the one builder of
+correctly rounded form, `FLT_DIG`, what an fp32 reading reliably carries; the
+envelope's scalar readings and `scores` use the same rule, so nothing is
+rounded twice). Significant digits, not decimal places: a `jlens/` probability
+is often below 1e-4 and is read on a log scale, so fixed places would zero it.
+
+- `token_row_measurements(envelope)` is a generated loom token row's
+  (`TokenRowMeasurements`, the engine's `TokenTap`): what the transcript's
+  tint, the reply trace and the tree filter read per token without a model,
+  the flat `scores` (every family's axis 0) and each geometry reading's
+  `fraction` and `coords` (`ROW_GEOMETRY_KEYS`: a curved probe's trace reads
+  its share, a multi-axis probe's tint its other coordinates), and no other
+  channel. Everything else is the token view's and the hover's, which replay
+  the token: the geometry `token_readout`, the lens and SAE `token_readout`s
+  (each also returns the attached probes' readings from the same capture) and
+  the token anatomy (its lens channel carries the lens probes' readings).
+  About 1 kB a SmolLM2 token with the 17 default probes.
+- `summary_measurements(envelope, per_layer=)` is every reading whole but its
+  traces: each geometry reading's summary (`GEOMETRY_SUMMARY_KEYS`: fraction,
+  nearest, coords, residual, assignment, membership, depth_com,
+  depth_spread), each scalar reading whole (its `per_layer` is a lens probe's
+  band or one unit or SAE layer), the lens readout's `aggregate`, the SAE
+  features, the bindings and `scores`; `per_layer=True` adds
+  `GEOMETRY_TRACE_KEYS` and the readout's `layers`. A row nothing can replay
+  (`session/authored_capture.py`: authored rows carry no `raw_index`) and a
+  row of a call that set `persist_per_layer_scores` keep it with
+  `per_layer=True`. `subspace_coords_per_layer` (the inspector's live trail)
+  is never kept.
+- `aggregate_measurements(envelope)` is what a loom node keeps of its reply's
+  aggregate envelope (`LoomNode.aggregate_measurements`, stamped at
+  finalize): the summary without traces and without `scores` (the node's
+  `aggregate_readings` is its flat view). The rack and the probe inspector
+  draw the reply's settled reading from it after a reload.
+
+The loom reader refuses rows and node aggregates of any other shape
+(`loom/tree.py`). That is why the geometry per-layer keys and
+`LensReadout.layers` are `NotRequired` in the TypedDicts. `envelope_sources` is the one builder of
 `lens_sources`/`sae_source`/`sae_layer`, from the lens instrument's
 `measurement_sources()` (the source labels its run pinned, stamped on each
 `LensRuntime` when its lens became resident, so no disk read per

@@ -250,7 +250,8 @@ the capture-mode table (including each mode's finalize read) are in
   `TokenConsumerOptions` (`live_scores`, `lens_readout`, `sae_readout`,
   `perplexity`, `probe_readings`), which lets the engine skip unconsumed work.
   `live_scores` already means the full reading, per-layer traces included;
-  whether the loom row keeps those traces is the call's
+  whether the loom row keeps the whole reading (not only its scores and
+  geometry shares and coordinates) is the call's
   `persist_per_layer_scores`, never a consumer's.
 - `TokenProbePayload` keeps one reading slot per `InstrumentFamily`.
   `to_token_payload` returns `{"measurements": envelope}` from
