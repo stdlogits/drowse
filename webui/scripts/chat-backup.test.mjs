@@ -122,11 +122,12 @@ function snapshot() {
     text: "Marmots", token_id: 5, raw_index: 1, logprob: -0.2, sampler_entropy: 1.1,
     top_alts: [{ id: 5, text: "Marmots", logprob: -0.2 }, { id: 6, text: "They", logprob: -2.4 }],
     measurements: {
-      version: 1, scope: "token", provenance: { source: "recorded" },
+      // A 6.0 row (token_row_measurements): the snapshot validator refuses any other shape.
+      version: 2, scope: "token", provenance: "captured",
       instruments: {
-        lens: { readout: { layers: [{ layer: 0, tokens: [{ id: 5, token: "Marmots", logprob: -1.2 }] }], aggregate: [{ token: "Marmots", strength: 0.3 }] } },
-        sae: { readout: { layer: 13, features: [{ id: 396, activation: 975.08 }] } },
-        geometry: { readings: { calm: { coords: [0.2], per_layer: { 13: [0.3] } } } },
+        lens: { binding: { sources: { R: "local:r" }, steering: "0.3 jlens/calm" }, readout: { layers: [{ layer: 0, tokens: [{ id: 5, token: "Marmots", logprob: -1.2 }] }], aggregate: [{ token: "Marmots", id: 5, strength: 0.3, com: 0.5, spread: 0.1 }] } },
+        sae: { binding: { source: "saelens:test", steering: "0.3 jlens/calm", layer: 13 }, readout: { features: [{ id: 396, activation: 975.08, label: null, max_act: null }] } },
+        geometry: { readings: { calm: { fraction: 0.4, nearest: [["calm", 1]], coords: [0.2], residual: 0, assignment: [["calm", 0.9]], membership: 1, depth_com: [0.5], depth_spread: [0.1] } } },
       },
     },
   }];
