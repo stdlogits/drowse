@@ -1148,6 +1148,11 @@ def _merge_plain(
     coeff: float,
     trig: Optional[Trigger],
 ) -> None:
+    # ``@both`` on a plain term is the parsed default spelled out: store the
+    # bare float, so ``x@both`` and ``x`` are one IR (and merge) and
+    # ``format_expr``'s tagless ``x`` re-parses to what it rendered.
+    if trig == Trigger.BOTH:
+        trig = None
     if key not in alphas:
         alphas[key] = coeff if trig is None else (coeff, trig)
         return

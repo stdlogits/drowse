@@ -215,9 +215,13 @@ def test_trigger_before():
     assert s.alphas == {"warm": (0.3, Trigger.PROMPT_ONLY)}
 
 
-def test_trigger_both():
+def test_trigger_both_is_the_bare_float():
+    # Regression: ``@both`` stored ``(0.3, Trigger.BOTH)`` while format_expr
+    # wrote it tagless, which re-parsed to a bare float; one IR per meaning.
     s = parse_expr("0.3 warm@both")
-    assert s.alphas == {"warm": (0.3, Trigger.BOTH)}
+    assert s.alphas == {"warm": 0.3}
+    assert parse_expr(format_expr(s)) == s
+    assert parse_expr("0.3 warm + 0.2 warm@both").alphas == {"warm": 0.5}
 
 
 def test_trigger_thinking():

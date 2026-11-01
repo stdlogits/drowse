@@ -122,7 +122,9 @@ to six significant digits (`m%0.1234567` and `m%0.1234568`) share a key: they
 raise rather than merge, since summing would move one term onto the other's
 point.
 Projection, ablation and `%` terms default to `Trigger.BOTH`; a plain term
-without `@` stores a bare float that inherits `Steering.trigger`.
+without `@`, or with `@both`, stores a bare float that inherits
+`Steering.trigger` (`Trigger.BOTH` for every parsed value), so `x@both` and
+`x` are one IR and merge.
 
 ### Triggers
 
