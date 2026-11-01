@@ -24,6 +24,14 @@ try {
   const { depthTint, layerDepth, peakLayer, traceBars, readingText, bucketed, aggregateReadingText } = await server.ssrLoadModule("/src/lib/charts/depth.ts");
   // Regression: the Readings list printed raw values ("0" for a jlens/ probability of 2e-6).
   assert.equal(aggregateReadingText("jlens/Paris", 2.4e-6), "<0.1%");
+  // Regression: the probe inspector's Geometry head read "L31 · share 20.01" beside a tip defining
+  // share as 0 to 1. A layer's fitted weight reads as its part of the reading.
+  {
+    const { readingWeight } = await server.ssrLoadModule("/src/lib/charts/chartValues.ts");
+    assert.equal(readingWeight(20.01, [20.01, 60.03, 20.01]), "20%");
+    assert.equal(readingWeight(-1, [1, -1, 2]), "25%");
+    assert.equal(readingWeight(1, [0, 0]), "0%");
+  }
   // Regression: a probe DLS fitted on a subset of layers (confident.uncertain kept 23 of 32) showed
   // no depth label; the label reads the model's layer count, falling back to a full fit's.
   {

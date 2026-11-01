@@ -39,7 +39,7 @@
   import Bar from "../lib/charts/Bar.svelte";
   import Trace from "../lib/charts/Trace.svelte";
   import TraceDetail from "../lib/charts/TraceDetail.svelte";
-  import { chartValue } from "../lib/charts/chartValues";
+  import { chartValue, readingWeight } from "../lib/charts/chartValues";
   import { depthTint, layerDepth, peakLayer, readingText } from "../lib/charts/depth";
   import {
     renderProbeGeometry,
@@ -57,7 +57,6 @@
   import { nodeCoordExtent, parseProbeTarget } from "../lib/tokens";
   import { polesOf } from "../lib/concepts";
   import { axisName } from "./token/readings";
-  import { coefficientText } from "../lib/steering/terms";
   import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
   import { probeTitle } from "../panels/rack/probeRows";
   import { readsShare, replyLayers, replyToken, replyTrace } from "../panels/rack/probeTrace";
@@ -285,6 +284,7 @@
     const next = layerList[Math.max(0, Math.min(layerList.length - 1, selectedIndex + by))];
     if (next) selectedLayer = next.layer;
   }
+  const layerWeights = $derived(layerList.map((l) => l.mahalanobis_share));
   const maxShare = $derived(
     layerList.reduce((m, l) => Math.max(m, Math.abs(l.mahalanobis_share)), 0),
   );
@@ -583,7 +583,7 @@
       </section>
 
       <section class="dw-sec">
-        <div class="dw-sec-head"><span class="head">Geometry</span>{#if activeGeom}<span class="meta"><MorphText text={`L${selectedLayer} · share ${coefficientText(activeGeom.mahalanobis_share, { fixed: true })}`} /></span>{/if}</div>
+        <div class="dw-sec-head"><span class="head">Geometry</span>{#if activeGeom}<span class="meta" data-tip="This layer's weight in the probe's reading (every layer's fitted spread in the subspace, summed to 100%)"><MorphText text={`L${selectedLayer} · ${readingWeight(activeGeom.mahalanobis_share, layerWeights)} of the reading`} /></span>{/if}</div>
         {#if loading}
           <div class="well" aria-busy="true" role="status"><span class="sr-only">Loading probe geometry…</span></div>
         {:else if error}
@@ -591,15 +591,15 @@
         {:else if !geom || !activeGeom || layerList.length === 0}
           <p class="meta">This probe has no fitted geometry.</p>
         {:else}
-          <div class="shares" role="group" aria-label="Share by layer: choose the layer to plot">
+          <div class="shares" role="group" aria-label="Weight by layer: choose the layer to plot">
             {#each layerList as l (l.layer)}
               <button
                 type="button"
                 class="share"
                 aria-pressed={l.layer === selectedLayer}
                 style:--tint={depthTint(layerDepth(l.layer, geomDeepest))}
-                data-tip={`L${l.layer} · share ${coefficientText(l.mahalanobis_share, { fixed: true })} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of the largest`}
-                aria-label={`Layer ${l.layer}, share ${coefficientText(l.mahalanobis_share, { fixed: true })}`}
+                data-tip={`L${l.layer} · ${readingWeight(l.mahalanobis_share, layerWeights)} of the reading`}
+                aria-label={`Layer ${l.layer}, ${readingWeight(l.mahalanobis_share, layerWeights)} of the reading`}
                 onclick={() => (selectedLayer = l.layer)}
               ><i style:height={`${Math.max(6, maxShare > 0 ? (Math.abs(l.mahalanobis_share) / maxShare) * 100 : 0)}%`}></i></button>
             {/each}
