@@ -389,6 +389,7 @@ class LensInstrument:
         # every footprint z divides by, beside the counts it was masked with.
         self._embeddings: TokenEmbeddings | None = None
         self._embeddings_counts: TokenCounts | None = None
+        self._mask_digest_cache: tuple[TokenCounts, str] | None = None
         # Whitened tokens-in atom norms by (S lens identity, layer), each
         # beside the whitener they were taken in (runtime.cached_norms).
         self._footprint_norms: BoundedLRU[tuple[str | None, int], tuple[Any, torch.Tensor]] = (
@@ -548,6 +549,11 @@ class LensInstrument:
         # the generation refuses (``NeutralMeansError``), never reads raw.
         if any(_spec_side(spec) == "input" for spec in list(self.probes.values())):
             self._neutral_means("out")
+        # Token counts that changed since the S statistics were built (a
+        # catalog bound, a corpus counted) reach this run: rebuild them now,
+        # which drops every view of the old mask (:meth:`_mask_changed`).
+        if self._mask_stale():
+            self._token_embeddings()
         # The WHOLE snapshot is one atomic lens-state transaction:
         # items, gate demand, pin demand, the getter refresh, spec
         # derivation, the live-state reference, and the sidecar
@@ -1378,7 +1384,7 @@ class LensInstrument:
         is refused (:meth:`_input_token`).
         """
         name = f"slens/{word}"
-        if name in self._registry.profiles:
+        if name in self._registry.profiles and not self._mask_stale():
             return name
         with self._exclusive(
             "an slens/ steering atom was resolved while another model "
@@ -1415,6 +1421,29 @@ class LensInstrument:
                 f"in an S read; mask: {embeddings.mask_source})"
             )
         return token_id
+
+    def _mask_stale(self) -> bool:
+        """Whether the token counts changed since the S statistics were
+        built (disk only; the rebuild is :meth:`_token_embeddings`)."""
+        built = self._embeddings
+        return built is not None and self._embeddings_counts is not self._token_counts()
+
+    def _mask_digest(self) -> str:
+        """A digest of what the S read's token mask is built from: the counts
+        (host int64) and their threshold, or ``"tokenizer"`` without counts
+        (the tokenizer is the model's).  Disk only; cached per counts object."""
+        counts = self._token_counts()
+        if counts is None:
+            return "tokenizer"
+        cached = self._mask_digest_cache
+        if cached is not None and cached[0] is counts:
+            return cached[1]
+        digest = hashlib.sha256(
+            counts.counts.to(torch.int64).contiguous().numpy().tobytes()
+            + f"|{counts.min_count}".encode()
+        ).hexdigest()[:16]
+        self._mask_digest_cache = (counts, digest)
+        return digest
 
     def token_embeddings(self) -> TokenEmbeddings:
         """The S read's masked embedding statistics (built once per model;
@@ -1456,11 +1485,41 @@ class LensInstrument:
             built = TokenEmbeddings.build(weight, spec.embed_scale, keep, counts=counts)
         with self.state_lock:
             if self._embeddings is None or self._embeddings_counts is not counts:
+                replaced = self._embeddings is not None
                 self._embeddings = built
                 self._embeddings_counts = counts
                 # Tokens-in atom norms were taken over the old centring.
                 self._footprint_norms.clear()
+                if replaced:
+                    self._mask_changed(keep)
             return self._embeddings
+
+    def _mask_changed(self, keep: torch.Tensor) -> None:
+        """The token counts changed under the session (a catalog bound, a
+        corpus counted): every view taken over the old mask goes.
+
+        ``slens/`` steering directions were centred on the old mask (they
+        re-resolve, and re-validate their token, on next use); an attached
+        ``slens/`` probe whose token the new mask drops is detached, as
+        attaching it now would be refused; every ``slens/`` probe's digest
+        names the mask, so the roster drops them.  ``keep`` is the new mask
+        on the host.  Call under ``state_lock``.
+        """
+        self._registry.evict_prefix("slens/")
+        self.current_run.input_stash = None
+        inputs = self._side_probes("input")
+        dropped = [
+            name for name, spec in inputs.items()
+            if not bool(keep[int(spec["token_id"])])
+        ]
+        for name in dropped:
+            del self.probes[name]
+        if dropped:
+            _log.warning(
+                "the S read's token mask changed and drops the token of %s; "
+                "detached", ", ".join(sorted(dropped)),
+            )
+        self._on_change(list(inputs))
 
     # ------------------------------------------------------------------ reads
 
@@ -1882,12 +1941,13 @@ class LensInstrument:
             identity: Any
             if _spec_side(spec) == "input":
                 # The footprint channel: the S lens identity and the token
-                # mask the z divides by (the tokenizer is the model's).
-                tag, identity = "slens-footprint-z-v2", self.input_runtime.identity
+                # mask the z divides by (its counts; the tokenizer is the
+                # model's).
+                tag, identity = "slens-footprint-z-v3", self.input_runtime.identity
             else:
                 tag, identity = "jlens-readout-v5", self.runtime.identity
         if tag.startswith("slens"):
-            identity = (identity, self._centre_digest(layers))
+            identity = (identity, self._centre_digest(layers), self._mask_digest())
         return hashlib.sha256(
             repr((tag, self.model_id, word, token_id, layers, identity)).encode("utf-8")
         ).hexdigest()

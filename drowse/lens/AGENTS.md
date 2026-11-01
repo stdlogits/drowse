@@ -170,7 +170,14 @@ layer's neurons), which a single read cannot be. `TokenEmbeddings` is built on
 the first S use and rebuilt when the counts change (model work: inside the
 exclusive section; the tokens-in footprint norms and the units reader's kept
 ids follow it; the per-token `slens/` probe path reads the built one and never
-rebuilds) and holds `Σ_E` on the model device (`d²` fp32). A one-token read
+rebuilds, so `prepare` rebuilds a stale one before the run binds). A rebuild
+over a changed mask (`_mask_changed`) drops every view of the old one:
+registered `slens/` directions re-resolve (and re-validate their token) on
+next use, an attached `slens/` probe whose token the new mask drops is
+detached with a warning, and the roster forgets every `slens/` digest. The
+`slens/` probe digest (`slens-footprint-z-v3`) binds the S lens identity, the
+neutral centre and the mask's counts digest (`_mask_digest`, disk only). It
+holds `Σ_E` on the model device (`d²` fp32). A one-token read
 (`z_of`) costs `O(d²)` per layer, not a vocabulary pass. The mask and the
 centring are browser-seam semantics: a different mask changes the S top-k and
 every footprint z.

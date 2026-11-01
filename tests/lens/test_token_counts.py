@@ -170,6 +170,54 @@ def test_the_session_masks_by_corpus_counts_and_rebuilds_on_a_change(
     assert int(reader._kept().numel()) == before.n_kept
 
 
+def test_a_mask_change_refreshes_every_s_view(
+    make_tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: a token-count change rebuilt the embedding statistics but
+    left the S family's other views on the old mask: a registered ``slens/``
+    direction returned early (its old centring, even for a token the new mask
+    drops), an attached ``slens/`` probe read the old statistics until another
+    S read rebuilt them, and the probe digest did not name the mask."""
+    from drowse.generation.sampling import SamplingConfig
+    from drowse.lens.jlens import InvalidTokenIdError
+    from tests.lens.test_slens import _install_s_lens, _token
+
+    monkeypatch.setattr(tc, "MIN_COUNT_TOKENS", 1)
+    session = make_tiny_session()
+    _install_s_lens(session)
+    a, b = _token(session, "a"), _token(session, "b")
+    session.add_probe("slens/a")
+    session.add_probe("slens/b")
+    session.registry.ensure_profile_registered("slens/a")
+    session.registry.ensure_profile_registered("slens/b")
+    before = session.lens.token_embeddings()
+    old_a = session.registry.profiles["slens/a"]
+    old_hash = session.probe_hashes()["slens/a"]
+
+    counts = torch.full((len(session.tokenizer),), 3, dtype=torch.int64)
+    rare = [i for i in before.keep.nonzero().squeeze(1).tolist() if i not in (a, b)][:4]
+    counts[rare + [b]] = 0
+    tc.write_corpus_counts(
+        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000, tokenizer="t",
+    )
+    # The instrument's digest names the mask the next run reads (disk only).
+    assert session.lens.probe_hash("slens/a") != old_hash
+    # The next run rebuilds the statistics before it binds: a probe whose token
+    # the new mask drops is detached, the others read the new mask.
+    session.generate("hi", sampling=SamplingConfig(max_tokens=2), stateless=True)
+    after = session.lens.token_embeddings()
+    assert after is not before and after.mask_source == "corpus"
+    assert "slens/b" not in session.lens.probes and "slens/a" in session.lens.probes
+    new_hash = session.probe_hashes()["slens/a"]
+    assert new_hash != old_hash
+    # Registered directions re-resolve over the new centring and re-validate.
+    assert "slens/a" not in session.registry.profiles
+    session.registry.ensure_profile_registered("slens/a")
+    assert not torch.equal(session.registry.profiles["slens/a"][1].cpu(), old_a[1].cpu())
+    with pytest.raises(InvalidTokenIdError, match="mask"):
+        session.registry.ensure_profile_registered("slens/b")
+
+
 def test_lens_counts_counts_a_corpus_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str],
 ) -> None:
