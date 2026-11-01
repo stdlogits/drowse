@@ -107,7 +107,10 @@ matches node ids, one agreeing parent, all reachable from a parentless
 `system` root, no cycles, all three token fields or none) and refuses a token
 row whose `measurements` envelope is not `MEASUREMENTS_VERSION` (2): rows
 arrive through the sidecar and inline through `PUT /tree` (the dashboard's
-restore), and a 5.x row's lens binding has another shape.
+restore), and a 5.x row's lens binding has another shape. It also refuses a
+row whose lens readout entry (aggregate or per-layer) lacks its vocabulary
+`id`: version 2 was never released without one, readers key the readout by
+id, and an unreleased pre-6.0 row or an outdated producer would collide.
 
 `to_dict()` omits token payloads; `GET /tree` sends `include_tokens=True` and
 `PUT /tree` reads it back. `save` writes the JSON atomically after a gzip

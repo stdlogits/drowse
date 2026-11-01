@@ -112,12 +112,16 @@ def _copy_list(value: list[Any] | None) -> list[Any] | None:
 
 
 def _check_row_measurements(rows: list[Any] | None) -> None:
-    """Refuse token rows whose measurement envelope is another version.
+    """Refuse token rows whose measurement envelope is another version, or
+    whose lens readout lacks its vocabulary ids.
 
     Rows reach a tree through the token sidecar and through ``PUT /tree``
     (the dashboard's restore, which carries them inline); an envelope of
     another version has another wire shape, so it is refused rather than
-    handed to a reader that expects this one.
+    handed to a reader that expects this one.  Version 2 was never released
+    with a lens readout that lacked ids (5.4.0 wrote version 1), so an entry
+    without one is an unreleased pre-6.0 row or an outdated producer, and is
+    refused too: readers key the readout by id.
     """
     for row in rows or ():
         if not isinstance(row, dict):
@@ -131,6 +135,28 @@ def _check_row_measurements(rows: list[Any] | None) -> None:
             raise LoomTreeError(
                 f"unsupported token measurements version {envelope.get('version')!r} "
                 f"(this build reads {MEASUREMENTS_VERSION})"
+            )
+        _check_lens_readout_ids(envelope)
+
+
+def _check_lens_readout_ids(envelope: dict[str, Any]) -> None:
+    instruments = envelope.get("instruments")
+    lens = instruments.get("lens") if isinstance(instruments, dict) else None
+    readout = lens.get("readout") if isinstance(lens, dict) else None
+    if readout is None:
+        return
+    if not isinstance(readout, dict):
+        raise LoomTreeError("the lens readout of a token row must be an object")
+    entries: list[Any] = list(readout.get("aggregate") or ())
+    for layer in readout.get("layers") or ():
+        entries.extend(layer.get("tokens") or () if isinstance(layer, dict) else (None,))
+    for entry in entries:
+        token_id = entry.get("id") if isinstance(entry, dict) else None
+        if not isinstance(token_id, int) or isinstance(token_id, bool):
+            raise LoomTreeError(
+                "a token row's lens readout entry has no vocabulary id; rows "
+                "written before drowse 6.0, or by a producer that omits ids, "
+                "are not read"
             )
 
 

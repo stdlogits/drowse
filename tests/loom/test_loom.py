@@ -1267,6 +1267,34 @@ def test_node_reader_refuses_rows_of_another_measurement_version(field: str):
         LoomTree.from_dict(raw)
 
 
+
+@pytest.mark.parametrize("where", ["aggregate", "layers"])
+def test_node_reader_refuses_lens_readout_rows_without_ids(where: str):
+    """Regression: the aggregate chip gained ``id`` under envelope version 2,
+    and the reader checked only the version, so a pre-6.0 row (or an outdated
+    producer's ``PUT /tree``) loaded and the dashboard keyed every chip
+    ``aggregate:undefined``."""
+    tree = _seed_tree()
+    raw = tree.to_dict(include_tokens=True)
+    node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)
+    readout = {
+        "layers": [{"layer": 0, "tokens": [{"token": "a", "id": 5, "logprob": -0.1}]}],
+        "aggregate": [{"token": "a", "id": 5, "strength": 0.8, "com": 0.0, "spread": 0.0}],
+    }
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+        "instruments": {"lens": {
+            "binding": {"sources": {"R": "local:r"}, "steering": None}, "readout": readout,
+        }},
+    }
+    node["tokens"] = [{"token_id": 7, "text": "x", "measurements": envelope}]
+    node["raw_token_ids"] = [7]
+    assert LoomTree.from_dict(raw)
+    entry = readout["aggregate"][0] if where == "aggregate" else readout["layers"][0]["tokens"][0]
+    del entry["id"]
+    with pytest.raises(LoomTreeError, match="no vocabulary id"):
+        LoomTree.from_dict(raw)
+
 def test_sidecar_token_rows_are_type_checked_by_the_node_reader(tmp_path: Path):
     tree = _seed_tree()
     node = tree.nodes[tree.active_node_id]
