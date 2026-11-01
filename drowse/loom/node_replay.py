@@ -30,11 +30,13 @@ unit activity are those of its producing forward, exactly as its loom row's
 live readings and the families' token readouts are.  Position 0 is the
 attention sink: unit activity there is out of distribution (the unit
 statistics never count it) and is reported as 0 and excluded from the peaks,
-as the units runtime excludes it.  Every value reads over the unit's soft
-scale (:func:`~drowse.units.stats.soft_scale`: its own ``act_top`` blended
-with a floor from its layer's typical scale), so a pole that barely fired on
-the neutral corpus ranks by how hard it fires against its layer, not by a
-near-zero divisor, and every unit ranks.
+as the units runtime excludes it.  Every value reads over the unit's reading
+scale (:class:`~drowse.units.stats.UnitScales`: the bound catalog's
+``act_top``, else the neutral statistics', blended with a floor that never
+collapses), so a pole that barely fired on the neutral corpus ranks by how
+hard it fires, not by a near-zero divisor, and every unit ranks.  Unit
+activity names the scale's source (``scale``), the anatomy too
+(``units_scale``).
 
 **Triggers.**  Generation runs the prompt as one prefill forward and then
 one decode forward per token, and a term's trigger decides per forward
@@ -94,7 +96,7 @@ from drowse.readout.measurements import (
 from drowse.steering.triggers import TriggerContext
 from drowse.units.capture import SCALE_FLOOR
 from drowse.units.runtime import UnitsUnavailableError
-from drowse.units.stats import UNIT_POSITIONS_FROM, UnitStats
+from drowse.units.stats import UNIT_POSITIONS_FROM, UnitScales
 
 if TYPE_CHECKING:
     from drowse.lens.instrument import LensInstrument
@@ -156,6 +158,15 @@ class ActivityPopulation(TypedDict):
     layers: list[PopulationLayer]
 
 
+class ActivityScale(TypedDict):
+    """Where unit activity's values divide by: the bound neuron-lens catalog's
+    ``act_top`` (``"catalog"``) or the neutral statistics' (``"neutral"``,
+    relative to the neutral text), with which (``detail``)."""
+
+    source: Literal["catalog", "neutral"]
+    detail: str
+
+
 class UnitActivityJSON(TypedDict):
     """Unit activity over a node's tokens (:meth:`NodeReplayer.unit_activity`).
 
@@ -163,13 +174,16 @@ class UnitActivityJSON(TypedDict):
     ``sink_raw_index`` names the token produced at the attention sink
     (position 0), whose values are 0 and never peak, or is ``None``.
     ``traces`` maps each requested unit to one value per token.  Every value
-    is over the unit's soft scale (:func:`~drowse.units.stats.soft_scale`),
-    and ``top`` ranks every unit by it.
+    is over the unit's reading scale, whose source ``scale`` names
+    (``{"source": "catalog" | "neutral", "detail"}``,
+    :meth:`~drowse.units.stats.UnitScales.describe`), and ``top`` ranks every
+    unit by it.
     """
 
     node_id: str
     steering: str | None
     unit: str
+    scale: ActivityScale
     tokens: list[ActivityToken]
     sink_raw_index: int | None
     top: list[ActivityPeak]
@@ -594,10 +608,13 @@ def token_anatomy_record(
     layers: Sequence[AnatomyLayer],
     units: Sequence[AnatomyUnit],
     units_absent: str | None,
+    units_scale: Literal["catalog", "neutral"] | None,
     patterns: Sequence[AnatomyPattern] | None,
     context: Sequence[str] | None,
 ) -> TokenAnatomy:
-    """The envelope's ``anatomy`` record (:class:`TokenAnatomy`)."""
+    """The envelope's ``anatomy`` record (:class:`TokenAnatomy`); ``units_scale``
+    names the source of the unit rows' ``activation_over_scale`` (``None``
+    without reading scales)."""
     return {
         "token": {
             "raw_index": int(raw_index),
@@ -611,6 +628,7 @@ def token_anatomy_record(
         "layers": list(layers),
         "units": list(units),
         "units_absent": units_absent,
+        "units_scale": units_scale,
         "patterns": None if patterns is None else list(patterns),
         "context": None if context is None else list(context),
     }
@@ -735,13 +753,13 @@ class NodeReplayer:
             # The centring mean is resident before the steering scope opens
             # (a neutral build refuses inside one).
             self._lens.neutral_mean("out", 0)
-        # The unit rows' over-scale values need the neutral unit statistics
-        # (loaded, like the means, before the scope opens); a model without
-        # them still has an anatomy, with those values None.
+        # The unit rows' over-scale values need the reading scales (the
+        # neutral statistics loaded, like the means, before the scope opens);
+        # a model without them still has an anatomy, with those values None.
         try:
-            unit_stats: UnitStats | None = self._units.stats()
+            unit_scales: UnitScales | None = self._units.scales()
         except UnitsUnavailableError:
-            unit_stats = None
+            unit_scales = None
 
         def run(forward: ReplayForward) -> TokenAnatomy:
             segments = self._segments(forward)
@@ -756,7 +774,7 @@ class NodeReplayer:
             with torch.inference_mode():
                 return self._anatomy(
                     spec, taps, forward, k=int(k), units=int(units), patterns=int(patterns),
-                    unit_stats=unit_stats,
+                    unit_scales=unit_scales,
                 )
 
         token, anatomy = self._replayer.forward(
@@ -771,7 +789,7 @@ class NodeReplayer:
 
     def _anatomy(
         self, spec: ModelSpec, taps: TokenTaps, forward: ReplayForward,
-        *, k: int, units: int, patterns: int, unit_stats: UnitStats | None,
+        *, k: int, units: int, patterns: int, unit_scales: UnitScales | None,
     ) -> TokenAnatomy:
         n = len(spec.blocks)
         device = taps.out.device
@@ -803,14 +821,14 @@ class NodeReplayer:
             absent = contributions
         else:
             neuron_c, head_c = contributions
-            # The units family's own number beside the raw one: over the soft
-            # neutral scale, as probes and unit activity read (None without stats).
+            # The units family's own number beside the raw one: over the reading
+            # scale, as probes and unit activity read (None without unit stats).
             for L, c in neuron_c.items():
                 idx = c.abs().topk(min(units, int(c.numel()))).indices
                 act = taps.acts[L][idx].float()
                 slots = [pack.add(c[idx]), pack.add(idx), pack.add(act)]
-                if unit_stats is not None:
-                    scale = unit_stats.layer(L).neuron_reading_scale.to(act.device)
+                if unit_scales is not None:
+                    scale = unit_scales.layer(L).neuron.to(act.device)
                     pole = torch.where(act >= 0, scale[0][idx], scale[1][idx])
                     slots.append(pack.add(act / pole.clamp_min(SCALE_FLOOR)))
                 neuron_slots[L] = tuple(slots)
@@ -819,8 +837,8 @@ class NodeReplayer:
                 idx = c.abs().topk(min(units, int(c.numel()))).indices
                 norms = head_write_norms(block, taps.z[L], taps.attn_out[L])[idx].float()
                 slots = [pack.add(c[idx]), pack.add(idx), pack.add(norms)]
-                if unit_stats is not None:
-                    scale = unit_stats.layer(L).head_reading_scale.to(norms.device)[idx]
+                if unit_scales is not None:
+                    scale = unit_scales.layer(L).head.to(norms.device)[idx]
                     slots.append(pack.add(norms / scale.clamp_min(SCALE_FLOOR)))
                 head_slots[L] = tuple(slots)
             groups = [("neuron", L, int(c.numel())) for L, c in neuron_c.items()]
@@ -897,6 +915,7 @@ class NodeReplayer:
             layers=layers,
             units=top_units,
             units_absent=absent,
+            units_scale=None if unit_scales is None else unit_scales.source,
             patterns=pattern_rows,
             context=(
                 [self._decode(int(t)) for t in _take(host, context_slot).tolist()]
@@ -990,14 +1009,14 @@ class NodeReplayer:
             label="session.unit_activity",
         )
         spec = self._units.spec()
-        stats = self._units.stats()
+        scales = self._units.scales()
         pop_layers = (
             resolve_model_layers(layers, len(spec.blocks)) if raw_index is not None else []
         )
 
         def run(forward: ReplayForward) -> UnitActivityJSON:
             return self._activity(
-                spec, stats, forward, self._segments(forward), top=int(top), refs=refs,
+                spec, scales, forward, self._segments(forward), top=int(top), refs=refs,
                 population=None if raw_index is None else int(raw_index),
                 pop_layers=pop_layers,
             )
@@ -1011,7 +1030,7 @@ class NodeReplayer:
         return result
 
     def _activity(
-        self, spec: ModelSpec, stats: UnitStats, forward: ReplayForward,
+        self, spec: ModelSpec, scales: UnitScales, forward: ReplayForward,
         segments: Sequence[ReplaySegment],
         *, top: int, refs: Sequence[UnitRef], population: int | None,
         pop_layers: Sequence[int],
@@ -1070,9 +1089,9 @@ class NodeReplayer:
                 pops[key] = values[population - r0]
 
         def neuron_hook(block: BlockSpec) -> Any:
-            layer_stats = stats.layer(block.layer)
-            plus = layer_stats.neuron_reading_scale[0].to(device)
-            minus = layer_stats.neuron_reading_scale[1].to(device)
+            layer_scales = scales.layer(block.layer)
+            plus = layer_scales.neuron[0].to(device)
+            minus = layer_scales.neuron[1].to(device)
             last = block.layer == n - 1
 
             def hook(_m: nn.Module, args: tuple[Any, ...], _output: Any) -> None:
@@ -1088,7 +1107,7 @@ class NodeReplayer:
 
         def head_hook(block: BlockSpec) -> Any:
             attn = block.attn
-            scale = stats.layer(block.layer).head_reading_scale.to(device).clamp_min(SCALE_FLOOR)
+            scale = scales.layer(block.layer).head.to(device).clamp_min(SCALE_FLOOR)
             grams = _grams(block, device)
             out_norm = block.attn_out_norm
 
@@ -1185,6 +1204,7 @@ class NodeReplayer:
             "node_id": "",
             "steering": None,
             "unit": UNIT_ACTIVITY_UNIT,
+            "scale": cast(ActivityScale, scales.describe()),
             "tokens": [
                 {"raw_index": i, "token_id": int(t), "token": self._decode(int(t))}
                 for i, t in enumerate(forward.raw_ids)
@@ -1202,6 +1222,7 @@ def _read_dict(read: LensRead) -> LensReadDict:
 
 __all__ = [
     "ActivityPeak",
+    "ActivityScale",
     "ActivityPopulation",
     "ActivityToken",
     "NodeReplayer",

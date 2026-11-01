@@ -608,6 +608,9 @@ def test_serve_live_sae_narrates_a_provider_load_before_it(
 # ---------------------------------------------------------------------------
 
 class _ReadoutLens:
+    def token_mask_info(self) -> dict[str, Any]:
+        return {"source": "tokenizer", "detail": "the tokenizer's rules only", "kept": None}
+
     def read_prompt(self, _prompt: str, **_kw: Any) -> Any:
         from drowse.lens.read import FamilyRead, LensRead, TokenScore
 

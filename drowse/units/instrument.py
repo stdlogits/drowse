@@ -3,12 +3,14 @@
 A unit probe reads one model part on the same forward the generation runs:
 
 - ``neuron/L8n344`` — the neuron's activation (coordinate 344 of block 8's
-  down projection input) over its pole's neutral scale, signed;
+  down projection input) over its pole's reading scale, signed;
 - ``head/L20h17`` — the head's write norm ``‖W_O^h z_h‖`` (Gemma's sandwich
-  scale included) over its neutral scale.
+  scale included) over its reading scale.
 
-The neutral scale is the soft one (:func:`~drowse.units.stats.soft_scale`):
-``act_top`` blended with a floor from the layer's typical scale.
+The reading scale is the soft one (:class:`~drowse.units.stats.UnitScales`):
+the bound catalog's ``act_top``, else the neutral statistics', blended with
+a floor; every reading's ``meta.scale`` names the source (``"catalog"`` or
+``"neutral"``).
 
 Both are :class:`~drowse.readout.types.ScalarReading`\\ s in the
 ``activation_over_scale`` unit at one layer (depth basis ``single_layer``),
@@ -55,7 +57,7 @@ from drowse.readout.types import (
 )
 from drowse.units.capture import TapUnit, UnitTap
 from drowse.units.runtime import UnitsRuntime, unit_ref
-from drowse.units.stats import UnitStats
+from drowse.units.stats import ScaleSource, UnitScales
 
 if TYPE_CHECKING:
     from drowse.units.reads import FindResult, TopResult, UnitDetail, UnitReader
@@ -143,12 +145,16 @@ class UnitsRun:
             if name in wanted
         })
 
+    def _source(self) -> ScaleSource:
+        tap = self.tap
+        return "neutral" if tap is None else tap.scale_source
+
     def step_readings(self, step_id: int) -> dict[str, ScalarReading]:
         """The attached probes' readings for this forward (the token tap)."""
         if not self.live or not self.binding.specs:
             return {}
         return self._instrument.readings(
-            self.binding.specs, self._step_values(step_id),
+            self.binding.specs, self._step_values(step_id), source=self._source(),
         )
 
     def aggregate_at(self, fwd: int | None) -> dict[str, ScalarReading]:
@@ -156,7 +162,9 @@ class UnitsRun:
         end-of-generation aggregate position); empty once it left the ring."""
         if not self.binding.specs or fwd is None:
             return {}
-        return self._instrument.readings(self.binding.specs, self._values(fwd))
+        return self._instrument.readings(
+            self.binding.specs, self._values(fwd), source=self._source(),
+        )
 
     def observe_aggregate(
         self, pooled: dict[int, torch.Tensor],
@@ -209,8 +217,9 @@ class UnitsInstrument:
         self._has_direction = has_direction
         #: Attached unit probes: name -> {unit, kind, layer, index}.
         self.probes: dict[str, dict[str, Any]] = {}
-        # Each probe's neutral scale at attach (its digest's unit identity).
-        self._scales: dict[str, tuple[float, ...]] = {}
+        # Each probe's reading scale at attach, with its source (its digest's
+        # unit identity).
+        self._scales: dict[str, tuple[str, tuple[float, ...]]] = {}
         self._live = True
         self.state_lock = threading.RLock()
         self.current_run = UnitsRun(self, InstrumentBinding(family=self.family))
@@ -233,12 +242,14 @@ class UnitsInstrument:
             "add_probe called while another model operation is in flight; retry shortly"
         ):
             self.runtime.check(ref)
-            scale = self._scale(self.runtime.stats(), ref)
+            scales = self.runtime.scales()
+            scale = self._scale(scales, ref)
             name = as_name if as_name is not None else ref.qualified
             with self.state_lock:
                 self.probes[name] = _spec(ref)
-                self._scales[name] = tuple(
-                    round(float(v), 9) for v in scale.reshape(-1).tolist()
+                self._scales[name] = (
+                    scales.detail,
+                    tuple(round(float(v), 9) for v in scale.reshape(-1).tolist()),
                 )
         return name
 
@@ -260,16 +271,17 @@ class UnitsInstrument:
             return list(self.probes)
 
     def probe_hash(self, name: str) -> str | None:
-        """The unit plus the neutral scale that sets its reading's unit (taken
-        at attach, so a digest never needs the exclusive section)."""
+        """The unit plus the reading scale (and its source) that sets its
+        reading's unit (taken at attach, so a digest never needs the
+        exclusive section)."""
         with self.state_lock:
             spec = self.probes.get(name)
             if spec is None:
                 return None
             unit = str(spec["unit"])
-            scale = list(self._scales.get(name, ()))
+            source, scale = self._scales.get(name, ("", ()))
         return hashlib.sha256(repr((
-            "units-readout-v1", self._model_id, unit, scale,
+            "units-readout-v2", self._model_id, unit, source, list(scale),
         )).encode("utf-8")).hexdigest()
 
     def validate_gate(self, ref: GateRef) -> None:
@@ -422,28 +434,35 @@ class UnitsInstrument:
     def _tap(self, units: Mapping[str, UnitRef], *, depth: int = AGG_TAIL_DEPTH) -> UnitTap:
         runtime = self.runtime
         stats = runtime.stats()
+        scales = runtime.scales(stats=stats)
         entries = []
         for name, ref in units.items():
             site = runtime.site(ref, stats=stats)
             entries.append(TapUnit(
                 name=name, site=site, block=runtime.block(ref.layer),
-                scale=self._scale(stats, ref),
+                scale=self._scale(scales, ref),
             ))
-        return UnitTap(entries, device=runtime.device, dtype=self._dtype, depth=depth)
+        return UnitTap(
+            entries, device=runtime.device, dtype=self._dtype, depth=depth,
+            scale_source=scales.source,
+        )
 
     @staticmethod
-    def _scale(stats: UnitStats, ref: UnitRef) -> torch.Tensor:
-        layer = stats.layer(ref.layer)
+    def _scale(scales: UnitScales, ref: UnitRef) -> torch.Tensor:
+        layer = scales.layer(ref.layer)
         if isinstance(ref, NeuronRef):
-            return layer.neuron_reading_scale[:, ref.index].clone()
-        return layer.head_reading_scale[ref.index].reshape(()).clone()
+            return layer.neuron[:, ref.index].clone()
+        return layer.head[ref.index].reshape(()).clone()
 
     def readings(
         self,
         specs: Mapping[str, Mapping[str, Any]],
         values: Mapping[str, tuple[float, float]],
+        *,
+        source: ScaleSource,
     ) -> dict[str, ScalarReading]:
-        """Shape ``{name: (value, raw)}`` into the probes' readings."""
+        """Shape ``{name: (value, raw)}`` into the probes' readings; ``source``
+        is the reading scale's (``meta.scale``)."""
         out: dict[str, ScalarReading] = {}
         depth_den = max(self._n_layers - 1, 1)
         for name, spec in specs.items():
@@ -460,7 +479,7 @@ class UnitsInstrument:
                 depth=DepthSummary(
                     center=(layer / depth_den,), spread=(0.0,), basis="single_layer",
                 ),
-                meta={"unit": str(spec["unit"]), meta_key: round(raw, 6)},
+                meta={"unit": str(spec["unit"]), meta_key: round(raw, 6), "scale": source},
             )
         return out
 
@@ -590,7 +609,7 @@ class UnitsInstrument:
             return self.readings(specs, {
                 name: (float(v), float(r))
                 for name, (v, r) in zip(tap.names, pairs, strict=True)
-            })
+            }, source=tap.scale_source)
 
         try:
             token, readings = self._replay(

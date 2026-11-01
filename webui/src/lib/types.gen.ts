@@ -45,6 +45,16 @@ export interface ActivityPopulation {
   layers: PopulationLayer[];
 }
 
+/**
+ * Where unit activity's values divide by: the bound neuron-lens catalog's
+ * ``act_top`` (``"catalog"``) or the neutral statistics' (``"neutral"``,
+ * relative to the neutral text), with which (``detail``).
+ */
+export interface ActivityScale {
+  source: "catalog" | "neutral";
+  detail: string;
+}
+
 export interface ActivityToken {
   raw_index: number;
   token_id: number;
@@ -97,9 +107,10 @@ export interface AnatomyToken {
 /**
  * A unit's direct contribution to the anatomy token's logit through the
  * R lens; ``activation`` is a neuron's raw activation or a head's write
- * norm, and ``activation_over_scale`` the same over the unit's soft neutral
+ * norm, and ``activation_over_scale`` the same over the unit's reading
  * scale (the units family's unit: the number its probe, unit activity and
- * the unit view show), ``None`` without unit statistics.  Both are ``None``
+ * the unit view show; :attr:`TokenAnatomy.units_scale` names its source),
+ * ``None`` without unit statistics.  Both are ``None``
  * in the cross-layer list.
  */
 export interface AnatomyUnit {
@@ -1034,8 +1045,9 @@ export interface SourceSwitchResponse {
 
 /**
  * Prepared sources.  The SAE adds its provider ``releases``; the lens
- * adds its fetchable ``providers``, the crossover ``band`` and the
- * documents a local fit averages over by default (``fit_documents``).
+ * adds its fetchable ``providers``, the crossover ``band``, the documents a
+ * local fit averages over by default (``fit_documents``) and the S read's
+ * ``token_mask``.
  */
 export interface SourcesResponse {
   sources: InstrumentSourceJSON[];
@@ -1043,6 +1055,7 @@ export interface SourcesResponse {
   providers?: LensProviderJSON[];
   band?: LensBandJSON;
   fit_documents?: number;
+  token_mask?: TokenMaskJSON;
 }
 
 /**
@@ -1159,15 +1172,35 @@ export interface TemplateTurnJSON {
   [key: string]: unknown;
 }
 
-/** One token, every layer (``session.token_anatomy``). */
+/**
+ * One token, every layer (``session.token_anatomy``).  ``units_scale``
+ * names where the unit rows' ``activation_over_scale`` divides by: the
+ * bound neuron-lens catalog's ``act_top`` (``"catalog"``) or the neutral
+ * statistics' (``"neutral"``, relative to the neutral text); ``None``
+ * without unit statistics.
+ */
 export interface TokenAnatomy {
   token: AnatomyToken;
   binding: LensBindingJSON;
   layers: AnatomyLayer[];
   units: AnatomyUnit[];
   units_absent: string | null;
+  units_scale: "catalog" | "neutral" | null;
   patterns: AnatomyPattern[] | null;
   context: string[] | null;
+}
+
+/**
+ * Where the S read's token mask comes from: a bound neuron-lens catalog's
+ * token counts (``"catalog"``), the model's corpus counts (``"corpus"``,
+ * ``drowse lens counts``) or the tokenizer's rules alone (``"tokenizer"``,
+ * whose ``detail`` says what to run); ``kept`` is the built mask's size,
+ * ``None`` before the first S read.
+ */
+export interface TokenMaskJSON {
+  source: "catalog" | "corpus" | "tokenizer";
+  detail: string;
+  kept: number | null;
 }
 
 /** One ranked token of a lens read half (``lens.read.TokenScore``). */
@@ -1212,13 +1245,16 @@ export interface TreeRestoreResponse {
  * ``sink_raw_index`` names the token produced at the attention sink
  * (position 0), whose values are 0 and never peak, or is ``None``.
  * ``traces`` maps each requested unit to one value per token.  Every value
- * is over the unit's soft scale (:func:`~drowse.units.stats.soft_scale`),
- * and ``top`` ranks every unit by it.
+ * is over the unit's reading scale, whose source ``scale`` names
+ * (``{"source": "catalog" | "neutral", "detail"}``,
+ * :meth:`~drowse.units.stats.UnitScales.describe`), and ``top`` ranks every
+ * unit by it.
  */
 export interface UnitActivityJSON {
   node_id: string;
   steering: string | null;
   unit: string;
+  scale: ActivityScale;
   tokens: ActivityToken[];
   sink_raw_index: number | null;
   top: ActivityPeak[];
@@ -1293,13 +1329,15 @@ export interface UnitFindNeuronJSON {
 
 /**
  * How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
- * the catalog) or why absent; drowse's neutral statistics (``act_top`` or a
- * head's ``write_top``, and ``scale``, the soft scale its readings divide
- * by); the catalog's activation row.
+ * the catalog) or why absent; ``scale``, what its readings divide by
+ * (``None`` without unit statistics); drowse's neutral statistics
+ * (``act_top`` or a head's ``write_top``, the mean, the documents); the
+ * catalog's activation row.
  */
 export interface UnitFiringJSON {
   rate: number | null;
   rate_absent: string | null;
+  scale: UnitScaleJSON | null;
   neutral: Record<string, number> | null;
   neutral_absent: string | null;
   catalog: Record<string, unknown> | null;
@@ -1381,6 +1419,20 @@ export interface UnitScalarsJSON {
   mean_act: number | null;
 }
 
+/**
+ * What a unit's readings divide by: ``source`` ``"catalog"`` (the bound
+ * neuron-lens catalog's ``act_top``) or ``"neutral"`` (drowse's, over the
+ * neutral statements: a reading is relative to the neutral text), ``detail``
+ * (which catalog, or how many statements), ``top`` the pole's (head's)
+ * ``act_top`` there and ``value`` the soft scale over it.
+ */
+export interface UnitScaleJSON {
+  source: "catalog" | "neutral";
+  detail: string;
+  top: number;
+  value: number;
+}
+
 /** One ranked token of a unit read, in its half's ``unit``. */
 export interface UnitTokenJSON {
   token_id: number;
@@ -1431,7 +1483,10 @@ export interface UnitTopLayerJSON {
 
 /**
  * The units family: attached ``neuron/…`` / ``head/…`` probe readings.
- * ``binding.source`` is always ``None`` (units are the model's own parts).
+ * ``binding.source`` is always ``None`` (units are the model's own parts);
+ * each reading's ``meta.scale`` names its reading scale's source
+ * (``"catalog"``: the bound neuron-lens catalog's ``act_top``;
+ * ``"neutral"``: the neutral statistics', relative to the neutral text).
  */
 export interface UnitsInstrumentJSON {
   binding: MeasurementBindingJSON;
@@ -1440,8 +1495,9 @@ export interface UnitsInstrumentJSON {
 
 /**
  * One attached unit probe: an MLP neuron or attention head, read at its
- * own layer in units of its soft neutral scale (``act_top`` blended with a
- * floor from its layer's typical scale, ``units.stats.soft_scale``).
+ * own layer in units of its reading scale (the bound catalog's ``act_top``,
+ * else the neutral statistics', blended with a floor:
+ * ``units.stats.UnitScales``; each reading's ``meta.scale`` names which).
  */
 export interface UnitsProbeInfo {
   family: "units";

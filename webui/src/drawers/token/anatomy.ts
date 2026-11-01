@@ -184,12 +184,17 @@ export interface PushRow {
   overScale: number | null;
 }
 
-/** How hard a unit fired, as its tip says it: first over its neutral scale, the number the Units
+/** How hard a unit fired, as its tip says it: first over its reading scale (``scale`` names the
+ *  source: the catalog or the neutral text), the number the Units
  *  room, the unit view and its probe show for the same unit, then the raw value. */
-export function activityText(kind: "neuron" | "head", activation: number | null, overScale: number | null): string {
+export function activityText(
+  kind: "neuron" | "head", activation: number | null, overScale: number | null,
+  scale: "catalog" | "neutral" | null = null,
+): string {
   const raw = activation === null ? "" : `${kind === "neuron" ? "activation" : "write norm"} ${activation.toFixed(2).replace("-", "−")}`;
   if (overScale === null) return raw;
-  const scaled = `${formatContribution(overScale)} of its scale`;
+  const of = scale === "catalog" ? "its typical firing in text" : scale === "neutral" ? "its typical firing on the neutral text" : "its scale";
+  const scaled = `${formatContribution(overScale)} of ${of}`;
   return raw ? `${scaled} (${raw})` : scaled;
 }
 

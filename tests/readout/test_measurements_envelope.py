@@ -654,10 +654,12 @@ def test_a_token_anatomy_rides_a_replay_envelope_only() -> None:
     record = token_anatomy_record(
         raw_index=0, token_id=1, token="a", position=3, prompt_length=4,
         probability=0.5, sources={"R": "local:r", "S": None}, steering=None,
-        layers=[], units=[], units_absent="no R-family lens", patterns=None, context=None,
+        layers=[], units=[], units_absent="no R-family lens", units_scale=None,
+        patterns=None, context=None,
     )
     assert set(record) == {
-        "token", "binding", "layers", "units", "units_absent", "patterns", "context",
+        "token", "binding", "layers", "units", "units_absent", "units_scale", "patterns",
+        "context",
     }
     assert set(record["token"]) == {
         "raw_index", "token_id", "token", "position", "prompt_length", "probability",

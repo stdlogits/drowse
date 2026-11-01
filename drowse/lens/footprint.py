@@ -19,27 +19,43 @@ per-vector affine of the raw score, whose top-k is the raw read's.  ``Σ_E``
 makes a one-token read (a probe, a gate) cost ``O(d²)`` per layer instead of a
 pass over the vocabulary.
 
-**The token mask** is decided by the tokenizer alone.  It drops special
-tokens, every added token (special or not: chat and tool control pieces such
-as Qwen3's ``<think>``, ``<tool_call>`` and ``<|fim_*|>``, Gemma's reserved
-``<unusedN>``), byte-fallback pieces (a vocabulary piece spelled ``<0xNN>``,
-including the ASCII ones that decode to a control character, and any token
-that decodes alone to U+FFFD, a partial UTF-8 sequence; out of distribution
-on their own and on top of many early reads) and embedding rows past the
-tokenizer (padding).  Masked tokens never rank and do not enter the mean or
-``Σ_E``.
+**The token mask** (:func:`token_mask`) has two parts.  The tokenizer's: it
+drops special tokens, every added token (special or not: chat and tool
+control pieces such as Qwen3's ``<think>``, ``<tool_call>`` and
+``<|fim_*|>``, Gemma's reserved ``<unusedN>``), byte-fallback pieces (a
+vocabulary piece spelled ``<0xNN>``, including the ASCII ones that decode to
+a control character, and any token that decodes alone to U+FFFD, a partial
+UTF-8 sequence; out of distribution on their own and on top of many early
+reads) and embedding rows past the tokenizer (padding).  And the counts'
+(:class:`TokenCounts`): a token the model almost never saw in text has an
+undertrained embedding whose footprint tops the weighted S half at early
+layers (on Qwen3-8B, 94 of 112 of L2 neurons' "fires on" S tokens were
+tokens neuron-lens saw fewer than five times in 88M, ``clarsimp`` and
+``邓小`` among them), so a token must also have been seen often enough.  The
+counts come from, in order:
+
+1. a bound neuron-lens catalog (``unit fetch``): its activation corpora's
+   counts, kept at :data:`MIN_TOKEN_COUNT` or more, exactly neuron-lens's
+   ``kept``;
+2. the model's corpus counts (``drowse lens counts``, a derived cache under
+   ``models/<id>/tokens/``, :mod:`drowse.lens.token_counts`): the S lens's
+   corpus streamed through the tokenizer, kept at the same rate
+   (:func:`count_threshold`);
+3. none: the tokenizer's part alone, which keeps every base-vocabulary token.
+   This is surfaced, never silent (:meth:`TokenEmbeddings.describe`: ``lens
+   show``, ``lens top``, the lens sources), with what to run.
+
+Masked tokens never rank and do not enter the mean or ``Σ_E``.
 
 Relation to neuron-lens (``scripts/08_reads.py``, ``neuron_lens/catalog.py``):
 the centred embedding and the read are the same (``s_tops`` over ``emb −
 emb.mean(0)`` with Gemma's ``× √d``), so top-k matches its raw ``read_S`` /
 ``write_S`` wherever both keep a token.  The differences:
 
-- Its kept set is the tokens seen at least five times in its activation
-  corpora, which drops control, byte and reserved pieces by never seeing
-  them.  A lens corpus is too small for a count, so drowse masks by the
-  tokenizer: the two sets differ on rare base-vocabulary tokens (drowse keeps
-  them) and on added tokens a corpus does contain (drowse drops them all,
-  Gemma 2's added whitespace runs among them).
+- With the catalog's counts the kept sets differ only on added tokens a
+  corpus does contain (drowse drops them all, Qwen3's ``<think>`` among them).
+  With corpus counts they differ by sampling; with none, on every rare
+  base-vocabulary token (drowse keeps them).
 - It reports the raw score of a unit covector where drowse reports the
   vocabulary z (same order, a scale comparable across vectors and layers).
 - Its ``_z`` reads are layer-contrastive (z across a layer's neurons), which
@@ -53,10 +69,11 @@ it.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import torch
 
@@ -69,9 +86,39 @@ _MIN_VARIANCE = 1e-30
 REPLACEMENT_CHARACTER = "�"
 #: A sentencepiece byte-fallback piece as the vocabulary spells it.
 _BYTE_PIECE = re.compile(r"<0x[0-9A-Fa-f]{2}>")
+#: neuron-lens's kept rule: a token seen this many times or more in its
+#: activation corpora.
+MIN_TOKEN_COUNT = 5
+#: The corpus that rule counts over: neuron-lens's Qwen3-8B activation
+#: corpora, in tokens (87,884,610).  A smaller count keeps the same rate
+#: (:func:`count_threshold`).
+TOKEN_COUNT_BASIS = 87_884_610
+
+#: Where an S read's token mask comes from (:func:`token_mask`).
+MaskSource = Literal["catalog", "corpus", "tokenizer"]
 
 
-def token_mask(tokenizer: Any, rows: int) -> torch.Tensor:
+def count_threshold(tokens: int) -> int:
+    """The count a token needs over a corpus of ``tokens`` tokens: neuron-lens's
+    rate (:data:`MIN_TOKEN_COUNT` per :data:`TOKEN_COUNT_BASIS`), at least 1."""
+    return max(1, math.ceil(MIN_TOKEN_COUNT * int(tokens) / TOKEN_COUNT_BASIS - 1e-9))
+
+
+@dataclass(frozen=True, eq=False)
+class TokenCounts:
+    """Every vocabulary id's occurrences over a corpus (``[ids]`` int64, CPU),
+    where they come from (``"catalog"`` or ``"corpus"``, with ``detail``),
+    and the count a token needs to be kept."""
+
+    counts: torch.Tensor
+    source: Literal["catalog", "corpus"]
+    detail: str
+    min_count: int = MIN_TOKEN_COUNT
+
+
+def token_mask(
+    tokenizer: Any, rows: int, counts: TokenCounts | None = None,
+) -> torch.Tensor:
     """``[rows]`` bool: the tokens an S read ranks.
 
     Drops the tokenizer's special ids (``all_special_ids``), every added
@@ -81,7 +128,9 @@ def token_mask(tokenizer: Any, rows: int) -> torch.Tensor:
     ``<0xNN>``, whatever it decodes to, and any id that decodes alone to a
     string containing U+FFFD, a partial UTF-8 sequence), and embedding rows
     at or past the tokenizer's length (padding rows a model reserves beyond
-    its vocabulary).
+    its vocabulary).  With ``counts``, it also drops every id counted fewer
+    than ``counts.min_count`` times (an id past the counts was never
+    counted).
     """
     size = rows
     try:
@@ -110,7 +159,25 @@ def token_mask(tokenizer: Any, rows: int) -> torch.Tensor:
             isinstance(raw, str) and _BYTE_PIECE.fullmatch(raw)
         ):
             keep[token_id] = False
+    if counts is not None:
+        seen = counts.counts.reshape(-1).to("cpu", torch.int64)
+        n = min(rows, int(seen.numel()))
+        keep[:n] &= seen[:n] >= int(counts.min_count)
+        keep[n:] = False
     return keep
+
+
+def mask_detail(counts: TokenCounts | None) -> tuple[MaskSource, str]:
+    """``(source, detail)`` for a mask built with ``counts``: what every view
+    of an S read names, and for the tokenizer-only mask what to run."""
+    if counts is None:
+        return "tokenizer", (
+            "the tokenizer's rules only, no token counts: rare tokens the model "
+            "barely saw can top S reads (bind the neuron-lens catalog with "
+            "`drowse unit fetch MODEL`, or count the lens corpus with "
+            "`drowse lens counts MODEL`)"
+        )
+    return counts.source, f"{counts.detail}, kept at {counts.min_count}+"
 
 
 @dataclass(frozen=True, eq=False)
@@ -120,7 +187,8 @@ class TokenEmbeddings:
     ``weight`` is the model's own ``[V, d]`` embedding (shared, model dtype,
     never copied); ``scale`` the factor the model applies on lookup.  ``keep``,
     ``mean`` (``[d]``) and ``cov`` (``Σ_E``, ``[d, d]``) live on the weight's
-    device, the statistics in fp32.
+    device, the statistics in fp32.  ``mask_source`` and ``mask_detail`` say
+    where the mask came from (:func:`mask_detail`).
     """
 
     weight: torch.Tensor
@@ -129,13 +197,21 @@ class TokenEmbeddings:
     mean: torch.Tensor
     cov: torch.Tensor
     n_kept: int
+    mask_source: MaskSource = "tokenizer"
+    mask_detail: str = ""
+
+    def describe(self) -> dict[str, Any]:
+        """The mask as every S view names it: ``{"source", "detail",
+        "kept"}``."""
+        return {"source": self.mask_source, "detail": self.mask_detail, "kept": self.n_kept}
 
     @classmethod
     def build(
         cls, weight: torch.Tensor, scale: float, keep: torch.Tensor,
-        *, chunk: int = VOCAB_CHUNK,
+        *, chunk: int = VOCAB_CHUNK, counts: TokenCounts | None = None,
     ) -> "TokenEmbeddings":
-        """Mean and covariance of ``scale · W[keep]`` in fp32, two chunked passes."""
+        """Mean and covariance of ``scale · W[keep]`` in fp32, two chunked
+        passes; ``counts`` (what ``keep`` was built with) names the mask."""
         device = weight.device
         keep = keep.to(device=device, dtype=torch.bool)
         n_kept = int(keep.sum())
@@ -153,7 +229,8 @@ class TokenEmbeddings:
             centred = rows[keep[start:start + chunk]] * float(scale) - mean
             cov += centred.T @ centred
         cov /= n_kept
-        return cls(weight, float(scale), keep, mean, cov, n_kept)
+        source, detail = mask_detail(counts)
+        return cls(weight, float(scale), keep, mean, cov, n_kept, source, detail)
 
     @property
     def device(self) -> torch.device:
@@ -242,10 +319,16 @@ def footprint_probe_rows(
 
 
 __all__ = [
+    "MIN_TOKEN_COUNT",
+    "MaskSource",
+    "TOKEN_COUNT_BASIS",
+    "TokenCounts",
     "TokenEmbeddings",
     "VOCAB_CHUNK",
+    "count_threshold",
     "depth_moments_positive",
     "footprint_probe_rows",
+    "mask_detail",
     "pullback_rows",
     "token_mask",
 ]

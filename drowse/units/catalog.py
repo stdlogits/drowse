@@ -11,7 +11,15 @@ pinned commit, copying only what a unit view shows:
 - ``neurons/acts`` and ``heads/acts`` projected to their scalar columns (the
   firing rate, ``act_top``, quantiles; never the top contexts);
 - ``neurons/legible`` and ``heads/legible`` projected to the legibility
-  tests' scalars (which reads hold at the unit's own top firings).
+  tests' scalars (which reads hold at the unit's own top firings);
+- ``token_counts.pt``'s total counts (every vocabulary id's occurrences over
+  the activation corpora, 88M tokens on Qwen3-8B), stored as
+  ``token_counts.safetensors``: the S read's token mask keeps the ids seen
+  :data:`~drowse.lens.footprint.MIN_TOKEN_COUNT` or more times, as
+  neuron-lens's ``kept`` does.
+
+The catalog's ``act_top`` per pole (``out_top`` per head) is also the units'
+reading scale (:meth:`UnitCatalog.reading_scales`).
 
 The bulk (``reads``, ``drivers``, media, the causal sample) is never
 downloaded: drowse computes its own reads.  Projection reads only the wanted
@@ -29,13 +37,14 @@ neuron-lens.com (:func:`unit_url`).  Reading and fetching need ``pyarrow``
 
 from __future__ import annotations
 
+import functools
 import json
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from drowse.base.atomic import artifact_lock, write_json_atomic
 from drowse.base.integrity import hash_file
@@ -44,11 +53,22 @@ from drowse.base.staging import promote, recover_backup, staging_area
 from drowse.errors import DrowseError
 from drowse.naming import HeadRef, NeuronRef, UnitRef
 
+if TYPE_CHECKING:
+    import torch
+
+    from drowse.lens.footprint import TokenCounts
+    from drowse.units.stats import UnitScales
+
 #: The catalog repository and the commit every binding pins.
 CATALOG_REPO = "stdlogits/neuron-lens"
 CATALOG_REVISION = "b5bf11a2b9e35c9100a0fa0995ff7a4e57f5b777"
-#: ``catalog.json``'s format; another is refused (fetch again).
-CATALOG_FORMAT = 1
+#: ``catalog.json``'s format; another is refused (fetch again).  2: the
+#: binding holds the token counts.
+CATALOG_FORMAT = 2
+#: The catalog's token counts, upstream (a torch pickle of plain tensors,
+#: loaded ``weights_only``) and in the binding.
+TOKEN_COUNTS_UPSTREAM = "token_counts.pt"
+TOKEN_COUNTS_FILE = "token_counts.safetensors"
 #: The explorer every unit links to.
 SITE = "https://neuron-lens.com"
 LABEL_CREDIT = "Labels by Claude Haiku 5.5"
@@ -176,9 +196,12 @@ def _remote_files(slug: str, revision: str) -> list[RemoteFile]:
     for sibling in info.siblings or ():
         path = sibling.rfilename
         parts = path.split("/")
-        if parts[0] != slug or not path.endswith(".parquet"):
+        if parts[0] != slug:
             continue
-        wanted = (
+        counts = len(parts) == 2 and parts[1] == TOKEN_COUNTS_UPSTREAM
+        if not counts and not path.endswith(".parquet"):
+            continue
+        wanted = counts or (
             len(parts) == 4 and parts[1] == "neurons" and parts[2] in NEURON_COLUMNS
         ) or (
             len(parts) == 3 and parts[1] == "heads" and parts[2][: -len(".parquet")] in HEAD_COLUMNS
@@ -214,6 +237,31 @@ def _columns_for(path: str) -> tuple[str, ...] | None:
     return HEAD_COLUMNS[parts[2][: -len(".parquet")]]
 
 
+def _download_remote(path: str, revision: str) -> Path:
+    """``path`` of the catalog at ``revision``, downloaded whole (the Hub
+    cache)."""
+    from huggingface_hub import hf_hub_download
+
+    return Path(hf_hub_download(
+        CATALOG_REPO, path, repo_type="dataset", revision=revision,
+    ))
+
+
+def _write_token_counts(source: Path, destination: Path) -> int:
+    """Copy ``token_counts.pt``'s total counts (``[vocabulary]`` int64) into
+    ``destination`` as safetensors; returns the vocabulary size.  The pickle
+    is loaded ``weights_only`` (plain tensors and strings only)."""
+    import torch
+    from safetensors.torch import save_file
+
+    record = torch.load(source, map_location="cpu", weights_only=True)
+    counts = record.get("counts") if isinstance(record, Mapping) else None
+    if not isinstance(counts, torch.Tensor) or counts.ndim != 1:
+        raise UnitCatalogError(f"{source.name} holds no [vocabulary] counts tensor")
+    save_file({"counts": counts.to(torch.int64).contiguous()}, str(destination))
+    return int(counts.numel())
+
+
 def fetch_catalog(
     model_id: str,
     *,
@@ -246,7 +294,27 @@ def fetch_catalog(
         files: dict[str, dict[str, Any]] = {}
         with staging_area() as stage:
             root = stage / "catalog"
+            if not any(item.path.endswith("/" + TOKEN_COUNTS_UPSTREAM) for item in remote):
+                raise UnitCatalogError(
+                    f"{CATALOG_REPO}@{CATALOG_REVISION[:12]} holds no {entry.slug} "
+                    f"{TOKEN_COUNTS_UPSTREAM}"
+                )
             for done, item in enumerate(remote, start=1):
+                if item.path.endswith("/" + TOKEN_COUNTS_UPSTREAM):
+                    root.mkdir(parents=True, exist_ok=True)
+                    destination = root / TOKEN_COUNTS_FILE
+                    rows = _write_token_counts(
+                        _download_remote(item.path, CATALOG_REVISION), destination,
+                    )
+                    files[TOKEN_COUNTS_FILE] = {
+                        "upstream": item.path,
+                        "upstream_sha256": item.sha256,
+                        "columns": ["counts"],
+                        "rows": rows,
+                        "sha256": hash_file(destination),
+                    }
+                    report(f"{done}/{len(remote)} {item.path} ({rows} token ids)")
+                    continue
                 local = item.path.split("/", 1)[1]
                 columns = _columns_for(item.path)
                 table = _read_remote_table(item.path, CATALOG_REVISION, columns)
@@ -471,6 +539,72 @@ class UnitCatalog:
         if row is None:
             return None
         return {key: value for key, value in row.items() if key not in HEAD_KEYS}
+
+    @property
+    def identity(self) -> str:
+        """``stdlogits/neuron-lens@<commit[:12]>``: what a reading scale or a
+        token mask taken from this binding names."""
+        return f"{self.record.get('repo', CATALOG_REPO)}@{str(self.record.get('revision', ''))[:12]}"
+
+    @functools.cached_property
+    def reading_scales(self) -> "UnitScales":
+        """The ``"catalog"`` reading scales: every pole's ``act_top`` and every
+        head's ``out_top`` (:func:`~drowse.units.stats.reading_scales`).  Disk
+        only; read once per opened binding.  A table missing or of the wrong
+        shape is a :class:`UnitCatalogError`."""
+        import torch
+
+        from drowse.units.stats import reading_scales
+
+        _pa, pq = _arrow()
+        heads_path = self.root / "heads" / "acts.parquet"
+        if not heads_path.is_file():
+            raise UnitCatalogError(f"the bound catalog has no {heads_path.name}")
+        heads = pq.read_table(str(heads_path), columns=["layer", "head", "out_top"]).to_pydict()
+        n_layers = int(max(heads["layer"])) + 1 if heads["layer"] else 0
+        if n_layers == 0 or len(heads["layer"]) % n_layers:
+            raise UnitCatalogError("the bound catalog's head table is not one row per head")
+        per_layer = len(heads["layer"]) // n_layers
+        head_top = torch.tensor(heads["out_top"], dtype=torch.float32).reshape(n_layers, per_layer)
+        neuron_top: dict[int, torch.Tensor] = {}
+        for layer in range(n_layers):
+            path = self.root / "neurons" / "acts" / f"L{layer:02d}.parquet"
+            if not path.is_file():
+                raise UnitCatalogError(f"the bound catalog has no neurons/acts/{path.name}")
+            table = pq.read_table(str(path), columns=["pole", "act_top"]).to_pydict()
+            rows = len(table["act_top"])
+            f = rows // 2
+            if rows % 2 or (f and (table["pole"][0] <= 0 or table["pole"][f] >= 0)):
+                raise UnitCatalogError(
+                    f"the bound catalog's neurons/acts/{path.name} is not + poles then − poles"
+                )
+            values = torch.tensor(
+                [float("nan") if v is None else float(v) for v in table["act_top"]],
+                dtype=torch.float32,
+            )
+            neuron_top[layer] = values.nan_to_num(0.0).clamp_min(0.0).reshape(2, f)
+        return reading_scales(
+            neuron_top,
+            {layer: head_top[layer].nan_to_num(0.0).clamp_min(0.0) for layer in range(n_layers)},
+            source="catalog",
+            detail=f"neuron-lens catalog {self.identity}",
+        )
+
+    @functools.cached_property
+    def token_counts(self) -> "TokenCounts | None":
+        """The catalog's token counts (``[vocabulary]`` occurrences over its
+        activation corpora), or ``None`` when the binding holds none."""
+        from safetensors.torch import load_file
+
+        from drowse.lens.footprint import TokenCounts
+
+        path = self.root / TOKEN_COUNTS_FILE
+        if not path.is_file():
+            return None
+        counts = load_file(str(path))["counts"]
+        return TokenCounts(
+            counts=counts, source="catalog", detail=f"neuron-lens catalog {self.identity}",
+        )
 
 
 #: ``catalog.json``'s on-disk identity (inode, mtime, size), or ``None``

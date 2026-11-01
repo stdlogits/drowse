@@ -13,18 +13,35 @@ that fills the neutral activation cache, :mod:`drowse.fit.neutral`):
   write norm ``‖W_O^h z_h‖`` as it reaches the residual (Gemma's sandwich
   norm included: its gain and its per-position scale, the LN rule).
 
-A reading divides by a **soft scale**, not the bare ``act_top``: a pole
-that barely fires on the neutral corpus has a tiny scale (SmolLM2's
-``L31n2394`` ``+`` pole: 0.055 against its layer's typical 2.3), and over it
-an ordinary firing reads in the hundreds.  :func:`soft_scale` blends the
-unit's own scale with a floor taken from its layer's typical scale for its
-kind, ``sqrt(s² + (c · m)²)``, ``m`` the layer's median (a neuron's over both
-poles of every neuron, a head's over the layer's heads) and ``c`` =
-:data:`SCALE_FLOOR_SHARE`.  It is soft: no unit is cut, a pole with no
-neutral scale at all reads over ``c · m``, and a unit at the median reads 3%
+A reading divides by a **reading scale** (:class:`UnitScales`) from one of
+two sources:
+
+- ``"catalog"``: the bound neuron-lens catalog's ``act_top`` per pole (a
+  head's ``out_top``), the same statistic over its activation corpora (15.4M
+  positions).  A catalogued model reads against it, so 1.0 is the pole's
+  typical high firing in text.
+- ``"neutral"``: the ``act_top`` measured here, over the neutral statements.
+  They are too few for a top-24-of-documents statistic (96 short statements
+  against neuron-lens's 60k documents): on Qwen3-8B it sits a median 12x
+  below the catalog's, and a sparse pole that never fires on the statements
+  gets 0.  A reading over it is relative to the neutral text.
+
+Either way the divisor is a **soft scale**, not the bare ``act_top``:
+:func:`soft_scale` blends the unit's own scale with a floor, ``sqrt(s² +
+(c · m)²)``, ``c`` = :data:`SCALE_FLOOR_SHARE` and ``m`` the floor's base
+(:func:`reading_scales`).  Over the catalog ``m`` is the layer's typical
+scale for the unit's kind (:func:`typical_scale`; the catalog's statistics
+are robust, so a quiet layer is truly quiet: Qwen3-8B's L1 and L2 medians are
+0.009 and 0.014).  Over the neutral statistics ``m`` is the larger of the
+layer's and the model's typical scale, a floor that cannot collapse with the
+layer: Qwen3-8B's neutral L2 median is 0.0024 with 4,856 of 24,576 poles at
+0, and a quarter of it read an ordinary firing in the hundreds (``L2n7950+``
+at 849, 0.59x its catalog ``act_top``).  It is soft: no unit is cut, a pole
+with no scale at all reads over ``c · m``, and a unit at the median reads 3%
 lower than over its own scale.  ``activation_over_scale`` divides by it
 everywhere (probes, gates, token readouts, unit activity, the anatomy's unit
-rows), so one unit shows one number in every view.
+rows), so one unit shows one number in every view, and every view names the
+source.
 
 Positions follow neuron-lens: position 0 (the attention sink, where
 activations are massive) is never counted, and a head's scale starts at
@@ -42,7 +59,7 @@ from __future__ import annotations
 import functools
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 import torch
 
@@ -64,7 +81,10 @@ HEAD_MEAN = "head_mean"
 HEAD_SCALE = "head_scale"
 UNIT_TENSOR_NAMES = (NEURON_MEAN, NEURON_SCALE, HEAD_MEAN, HEAD_SCALE)
 
-#: The soft floor's share of a layer's typical unit scale (:func:`soft_scale`).
+#: Where a reading scale comes from (:class:`UnitScales`).
+ScaleSource = Literal["catalog", "neutral"]
+
+#: The soft floor's share of its base (:func:`soft_scale`).
 #: Measured on SmolLM2-360M (96 neutral documents): the 0.1%, 1% and 5%
 #: quantiles of a neuron pole's ``act_top`` over its layer's median are 0.20,
 #: 0.33 and 0.47 (heads 0.13, 0.24, 0.45); 0.24% of neuron poles and 1.25% of
@@ -85,13 +105,87 @@ def typical_scale(scale: torch.Tensor) -> torch.Tensor:
     return positive.median()
 
 
-def soft_scale(scale: torch.Tensor, typical: torch.Tensor) -> torch.Tensor:
+def soft_scale(scale: torch.Tensor, base: torch.Tensor) -> torch.Tensor:
     """``sqrt(s² + (c · m)²)``: a unit's own scale ``s`` blended with the floor
-    ``c · m`` (``m`` its layer's :func:`typical_scale`, ``c`` =
+    ``c · m`` (``m`` the floor's base, :func:`reading_scales`; ``c`` =
     :data:`SCALE_FLOOR_SHARE`), the scale every ``activation_over_scale``
     divides by."""
-    floor = SCALE_FLOOR_SHARE * typical.float()
+    floor = SCALE_FLOOR_SHARE * base.float()
     return torch.sqrt(scale.float().pow(2) + floor.pow(2))
+
+
+@dataclass(frozen=True, eq=False)
+class LayerScales:
+    """One block's reading scales, fp32 on CPU.
+
+    ``neuron_top`` (``[2, d_ff]``: row 0 the ``+`` pole, row 1 the ``−``)
+    and ``head_top`` (``[n_heads]``) are the source's own ``act_top``;
+    ``neuron`` and ``head`` are what a reading divides by (:func:`soft_scale`
+    over the floor's base).
+    """
+
+    neuron_top: torch.Tensor
+    head_top: torch.Tensor
+    neuron: torch.Tensor
+    head: torch.Tensor
+
+
+@dataclass(frozen=True, eq=False)
+class UnitScales:
+    """Every block's :class:`LayerScales` and where they come from.
+
+    ``source`` is ``"catalog"`` (the bound neuron-lens catalog's ``act_top``)
+    or ``"neutral"`` (drowse's own, over the neutral statements, so a reading
+    is relative to the neutral text); ``detail`` says which (the catalog's
+    repository and commit, or the statement count).
+    """
+
+    source: ScaleSource
+    detail: str
+    layers: Mapping[int, LayerScales]
+
+    def layer(self, layer: int) -> LayerScales:
+        return self.layers[int(layer)]
+
+    def describe(self) -> dict[str, str]:
+        """``{"source", "detail"}``: the wire form every view names."""
+        return {"source": self.source, "detail": self.detail}
+
+
+def reading_scales(
+    neuron_top: Mapping[int, torch.Tensor],
+    head_top: Mapping[int, torch.Tensor],
+    *,
+    source: ScaleSource,
+    detail: str,
+) -> UnitScales:
+    """The reading scales over per-layer ``act_top`` tables (``[2, d_ff]``
+    per block for the neurons, ``[n_heads]`` for the heads).
+
+    The floor's base ``m`` per layer and kind: over the catalog, the layer's
+    :func:`typical_scale`; over the neutral statistics, the larger of the
+    layer's and the model's (every layer's poles, or heads, together), so a
+    layer whose neutral statistics collapsed still reads against a floor.
+    """
+    layers = sorted(int(layer) for layer in neuron_top)
+    neurons = {L: neuron_top[L].float() for L in layers}
+    heads = {L: head_top[L].float() for L in layers}
+    zero = torch.zeros((), dtype=torch.float32)
+    model_neuron = model_head = zero
+    if source == "neutral":
+        model_neuron = typical_scale(torch.cat([t.reshape(-1) for t in neurons.values()]))
+        model_head = typical_scale(torch.cat([t.reshape(-1) for t in heads.values()]))
+    out: dict[int, LayerScales] = {}
+    for L in layers:
+        n_base = torch.maximum(typical_scale(neurons[L]), model_neuron)
+        h_base = torch.maximum(typical_scale(heads[L]), model_head)
+        out[L] = LayerScales(
+            neuron_top=neurons[L],
+            head_top=heads[L],
+            neuron=soft_scale(neurons[L], n_base),
+            head=soft_scale(heads[L], h_base),
+        )
+    return UnitScales(source=source, detail=detail, layers=out)
 
 
 @dataclass(frozen=True, eq=False)
@@ -99,9 +193,8 @@ class LayerUnitStats:
     """One block's unit statistics, fp32 on CPU.
 
     ``neuron_scale`` row 0 is the ``+`` pole's ``act_top``, row 1 the ``−``
-    pole's (both ``≥ 0``).  :attr:`neuron_reading_scale` and
-    :attr:`head_reading_scale` are what a reading divides by
-    (:func:`soft_scale` over the layer's typical scale).
+    pole's (both ``≥ 0``).  A reading divides by a :class:`UnitScales`
+    (:attr:`UnitStats.reading_scales` over these, or a bound catalog's).
     """
 
     neuron_mean: torch.Tensor   # [d_ff]
@@ -126,17 +219,6 @@ class LayerUnitStats:
             head_scale=tensors[HEAD_SCALE],
         )
 
-    @functools.cached_property
-    def neuron_reading_scale(self) -> torch.Tensor:
-        """``[2, d_ff]``: each pole's soft scale over the layer's typical
-        neuron scale (the median of both poles of every neuron)."""
-        return soft_scale(self.neuron_scale, typical_scale(self.neuron_scale))
-
-    @functools.cached_property
-    def head_reading_scale(self) -> torch.Tensor:
-        """``[n_heads]``: each head's soft scale over the layer's typical head
-        scale."""
-        return soft_scale(self.head_scale, typical_scale(self.head_scale))
 
 
 @dataclass(frozen=True, eq=False)
@@ -163,6 +245,17 @@ class UnitStats:
                 for layer, row in tensors.items()
             },
             n_documents=int(n_documents),
+        )
+
+    @functools.cached_property
+    def reading_scales(self) -> UnitScales:
+        """The ``"neutral"`` reading scales: these ``act_top`` values, floored
+        against the larger of the layer's and the model's typical scale."""
+        return reading_scales(
+            {layer: row.neuron_scale for layer, row in self.layers.items()},
+            {layer: row.head_scale for layer, row in self.layers.items()},
+            source="neutral",
+            detail=f"{self.n_documents} neutral statements",
         )
 
 
@@ -410,13 +503,20 @@ __all__ = [
     "HEAD_MEAN",
     "HEAD_SCALE",
     "HEAD_SCALE_FROM",
+    "LayerScales",
     "LayerUnitStats",
     "NEURON_MEAN",
     "NEURON_SCALE",
+    "SCALE_FLOOR_SHARE",
+    "ScaleSource",
     "UNIT_POSITIONS_FROM",
     "UNIT_TENSOR_NAMES",
     "UNIT_TOP_DOCS",
+    "UnitScales",
     "UnitStats",
     "UnitStatsAccumulator",
+    "reading_scales",
+    "soft_scale",
     "top_median",
+    "typical_scale",
 ]

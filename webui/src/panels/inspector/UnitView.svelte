@@ -159,7 +159,7 @@
     {/if}
     {#if facts}
       <div class="dw-facts">
-        {#if facts.typical !== null}<span>typical {isHead ? "write" : "firing"} <b>{factText(facts.typical)}</b></span>{/if}
+        {#if facts.typical !== null}<span data-tip={facts.scale ? `Readings divide by this (${facts.scale.detail})` : undefined}>typical {isHead ? "write" : "firing"} <b>{factText(facts.typical)}</b>{facts.scale?.source === "neutral" ? " on the neutral text" : ""}</span>{/if}
         {#if facts.rate !== null}<span>fires on <b>{rateText(facts.rate)}</b> of tokens</span>{/if}
         {#if facts.writeNorm !== null}<span>write norm <b>{factText(facts.writeNorm)}</b></span>{/if}
         {#if facts.copy !== null}<span>copy score <b>{factText(facts.copy)}</b></span>{/if}

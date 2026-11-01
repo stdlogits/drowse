@@ -68,6 +68,7 @@ from drowse.sae.instrument import SaeInstrument
 from drowse.sae.runtime import SaeRuntime
 from drowse.model.fingerprint import loaded_model_fingerprint
 from drowse.units.catalog import CatalogBinding
+from drowse.lens.token_counts import TokenCountSource
 from drowse.units.instrument import UnitsInstrument
 from drowse.units.reads import UnitReader
 from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
@@ -368,9 +369,15 @@ class DrowseSession:
         )
         # The model's neurons and heads (block description + the neutral
         # unit statistics): unit probes, gates, pushes and ablations.
+        # The neuron-lens catalog binding (labels, the units' reading scale
+        # and the S mask's token counts when the model has one), and the
+        # S mask's token counts: the catalog's, else the model's corpus counts.
+        self._unit_catalog = CatalogBinding(self.model_id)
+        self._token_counts = TokenCountSource(self.model_id, self._unit_catalog.get)
         self._units_runtime = UnitsRuntime(
             model=self._model, device=self._device,
             exclusive=self._model_exclusive, stats=self._require_unit_stats,
+            catalog=self._unit_catalog.get,
         )
         # Corpus generation and the extract/fit/bake glue.  Wired before the
         # probe bootstrap below, which fits stale bundled axes through ``fit``;
@@ -453,6 +460,7 @@ class DrowseSession:
             replay=self._token_replay,
             whitener=self._neutral.whitener,
             neutral_means=self._neutral.site_means,
+            token_counts=self._token_counts.get,
         )
         # The SAE family: resident dictionary + Neuronpedia metadata (the
         # runtime), probes, live discovery and token replay.  ``sae/<id>``
@@ -476,7 +484,7 @@ class DrowseSession:
             self._units_runtime, self._lens_instrument,
             model_id=self.model_id, n_layers=len(self._layers),
             exclusive=self._model_exclusive,
-            catalog=CatalogBinding(self.model_id),
+            catalog=self._unit_catalog,
             weights=lambda: loaded_model_fingerprint(self._model, self.model_id),
             whitener=self._neutral.whitener,
         )

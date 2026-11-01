@@ -57,10 +57,15 @@ def _firing_line(firing: dict[str, Any], *, head: bool) -> str:
         bits.append(f"fires on {100 * firing['rate']:.2f}% of tokens (catalog)")
     else:
         bits.append(f"rate: {firing['rate_absent']}")
-    neutral = firing["neutral"]
-    if neutral is not None:
+    scale = firing["scale"]
+    if scale is not None:
+        # The scale a reading of this unit divides by, and where it came from.
         key = "write_top" if head else "act_top"
-        bits.append(f"{key} {neutral[key]:.3g} (neutral, {int(neutral['documents'])} docs)")
+        relative = ", relative to the neutral text" if scale["source"] == "neutral" else ""
+        bits.append(
+            f"{key} {scale['top']:.3g} ({scale['detail']}) · readings over "
+            f"{scale['value']:.3g}{relative}"
+        )
     elif firing["neutral_absent"]:
         bits.append(f"neutral: {firing['neutral_absent']}")
     return "  " + " · ".join(bits)

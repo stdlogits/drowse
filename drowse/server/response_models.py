@@ -483,8 +483,9 @@ class SaeProbeInfo(TypedDict):
 
 class UnitsProbeInfo(TypedDict):
     """One attached unit probe: an MLP neuron or attention head, read at its
-    own layer in units of its soft neutral scale (``act_top`` blended with a
-    floor from its layer's typical scale, ``units.stats.soft_scale``)."""
+    own layer in units of its reading scale (the bound catalog's ``act_top``,
+    else the neutral statistics', blended with a floor:
+    ``units.stats.UnitScales``; each reading's ``meta.scale`` names which)."""
 
     family: Literal["units"]
     name: str
@@ -831,16 +832,30 @@ class LensProviderJSON(TypedDict):
     repo_id: str
 
 
+class TokenMaskJSON(TypedDict):
+    """Where the S read's token mask comes from: a bound neuron-lens catalog's
+    token counts (``"catalog"``), the model's corpus counts (``"corpus"``,
+    ``drowse lens counts``) or the tokenizer's rules alone (``"tokenizer"``,
+    whose ``detail`` says what to run); ``kept`` is the built mask's size,
+    ``None`` before the first S read."""
+
+    source: Literal["catalog", "corpus", "tokenizer"]
+    detail: str
+    kept: int | None
+
+
 class SourcesResponse(TypedDict):
     """Prepared sources.  The SAE adds its provider ``releases``; the lens
-    adds its fetchable ``providers``, the crossover ``band`` and the
-    documents a local fit averages over by default (``fit_documents``)."""
+    adds its fetchable ``providers``, the crossover ``band``, the documents a
+    local fit averages over by default (``fit_documents``) and the S read's
+    ``token_mask``."""
 
     sources: list[InstrumentSourceJSON]
     releases: NotRequired[list[SaeReleaseJSON]]
     providers: NotRequired[list[LensProviderJSON]]
     band: NotRequired[LensBandJSON]
     fit_documents: NotRequired[int]
+    token_mask: NotRequired[TokenMaskJSON]
 
 
 class SourceSwitchResponse(TypedDict):
@@ -956,14 +971,29 @@ class UnitPlaceJSON(TypedDict):
     r: UnitHalfJSON
 
 
+class UnitScaleJSON(TypedDict):
+    """What a unit's readings divide by: ``source`` ``"catalog"`` (the bound
+    neuron-lens catalog's ``act_top``) or ``"neutral"`` (drowse's, over the
+    neutral statements: a reading is relative to the neutral text), ``detail``
+    (which catalog, or how many statements), ``top`` the pole's (head's)
+    ``act_top`` there and ``value`` the soft scale over it."""
+
+    source: Literal["catalog", "neutral"]
+    detail: str
+    top: float
+    value: float
+
+
 class UnitFiringJSON(TypedDict):
     """How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
-    the catalog) or why absent; drowse's neutral statistics (``act_top`` or a
-    head's ``write_top``, and ``scale``, the soft scale its readings divide
-    by); the catalog's activation row."""
+    the catalog) or why absent; ``scale``, what its readings divide by
+    (``None`` without unit statistics); drowse's neutral statistics
+    (``act_top`` or a head's ``write_top``, the mean, the documents); the
+    catalog's activation row."""
 
     rate: float | None
     rate_absent: str | None
+    scale: UnitScaleJSON | None
     neutral: dict[str, float] | None
     neutral_absent: str | None
     catalog: dict[str, Any] | None

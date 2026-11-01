@@ -132,6 +132,8 @@ try {
   assert.equal(a.activityText("neuron", -3.2, -2.4), "−2.4 of its scale (activation −3.20)");
   assert.equal(a.activityText("head", 2.0, 0.5), "+0.50 of its scale (write norm 2.00)");
   assert.equal(a.activityText("head", 2.0, null), "write norm 2.00", "without unit statistics, the raw value");
+  assert.equal(a.activityText("neuron", 1.0, 0.5, "catalog"), "+0.50 of its typical firing in text (activation 1.00)");
+  assert.equal(a.activityText("neuron", 1.0, 0.5, "neutral"), "+0.50 of its typical firing on the neutral text (activation 1.00)");
   assert.deepEqual(a.layerUnits(withUnits[0], 1).map(u => u.unit), ["neuron/L2n4"]);
   assert.equal(a.formatContribution(-1.53), "−1.5");
   assert.equal(a.formatContribution(0.034), "+0.03");
