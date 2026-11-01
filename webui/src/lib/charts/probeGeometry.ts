@@ -221,10 +221,39 @@ function label(
   ctx.globalAlpha = 0.9;
   ctx.fillStyle = color;
   ctx.font = FONT_LABEL;
+  ctx.fillText(text, labelBox(ctx, x, y, text, width)[0], y - 4);
+  ctx.globalAlpha = 1;
+}
+
+/** Where ``label`` draws ``text`` for a dot at ``(x, y)``: ``[left, top, right, bottom]`` (the
+ *  11px label's line box, beside the dot and moved inward before it would clip). */
+function labelBox(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, width: number): [number, number, number, number] {
+  ctx.font = FONT_LABEL;
   const textWidth = ctx.measureText(text).width;
   const labelX = x + 5 + textWidth <= width - 8 ? x + 5 : Math.max(8, x - 5 - textWidth);
-  ctx.fillText(text, labelX, y - 4);
-  ctx.globalAlpha = 1;
+  return [labelX, y - 15, labelX + textWidth, y - 1];
+}
+
+/** The labels a scatter can draw without two overlapping: nearest first (``order`` runs far to
+ *  near), each one whose box meets an already placed label's left out (its dot stays, and its name
+ *  shows on hover). */
+function placedLabels(
+  ctx: CanvasRenderingContext2D,
+  order: readonly number[],
+  at: (i: number) => [number, number],
+  text: (i: number) => string,
+  width: number,
+): Set<number> {
+  const boxes: Array<[number, number, number, number]> = [];
+  const kept = new Set<number>();
+  for (const i of [...order].reverse()) {
+    const [x, y] = at(i);
+    const box = labelBox(ctx, x, y, text(i), width);
+    if (boxes.some(b => box[0] < b[2] + 2 && b[0] < box[2] + 2 && box[1] < b[3] && b[1] < box[3])) continue;
+    boxes.push(box);
+    kept.add(i);
+  }
+  return kept;
 }
 
 /** Polyline with a per-vertex opacity ramp (oldest faint -> newest bright). */
@@ -640,16 +669,21 @@ function drawRank3(
     ctx.stroke();
   }
 
-  // nodes — painter's algorithm (far first), depth-cued size + alpha
+  // nodes — painter's algorithm (far first), depth-cued size + alpha; the front half's labels,
+  // nearest first, without two overlapping
   const order = node3
     .map((p, i) => ({ i, z: p.z }))
     .sort((a, c) => a.z - c.z);
+  const labelled = placedLabels(
+    ctx, order.map(({ i }) => i).filter((i) => depth01(node3[i].z) > 0.55),
+    (i) => node3[i].s, nodeLabel, w,
+  );
   for (const { i } of order) {
     const p = node3[i];
     hits.push({ screen: p.s, label: nodeLabel(i), point: geom.node_white[i] });
     const d = depth01(p.z);
     dot(ctx, p.s[0], p.s[1], 2.5 + 2.5 * d, pal.node, 0.4 + 0.6 * d);
-    if (d > 0.55) label(ctx, p.s[0], p.s[1], nodeLabel(i), pal.fgDim, w);
+    if (labelled.has(i)) label(ctx, p.s[0], p.s[1], nodeLabel(i), pal.fgDim, w);
   }
 
   // trail + live (always on top)

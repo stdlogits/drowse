@@ -56,6 +56,7 @@
   } from "../lib/pointerGesture";
   import { nodeCoordExtent, parseProbeTarget } from "../lib/tokens";
   import { polesOf } from "../lib/concepts";
+  import { coefficientText } from "../lib/steering/terms";
   import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
   import { probeTitle } from "../panels/rack/probeRows";
   import { readsShare, replyLayers, replyToken, replyTrace } from "../panels/rack/probeTrace";
@@ -581,7 +582,7 @@
       </section>
 
       <section class="dw-sec">
-        <div class="dw-sec-head"><span class="head">Geometry</span>{#if activeGeom}<span class="meta"><MorphText text={`L${selectedLayer} · share ${activeGeom.mahalanobis_share.toFixed(3)}`} /></span>{/if}</div>
+        <div class="dw-sec-head"><span class="head">Geometry</span>{#if activeGeom}<span class="meta"><MorphText text={`L${selectedLayer} · share ${coefficientText(activeGeom.mahalanobis_share, { fixed: true })}`} /></span>{/if}</div>
         {#if loading}
           <div class="well" aria-busy="true" role="status"><span class="sr-only">Loading probe geometry…</span></div>
         {:else if error}
@@ -596,8 +597,8 @@
                 class="share"
                 aria-pressed={l.layer === selectedLayer}
                 style:--tint={depthTint(layerDepth(l.layer, geomDeepest))}
-                data-tip={`L${l.layer} · share ${l.mahalanobis_share.toFixed(3)} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of the largest`}
-                aria-label={`Layer ${l.layer}, share ${l.mahalanobis_share.toFixed(3)}`}
+                data-tip={`L${l.layer} · share ${coefficientText(l.mahalanobis_share, { fixed: true })} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of the largest`}
+                aria-label={`Layer ${l.layer}, share ${coefficientText(l.mahalanobis_share, { fixed: true })}`}
                 onclick={() => (selectedLayer = l.layer)}
               ><i style:height={`${Math.max(6, maxShare > 0 ? (Math.abs(l.mahalanobis_share) / maxShare) * 100 : 0)}%`}></i></button>
             {/each}

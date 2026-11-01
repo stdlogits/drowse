@@ -156,6 +156,12 @@ try {
           assert.ok(call.x >= 0 && call.x + call.text.length * 6 <= width && call.y - 11 >= 0 && call.y <= height,
             `the label ${call.text} fits the ${width}x${height} plot`);
         }
+        // Regression (W4): neighbouring nodes' labels overlapped (december, november, january).
+        const drawn = textCalls.filter((call) => months.includes(call.text));
+        for (const [a, b] of drawn.flatMap((a, i) => drawn.slice(i + 1).map((b) => [a, b]))) {
+          const apart = a.x + a.text.length * 6 <= b.x || b.x + b.text.length * 6 <= a.x || a.y - 14 >= b.y || b.y - 14 >= a.y;
+          assert.ok(apart, `the labels ${a.text} and ${b.text} do not overlap`);
+        }
       }
     }
   } finally {
