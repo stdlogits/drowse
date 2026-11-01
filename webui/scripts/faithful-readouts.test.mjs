@@ -95,7 +95,24 @@ try {
   await flush();
   assert.equal(view.data, null, "a base never outlives the call that set it");
   assert.equal(view.origin, null);
+  // A refused steered replay (the server cannot reproduce the node's steering: 422) says so, so
+  // the view reads the token unsteered instead of printing the reason; a busy model is not a
+  // refusal, and an unsteered replay is never refused for its steering.
+  const { steeredReplayRefused } = await server.ssrLoadModule("/src/drawers/token/readout.svelte.ts");
+  const refusal = Object.assign(new Error("the replayed steering has thinking-phase terms"),
+    { status: 422, body: { detail: "the replayed steering has thinking-phase terms" } });
+  assert.equal(steeredReplayRefused(refusal, true), true);
+  assert.equal(steeredReplayRefused(refusal, false), false);
+  assert.equal(steeredReplayRefused(Object.assign(new Error("busy"), { status: 409 }), true), false);
+  replay = async () => { throw refusal; };
+  view.replay("lens", "phased", 2, { steered: true }, map);
+  await flush();
+  assert.equal(view.refused, true, "the readout flags the refusal");
   replay = async () => envelope;
+  view.replay("lens", "phased", 2, { steered: false }, map);
+  await flush();
+  assert.equal(view.refused, false, "the unsteered read is not refused");
+  assert.deepEqual(view.data, { strength: 0.4 });
   const { layersNote } = await server.ssrLoadModule("/src/drawers/token/readings.ts");
   assert.match(layersNote(true, true, "the probe is attached"), /replay while this model is loaded and the probe is attached/);
   assert.match(layersNote(true, false, "x"), /no replay record/);

@@ -38,7 +38,19 @@ interface ReplayEntry<T> {
   source: string | null;
   pins: Pins | null;
   error: string | null;
+  /** The replay was refused because it cannot reproduce the node's own steering. */
+  refused: boolean;
   progress: ReadoutProgress | null;
+}
+
+/** Whether ``error``, the failure of a replay under the node's own steering, is the server
+ *  refusing that steering (422: a ``SteeringCompositionError``, a thinking-phase window on a
+ *  thinking family it cannot reproduce), as opposed to a busy model (409) or a failed read. The
+ *  native routes answer ``{detail}`` without a code, so the status decides; an unsteered replay is
+ *  never refused for its steering. */
+export function steeredReplayRefused(error: unknown, steered: boolean): boolean {
+  if (!steered || !error || typeof error !== "object") return false;
+  return (error as { status?: unknown }).status === 422;
 }
 
 /** The lens or SAE probes pinned while the token was read, by name: a capture's, or a replay's
@@ -70,6 +82,8 @@ export class ReplayReadout<T> {
   source: string | null = $state(null);
   /** The probes the shown read pinned (captured or replayed with it), else null. */
   pins: Pins | null = $state(null);
+  /** The shown replay was refused: it cannot reproduce the node's own steering. */
+  refused: boolean = $state(false);
   progress: ReadoutProgress | null = $state(null);
   #selectedKey: string | null = null;
   /** The saved capture a replay stands on: shown while the replay loads and kept beside its error
@@ -88,6 +102,7 @@ export class ReplayReadout<T> {
     this.pins = pins;
     this.loading = false;
     this.error = null;
+    this.refused = false;
     this.progress = null;
   }
 
@@ -101,6 +116,7 @@ export class ReplayReadout<T> {
     this.pins = null;
     this.loading = false;
     this.error = null;
+    this.refused = false;
     this.progress = null;
   }
 
@@ -126,7 +142,7 @@ export class ReplayReadout<T> {
   ): void {
     const key = replayKey(family, nodeId, rawIndex, opts);
     this.#base = base;
-    this.#start(key, rawIndex, (onProgress) => cachedTokenReadout(family, nodeId, rawIndex, opts, onProgress), map);
+    this.#start(key, rawIndex, (onProgress) => cachedTokenReadout(family, nodeId, rawIndex, opts, onProgress), map, opts.steered ?? true);
   }
 
   /** One token's anatomy (the node replay), queued and kept as the family replays are. */
@@ -141,7 +157,7 @@ export class ReplayReadout<T> {
       opts.k ?? null, opts.units ?? null, opts.patterns ?? null, opts.steered ?? true, opts.raw ?? false,
     ]);
     this.#base = null;
-    this.#start(key, rawIndex, (onProgress) => cachedTokenAnatomy(nodeId, rawIndex, opts, onProgress), map);
+    this.#start(key, rawIndex, (onProgress) => cachedTokenAnatomy(nodeId, rawIndex, opts, onProgress), map, opts.steered ?? true);
   }
 
   #start(
@@ -149,6 +165,7 @@ export class ReplayReadout<T> {
     rawIndex: number,
     request: (onProgress: (event: RuntimeProgressEvent) => void) => Promise<{ measurements: MeasurementsEnvelopeJSON }>,
     map: (env: MeasurementsEnvelopeJSON) => ReadoutView<T>,
+    steered: boolean,
   ): void {
     this.#selectedKey = key;
     const cached = this.#entries.get(key);
@@ -164,6 +181,7 @@ export class ReplayReadout<T> {
       source: null,
       pins: null,
       error: null,
+      refused: false,
       progress: {
         phase: "queued",
         completed: 0,
@@ -192,6 +210,7 @@ export class ReplayReadout<T> {
       .catch((e) => {
         entry.state = "failed";
         entry.error = describeError(e);
+        entry.refused = steeredReplayRefused(e, steered);
         entry.progress = null;
       })
       .finally(() => {
@@ -206,6 +225,7 @@ export class ReplayReadout<T> {
     this.loading = entry.state === "loading";
     this.data = base ? base.data : entry.data;
     this.error = entry.error;
+    this.refused = entry.state === "failed" && entry.refused;
     this.origin = entry.state === "ready" ? "replayed" : base ? "captured" : null;
     this.source = base ? base.source : entry.source;
     this.pins = base ? base.pins ?? null : entry.pins;

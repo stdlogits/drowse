@@ -405,6 +405,18 @@
     geometrySteered = on || !geometryTokenReplayAvailable;
   }
 
+  // A reply whose steering a replay cannot reproduce (a thinking-phase window on a thinking model)
+  // is read unsteered, the one way it replays: the first refusal switches every family over, and
+  // the view says so once instead of each section printing the server's reason.
+  let unreplayableNode: string | null = $state(null);
+  const steeringUnreplayable = $derived(unreplayableNode !== null && unreplayableNode === loomNodeId);
+  $effect(() => {
+    const refused = geometryReadout.refused || anatomyReadout.refused || lensReadout.refused || saeReadout.refused;
+    if (!refused || !loomNodeId || unreplayableNode === loomNodeId) return;
+    unreplayableNode = loomNodeId;
+    setSteered("unsteered");
+  });
+
   /** At least one geometry probe on the roster: the geometry replay refuses an empty one. */
   const hasGeometryProbes = $derived(probeRack.active.some((name) => probeRack.entries.get(name)?.info.family === "geometry"));
 
@@ -712,7 +724,9 @@
       <Alternatives {token} canBranch={canBranch} busy={branching} onbranch={(id) => void branchWith(id)} />
     </section>
 
-    {#if showSteering}
+    {#if steeringUnreplayable}
+      <p class="meta readings-note">A replay can't reproduce where this reply's steering fired, so these readings are replayed without it.</p>
+    {:else if showSteering}
       <div class="dw-row readings-switch">
         <Segmented label="Readings" value={steeredAll ? "steered" : "unsteered"} onchange={setSteered}
           options={[{ value: "steered", label: "Steered", hint: recipeSteering ?? undefined }, { value: "unsteered", label: "Unsteered", hint: "Replayed without the steering" }]} />
@@ -793,6 +807,7 @@
   .mobile .part { gap: var(--s6); }
   /* The switch heads the readings below it. */
   .readings-switch { margin-bottom: calc(-1 * var(--s4)); }
+  .readings-note { margin: 0; }
 
   .title-row { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
   .title-row .dw-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: pre; text-overflow: ellipsis; cursor: help; }
