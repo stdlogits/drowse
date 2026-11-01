@@ -18,7 +18,7 @@
   import { genStatus } from "../../lib/stores/chat.svelte";
   import { goto } from "../../lib/stores/rooms.svelte";
   import { select } from "../../lib/stores/selection.svelte";
-  import { cursorAtIndex, moveCursor, tokenCursor } from "../../lib/stores/tokenCursor.svelte";
+  import { cursorAtIndex, moveCursor, settled, tokenCursor } from "../../lib/stores/tokenCursor.svelte";
   import {
     loadCatalog,
     nodeActivity,
@@ -79,7 +79,9 @@
   const catalogMissing = $derived(unitsState.catalog?.available === true && !bound);
 
   // ---------- the token the room reads: the cursor's, or the whole reply
-  const cursorToken = $derived(tokenCursor.token);
+  /** The cursor's token once it holds still (a held arrow key asks for no replay on the way). */
+  const here = settled(() => tokenCursor.token);
+  const cursorToken = $derived(here.current);
   const whole = $derived(cursorToken === null);
   /** The node and the token read: the cursor's token (where it replays), or, whole, the reply. */
   const target = $derived.by((): { nodeId: string; rawIndex: number | null; turnIdx: number } | null => {
