@@ -130,4 +130,15 @@ def _part_json(part: TermPart) -> SteeringPartJSON:
         "position": list(position) if isinstance(position, tuple) else position,
         "layers": list(layers) if isinstance(layers, tuple) else layers,
         "trigger": part.trigger,
+        "phase": part.phase,
+        "first_n": part.first_n,
+        "after_n": part.after_n,
+        "gate": None if part.gate is None else {
+            "probe": part.gate.probe, "op": part.gate.op,
+            "threshold": part.gate.threshold,
+        },
+        "projection": None if part.projection is None else {
+            "base": part.projection[0], "operator": part.projection[1],
+            "onto": part.projection[2],
+        },
     }

@@ -73,7 +73,8 @@ export interface ConversationImportPlan {
   probeRows: Map<string, ConversationProbeRow>;
 }
 
-const TRIGGERS = new Set<Trigger>(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"]);
+const TRIGGERS = new Set<Trigger>(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE", "FIRST_N", "AFTER_N"]);
+const GATE_OPS = new Set([">", ">=", "<", "<="]);
 const VARIANT = /^(?:raw|sae(?:-.+)?|role(?:-.+)?|from(?:-.+)?)$/u;
 
 export function isConversationSnapshot(
@@ -153,6 +154,7 @@ export function validateConversationSnapshot(
     if (!TRIGGERS.has(row.trigger as Trigger) || typeof row.enabled !== "boolean") {
       invalid(`steering row ${name}`);
     }
+    timing(row, `steering row ${name}`);
     if (row.mode === "unit") {
       // A unit term (lib/unitTerms.ts, the one rule): a neuron pushed (signed α) or a neuron or
       // head ablated toward its neutral mean (α not negative); a head has no push. A unit carries
@@ -164,6 +166,16 @@ export function validateConversationSnapshot(
       continue;
     }
     layerScope(row.layers, `steering row ${name} layers`);
+    if (row.mode === "projection") {
+      // ``base~onto`` / ``base|onto``, keyed by that selector, with its own signed push strength.
+      finite(row.alpha, `steering row ${name} alpha`);
+      const base = nonempty(row.base, `steering row ${name} base`);
+      const onto = nonempty(row.onto, `steering row ${name} second concept`);
+      if ((row.operator !== "~" && row.operator !== "|") || name !== `${base}${row.operator}${onto}`) {
+        invalid(`projection row ${name}`);
+      }
+      continue;
+    }
     if (row.mode === "jlens" || row.mode === "slens" || row.mode === "sae") {
       finite(row.alpha, `steering row ${name} alpha`);
       if (typeof row.ablate !== "boolean") invalid(`steering row ${name} ablation`);
@@ -319,6 +331,25 @@ function finiteArray(value: unknown, label: string): number[] {
   const values = array(value, label);
   if (!values.every((item) => typeof item === "number" && Number.isFinite(item))) invalid(label);
   return values as number[];
+}
+
+/** A row's counted window and gate: ``tokens`` (a whole number) exactly when the window counts
+ *  (``FIRST_N``, ``AFTER_N``); ``gate`` absent, ``null`` or a probe, a comparison and a finite
+ *  threshold. */
+function timing(row: Record<string, unknown>, label: string): void {
+  const counted = row.trigger === "FIRST_N" || row.trigger === "AFTER_N";
+  if (counted) {
+    finiteInteger(row.tokens, `${label} token count`);
+    if ((row.tokens as number) < 0) invalid(`${label} token count`);
+  } else if (row.tokens !== undefined) {
+    invalid(`${label} token count`);
+  }
+  if (row.gate === undefined || row.gate === null) return;
+  const gate = record(row.gate, `${label} gate`);
+  exactKeys(gate, ["op", "probe", "threshold"], `${label} gate`);
+  nonempty(gate.probe, `${label} gate probe`);
+  if (!GATE_OPS.has(gate.op as string)) invalid(`${label} gate comparison`);
+  finite(gate.threshold, `${label} gate threshold`);
 }
 
 function exactKeys(

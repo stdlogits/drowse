@@ -390,7 +390,7 @@ export function createWorkspaceTools(): AppTool[] {
       action: choice(["upsert", "remove", "clear", "strength"], "Card mutation or shared flat strength."), selector: string("Exact namespace/name, jlens/word (toward saying it), slens/word (toward having read it), sae/feature_id, or a unit (neuron/L8n344, head/L20h17); pass geometry variant separately.", 256),
       variant: string("Geometry variant such as raw, sae-release, role-name, from-model.", 256), label: nullable(string("Target node label; null uses coordinates.", 256)), coords: { type: "array", items: number("Authoring coordinate."), minItems: 1, maxItems: 64 },
       subspace_along: number("Shared slide coefficient for EVERY flat card; 0 disables their push."), along: number("Curved card slide coefficient."), onto: number("Curved residual collapse; zero leaves it unchanged.", 0, 1), alpha: number("Lens/SAE atom or unit coefficient. Values are model dependent; start modestly. A unit ablation runs at 1 (the unit held at its neutral mean) and refuses a negative alpha."),
-      enabled: boolean("Include this card in the expression."), ablate: boolean("Mean-ablate a flat concept or atom instead of pushing."), trigger: choice(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"], "Trigger phase: BOTH (default) steers the prompt and every generated token, BEFORE only the prompt prefill, AFTER the reply after thinking, THINKING only thinking tokens, RESPONSE every generated token."),
+      enabled: boolean("Include this card in the expression."), ablate: boolean("Mean-ablate a flat concept or atom instead of pushing."), trigger: choice(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"], "Trigger phase: BOTH (default) steers the prompt and every generated token, BEFORE only the prompt prefill, AFTER the reply after thinking, THINKING only thinking tokens, RESPONSE every generated token. It replaces a counted window and keeps a probe gate; set_steering writes @first:N, @after:N and @when: gates."),
     }, ["action"]), async (input, context) => editRack(input, context), { surfaces: ["subspace", "manifolds", "RecipeBar", "TermEditor", "JLensPanel", "SaePanel"] }),
     tool("drowse_attach_probe", "Attach a reading", "Attach a geometry, lens-token, or SAE-feature probe and synchronize the visible probe rack. Reading measures the current representation; attaching does not apply steering.", objectSchema({ selector: string("Full geometry selector, jlens/word (the word as said: its probability), slens/word (the word as read: its footprint z), or sae/feature_id.", 256), name: string("Optional unique display/channel name.", 256), top_n: integer("Number of nearest geometry labels to retain.", 1, 1000) }, ["selector"]), async (input, context) => {
       assertWorkspaceIdle(context);
@@ -476,8 +476,15 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
         }
       })();
       if (input.enabled !== undefined) entry.enabled = input.enabled as boolean;
-      if (input.trigger !== undefined) entry.trigger = input.trigger as Trigger;
-      if (entry.mode === "jlens" || entry.mode === "slens" || entry.mode === "sae" || entry.mode === "unit") {
+      if (input.trigger !== undefined) {
+        // A preset window replaces a counted one (its count goes with it); a gate stays.
+        entry.trigger = input.trigger as Trigger;
+        delete entry.tokens;
+      }
+      if (entry.mode === "projection") {
+        if (["coords", "label", "variant", "along", "onto", "ablate"].some(key => input[key] !== undefined)) throw new ToolError("INVALID_INPUT", "A projection card uses alpha only; set_steering writes a new one.");
+        if (input.alpha !== undefined) entry.alpha = input.alpha as number;
+      } else if (entry.mode === "jlens" || entry.mode === "slens" || entry.mode === "sae" || entry.mode === "unit") {
         if (["coords", "label", "variant", "along", "onto"].some(key => input[key] !== undefined)) throw new ToolError("INVALID_INPUT", "Lens, SAE and unit cards use alpha and ablate, not geometry coordinates or along/onto.");
         if (input.alpha !== undefined) entry.alpha = input.alpha as number;
         if (input.ablate !== undefined) {

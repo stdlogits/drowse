@@ -41,9 +41,11 @@ try {
   const unfitted = render(DiagnosticsPanel, { props: { manifold: { ...manifold, resolved_fit_mode: null, fitted: [] } } }).body;
   assert.match(unfitted, /fit for diagnostics/);
 
-  // The term editor's When: one choice per engine preset, in phase order, tips matching the phases.
+  // The term editor's When: one choice per engine preset, in phase order, tips matching the phases,
+  // then the counted windows (@first:N / @after:N) as one choice.
   const { WHEN } = await server.ssrLoadModule("/src/lib/steering/terms.ts");
-  assert.deepEqual(WHEN.map(option => option.value), ["BOTH", "BEFORE", "RESPONSE", "THINKING", "AFTER"]);
+  assert.deepEqual(WHEN.map(option => option.value), ["BOTH", "BEFORE", "RESPONSE", "THINKING", "AFTER", "TOKENS"]);
+  assert.deepEqual(WHEN.filter(option => option.prompt).map(option => option.value), ["BOTH", "BEFORE"], "the two a gate never fires in");
   const hint = Object.fromEntries(WHEN.map(option => [option.value, option.hint]));
   assert.match(hint.BEFORE, /prompt only/);
   assert.doesNotMatch(hint.BEFORE, /response/i);

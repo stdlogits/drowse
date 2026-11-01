@@ -164,7 +164,12 @@ class SteeringPartJSON(TypedDict):
     coefficient (a position's along) and ``onto`` a position's collapse (0
     otherwise); ``position`` a position's node label or coordinates;
     ``layers`` the ``{…}`` clause (``null`` for none); ``trigger`` the ``@``
-    clause without the ``@`` (``null`` for both phases).
+    clause without the ``@`` (``null`` for both phases), and the same trigger
+    in fields: ``phase`` its window's preset name (``null`` for a counted
+    window), ``first_n`` / ``after_n`` the counted windows (``@first:N`` /
+    ``@after:N``), ``gate`` its probe gate (a bare ``@when:`` is phase
+    ``response`` with a gate); ``projection`` a projection's base, operator
+    and second concept (``null`` otherwise).
     """
 
     text: str
@@ -175,6 +180,29 @@ class SteeringPartJSON(TypedDict):
     position: str | list[float] | None
     layers: Literal["workspace"] | list[int] | None
     trigger: str | None
+    phase: Literal["both", "before", "response", "after", "thinking"] | None
+    first_n: int | None
+    after_n: int | None
+    gate: SteeringGateJSON | None
+    projection: SteeringProjectionJSON | None
+
+
+class SteeringGateJSON(TypedDict):
+    """A term's probe gate (``@when:<probe><op><threshold>``): ``probe`` the
+    scalar key verbatim, the comparison and its threshold."""
+
+    probe: str
+    op: Literal[">", ">=", "<", "<="]
+    threshold: float
+
+
+class SteeringProjectionJSON(TypedDict):
+    """A projection term's parts: ``base~onto`` keeps the part of ``base``
+    along ``onto``, ``base|onto`` removes it."""
+
+    base: str
+    operator: Literal["~", "|"]
+    onto: str
 
 
 class SteeringValidationResponse(TypedDict):

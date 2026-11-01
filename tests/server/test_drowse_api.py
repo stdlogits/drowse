@@ -154,6 +154,11 @@ class TestSessions:
                 "position": "honest",
                 "layers": None,
                 "trigger": "response",
+                "phase": "response",
+                "first_n": None,
+                "after_n": None,
+                "gate": None,
+                "projection": None,
             }],
         }
         session.steering.assert_called_once()
@@ -164,7 +169,9 @@ class TestSessions:
     ) -> None:
         # The recipe row shows a recipe from elsewhere (an agent's, a tree's,
         # the CLI's) as chips from these fields: one per term, in the order
-        # written, each with its own text, so the client needs no parser.
+        # written, each with its own text, so the client needs no parser: a
+        # trigger comes as its fields too (phase, counted window, gate), a
+        # projection as its base, relation and second concept.
         session, client = session_and_client
         session.layers = [object()] * 8
         scope = session.steering.return_value.__enter__.return_value
@@ -172,7 +179,7 @@ class TestSessions:
         expression = (
             "0.3 jlens/storm{2-4} - !slens/#12@response + 0.5 !head/L3h1"
             " + 0.5,0.2 emotions%0.3,-0.8{workspace} + 0.4 a~b@when:jlens/x>0.1"
-            " + 0.2 neuron/L5n7"
+            " + 0.2 neuron/L5n7 + 0.1 jlens/a@after:3&when:a.b[1]<=-2"
         )
         resp = client.post(
             "/drowse/v1/sessions/default/steering/validate",
@@ -182,19 +189,29 @@ class TestSessions:
         body = resp.json()
         parts = body["parts"]
         assert " + ".join(part["text"] for part in parts).replace("+ -", "- ") == body["expression"]
+        both = {"phase": "both", "first_n": None, "after_n": None, "gate": None, "projection": None}
         assert parts == [
             {"text": "0.3 jlens/storm{2-4}", "op": "push", "target": "jlens/storm",
-             "coeff": 0.3, "onto": 0.0, "position": None, "layers": [2, 3, 4], "trigger": None},
+             "coeff": 0.3, "onto": 0.0, "position": None, "layers": [2, 3, 4], "trigger": None, **both},
             {"text": "-!slens/#12@response", "op": "ablate", "target": "slens/#12",
-             "coeff": -1.0, "onto": 0.0, "position": None, "layers": None, "trigger": "response"},
+             "coeff": -1.0, "onto": 0.0, "position": None, "layers": None, "trigger": "response",
+             **both, "phase": "response"},
             {"text": "0.5 !head/L3h1", "op": "ablate", "target": "head/L3h1",
-             "coeff": 0.5, "onto": 0.0, "position": None, "layers": None, "trigger": None},
+             "coeff": 0.5, "onto": 0.0, "position": None, "layers": None, "trigger": None, **both},
             {"text": "0.5,0.2 emotions%0.3,-0.8{workspace}", "op": "position", "target": "emotions",
-             "coeff": 0.5, "onto": 0.2, "position": [0.3, -0.8], "layers": "workspace", "trigger": None},
+             "coeff": 0.5, "onto": 0.2, "position": [0.3, -0.8], "layers": "workspace", "trigger": None,
+             **both},
             {"text": "0.4 a~b@when:jlens/x>0.1", "op": "project", "target": "a~b",
-             "coeff": 0.4, "onto": 0.0, "position": None, "layers": None, "trigger": "when:jlens/x>0.1"},
+             "coeff": 0.4, "onto": 0.0, "position": None, "layers": None, "trigger": "when:jlens/x>0.1",
+             **both, "phase": "response",
+             "gate": {"probe": "jlens/x", "op": ">", "threshold": 0.1},
+             "projection": {"base": "a", "operator": "~", "onto": "b"}},
             {"text": "0.2 neuron/L5n7", "op": "push", "target": "neuron/L5n7",
-             "coeff": 0.2, "onto": 0.0, "position": None, "layers": None, "trigger": None},
+             "coeff": 0.2, "onto": 0.0, "position": None, "layers": None, "trigger": None, **both},
+            {"text": "0.1 jlens/a@after:3&when:a.b[1]<=-2", "op": "push", "target": "jlens/a",
+             "coeff": 0.1, "onto": 0.0, "position": None, "layers": None,
+             "trigger": "after:3&when:a.b[1]<=-2", **both, "phase": None, "after_n": 3,
+             "gate": {"probe": "a.b[1]", "op": "<=", "threshold": -2.0}},
         ]
 
     def test_validate_steering_returns_expected_errors_in_band(

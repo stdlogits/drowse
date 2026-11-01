@@ -9,7 +9,9 @@
 //   coord_list := signed_num ("," signed_num)*
 //   atom     := [ns "/"] NAME ["." NAME] [":" variant]
 //             | ("neuron" | "head") "/" UNIT                     (no clause: a unit has its layer)
-//   trigger  := before|after|both|thinking|response|prompt|generated
+//   trigger  := phase ["&" gate] | gate
+//   phase    := before|after|both|thinking|response|prompt|generated | (first|after) ":" INT
+//   gate     := "when:" probe (">" | ">=" | "<" | "<=") signed_num
 //   variant  := raw | sae | sae-<release> | role | role-<name>
 //             | from | from-<safe-source-model>
 //
@@ -30,9 +32,10 @@ import type {
   SLensSteerEntry,
   SaeSteerEntry,
   ManifoldSteerEntry,
+  ProjectionSteerEntry,
   SteerEntry,
+  SteerTiming,
   SubspaceSteerEntry,
-  Trigger,
   UnitSteerEntry,
   Variant,
 } from "./types";
@@ -40,15 +43,27 @@ import { layerClause, termIsInert } from "./steering/layers";
 
 // ----------------------------------------------- triggers ----------------
 
-/** Map UI Trigger values to the keyword the formatter emits.  BOTH is the
- * default and is omitted from the output. */
-const TRIGGER_TO_KEYWORD: Record<Trigger, string | null> = {
-  BOTH: null,
+/** The preset windows' canonical keywords (grammar ``_TRIGGER_CANONICAL``). */
+const PRESET_KEYWORD = {
+  BOTH: "both",
   BEFORE: "before",
   AFTER: "after",
   THINKING: "thinking",
   RESPONSE: "response",
-};
+} as const;
+
+/** A term's ``@`` clause as ``format_expr`` writes it (grammar ``_trigger_name``): nothing for
+ *  ``BOTH``; a preset's keyword; ``first:N`` / ``after:N`` for a counted window; with a gate,
+ *  ``@when:G`` on the ``RESPONSE`` window (the gate's own) and ``@<window>&when:G`` on any other
+ *  (``@both&when:G`` included), the threshold written as ``%g``. */
+export function triggerClause({ trigger, tokens, gate }: SteerTiming): string {
+  const window = trigger === "FIRST_N"
+    ? `first:${tokens ?? 0}`
+    : trigger === "AFTER_N" ? `after:${tokens ?? 0}` : PRESET_KEYWORD[trigger];
+  if (!gate) return trigger === "BOTH" ? "" : `@${window}`;
+  const when = `when:${gate.probe}${gate.op}${formatCoeff(gate.threshold)}`;
+  return trigger === "RESPONSE" ? `@${when}` : `@${window}&${when}`;
+}
 
 // ----------------------------------------------- formatter ---------------
 
@@ -72,14 +87,15 @@ export function serializeExpression(
   return joinTerms(parts);
 }
 
-/** The order families emit in: flat terms first (they share one slide), then the atoms, units
- *  and curved terms. */
-const TERM_ORDER: readonly SteerEntry["mode"][] = ["subspace", "jlens", "slens", "sae", "unit", "manifold"];
+/** The order families emit in: flat terms first (they share one slide), projections, then the
+ *  atoms, units and curved terms. */
+const TERM_ORDER: readonly SteerEntry["mode"][] = ["subspace", "projection", "jlens", "slens", "sae", "unit", "manifold"];
 
 /** Render one rack entry as its own term (whatever ``enabled`` says). */
 export function formatTerm(name: string, entry: SteerEntry, subspaceAlong: number): string {
   switch (entry.mode) {
     case "subspace": return formatSubspaceTerm(name, entry, subspaceAlong);
+    case "projection": return formatProjectionTerm(entry);
     case "jlens":
     case "slens": return formatJLensTerm(name, entry);
     case "sae": return formatSaeTerm(name, entry);
@@ -115,11 +131,11 @@ export function formatSubspaceTerm(
 ): string {
   const clause = layerClause(entry.layers);
   if (entry.ablate) {
-    return `${formatBang(`${nameWithVariant(name, entry.variant)}${clause}`, subspaceAlong)}${formatTriggerSuffix(entry.trigger)}`;
+    return `${formatBang(`${nameWithVariant(name, entry.variant)}${clause}`, subspaceAlong)}${triggerClause(entry)}`;
   }
   const position = entry.label ?? entry.coords.map((c) => formatCoeff(c)).join(",");
   const selector = `${nameWithVariant(name, entry.variant)}%${position}`;
-  return `${formatCoeff(subspaceAlong)} ${selector}${clause}${formatTriggerSuffix(entry.trigger)}`;
+  return `${formatCoeff(subspaceAlong)} ${selector}${clause}${triggerClause(entry)}`;
 }
 
 function nameWithVariant(name: string, variant: Variant): string {
@@ -192,9 +208,10 @@ function formatBang(target: string, coeff: number): string {
   return `${formatCoeff(coeff)} !${target}`;
 }
 
-function formatTriggerSuffix(trigger: Trigger): string {
-  const kw = TRIGGER_TO_KEYWORD[trigger];
-  return kw ? `@${kw}` : "";
+/** Render one projection — ``<alpha> base~onto`` or ``<alpha> base|onto``, its clause and its
+ *  ``@`` clause (grammar ``_fmt_projected``). */
+export function formatProjectionTerm(entry: ProjectionSteerEntry): string {
+  return `${formatCoeff(entry.alpha)} ${entry.base}${entry.operator}${entry.onto}${layerClause(entry.layers)}${triggerClause(entry)}`;
 }
 
 /** Render one lens token term — the plain atom ``<alpha> jlens/<word>``
@@ -213,7 +230,7 @@ export function formatSaeTerm(name: string, entry: SaeSteerEntry): string {
 /** One single-direction atom: ``<alpha> <atom>{clause}`` pushed, or its ablation. */
 function formatAtomTerm(name: string, entry: JLensSteerEntry | SLensSteerEntry | SaeSteerEntry): string {
   const target = `${name}${layerClause(entry.layers)}`;
-  return `${entry.ablate ? formatBang(target, entry.alpha) : `${formatCoeff(entry.alpha)} ${target}`}${formatTriggerSuffix(entry.trigger)}`;
+  return `${entry.ablate ? formatBang(target, entry.alpha) : `${formatCoeff(entry.alpha)} ${target}`}${triggerClause(entry)}`;
 }
 
 /** Render one unit term — ``<alpha> neuron/L31n4410`` (a push; a negative α takes the other pole)
@@ -222,7 +239,7 @@ function formatAtomTerm(name: string, entry: JLensSteerEntry | SLensSteerEntry |
  *  (the grammar refuses one); which terms a unit takes is lib/unitTerms.ts's rule, held by the
  *  rack. */
 export function formatUnitTerm(name: string, entry: UnitSteerEntry): string {
-  return `${entry.ablate ? formatBang(name, entry.alpha) : `${formatCoeff(entry.alpha)} ${name}`}${formatTriggerSuffix(entry.trigger)}`;
+  return `${entry.ablate ? formatBang(name, entry.alpha) : `${formatCoeff(entry.alpha)} ${name}`}${triggerClause(entry)}`;
 }
 
 /** Render one manifold (curved) rack entry — ``<along[,onto]>
@@ -245,5 +262,5 @@ export function formatManifoldTerm(name: string, entry: ManifoldSteerEntry): str
     onto !== 0
       ? `${formatCoeff(entry.blend)},${formatCoeff(negative ? -onto : onto)}`
       : formatCoeff(entry.blend);
-  return `${coeff} ${selector}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
+  return `${coeff} ${selector}${layerClause(entry.layers)}${triggerClause(entry)}`;
 }

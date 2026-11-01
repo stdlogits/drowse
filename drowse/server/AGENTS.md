@@ -208,8 +208,9 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   layers, share and selected layers), which the term editor draws its depth
   strip from, and `parts` (`grammar.term_parts`: each term in parse order with
   its own `format_expr` text, op, target, coefficient(s), position, clause and
-  trigger), from which the dashboard shows a recipe from elsewhere as chips
-  without a parser of its own. A lens probe row names its `namespace`
+  trigger, the trigger also as `phase`, `first_n`, `after_n` and `gate`, and a
+  projection's `projection`), from which the dashboard shows a recipe from
+  elsewhere as chips without a parser of its own. A lens probe row names its `namespace`
   (`jlens` or `slens`).
 - **Profiles.** `pairwise` and `correlation` read `session.analytics_profile`,
   CPU snapshots built inside the exclusive-GPU section, so a polled read never

@@ -244,6 +244,35 @@ try {
   unknownTrigger.steerRack[0].trigger = "SOMETIMES";
   assert.equal(isConversationSnapshot(unknownTrigger, Object.keys(samplingState)), false);
 
+  // A row's counted window carries its whole count, and only a counted window has one; a gate is a
+  // probe, a comparison and a finite threshold, exactly; a projection is keyed by its selector.
+  const timed = structuredClone(snapshot);
+  Object.assign(timed.steerRack[0], { trigger: "AFTER_N", tokens: 4, gate: { probe: "local/a.b", op: ">=", threshold: -0.5 } });
+  timed.steerRack.push({
+    name: "local/a.b|local/c.d", mode: "projection", base: "local/a.b", operator: "|", onto: "local/c.d",
+    alpha: -0.6, trigger: "FIRST_N", tokens: 8, layers: [3, 4], gate: null, enabled: true,
+  });
+  assert.equal(isConversationSnapshot(timed, Object.keys(samplingState)), true);
+  assert.match(buildConversationImportPlan(timed).steeringExpression, /@after:4&when:local\/a\.b>=-0\.5/);
+  assert.match(buildConversationImportPlan(timed).steeringExpression, /- 0\.6 local\/a\.b\|local\/c\.d\{3-4\}@first:8/);
+  for (const [label, mutate] of [
+    ["a counted window without its count", (rows) => { delete rows[0].tokens; }],
+    ["a fractional count", (rows) => { rows[0].tokens = 2.5; }],
+    ["a negative count", (rows) => { rows[0].tokens = -1; }],
+    ["a count on a phase", (rows) => { rows[1].tokens = 3; }],
+    ["a gate without a probe", (rows) => { rows[0].gate.probe = ""; }],
+    ["a gate's unknown comparison", (rows) => { rows[0].gate.op = "=="; }],
+    ["a gate's infinite threshold", (rows) => { rows[0].gate.threshold = Infinity; }],
+    ["a gate's extra field", (rows) => { rows[0].gate.channel = "fraction"; }],
+    ["a projection keyed off its selector", (rows) => { rows.at(-1).name = "local/a.b~local/c.d"; }],
+    ["a projection's unknown relation", (rows) => { rows.at(-1).operator = "%"; rows.at(-1).name = "local/a.b%local/c.d"; }],
+    ["a projection without its strength", (rows) => { delete rows.at(-1).alpha; }],
+  ]) {
+    const bad = structuredClone(timed);
+    mutate(bad.steerRack);
+    assert.equal(isConversationSnapshot(bad, Object.keys(samplingState)), false, label);
+  }
+
   // Unit terms: a neuron pushed either pole or ablated, a head only ablated; the reference exact.
   const unitRows = structuredClone(snapshot);
   unitRows.steerRack.push(

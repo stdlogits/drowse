@@ -1,12 +1,15 @@
 <script lang="ts">
   // The open term, in place under the recipe's chips (the Steering canvas): a wash surface with the
   // term's name and what it is, its strength (a big readout that scrubs sideways, over a signed
-  // range), when it acts, its position on its geometry, where it acts by layer (the depth strip),
-  // and the term as the expression writes it. A unit (a neuron or a head) follows lib/unitTerms.ts:
+  // range), when it acts (a phase or a count of generated tokens, and "Only while…", a gate on an
+  // attached probe's reading), which part of a concept it pushes (all of it, or only or all but the
+  // part along a second concept: a projection), its position on its geometry, where it acts by
+  // layer (the depth strip), and the term as the expression writes it. A unit (a neuron or a head) follows lib/unitTerms.ts:
   // its push and its ablation each take their own strength, a head is only ablated, and its strip
   // shows its own layer, fixed; its catalog label joins the facts, and it opens its unit view. Every change applies at once (through the rack's
   // pending queue while a reply generates); Done closes it.
   import { MorphText, Segmented, Switch } from "@stdlogits/ledger";
+  import NumberInput from "../../lib/NumberInput.svelte";
   import Select from "../../lib/Select.svelte";
   import Slider from "../../lib/Slider.svelte";
   import XYPad from "../manifold/XYPad.svelte";
@@ -15,22 +18,31 @@
     ATOM_DEFAULT_ALPHA,
     manifoldByName,
     patchSteerEntry,
+    relateSteerEntry,
     setSteerCoords,
     setSteerLabel,
     setSteerLayers,
+    setSteerTiming,
     setSubspaceAlong,
+    timingOf,
     lensTokenText,
     steerRack,
   } from "../../lib/stores/steering.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
+  import { probeRack } from "../../lib/stores/probes.svelte";
+  import { fitGeometry } from "../../lib/manifolds/fitKind";
   import { select } from "../../lib/stores/selection.svelte";
   import { setUnitOperation, unitTermLabel, unitsAvailable } from "../../lib/stores/units.svelte";
   import { formatTerm } from "../../lib/expression";
   import { layerClause, layerRunsText, layerTint, peakLayer } from "../../lib/steering/layers";
   import { placeOf } from "../../lib/steering/termLayers.svelte";
   import {
+    DEFAULT_WINDOW_TOKENS,
+    GATE_OPS,
     WHEN,
     canRemove,
+    gateProbeKey,
+    whenChoice,
     coefficientText,
     removes,
     strengthDial,
@@ -41,7 +53,8 @@
     unitLayer,
     wrapPieces,
   } from "../../lib/steering/terms";
-  import type { LayerScope, SteerEntry, Trigger } from "../../lib/types";
+  import type { GateOp, LayerScope, SteerEntry, SteerGate } from "../../lib/types";
+  import type { WhenChoice } from "../../lib/steering/terms";
 
   let { name, entry, onclose, onremove }: {
     name: string;
@@ -51,7 +64,9 @@
   } = $props();
 
   const uid = $props.id();
-  const info = $derived(entry.mode === "subspace" || entry.mode === "manifold" ? manifoldByName(name) : null);
+  const info = $derived(entry.mode === "subspace" || entry.mode === "manifold"
+    ? manifoldByName(name)
+    : entry.mode === "projection" ? manifoldByName(entry.base) : null);
   const title = $derived(termTitle(name, entry, entry.mode === "manifold" ? info : null, lensTokenText));
   const removal = $derived(removes(name, entry));
   const place = $derived(placeOf(name, entry, sessionState.info?.model_id));
@@ -83,10 +98,11 @@
 
   function setStrength(raw: number): void {
     if (!Number.isFinite(raw)) return;
-    const value = Math.round(Math.min(dial.max, Math.max(dial.min, raw)) * 100) / 100;
+    // ``|| 0``: a −0 would write ``-0`` (and flip a curved term's onto).
+    const value = Math.round(Math.min(dial.max, Math.max(dial.min, raw)) * 100) / 100 || 0;
     if (entry.mode === "subspace") setSubspaceAlong(value);
     else if (entry.mode === "manifold") patchSteerEntry(name, { blend: value }, ["manifold"]);
-    else patchSteerEntry(name, { alpha: value }, ["jlens", "slens", "sae", "unit"]);
+    else patchSteerEntry(name, { alpha: value }, ["projection", "jlens", "slens", "sae", "unit"]);
   }
 
   /** The range's track: filled from zero to the thumb, in the term's colour (ink, faint, below
@@ -143,9 +159,77 @@
   // ---------- when
 
   const thinks = $derived(sessionState.info?.supports_thinking === true);
+  const choice = $derived(whenChoice(entry.trigger));
+  // A gate never reads the prompt, so a gated term leaves out Always and Prompt (unless it is set
+  // to one: an agent may write ``@both&when:…``).
   const when = $derived(WHEN
-    .filter(option => !option.thinking || thinks || option.value === entry.trigger)
+    .filter(option => (!option.thinking || thinks || option.value === choice) && (!option.prompt || !entry.gate || option.value === choice))
     .map(({ value, label, hint }) => ({ value, label, hint })));
+  const counted = $derived(entry.trigger === "FIRST_N" || entry.trigger === "AFTER_N");
+
+  function setWhen(value: WhenChoice): void {
+    if (value === choice) return;
+    const gate = entry.gate ?? null;
+    if (value === "TOKENS") setSteerTiming(name, { trigger: "FIRST_N", tokens: DEFAULT_WINDOW_TOKENS, gate });
+    else setSteerTiming(name, { trigger: value, gate });
+  }
+
+  function setWindow(trigger: "FIRST_N" | "AFTER_N", tokens: number): void {
+    if (!Number.isFinite(tokens)) return;
+    setSteerTiming(name, { trigger, tokens: Math.max(1, Math.round(tokens)), gate: entry.gate ?? null });
+  }
+
+  // ---------- only while (a gate on an attached probe's reading)
+
+  /** The probes a gate can read: each attached probe by the key whose number its card shows, with
+   *  that number; a gate set elsewhere on a probe not attached (or a channel) stays one. */
+  const gateProbes = $derived.by(() => {
+    const rows: { value: string; label: string; now: number | null }[] = [...probeRack.entries]
+      .map(([probe, row]) => ({ value: gateProbeKey(probe, row.info), label: probe, now: row.reading || row.aggregate ? row.current : null }));
+    const set = entry.gate?.probe;
+    if (set !== undefined && !rows.some(row => row.value === set)) rows.unshift({ value: set, label: `${set}, not attached`, now: null });
+    return rows;
+  });
+  const gateNow = $derived(gateProbes.find(row => row.value === entry.gate?.probe)?.now ?? null);
+  const gateable = $derived(entry.trigger !== "BEFORE" && gateProbes.length > 0);
+
+  function addGate(): void {
+    const first = gateProbes[0];
+    if (!first) return;
+    // A gate never reads the prompt: Always and Prompt become Response, the gate's own window.
+    const trigger = entry.trigger === "BOTH" || entry.trigger === "BEFORE" ? "RESPONSE" : entry.trigger;
+    const threshold = first.now === null ? 0 : Math.round(first.now * 100) / 100 || 0;
+    setSteerTiming(name, { ...timingOf(entry), trigger, gate: { probe: first.value, op: ">", threshold } });
+  }
+
+  function setGate(patch: Partial<SteerGate>): void {
+    if (!entry.gate) return;
+    setSteerTiming(name, { ...timingOf(entry), gate: { ...entry.gate, ...patch } });
+  }
+
+  // ---------- which part (all of a concept, or only or all but its part along a second one)
+
+  /** The flat two-node concepts a projection relates to, by their rack name. */
+  const concepts = $derived(steerRack.catalog
+    .filter(row => row.node_count === 2 && fitGeometry(row) === "flat")
+    .map(row => `${row.namespace}/${row.name}`));
+  const part = $derived<"all" | "~" | "|">(entry.mode === "projection" ? entry.operator : "all");
+  const base = $derived(entry.mode === "projection" ? entry.base : name);
+  const ontoOptions = $derived.by(() => {
+    const options = concepts.filter(concept => concept !== base).map(concept => ({ value: concept, label: concept }));
+    if (entry.mode === "projection" && !options.some(row => row.value === entry.onto)) options.unshift({ value: entry.onto, label: entry.onto });
+    return options;
+  });
+  const relatable = $derived(ontoOptions.length > 0 && (entry.mode === "projection"
+    ? concepts.includes(entry.base)
+    : entry.mode === "subspace" && !entry.ablate && entry.variant === "raw" && concepts.includes(name)));
+  const reselect = (key: string) => select({ kind: "term", name: key });
+
+  function setPart(value: "all" | "~" | "|"): void {
+    if (value === part) return;
+    if (value === "all") relateSteerEntry(name, null, reselect);
+    else relateSteerEntry(name, { operator: value, onto: entry.mode === "projection" ? entry.onto : ontoOptions[0].value }, reselect);
+  }
 
   // ---------- position (a node of a fit, or a free point on it)
 
@@ -245,10 +329,55 @@
     </div>
     <div class="col">
       <span class="head" id="{uid}-when">When</span>
-      <Segmented label="When {title} acts" value={entry.trigger} options={when}
-        onchange={(value: Trigger) => patchSteerEntry(name, { trigger: value })} />
+      <Segmented label="When {title} acts" value={choice} options={when} onchange={setWhen} />
+      {#if counted && (entry.trigger === "FIRST_N" || entry.trigger === "AFTER_N")}
+        {@const trigger = entry.trigger}
+        <div class="dw-row window">
+          <Segmented label="Which generated tokens" value={trigger}
+            options={[{ value: "FIRST_N", label: "First", hint: "The first so many generated tokens" }, { value: "AFTER_N", label: "After", hint: "Every generated token after the first so many" }]}
+            onchange={(next) => setWindow(next, entry.tokens ?? DEFAULT_WINDOW_TOKENS)} />
+          <span class="count"><NumberInput value={entry.tokens ?? DEFAULT_WINDOW_TOKENS} min={1} step={1} ariaLabel="How many generated tokens"
+            onchange={(value) => { if (value !== null) setWindow(trigger, value); }} /></span>
+          <span class="meta">tokens</span>
+        </div>
+      {/if}
+      {#if !entry.gate}
+        <button type="button" class="dw-text" disabled={!gateable} onclick={addGate}
+          data-tip={entry.trigger === "BEFORE" ? "A gate never reads the prompt" : gateProbes.length === 0 ? "Attach a probe to gate on its reading" : "Act only while a probe's reading passes a threshold"}>+ Only while…</button>
+      {/if}
     </div>
   </div>
+
+  {#if entry.gate}
+    {@const gate = entry.gate}
+    <div class="gate">
+      <div class="dw-sec-head"><span class="head" id="{uid}-gate">Only while</span>{#if gateNow !== null}<span class="meta">reads {coefficientText(gateNow, { fixed: true })} now</span>{/if}</div>
+      <div class="gate-row">
+        <span class="probe"><Select value={gate.probe} options={gateProbes.map(({ value, label }) => ({ value, label }))} ariaLabel="The probe whose reading gates {title}"
+          onchange={(probe) => setGate({ probe })} /></span>
+        <Segmented label="Comparison" value={gate.op} options={GATE_OPS.map(({ value, label, hint }) => ({ value, label, hint }))}
+          onchange={(op: GateOp) => setGate({ op })} />
+        <span class="count"><NumberInput value={gate.threshold} step={0.05} ariaLabel="Threshold"
+          onchange={(value) => { if (value !== null && Number.isFinite(value)) setGate({ threshold: value || 0 }); }} /></span>
+        <button type="button" class="dw-text" onclick={() => setSteerTiming(name, { ...timingOf(entry), gate: null })}>Clear</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if relatable}
+    <div class="part">
+      <div class="dw-sec-head"><span class="head">Which part</span>{#if entry.mode === "projection"}<span class="pick">
+        <Select value={entry.onto} options={ontoOptions} ariaLabel="The second concept"
+          onchange={(onto) => { if (entry.mode === "projection") relateSteerEntry(name, { operator: entry.operator, onto }, reselect); }} /></span>{/if}</div>
+      <Segmented label="Which part of {title} it pushes" value={part}
+        options={[
+          { value: "all", label: "All of it", hint: "The whole concept" },
+          { value: "~", label: "Along", hint: "Only the part of it along a second concept" },
+          { value: "|", label: "Not along", hint: "All of it but the part along a second concept" },
+        ]}
+        onchange={setPart} />
+    </div>
+  {/if}
 
   {#if positioned && info}
     <div class="position">
@@ -350,6 +479,16 @@
   .ticks { display: grid; grid-template-columns: 1fr auto 1fr; padding: 0 2px; }
   .ticks > span:last-child { text-align: right; }
 
+  .window { gap: var(--s3); flex-wrap: wrap; }
+  .window :global(.seg) { background: var(--wash2); }
+  .count { display: inline-flex; width: 88px; }
+  .gate, .part { display: grid; gap: var(--s2); min-width: 0; }
+  .gate .dw-sec-head, .part .dw-sec-head { align-items: center; }
+  .gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); min-width: 0; }
+  .gate-row .probe { display: inline-flex; flex: 1 1 200px; min-width: 0; max-width: 360px; }
+  .gate-row :global(.seg), .part :global(.seg) { background: var(--wash2); max-width: 100%; }
+  .part { justify-items: start; }
+  .part .dw-sec-head { justify-self: stretch; }
   .position { display: grid; gap: var(--s3); min-width: 0; }
   .position .dw-sec-head { align-items: center; }
   .pick { display: inline-flex; min-width: 0; max-width: 60%; }

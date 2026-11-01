@@ -318,9 +318,14 @@ drowse.ai too.
 ## Surface invariants
 
 - **Expression.** `lib/expression.ts` only serializes; the server's grammar is the only
-  parser. Terms come out as subspace terms (at the shared `subspaceAlong`), `jlens/`
-  atoms, `sae/` atoms, units (`neuron/…` pushed or silenced, `head/…` only silenced), then
-  manifold terms (at their own `along[,onto]`). A term's `layers` writes its `{…}` clause after
+  parser. Terms come out as subspace terms (at the shared `subspaceAlong`), projections
+  (`α base~onto` / `α base|onto`, at their own `alpha`), `jlens/` and `slens/` atoms, `sae/`
+  atoms, units (`neuron/…` pushed or silenced, `head/…` only silenced), then manifold terms
+  (at their own `along[,onto]`). A term's timing is `trigger` (the five presets, or `FIRST_N` /
+  `AFTER_N` with its count in `tokens`) and `gate` (`SteerGate`: a probe key, a comparison, a
+  threshold); `triggerClause` writes it as `_trigger_name` does: nothing for `BOTH`,
+  `@first:N` / `@after:N`, `@when:G` on the `RESPONSE` window (the gate's own) and
+  `@<window>&when:G` on any other, `@both&when:G` included. A term's `layers` writes its `{…}` clause after
   the selector and before `@` (`lib/steering/layers.ts` mirrors `format_layer_indices`:
   `{4-8,20}`, `{workspace}`, none for every fitted layer); a unit carries its layer and never
   writes one, and a term scoped to no layer sits out of the expression. Keep `Variant`
@@ -334,11 +339,22 @@ drowse.ai too.
   is no text editor or text chip. A recipe from elsewhere (WebMCP `drowse_set_steering`, a
   saved conversation's read-only recipe, the command line's `-S` default) goes through
   `applyRecipe`: `POST .../steering/validate` answers each term's fields in order (`parts`,
-  `grammar.term_parts`), and `lib/steering/recipe.ts::recipeAsChips` makes chips when every
-  term fits one exactly (each chip writes its term's own `text` back and sits inside its
-  dial). Otherwise the recipe stays one read-only chip (`steerRack.readOnlyRecipe`, sent as
-  written) whose panel says why (`recipeNote`), copies it and clears it; a chip added
+  `grammar.term_parts`: a trigger comes as `phase`, `first_n`/`after_n` and `gate`, a
+  projection as `projection`, so the page never parses a clause), and
+  `lib/steering/recipe.ts::recipeAsChips` makes chips when every term fits one exactly (each
+  chip writes its term's own `text` back and sits inside its dial). Otherwise the recipe stays
+  one read-only chip (`steerRack.readOnlyRecipe`, sent as written) whose panel says why and
+  that only an agent can write it (`recipeNote`), copies it and clears it; a chip added
   afterwards replaces it, and `recipeTicket` keeps a late check from overwriting a newer rack.
+  Chips hold every kind the grammar writes but these, which stay **agent-only** (WebMCP
+  `drowse_set_steering`, the API, the command line): flat terms at different strengths (flat
+  chips share one strength); a unit's removal below zero (`-!neuron/…`, which the one unit
+  rule refuses); a selector that names no installed manifold (a plain vector); the same
+  selector twice (`x` and `!x{3}`); a strength past its chip's dial. A curved position pushed
+  away is refused by composition everywhere. Chips hold, but the editor does not write, a gate
+  on any channel but a probe's main reading (`:membership`, `@label`, `~label`, `[i]`, a flat
+  probe's `:fraction`), a gate on the Prompt window (it never fires), and a projection whose
+  base is not a raw two-node flat concept: an agent writes those, and the chip keeps them.
   A cast member's steering is set from the chips ("Use the recipe") and shown as written. The
   agent and API inputs that take a full expression stay: they are the grammar's other
   frontends.
@@ -385,7 +401,9 @@ drowse.ai too.
   browser cache, because node ids go stale when the server restarts.
   `ConversationSnapshotV8` is validated exactly (v8: `readOnlyRecipe` with no chips beside it
   replaced v7's typed `customSteeringExpression`; every ablatable row carries `ablate`;
-  triggers are the five chip presets) and backs both the IndexedDB library
+  triggers are the five chip presets and `FIRST_N`/`AFTER_N`, which alone carry a whole
+  `tokens`; a `gate` is absent, `null` or exactly `{probe, op, threshold}`; a `projection`
+  row is keyed `base~onto` / `base|onto` with its own `alpha`) and backs both the IndexedDB library
   (written by `ConversationAutosave` while no generation runs) and the backup files
   (`lib/chatBackup.ts`). localStorage holds presentation preferences only, via
   `safeLocalStorage*`.
@@ -400,11 +418,21 @@ drowse.ai too.
 - **The term editor.** A chip selects its term (`{kind: "term"}`) and opens
   `panels/rack/TermEditor.svelte` in place under the chips, as the Steering artboard draws it:
   the name and what it is, Push or Without (a rank-one direction or a neuron), On, the
-  strength (a readout that scrubs sideways over the term's dial, `terms.ts::strengthDial`:
-  flat terms share one `subspaceAlong` from 0 to 2, a curved term runs from 0 to 1 because
-  composition refuses a negative curved along, an atom is signed), When (the trigger
-  presets; the thinking pair only on a thinking model),
-  the position on its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
+  strength (a readout that scrubs sideways over the term's dial, `terms.ts::strengthDial`.
+  Every dial is signed but two: flat terms share one `subspaceAlong` from −2 to 2, below zero
+  a push going away from its position and a removal adding to the component; a projection
+  runs over the same range on its own; an atom runs from −1 to 1, its removal too, below zero
+  adding to the component; a curved term runs from 0 to 1 because composition refuses a
+  negative curved along, and a unit's removal from 0 to 1 by the one unit rule), When (the
+  trigger presets, the thinking pair only on a thinking model, and Tokens: First or After so
+  many generated tokens), "+ Only while…" (the canvas's gate: an attached probe by the key
+  whose number its card shows, `terms.ts::gateProbeKey`, a curved probe's `:fraction` and
+  every other probe's bare name; a comparison; a threshold; the probe's reading now beside
+  it. A gate never reads the prompt, so adding one moves Always or Prompt to Response, and a
+  gated term is not offered those two), Which part (a raw two-node flat concept, pushed: All
+  of it, Along or Not along a second fitted concept; a relation re-keys the chip as a
+  projection, `relateSteerEntry`, at its own strength with its pole's sign), the position on
+  its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
   as tall as the term's share, painted by dragging; All fitted, Workspace, Clear) and the
   term as the expression writes it. A unit's strip is fixed (`LayerStrip` without
   `onchange`, a `note` in place of the presets): its own layer lit, nothing to paint. A unit's
@@ -415,7 +443,11 @@ drowse.ai too.
   `@response`, so a probe never drops the cached prefix (`termLayers.svelte.ts`); a runtime
   that does not report them hides the strip. The probe names the term's position, so a moved
   position asks again once it has rested (`SETTLE_MS`), and until the answer comes the term
-  keeps the strip and span it last showed.
+  keeps the strip and span it last showed. Timing has one mutator, `setSteerTiming` (a window,
+  its count only while it counts, a gate); `patchSteerEntry` takes no timing field. The
+  loom's guided variations pick a fitted flat concept and its node
+  (`loomCommands.ts::fanoutConcepts`, `fanoutRecipe`: each variation's `steering=` is the
+  chips' own term at that strength), never typed text.
 
 ## Testing
 
