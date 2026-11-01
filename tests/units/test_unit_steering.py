@@ -238,7 +238,9 @@ def test_an_ablated_generation_runs_its_ops_and_leaves_no_hook(
     assert result.applied_steering == "!neuron/L1n3 + !neuron/L2n9 + !head/L1h0"
     # Three modules (two down projections, one output projection), every
     # forward: the prefill over the whole prompt, then one position per step.
-    forwards = len(result.tokens)
+    # A reply that sampled its end token ran one forward more than it kept
+    # (the sampling is unseeded, so the tiny model sometimes ends early).
+    forwards = len(result.tokens) + (result.finish_reason == "stop")
     assert len(calls) == 3 * forwards
     assert calls[0][1] > 1 and all(shape[1] == 1 for shape in calls[3:])
     assert not tiny_session._steering.unit_hooks
