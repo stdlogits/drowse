@@ -255,6 +255,36 @@ def test_contrast_cache_persists_and_follows_the_lens(lensed: Any) -> None:
     assert len(after) == 6
 
 
+def _count_some_tokens(session: Any, *, dropped: int) -> None:
+    """Write corpus counts that keep every vocabulary id but the first ``dropped``."""
+    from drowse.lens.token_counts import MIN_COUNT_TOKENS, write_corpus_counts
+
+    rows = int(session.model.get_input_embeddings().weight.shape[0])
+    counts = torch.full((rows,), 1_000, dtype=torch.int64)
+    counts[:dropped] = 0
+    write_corpus_counts(
+        session.model_id, counts, corpus="test", documents=10,
+        tokens=MIN_COUNT_TOKENS, tokenizer="test",
+    )
+
+
+def test_unit_reads_follow_a_token_mask_change(lensed: Any) -> None:
+    # Regression: the in-memory contrast slot answered before its record (which
+    # carries the mask digest) was compared, so a mask change mid-session kept
+    # the old population stats: neuron S z-scores went stale and a head read
+    # with hidden hubs subtracted an old-mask mean from a new-mask z (a size
+    # mismatch, a 500).
+    session, _r, _s = lensed
+    session.units.read("neuron/L1n2", hide_hubs=True)
+    session.units.read("head/L1h2", k=3, hide_hubs=True)
+    _count_some_tokens(session, dropped=9)
+    neuron = session.units.read("neuron/L1n2", hide_hubs=True).to_dict()
+    head = session.units.read("head/L1h2", k=3, hide_hubs=True).to_dict()
+    session.units.reads.contrast.clear()
+    assert session.units.read("neuron/L1n2", hide_hubs=True).to_dict() == neuron
+    assert session.units.read("head/L1h2", k=3, hide_hubs=True).to_dict() == head
+
+
 def test_token_logits_match_the_readout(lensed: Any) -> None:
     session, _r, _s = lensed
     rows = torch.randn(5, 32, generator=torch.Generator().manual_seed(3))

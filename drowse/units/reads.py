@@ -538,13 +538,15 @@ class ContrastCache:
     A shard is ``<key>/L<layer>.safetensors`` with a metadata record (format,
     the key's parts, the mask digest); a shard that is missing, unreadable or
     names anything else is recomputed (a derived cache, never migrated).  In
-    memory the latest few shards stay resident.
+    memory the latest few shards stay resident with their records, and a
+    resident shard serves only a request whose record matches (the token
+    mask can change under a running session).
     """
 
     def __init__(self, model_id: str, *, resident: int = 8) -> None:
         self._model_id = model_id
         self._resident = int(resident)
-        self._memory: dict[tuple[str, int], ContrastStats] = {}
+        self._memory: dict[tuple[str, int], tuple[dict[str, Any], ContrastStats]] = {}
         self._lock = threading.Lock()
 
     def _path(self, key: str, layer: int) -> Path:
@@ -559,11 +561,11 @@ class ContrastCache:
         from safetensors.torch import load_file, save
 
         slot = (key, int(layer))
+        record = {"format": CONTRAST_FORMAT, "layer": int(layer), **dict(meta)}  # meta carries mask and weights
         with self._lock:
             hit = self._memory.get(slot)
-        if hit is not None:
-            return hit
-        record = {"format": CONTRAST_FORMAT, "layer": int(layer), **dict(meta)}  # meta carries the weights
+        if hit is not None and hit[0] == record:
+            return hit[1]
         path = self._path(key, layer)
         tensors: Mapping[str, torch.Tensor] | None = None
         if path.is_file():
@@ -583,9 +585,10 @@ class ContrastCache:
             tensors = built
         stats = ContrastStats({name: value.to(device) for name, value in tensors.items()})
         with self._lock:
+            self._memory.pop(slot, None)
             if len(self._memory) >= self._resident:
                 self._memory.pop(next(iter(self._memory)))
-            self._memory[slot] = stats
+            self._memory[slot] = (record, stats)
         return stats
 
     def clear(self) -> None:
