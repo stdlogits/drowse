@@ -1561,24 +1561,12 @@ class LensInstrument:
             raise RequestError(f"site must be one of {', '.join(LENS_SITES)}, got {site!r}")
         from drowse.model.layers import resolve_layer_selector
 
-        held: set[int] = set()
-        for lens in (self.resident(), self.resident_input()):
-            if lens is not None and site in getattr(lens, "sites", ("out",)):
-                held.update(int(layer) for layer in lens.layers(site))
-                if lens.key.side == "output" and site == "out":
-                    held.add(self.runtime.n_layers - 1)
-        if not held:
-            from drowse.lens.jlens import LensNotFittedError
-
-            raise LensNotFittedError(
-                f"no lens of either family holds the {site!r} site for "
-                f"{self.model_id} — fetch one (`drowse lens fetch "
-                f"{self.model_id} rs-r|rs-s`) or fit one"
-            )
-        req = resolve_layer_selector(layers, sorted(held), n_layers=self.runtime.n_layers)
-        runtime = self.runtime
-        ids = runtime.tokenizer(prompt, return_tensors="pt")["input_ids"].to(runtime.device)
-        n_pos = int(ids.shape[1])
+        # Tokenize and check positions on the host; the device upload, the
+        # resident lenses and the layers they hold are read inside the
+        # exclusive section, so a busy refusal moves nothing to the device
+        # and the capture uses the lenses its layers were checked against.
+        ids_host = self.runtime.tokenizer(prompt, return_tensors="pt")["input_ids"]
+        n_pos = int(ids_host.shape[1])
         pos = [n_pos - 1] if positions is None else [
             p if p >= 0 else n_pos + p for p in positions
         ]
@@ -1588,6 +1576,23 @@ class LensInstrument:
             "session.lens.read called while another model use is in flight",
             phase_msg="session.lens.read called while a generation is in flight",
         ):
+            runtime = self.runtime
+            held: set[int] = set()
+            for lens in (self.resident(), self.resident_input()):
+                if lens is not None and site in getattr(lens, "sites", ("out",)):
+                    held.update(int(layer) for layer in lens.layers(site))
+                    if lens.key.side == "output" and site == "out":
+                        held.add(runtime.n_layers - 1)
+            if not held:
+                from drowse.lens.jlens import LensNotFittedError
+
+                raise LensNotFittedError(
+                    f"no lens of either family holds the {site!r} site for "
+                    f"{self.model_id} — fetch one (`drowse lens fetch "
+                    f"{self.model_id} rs-r|rs-s`) or fit one"
+                )
+            req = resolve_layer_selector(layers, sorted(held), n_layers=runtime.n_layers)
+            ids = ids_host.to(runtime.device)
             if site == "out":
                 hidden = self._capture_hidden(ids, layer_indices=req, pool_index=None)
                 rows = {layer: hidden[layer][0, pos, :] for layer in req}

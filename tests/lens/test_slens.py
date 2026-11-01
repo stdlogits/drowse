@@ -455,6 +455,46 @@ def test_read_without_lenses_is_two_absent_halves(make_tiny_session: Any) -> Non
     assert "rs-s" in str(read.s.absent) and read.r.lens is None
 
 
+def test_read_prompt_refuses_busy_before_any_device_or_lens_work(
+    make_tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: read_prompt uploaded the ids and read the resident lenses
+    before entering the exclusive section, so a busy refusal had already
+    issued a host-to-device copy while another thread owned the device."""
+    from contextlib import contextmanager
+    from collections.abc import Iterator
+
+    from drowse.errors import ConcurrentExtractionError
+
+    session = make_tiny_session(warm=False)
+    _install_s_lens(session, sites=("out",))
+    harness = LensHarness(
+        model=session.model, tokenizer=session.tokenizer, layers=session.layers,
+        model_id=session.model_id, neutral_means={"out": session.layer_means},
+    )
+    events: list[str] = []
+
+    @contextmanager
+    def busy(_message: str, *, phase_msg: str | None = None) -> Iterator[None]:
+        del phase_msg
+        events.append("exclusive")
+        raise ConcurrentExtractionError("busy")
+        yield  # pragma: no cover
+
+    original_to = torch.Tensor.to
+
+    def spy_to(self: torch.Tensor, *args: Any, **kwargs: Any) -> Any:
+        events.append("to")
+        return original_to(self, *args, **kwargs)
+
+    monkeypatch.setattr(harness.lens, "_exclusive", busy)
+    monkeypatch.setattr(harness.lens, "resident", lambda: events.append("resident"))
+    monkeypatch.setattr(torch.Tensor, "to", spy_to)
+    with pytest.raises(ConcurrentExtractionError):
+        harness.lens.read_prompt("abc", site="out")
+    assert events == ["exclusive"]
+
+
 def test_read_prompt_reads_out_and_mid_residuals(make_tiny_session: Any) -> None:
     from drowse.model.blocks import model_spec
     from tests.support.blocks import spec_forward
