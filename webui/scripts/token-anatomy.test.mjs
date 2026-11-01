@@ -204,6 +204,13 @@ try {
     assert.match(rule, /padding-block: 2px/, `${path}: the chip grows up and down`);
     assert.doesNotMatch(rule, /box-shadow|padding-inline|margin/, `${path}: and never sideways`);
   }
+  // Regression (W5): when a reply stopped, Stop left the row and Clear slid into its place, so a
+  // quick second click on Stop landed on Clear. Stop's slot is held (hidden, inert) a moment.
+  {
+    const chat = await source("panels/Chat.svelte");
+    assert.match(chat, /\{#if genStatus\.active \|\| stopSlotHeld\}\s*<button type="button" class="dw-quiet stop" class:held=\{!genStatus\.active\} inert=\{!genStatus\.active\}/);
+    assert.match(chat, /\.stop\.held \{ visibility: hidden; \}/);
+  }
   console.log("token anatomy: ok");
 } finally {
   await server.close();

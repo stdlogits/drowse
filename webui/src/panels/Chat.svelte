@@ -208,6 +208,15 @@
   let readingOpen = $state(false);
   // On a phone the composer's extras (who writes, reasoning, colours, clear) fold behind More.
   let extrasOpen = $state(false);
+  // Stop's slot stays a moment after the reply ends (the button hidden and inert): the row's
+  // controls shift when it goes, and a quick second click on Stop would land on Clear.
+  const STOP_SLOT_HOLD_MS = 1200;
+  let stopSlotHeld = $state(false);
+  $effect(() => {
+    if (genStatus.active) { stopSlotHeld = true; return; }
+    const timer = setTimeout(() => { stopSlotHeld = false; }, STOP_SLOT_HOLD_MS);
+    return () => clearTimeout(timer);
+  });
   const modelShort = $derived(sessionState.info?.model_id.split("/").at(-1) ?? "drowse");
   /** A sampling value as the line shows it: the user's, else the model's default. */
   function shown(value: number | null | undefined): string {
@@ -1383,8 +1392,9 @@
         {/if}
         </span>
         <span class="send">
-          {#if genStatus.active}
-            <button type="button" class="dw-quiet" onclick={sendStop} data-tip="Escape stops the reply">Stop</button>
+          {#if genStatus.active || stopSlotHeld}
+            <button type="button" class="dw-quiet stop" class:held={!genStatus.active} inert={!genStatus.active}
+              aria-hidden={!genStatus.active} onclick={sendStop} data-tip="Escape stops the reply">Stop</button>
           {/if}
           <button type="submit" class="dw-button" disabled={primaryDisabled}
             data-tip={appendSelected ? "Enter adds your message only" : hasText ? "Enter sends and generates a reply" : "Generates the next reply"}>
@@ -1587,6 +1597,7 @@
    * when the row wraps, its own auto margin keeps it there instead of flush left. */
   .dw-sampling { min-width: 0; flex: 1 1 auto; }
   .send { display: inline-flex; align-items: center; gap: var(--s2); margin-left: auto; }
+  .stop.held { visibility: hidden; }
   .turn-plan-summary { max-width: 24ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .clear-conversation.armed { color: var(--ink); }
   .dw-compose .dw-button, .dw-compose .dw-quiet { flex: none; }
