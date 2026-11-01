@@ -296,6 +296,30 @@ try {
   assert.equal(terms.termTitle("default/months", { ...free, label: "july" }, monthsInfo), "july");
   assert.equal(terms.strengthSays("default/months", free, 0.5, monthsInfo), "Toward month 6.00", "the strength names it the same way");
   assert.equal(terms.termSource("slens/Paris", read), "lens token, as read");
+  assert.equal(terms.termSource("jlens/Paris", { ...read, mode: "jlens" }), "lens token, as said", "the pair's twin wording");
+  // The one pair the Lens panel and the token view share: its choice when that lens is ready, the
+  // other when only that one is, so a model with one lens family offers it alone.
+  const lens = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+  const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+  const sessionBefore = sessionState.info;
+  sessionState.info = { ...(sessionBefore ?? {}), jlens_fitted: true };
+  lens.lensSourceState.sources = [];
+  assert.equal(lens.lensNamespaceReady("slens"), false, "no S source, no slens/");
+  lens.lensPairState.namespace = "slens";
+  assert.equal(lens.lensNamespaceInUse(), "jlens", "the R lens alone is offered alone");
+  lens.lensSourceState.sources = [{ source: "local:s", family: "S", active: true, sites: ["mid"] }];
+  assert.equal(lens.lensNamespaceReady("slens"), false, "slens/ needs the S lens's out site");
+  lens.lensSourceState.sources = [{ source: "local:s", family: "S", active: true, sites: ["out", "mid"], compatible: true }];
+  assert.equal(lens.lensNamespaceInUse(), "slens");
+  sessionState.info = { ...(sessionBefore ?? {}), jlens_fitted: false };
+  lens.lensPairState.namespace = "jlens";
+  assert.equal(lens.lensNamespaceInUse(), "slens", "the S lens alone is offered alone");
+  lens.lensSourceState.sources = [{ source: "local:s", family: "S", active: true, sites: ["out"], compatible: false }];
+  assert.equal(lens.lensNamespaceReady("slens"), false, "an S source not loaded for these weights");
+  assert.deepEqual(lens.LENS_NAMESPACES.map(row => row.label), ["As said", "As read"]);
+  sessionState.info = sessionBefore;
+  lens.lensSourceState.sources = [];
+  lens.lensPairState.namespace = "jlens";
   assert.ok(terms.canRemove("slens/Paris", read, null));
   assert.equal(layersProbe("slens/Paris", read, true), "1 slens/Paris{2-4}@response");
   const { addSLensToRack } = steering;

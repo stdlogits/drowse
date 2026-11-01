@@ -125,7 +125,9 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
       if (typeof value === "number" && Number.isFinite(value)) perLayer[layer] = value;
     }
 
-    if (scalar === undefined && base.info.family === "lens") {
+    // A ``jlens/`` probe's word can fill from the R lens's hovered read; an ``slens/`` probe's
+    // footprint z is its own channel, never the R lens's probability.
+    if (scalar === undefined && base.info.family === "lens" && base.info.namespace === "jlens") {
       const word = base.info.word;
       const aggregate = tokenHoverState.lensAggregate?.find(
         ([token]) => token === word,
@@ -166,7 +168,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
           reading: {
             value,
             unit: scalarUnit ?? (base.info.family === "lens"
-              ? "mean_token_probability"
+              ? (base.info.namespace === "slens" ? "mean_footprint_z" : "mean_token_probability")
               : ((base.info as SaeProbeInfo).max_act != null
                 ? "activation_over_max"
                 : "raw_activation")),
@@ -267,7 +269,7 @@ export function probeRequestFromInfo(info: ProbeInfo): ProbeRequest {
     return { selector: info.manifold, name: info.name, top_n: info.top_n };
   }
   if (info.family === "lens") {
-    return { selector: `jlens/${info.word}`, name: info.name };
+    return { selector: `${info.namespace}/${info.word}`, name: info.name };
   }
   if (info.family === "units") return { selector: info.unit, name: info.name };
   return { selector: `sae/${info.feature_id}`, name: info.name };

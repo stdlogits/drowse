@@ -40,8 +40,17 @@
     sendFork,
     sendTextFork,
     addJLensToRack,
+    addSLensToRack,
     attachProbe,
+    refreshLensSources,
   } from "../lib/stores.svelte";
+  import {
+    LENS_NAMESPACES,
+    lensNamespaceInUse,
+    lensNamespaceReady,
+    lensPairState,
+    type LensNamespace,
+  } from "../lib/stores/instruments.svelte";
   import { pushToast } from "../lib/stores/toasts.svelte";
   import type {
     ChatTurn,
@@ -610,18 +619,26 @@
   });
 
   // ---- the canvas's token actions: a lens probe on it, a lens term toward it ----------------
-  // Addressed by id (``jlens/#<id>``): the text may not name the token (a leading space, a byte
-  // piece), and the id always does.
+  // As said (``jlens/``) or as read (``slens/``), through the pair the Lens panel shares; a model
+  // with one lens family offers it alone. Addressed by id (``jlens/#<id>``): the text may not name
+  // the token (a leading space, a byte piece), and the id always does.
+  const saidReady = $derived(lensNamespaceReady("jlens"));
+  const readReady = $derived(lensNamespaceReady("slens"));
+  const lensAs = $derived(lensNamespaceInUse());
+  const lensPair = $derived(LENS_NAMESPACES.find((row) => row.value === lensAs) ?? LENS_NAMESPACES[0]);
+  onMount(() => {
+    if (lensSourceState.sources.length === 0) void refreshLensSources();
+  });
   let probing = $state(false);
   const tokenProbed = $derived(token?.tokenId != null && probeRack.active.some((name) => {
     const info = probeRack.entries.get(name)?.info;
-    return info?.family === "lens" && info.token_id === token?.tokenId;
+    return info?.family === "lens" && info.namespace === lensAs && info.token_id === token?.tokenId;
   }));
   async function probeToken(): Promise<void> {
     const id = token?.tokenId;
     if (id == null || probing) return;
     probing = true;
-    const selector = `jlens/#${id}`;
+    const selector = `${lensAs}/#${id}`;
     try {
       await attachProbe(selector);
       pushToast(`Probing ${named.empty ? "∅" : named.text.trim() || JSON.stringify(named.text)}`, { kind: "info" });
@@ -634,7 +651,8 @@
   function steerTowardToken(): void {
     const id = token?.tokenId;
     if (id == null) return;
-    addJLensToRack(`#${id}`);
+    if (lensAs === "jlens") addJLensToRack(`#${id}`);
+    else addSLensToRack(`#${id}`);
   }
 </script>
 
@@ -711,11 +729,15 @@
         </form>
       {:else}
         <div class="dw-row">
-          {#if lensGate.ready && token.tokenId != null}
+          {#if (saidReady || readReady) && token.tokenId != null}
+            {#if saidReady && readReady}
+              <Segmented label="Read this token" value={lensAs} options={[...LENS_NAMESPACES]}
+                onchange={(value: LensNamespace) => (lensPairState.namespace = value)} />
+            {/if}
             <button type="button" class="dw-quiet" disabled={probing || tokenProbed}
-              data-tip={tokenProbed ? "Already a lens probe" : "Read this token's lens probability at every layer, every token from now on"}
+              data-tip={tokenProbed ? "Already a lens probe" : `Read this token at every layer, every token from now on: ${lensPair.hint}`}
               onclick={() => void probeToken()}>Probe <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</button>
-            <button type="button" class="dw-quiet" data-tip="Add a lens term that pushes toward saying this token"
+            <button type="button" class="dw-quiet" data-tip={`Add a lens term that pushes this way: ${lensPair.hint}`}
               onclick={steerTowardToken}>Steer toward it</button>
           {/if}
           <button type="button" class="dw-quiet" disabled={!canBranch || branching}
