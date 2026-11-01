@@ -3,8 +3,31 @@
 // the view only draws.
 
 import { polesOf } from "../../lib/concepts";
-import type { ScalarReadingJSON } from "../../lib/types";
-import type { Pins } from "./readout.svelte";
+import { withRowValues } from "../../lib/tokenRows";
+import type { MeasurementsEnvelopeJSON, RowProbeReadingJSON, ScalarReadingJSON } from "../../lib/types";
+import type { GeometryTokenReadout, Pins, ReadoutView } from "./readout.svelte";
+
+/** The geometry replay's map from a replayed envelope to the view, bound to the token it was asked
+ *  for: ``row`` (its generated row's share and coordinates) and ``captured`` (a live token's
+ *  capture) are taken when the replay is requested, never read again when it lands, so a replay
+ *  that resolves after the selection moved caches the requested token's values, not the newly
+ *  selected one's. Steered, a probe detached since keeps its capture, and a generated row's share
+ *  and coordinates stay as the row kept them. */
+export function geometryReplayView(opts: {
+  steered: boolean;
+  captured: GeometryTokenReadout | null;
+  row: Record<string, RowProbeReadingJSON>;
+}): (m: MeasurementsEnvelopeJSON) => ReadoutView<GeometryTokenReadout> {
+  const { steered, captured, row } = opts;
+  return (m) => {
+    const geometry = m.instruments.geometry;
+    if (!geometry) throw new Error("No probe readings came back. Check that the probes are attached.");
+    const kept = steered && captured ? captured.readings : {};
+    const replayed = geometry.readings ?? {};
+    const readings = steered && !captured ? withRowValues(replayed, row) : replayed;
+    return { data: { steering: geometry.binding?.steering ?? null, readings: { ...kept, ...readings } }, source: null };
+  };
+}
 
 /** The lens and SAE probes the token view lists beside its probes: each family's pins as its shown
  *  read pinned them (a capture's, or the replay's: the lens and SAE replays and the anatomy return

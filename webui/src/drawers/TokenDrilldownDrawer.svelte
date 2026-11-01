@@ -73,9 +73,9 @@
   import ProbeReadings from "./token/ProbeReadings.svelte";
   import FeatureReadings from "./token/FeatureReadings.svelte";
   import { formatP, lastLayer } from "./token/layers";
-  import { lensReplay, tokenPins } from "./token/readings";
+  import { geometryReplayView, lensReplay, tokenPins } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
-  import { geometryTracesKept, rowGeometry, wholeEnvelope, withRowValues } from "../lib/tokenRows";
+  import { geometryTracesKept, rowGeometry, wholeEnvelope } from "../lib/tokenRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
 
@@ -482,16 +482,9 @@
     const steered = geometrySteered;
     // Steered, a saved summary shows while the replay brings its layers, and stays if it fails.
     const base = steered && captured ? { data: captured, source: null } : null;
-    geometryReadout.replay("geometry", nodeId, rawIndex, { steered, raw: effectiveRawMode() }, (m) => {
-      const geometry = m.instruments.geometry;
-      if (!geometry) throw new Error("No probe readings came back. Check that the probes are attached.");
-      // Steered, the replay reads the generation again: a probe detached since keeps its capture,
-      // and a generated row's share and coordinates stay as the row kept them.
-      const kept = steered && captured ? captured.readings : {};
-      const replayed = geometry?.readings ?? {};
-      const readings = steered && !captured ? withRowValues(replayed, rowGeometry(token?.measurements)) : replayed;
-      return { data: { steering: geometry?.binding?.steering ?? null, readings: { ...kept, ...readings } }, source: null };
-    }, base);
+    // The map is bound to this token's row now: the replay may land after the selection moved.
+    const map = geometryReplayView({ steered, captured, row: rowGeometry(token?.measurements) });
+    geometryReadout.replay("geometry", nodeId, rawIndex, { steered, raw: effectiveRawMode() }, map, base);
   });
 
   $effect(() => {

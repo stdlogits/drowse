@@ -286,6 +286,32 @@ try {
   assert.deepEqual(withRowValues(replayedGeometry, { calm: { fraction: 0.4, coords: [0.25] } }).calm,
     { ...replayedGeometry.calm, fraction: 0.4, coords: [0.25] }, "a generated row's share and coordinates stand; the rest replays");
   assert.deepEqual(withRowValues(replayedGeometry, {}), replayedGeometry);
+  // A steered geometry replay that lands after the selection moved caches the requested token's
+  // row values, never the newly selected token's (the map is bound when the replay is asked for).
+  {
+    const { geometryReplayView } = await server.ssrLoadModule("/src/drawers/token/readings.ts");
+    const pending = [];
+    replay = () => new Promise((resolve) => pending.push(resolve));
+    const geometryView = new ReplayReadout();
+    const replayedEnvelope = { measurements: { version: 2, scope: "replay", provenance: "replayed", instruments: {
+      geometry: { binding: { source: "test", steering: null }, readings: replayedGeometry },
+    } } };
+    let selectedRow = { calm: { fraction: 0.1, coords: [1] } };
+    geometryView.replay("geometry", "race", 0, { steered: true },
+      geometryReplayView({ steered: true, captured: null, row: selectedRow }));
+    selectedRow = { calm: { fraction: 0.9, coords: [9] } };
+    geometryView.replay("geometry", "race", 1, { steered: true },
+      geometryReplayView({ steered: true, captured: null, row: selectedRow }));
+    for (const resolve of pending) resolve(replayedEnvelope);
+    await flush();
+    await flush();
+    geometryView.replay("geometry", "race", 0, { steered: true },
+      geometryReplayView({ steered: true, captured: null, row: selectedRow }));
+    assert.deepEqual(geometryView.data.readings.calm.coords, [1], "token 0 keeps its own coordinates");
+    assert.equal(geometryView.data.readings.calm.fraction, 0.1, "token 0 keeps its own share");
+    geometryView.dispose();
+    replay = async () => envelope;
+  }
   // The lens side replays as the anatomy (any active lens, an S lens alone included) or as the
   // readout (the R lens only); the view and the WebMCP inspector gate Unsteered on the same answer.
   const gate = (o) => readings.lensReplay({ anatomy: false, tokenReadout: false, rLens: false, activeLens: false, replayContext: true, ...o });
