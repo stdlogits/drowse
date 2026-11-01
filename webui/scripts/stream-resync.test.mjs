@@ -14,19 +14,33 @@ const server = await createServer({
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 try {
   const words = Array.from({ length: 16 }, (_, index) => `w${index} `);
-  const row = (index) => ({ token_id: index, text: words[index], raw_index: index, logprob: -0.5 });
+  // A curved probe (months: its share is the primary reading) and a flat one (calm: its score).
+  // The tree's rows are the generated row's slim projection (``token_row_measurements``: the
+  // scores, each geometry reading's fraction and coords); a live frame carries the envelope whole.
+  const share = (index) => 0.5 + index / 100;
+  const scores = (index) => ({ months: index / 10, calm: -index / 4 });
+  const envelope = (readings, index) => ({
+    version: 2, scope: "token", provenance: "captured",
+    instruments: { geometry: { readings } }, scores: scores(index),
+  });
+  const slim = (index) => envelope({ months: { fraction: share(index), coords: [index / 10, 1] } }, index);
+  const whole = (index) => envelope({ months: {
+    fraction: share(index), coords: [index / 10, 1], nearest: [["may", 0.4]], assignment: { may: 1 },
+    residual: 0.2, membership: 0.8, depth: { "3": share(index) },
+  } }, index);
+  const row = (index) => ({ token_id: index, text: words[index], raw_index: index, logprob: -0.5, measurements: slim(index) });
   const reply = (rows, finish = null, text = "") => ({
     id: "reply", parent_id: "ask", role: "assistant", text, role_label: null, thinking_text: null,
     aggregate_readings: {}, applied_steering: null, finish_reason: finish, starred: false, notes: "",
     created_at: 0, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null,
     recipe: { steering: null, sampling: null, thinking: false, seed: null, probes: [], probe_hashes: {} },
-    tokens: rows, thinking_tokens: [], raw_token_ids: null, children: [],
+    tokens: rows, thinking_tokens: [], raw_token_ids: null, children: [], aggregate_measurements: null,
   });
   const ask = {
     id: "ask", parent_id: "root", role: "user", text: "tell me", role_label: null, thinking_text: null,
     aggregate_readings: {}, applied_steering: null, finish_reason: null, starred: false, notes: "",
     created_at: 0, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null,
-    tokens: [], thinking_tokens: [], raw_token_ids: null,
+    tokens: [], thinking_tokens: [], raw_token_ids: null, aggregate_measurements: null,
   };
   const root = { ...ask, id: "root", parent_id: null, role: "system", text: "" };
   const tree = (rev, nodes, active) => ({
@@ -70,10 +84,12 @@ try {
   const { ensureRuntimeChannel } = await server.ssrLoadModule("/src/lib/stores/ws.svelte.ts");
   const { chatLog, genStatus } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
   const { loomTree } = await server.ssrLoadModule("/src/lib/stores/loom.svelte.ts");
+  const { turnTrace } = await server.ssrLoadModule("/src/panels/rack/probeTrace.ts");
   await ensureRuntimeChannel({ sessionFresh: true });
   const emit = (message) => { for (const listener of listeners) listener(message); };
   const token = (index) => ({
     type: "token", text: words[index], thinking: false, token_id: index, node_id: "reply", raw_index: index, logprob: -0.5,
+    measurements: whole(index),
   });
   const turn = () => chatLog.turns.find((candidate) => candidate.nodeId === "reply");
 
@@ -98,6 +114,14 @@ try {
   assert.equal(turn().text, words.slice(0, 12).join(""));
   assert.ok(live.every((score, index) => turn().tokens[index] === score), "the drawn rows are kept as they are");
   assert.equal(genStatus.tokensSoFar, 12);
+  // The rack's trace and the thread's tint read the caught-up slim rows as they read the live
+  // ones: a curved probe's share, a flat probe's score, no gap where the frames were dropped.
+  const indices = [...Array(12).keys()];
+  assert.deepEqual(turnTrace(turn(), "months", { share: true }), indices.map(share), "the share reads every row");
+  assert.deepEqual(turnTrace(turn(), "calm"), indices.map((index) => scores(index).calm), "the score reads every row");
+  assert.deepEqual(turnTrace(turn(), "months[1]"), indices.map(() => 1), "a curved probe's second axis reads every row");
+  assert.ok(turn().tokens.slice(4, 11).every((score) => Object.keys(score.measurements.instruments.geometry.readings.months).sort().join() === "coords,fraction"),
+    "the caught-up rows are the tree's slim rows");
   assert.equal(genStatus.active, true);
 
   emit(token(12));
