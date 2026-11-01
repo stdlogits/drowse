@@ -128,19 +128,60 @@ function nameWithVariant(name: string, variant: Variant): string {
 
 /** A number as the server's ``format_expr`` writes it: Python's ``%g`` (six significant digits,
  *  trailing zeros dropped, an exponent below 1e-4 or from 1e6 on: ``1e-05``, ``1.5e+06``), so the
- *  chips' expression is the canonical one. (An exact binary tie at the seventh digit, an integer
- *  such as 1234565, rounds up here and to even in Python; no dial reaches one.) The leading sign
- *  rides the term; the joiner above splits +/-. */
+ *  chips' expression is the canonical one. The leading sign rides the term; the joiner above
+ *  splits +/-. */
 export function formatCoeff(coeff: number): string {
   if (Number.isNaN(coeff) || !Number.isFinite(coeff)) return "0";
-  if (coeff === 0) return Object.is(coeff, -0) ? "-0" : "0";
-  const [mantissa, power] = coeff.toExponential(5).split("e");
-  const exponent = Number(power);
-  const trim = (digits: string) => digits.includes(".") ? digits.replace(/0+$/u, "").replace(/\.$/u, "") : digits;
-  if (exponent < -4 || exponent >= 6) {
-    return `${trim(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  return formatG(coeff, 6);
+}
+
+/** ``x`` as C's (and Python's) ``%.{precision}g``: the exact binary value rounded to ``precision``
+ *  significant digits, an exact tie to even (``toExponential`` and ``toPrecision`` round a tie
+ *  up, so 1.015625 would write 1.01563 where Python writes 1.01562); fixed notation while the
+ *  decimal exponent is from −4 to below ``precision``, else ``d.ddde±XX``; trailing zeros dropped.
+ *  ``-0`` writes ``-0``. Finite input only. */
+export function formatG(x: number, precision: number): string {
+  if (x === 0) return Object.is(x, -0) ? "-0" : "0";
+  const sign = x < 0 ? "-" : "";
+  // The exact value: an integer numerator over a power of two.
+  const view = new DataView(new ArrayBuffer(8));
+  view.setFloat64(0, Math.abs(x));
+  const hi = view.getUint32(0);
+  const lo = view.getUint32(4);
+  const biased = (hi >>> 20) & 0x7ff;
+  let mantissa = (BigInt(hi & 0xfffff) << 32n) | BigInt(lo);
+  let shift = biased - 1075;
+  if (biased === 0) shift = -1074;
+  else mantissa |= 1n << 52n;
+  let num = shift >= 0 ? mantissa << BigInt(shift) : mantissa;
+  let den = shift >= 0 ? 1n : 1n << BigInt(-shift);
+  // The decimal exponent: 10^e <= value < 10^(e+1), estimated in floating point, then made exact.
+  let exponent = Math.floor(Math.log10(Math.abs(x)));
+  const pow10 = (n: number) => 10n ** BigInt(n);
+  const atLeast = (e: number) => (e >= 0 ? num >= den * pow10(e) : num * pow10(-e) >= den);
+  while (!atLeast(exponent)) exponent -= 1;
+  while (atLeast(exponent + 1)) exponent += 1;
+  // value · 10^(precision−1−exponent), rounded half to even.
+  const scale = precision - 1 - exponent;
+  if (scale >= 0) num *= pow10(scale);
+  else den *= pow10(-scale);
+  let digits = num / den;
+  const twice = 2n * (num % den);
+  if (twice > den || (twice === den && digits % 2n === 1n)) digits += 1n;
+  if (digits === pow10(precision)) {
+    digits = pow10(precision - 1);
+    exponent += 1;
   }
-  return trim(coeff.toFixed(5 - exponent));
+  const text = digits.toString();
+  const trim = (s: string) => (s.includes(".") ? s.replace(/0+$/u, "").replace(/\.$/u, "") : s);
+  if (exponent < -4 || exponent >= precision) {
+    const mantissaText = trim(`${text[0]}.${text.slice(1)}`);
+    return `${sign}${mantissaText}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  const decimals = precision - 1 - exponent;
+  if (decimals === 0) return `${sign}${text}`;
+  const padded = text.padStart(decimals + 1, "0");
+  return `${sign}${trim(`${padded.slice(0, -decimals)}.${padded.slice(-decimals)}`)}`;
 }
 
 /** An ablation as the server writes it: ``!x`` at full strength, ``-!x`` at −1, ``0.5 !x``
@@ -196,11 +237,13 @@ export function formatManifoldTerm(name: string, entry: ManifoldSteerEntry): str
   const selector = `${nameWithVariant(name, entry.variant)}%${position}`;
   // Coefficient slot: ``along`` alone, or ``along,onto`` when onto is set — the curved-manifold
   // residual-collapse fraction. The term's sign applies to the whole run, so ``onto`` is written
-  // relative to ``along``'s sign, as format_expr writes it.
+  // relative to ``along``'s sign, as format_expr writes it: the sign bit, so a −0 along (an agent
+  // may set one) writes ``-0,-0.3``, which parses back to along −0, onto 0.3.
   const onto = entry.onto ?? 0;
+  const negative = entry.blend < 0 || Object.is(entry.blend, -0);
   const coeff =
     onto !== 0
-      ? `${formatCoeff(entry.blend)},${formatCoeff(entry.blend < 0 ? -onto : onto)}`
+      ? `${formatCoeff(entry.blend)},${formatCoeff(negative ? -onto : onto)}`
       : formatCoeff(entry.blend);
   return `${coeff} ${selector}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
 }

@@ -605,6 +605,76 @@
           "trigger": null
         }
       ]
+    },
+    {
+      "name": "exact binary ties round to even, and a negative-zero along keeps its onto",
+      "subspaceAlong": 0.5,
+      "rack": [
+        {
+          "name": "jlens/a",
+          "mode": "jlens",
+          "ablate": false,
+          "alpha": 0.1015625,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "jlens/b",
+          "mode": "jlens",
+          "ablate": true,
+          "alpha": 0.01953125,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "default/months_loop",
+          "mode": "manifold",
+          "blend": -0.0,
+          "onto": 0.3,
+          "coords": [
+            6
+          ],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        }
+      ],
+      "expression": "0.101562 jlens/a + 0.0195312 !jlens/b - 0,-0.3 default/months_loop%6",
+      "parts": [
+        {
+          "text": "0.101562 jlens/a",
+          "op": "push",
+          "target": "jlens/a",
+          "coeff": 0.101562,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null
+        },
+        {
+          "text": "0.0195312 !jlens/b",
+          "op": "ablate",
+          "target": "jlens/b",
+          "coeff": 0.0195312,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null
+        },
+        {
+          "text": "-0,-0.3 default/months_loop%6",
+          "op": "position",
+          "target": "default/months_loop",
+          "coeff": -0.0,
+          "onto": 0.3,
+          "position": [
+            6.0
+          ],
+          "layers": null,
+          "trigger": null
+        }
+      ]
     }
   ],
   "readOnly": [

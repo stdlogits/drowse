@@ -108,6 +108,10 @@ try {
     [0.3, "0.3"], [0.1 + 0.2, "0.3"], [1, "1"], [-0.35, "-0.35"], [100, "100"], [123456, "123456"],
     [1234567, "1.23457e+06"], [999999.5, "1e+06"], [0.0001, "0.0001"], [0.00001, "1e-05"],
     [0.000123456789, "0.000123457"], [1.5e-7, "1.5e-07"], [2.5e100, "2.5e+100"], [0, "0"],
+    // Regression: an exact binary tie at the seventh digit rounds to even, as %g does (a fraction
+    // as well as an integer; toExponential rounds it up).
+    [1.015625, "1.01562"], [0.01953125, "0.0195312"], [1234565, "1.23456e+06"], [-1.015625, "-1.01562"],
+    [-0, "-0"], [5e-324, "4.94066e-324"],
   ]) assert.equal(formatCoeff(value), text, `formatCoeff(${value})`);
 } finally {
   await server.close();
