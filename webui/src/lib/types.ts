@@ -760,7 +760,19 @@ export type WSServerMessage =
   | WSDoneEvent
   | WSErrorEvent
   | WSRequestCompleteEvent
-  | WSTreeMutatedEvent;
+  | WSTreeMutatedEvent
+  | WSResyncEvent;
+
+/** The client read slower than the runtime produced, and ``dropped`` token and
+ *  ``tree_mutated`` frames were never sent (``ws_stream._OutboundQueue``).
+ *  Generation went on into the tree; frames after this one are live.  The
+ *  client rebuilds what it missed from the authoritative tree: the streaming
+ *  node's rows past its last ``raw_index``, and any tree delta.  It always
+ *  precedes a ``done`` whose reply it affects. */
+export interface WSResyncEvent {
+  type: "resync";
+  dropped: number;
+}
 
 export interface WSRequestCompleteEvent {
   type: "request_complete";

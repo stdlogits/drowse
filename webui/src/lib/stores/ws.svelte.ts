@@ -106,6 +106,9 @@ const wsConn: RuntimeConnection = {
 
 let firstDecodeTokenAt: number | null = null;
 let activeRequestId: string | null = null;
+/** A ``resync`` arrived during the current generation: its live frames have a
+ *  gap the tree fills, except for a stateless reply, which has no node. */
+let streamGap = false;
 
 export function onWsMessage(cb: WsListener): () => void {
   wsConn.listeners.add(cb);
@@ -184,6 +187,9 @@ export function ensureRuntimeChannel(
       return;
     }
     notifyListeners(msg);
+    // The runtime dropped frames this client read too slowly for: rebuild
+    // from the authoritative tree, holding later frames until it lands.
+    if (disposition === "tree_resync") beginTreeRecovery(loomTree.rev);
   };
   const clearConnection = (): void => {
     if (wsConn.channel !== channel) return;
@@ -466,8 +472,13 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       if (!ok) return "tree_resync";
       return;
     }
+    case "resync": {
+      if (genStatus.active) streamGap = true;
+      return "tree_resync";
+    }
     case "started": {
       activeRequestId = msg.request_id ?? null;
+      streamGap = false;
       genStatus.active = true;
       genStatus.replay = null;
       genStatus.tokensSoFar = 0;
@@ -681,6 +692,9 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       }
       const turn = _currentWriteTurn();
       if (turn) {
+        // A stateless reply (a comparison) has no node to resync from; its
+        // text is whole on ``done`` even when the stream dropped frames.
+        if (streamGap && !turn.nodeId && typeof msg.result?.text === "string") turn.text = msg.result.text;
         turn.finishReason = msg.result?.finish_reason ?? "stop";
         if (msg.result?.applied_steering !== undefined) {
           turn.appliedSteering = msg.result.applied_steering;
