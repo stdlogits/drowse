@@ -26,7 +26,7 @@ SAMPLE_COUNT = 9
 LayerSelector = Sequence[int] | str | None
 
 # One list entry: an index or an inclusive ``a-b`` range.
-_ENTRY_RE = re.compile(r"(\d+)\s*(?:-\s*(\d+))?")
+_ENTRY_RE = re.compile(r"(\d+)\s*(?:-\s*(\d+))?", re.ASCII)  # ASCII digits only
 
 
 class LayerSelectorError(RequestError):

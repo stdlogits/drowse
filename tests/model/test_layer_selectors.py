@@ -37,6 +37,10 @@ def test_parse_layer_selector(text: str | None, expected: object) -> None:
     ("-1", "non-negative", 0),
     ("1,-3", "non-negative", 2),
     ("1-", "malformed layers", 0),
+    # ASCII digits only: Arabic-Indic and fullwidth digits are not indices.
+    ("\u0664", "malformed layers", 0),
+    ("\uff14", "malformed layers", 0),
+    ("1-\u0664", "malformed layers", 0),
 ])
 def test_parse_layer_selector_rejects_malformed_text(
     text: str, message: str, offset: int,

@@ -358,7 +358,10 @@ class ManifoldTerm:
 
 # ---------------------------------------------------------------- lexer ---
 
-_NUM_RE = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?")
+# ASCII digits only (``re.ASCII``): ``\d`` would also take Arabic-Indic or
+# fullwidth digits, which a JavaScript ``\d`` refuses.
+_NUM_RE = re.compile(r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?", re.ASCII)
+_DIGITS = frozenset("0123456789")
 _IDENT_START_RE = re.compile(r"[A-Za-z]")
 _IDENT_CHAR_RE = re.compile(r"[A-Za-z0-9_]")
 
@@ -398,9 +401,9 @@ def _lex(text: str) -> list[_Tok]:
             continue
         # Number detection must precede the single-char DOT branch, since
         # ``.25`` starts with a DOT that is actually a decimal point.
-        if c.isdigit() or (c == "." and i + 1 < n and text[i + 1].isdigit()):
+        if c in _DIGITS or (c == "." and i + 1 < n and text[i + 1] in _DIGITS):
             m = _NUM_RE.match(text, i)
-            if m is None:  # pragma: no cover — isdigit guard
+            if m is None:  # pragma: no cover — digit guard
                 raise SteeringExprError(f"malformed number at {c!r}", col=i)
             toks.append(_Tok("NUM", float(m.group()), i))
             i = m.end()

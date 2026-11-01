@@ -292,6 +292,23 @@ def test_projection_chained_rejected():
     assert "chained projection" in str(ei.value).lower()
 
 
+@pytest.mark.parametrize("expr", [
+    "0.\u0665 x",                # Arabic-Indic five in a coefficient
+    "\u0665 x",
+    "x{\u0664}",                 # ... and in a layer clause
+    "x{\uff14}",                 # fullwidth four
+    "jlens/#\u0661\u0662",
+    "sae/\u0663",
+    "x@first:\u0663",
+    "x@when:p>\u0663",
+])
+def test_non_ascii_digits_are_rejected(expr: str) -> None:
+    # Regression: NUM and layer indices took any Unicode decimal digit, which
+    # the documented grammar (and a JavaScript ``\\d``) does not.
+    with pytest.raises(SteeringExprError):
+        parse_expr(expr)
+
+
 def test_projection_with_trigger():
     s = parse_expr("0.5 honest|sycophantic@after")
     v = next(iter(s.alphas.values()))

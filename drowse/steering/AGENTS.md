@@ -60,7 +60,9 @@ signed_num := ["+" | "-"] NUM
 UNIT       := "L" INT ("n" | "h") INT                  # any letter case; n under neuron/, h under head/
 ```
 
-Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`); a term's sign
+Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`), and every digit,
+in `NUM`, `INT` and a layer clause, is ASCII `0-9` (an Arabic-Indic or
+fullwidth digit is an unexpected character); a term's sign
 comes from the leading/separating `+`/`-` and applies to every value of a
 comma run (`-0.6,0.3 m%x` is `along=-0.6, onto=-0.3`). `IDENT` is
 `[A-Za-z][A-Za-z0-9_]*`, and a `-` between two identifier characters joins
