@@ -39,7 +39,11 @@
   const keys = [
     { group: "Anywhere", rows: [
       { keys: [mod, "K"], what: "Searches everything" },
-      { keys: ["Esc"], what: "Closes a dialog, stops a generation, or clears the selection" },
+      { keys: ["Esc"], what: "Closes a dialog or an open steering term, stops a generation, or clears the selection" },
+    ] },
+    { group: "Units, Lens and Probes", rows: [
+      { keys: ["←", "→"], or: true, what: "Moves to the previous or next token, across turns" },
+      { keys: ["Home", "End"], or: true, what: "Moves to the first or last token of the turn's thinking or text" },
     ] },
     { group: "Composer", rows: [
       { keys: ["Enter"], what: "Sends the turn" },

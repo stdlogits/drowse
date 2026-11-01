@@ -210,5 +210,10 @@ try {
   const { default: Help } = await server.ssrLoadModule("/src/drawers/HelpDrawer.svelte");
   const help = render(Help).body;
   assert.match(help, /<dt[^>]*>Artifacts<\/dt>\s*<dd[^>]*>Where what the model is read and steered with is prepared/);
+  // ...and lists the token strip's keys, which the readout rooms share.
+  assert.match(help, /Units, Lens and Probes/);
+  assert.match(help, /<kbd[^>]*>←<\/kbd>.*<kbd[^>]*>→<\/kbd>/s);
+  assert.match(help, /<kbd[^>]*>Home<\/kbd>.*<kbd[^>]*>End<\/kbd>/s);
+  assert.ok(help.includes("Closes a dialog or an open steering term"), "Escape closes an open term before the selection");
   console.log("Rooms (Artifacts sections, palette by what each does, setup links, the phone crumb) passed");
 } finally { await server.close(); }
