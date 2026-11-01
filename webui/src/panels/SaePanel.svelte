@@ -6,7 +6,6 @@
   // opens for the strength (lib/steerActions.ts). While a token is hovered, the rows read that token.
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Switch, ease, reducedMotion } from "@stdlogits/ledger";
-  import RuntimeSaeSourceSection from "@runtime-sae-source";
   import SaeProbeCard from "./rack/SaeProbeCard.svelte";
   import { mergeInstrumentProbeRows } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
@@ -31,8 +30,6 @@
   import type { SaeProbeInfo, ScalarReadingJSON } from "../lib/types";
   import type { SaeSortMode } from "../lib/stores.svelte";
 
-  /** ``sources={false}`` leaves the source picker to the Lens room (the Inspector's Features). */
-  let { sources = true }: { sources?: boolean } = $props();
   const loaded = $derived(saeLoaded());
   const displayReadout = $derived(saeReadoutForDisplay());
   /** The resident SAE's hook layer, off the family block. */
@@ -146,8 +143,6 @@
 </script>
 
 <div class="sae" aria-label="Features">
-  {#if sources}<RuntimeSaeSourceSection />{/if}
-
   {#if loaded}
     <div class="dw-row">
       <span class="live" inert={saeState.busy}>

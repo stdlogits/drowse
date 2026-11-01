@@ -162,6 +162,10 @@ try {
     sessionState.info = null;
     lensSourceState.sources = [];
   }
+  // The SAE source picker lives in the Artifacts room's saes section alone (SaeSources); the
+  // Inspector's Features keep no copy and no switch for one.
+  assert.doesNotMatch(read("panels/SaePanel.svelte"), /@runtime-sae-source|sources/);
+  assert.match(read("panels/rooms/artifacts/SaeSources.svelte"), /@runtime-sae-source/);
   const model = read("panels/rooms/ModelFacts.svelte");
   assert.ok(model.includes(`goto("artifacts", "lenses")}>{canFit ? "Fit a lens here"`));
   assert.ok(model.includes(`goto("artifacts", "saes")}>{sae ? "SAEs" : "Choose an SAE"}`));

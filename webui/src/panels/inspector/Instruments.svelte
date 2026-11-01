@@ -156,7 +156,7 @@
   <section class="dw-sec" id="instrument-sae" aria-labelledby="instrument-sae-head">
     <div class="dw-sec-head"><span class="head" id="instrument-sae-head">Features</span>{#if !saeOn}<span class="meta">Off</span>{:else}{@render at()}{/if}</div>
     {#if saeOn}
-      <SaePanel sources={false} />
+      <SaePanel />
     {:else}
       <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "saes")}>Choose an SAE</button></div>
     {/if}
