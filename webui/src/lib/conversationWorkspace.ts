@@ -49,6 +49,20 @@ export interface ConversationRestoreSummary {
 }
 
 export function captureConversationSnapshot(now = new Date()): ConversationSnapshotV8 {
+  return snapshotWith((tree) => clone(tree), now);
+}
+
+/** The workspace alone (the tree reduced to its identity, no nodes): what the page keeps
+ *  synchronously as it hides (``workspaceDraft``), when a change has not reached autosave yet.
+ *  Cheap whatever the tree's size. */
+export function captureWorkspaceSnapshot(now = new Date()): ConversationSnapshotV8 {
+  return snapshotWith((tree) => ({ ...tree, nodes: [], children_of: {}, active_node_id: tree.root_id }), now);
+}
+
+function snapshotWith(
+  treeOf: (tree: NonNullable<ReturnType<typeof currentLoomTreeSnapshot>>) => ConversationSnapshotV8["tree"],
+  now: Date,
+): ConversationSnapshotV8 {
   const info = sessionState.info;
   const tree = currentLoomTreeSnapshot();
   if (!info || !tree) throw new Error("The conversation is still loading");
@@ -57,7 +71,7 @@ export function captureConversationSnapshot(now = new Date()): ConversationSnaps
     savedAt: now.toISOString(),
     model_id: info.model_id,
     session_id: info.id,
-    tree: clone(tree),
+    tree: treeOf(tree),
     steerRack: [...steerRack.entries.entries()].map(([name, entry]) => ({
       name,
       ...clone(entry),

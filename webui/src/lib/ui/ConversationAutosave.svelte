@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { captureConversationSnapshot } from "../conversationWorkspace";
+  import { captureConversationSnapshot, captureWorkspaceSnapshot } from "../conversationWorkspace";
   import { loomTree } from "../stores/loom.svelte";
   import { genStatus } from "../stores/chat.svelte";
   import { sessionState } from "../stores/session.svelte";
@@ -73,16 +73,31 @@
     timer = setTimeout(() => { void flush().catch(() => undefined); }, 600);
   });
 
+  /** A change autosave has not written yet (its debounce, or a write in flight) would be lost if
+   *  the page went now: keep the workspace synchronously as the draft, which the next load takes
+   *  over the older record. */
+  function keepPendingWorkspace(): void {
+    if (timer === null && savedConversationState.status !== "saving") return;
+    if (!loomTree.loaded || genStatus.active) return;
+    try { saveWorkspaceDraft(captureWorkspaceSnapshot()); } catch {}
+  }
+
   onMount(() => {
     disposed = false;
     const unregister = registerConversationAutosave(flush);
-    const saveWhenHidden = () => { if (document.hidden) void flush().catch(() => undefined); };
+    const saveWhenHidden = () => {
+      if (!document.hidden) return;
+      keepPendingWorkspace();
+      void flush().catch(() => undefined);
+    };
     document.addEventListener("visibilitychange", saveWhenHidden);
+    window.addEventListener("pagehide", keepPendingWorkspace);
     return () => {
       void flush().catch(() => undefined);
       disposed = true;
       unregister();
       document.removeEventListener("visibilitychange", saveWhenHidden);
+      window.removeEventListener("pagehide", keepPendingWorkspace);
     };
   });
 </script>

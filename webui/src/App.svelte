@@ -22,7 +22,7 @@
   import { resetSettings } from "./lib/stores/settingsReset.svelte";
   import { conversationLibrary, savedConversationState } from "./lib/stores/savedConversations.svelte";
   import { clearConversationOpen, peekConversationOpen } from "./lib/conversationOpen";
-  import { readWorkspaceDraft } from "./lib/workspaceDraft";
+  import { newerWorkspaceDraft, readWorkspaceDraft } from "./lib/workspaceDraft";
   import { containTab, tabStops } from "./lib/focusTrap";
   import {
     bootstrap,
@@ -148,6 +148,9 @@
         const record = tree && await conversationLibrary.findForTree(sessionState.info.model_id, tree.root_id);
         if (record) {
           await restoreConversationSnapshot({ ...record.snapshot, tree });
+          // A change the page hid before autosave wrote it.
+          const pending = newerWorkspaceDraft(sessionState.info.model_id, record.snapshot.tree.root_id, record.snapshot.savedAt);
+          if (pending) restoreWorkspaceSettings(pending);
           savedConversationState.activeId = record.id;
           savedConversationState.avatarSeed = record.avatarSeed;
           savedConversationState.accent = record.accent ?? "purple";
@@ -163,6 +166,9 @@
           const record = tree && await conversationLibrary.findForTree(sessionState.info.model_id, tree.root_id);
           if (record) {
             restoreWorkspaceSettings(record.snapshot);
+            // A change the page hid before autosave wrote it.
+            const pending = newerWorkspaceDraft(sessionState.info.model_id, record.snapshot.tree.root_id, record.snapshot.savedAt);
+            if (pending) restoreWorkspaceSettings(pending);
             savedConversationState.activeId = record.id;
             savedConversationState.avatarSeed = record.avatarSeed;
             savedConversationState.accent = record.accent ?? "purple";

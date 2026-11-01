@@ -268,6 +268,13 @@ try {
     steerRack.entries.clear();
     restoreWorkspaceSettings(readWorkspaceDraft("fixture/model", "root", storage));
     assert.equal(currentSteeringExpression(), "0.5 default/formal.casual%formal", "the draft rack comes back");
+    // Regression: a rack change made just before a reload was lost (autosave is debounced and
+    // asynchronous). The page keeps it as the draft as it hides; the next load takes the draft
+    // over the record only when the draft is the newer.
+    const { newerWorkspaceDraft } = await server.ssrLoadModule("/src/lib/workspaceDraft.ts");
+    assert.ok(newerWorkspaceDraft("fixture/model", "root", "2026-10-31T23:59:59.000Z", storage), "a newer draft wins");
+    assert.equal(newerWorkspaceDraft("fixture/model", "root", "2026-11-01T00:00:00.000Z", storage), null, "the record is as new");
+    assert.equal(newerWorkspaceDraft("fixture/model", "other-root", "2026-10-31T00:00:00.000Z", storage), null);
     clearWorkspaceDraft(storage);
     assert.equal(readWorkspaceDraft("fixture/model", "root", storage), null);
     store.set("drowse.workspace-draft.v1", "{not json");

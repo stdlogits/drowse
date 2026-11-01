@@ -2,7 +2,10 @@
  *  turn (an empty one would crowd Your chats), and in server mode the server keeps the tree and the
  *  probes but not the page's own workspace (the steer rack, sampling, the highlight), so a recipe
  *  built before the first message would vanish on reload. The page keeps that workspace here,
- *  keyed by the model and the tree's root, until the first turn's autosave record takes over. */
+ *  keyed by the model and the tree's root, until the first turn's autosave record takes over.
+ *  The same draft holds a workspace change the page hid (a reload, a closed tab) before autosave
+ *  wrote it: autosave is asynchronous and debounced, so the page keeps it here synchronously and
+ *  the next load takes it over the older record (``newerWorkspaceDraft``). */
 import type { ConversationSnapshotV8 } from "./conversationSnapshot";
 
 const WORKSPACE_DRAFT_KEY = "drowse.workspace-draft.v1";
@@ -60,6 +63,19 @@ export function readWorkspaceDraft(
   } catch {
     return null;
   }
+}
+
+/** The draft of ``modelId``'s tree rooted at ``rootId`` when it is newer than ``savedAt`` (the
+ *  autosave record's): a change made just before the page closed, kept as the page hid, which the
+ *  record never got. ``null`` otherwise. */
+export function newerWorkspaceDraft(
+  modelId: string,
+  rootId: string,
+  savedAt: string,
+  storage: WebStorage | undefined = localStore(),
+): ConversationSnapshotV8 | null {
+  const draft = readWorkspaceDraft(modelId, rootId, storage);
+  return draft && Date.parse(draft.savedAt) > Date.parse(savedAt) ? draft : null;
 }
 
 /** Drop the draft (its conversation has an autosave record now). */
