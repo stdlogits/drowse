@@ -81,6 +81,9 @@ class _WordTokenizer:
     def __len__(self) -> int:
         return len(self.vocab)
 
+    def get_vocab(self) -> dict[str, int]:
+        return dict(self.vocab)
+
     def __call__(self, texts: list[str], add_special_tokens: bool = False) -> dict[str, Any]:
         assert add_special_tokens is False
         return {"input_ids": [[self.vocab[w] for w in text.split()] for text in texts]}
@@ -135,6 +138,34 @@ def test_the_source_prefers_the_catalog_and_reloads_on_disk_changes(
     assert source.get() is second
 
 
+def test_counts_of_another_tokenizer_are_not_read(
+    make_tiny_session: Any, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Regression: corpus counts were applied to any tokenizer of the model id
+    (the record's tokenizer was written and never compared), so counts taken
+    over another vocabulary masked the wrong ids."""
+    monkeypatch.setattr(tc, "MIN_COUNT_TOKENS", 1)
+    session = make_tiny_session()
+    vocab = len(session.tokenizer)
+    counts = torch.full((vocab,), 3, dtype=torch.int64)
+    tc.write_corpus_counts(
+        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000,
+        tokenizer="999:0123456789abcdef",
+    )
+    with caplog.at_level("WARNING", logger="drowse.lens.token_counts"):
+        assert session.lens.token_mask_info()["source"] == "tokenizer"
+    assert "another tokenizer" in caplog.text
+    tc.write_corpus_counts(
+        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000,
+        tokenizer=tc.tokenizer_fingerprint(session.tokenizer),
+    )
+    assert session.lens.token_mask_info()["source"] == "corpus"
+    # The fingerprint is the vocabulary: its size and every (piece, id) pair.
+    fp = tc.tokenizer_fingerprint(session.tokenizer)
+    assert fp.startswith(f"{vocab}:")
+    assert tc.tokenizer_fingerprint(_WordTokenizer(["a", "b"])) != tc.tokenizer_fingerprint(_WordTokenizer(["b", "a"]))
+
+
 def test_the_session_masks_by_corpus_counts_and_rebuilds_on_a_change(
     make_tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -153,7 +184,8 @@ def test_the_session_masks_by_corpus_counts_and_rebuilds_on_a_change(
     rare = kept_ids[:4]
     counts[rare] = 0
     tc.write_corpus_counts(
-        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000, tokenizer="t",
+        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000,
+        tokenizer=tc.tokenizer_fingerprint(session.tokenizer),
     )
     info = session.lens.token_mask_info()
     assert info["source"] == "corpus" and info["kept"] is None, "counted since the last build"
@@ -198,7 +230,8 @@ def test_a_mask_change_refreshes_every_s_view(
     rare = [i for i in before.keep.nonzero().squeeze(1).tolist() if i not in (a, b)][:4]
     counts[rare + [b]] = 0
     tc.write_corpus_counts(
-        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000, tokenizer="t",
+        session.model_id, counts, corpus="file:test", documents=1, tokens=5_000_000,
+        tokenizer=tc.tokenizer_fingerprint(session.tokenizer),
     )
     # The instrument's digest names the mask the next run reads (disk only).
     assert session.lens.probe_hash("slens/a") != old_hash

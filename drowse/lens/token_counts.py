@@ -10,7 +10,9 @@ that tops early S reads.  The mask's counts come from, in order:
 2. the model's **corpus counts**, a derived cache this module owns:
    ``models/<id>/tokens/counts.safetensors`` (``counts``, ``[ids]`` int64)
    with ``counts.json`` (:data:`TOKEN_COUNTS_FORMAT`, the corpus spec, the
-   documents and tokens counted, the threshold, the vocabulary size).
+   documents and tokens counted, the threshold, the vocabulary size and the
+   counting tokenizer's :func:`tokenizer_fingerprint`; a session whose
+   tokenizer has another fingerprint does not read them and says so).
    ``drowse lens counts MODEL`` writes it, streaming the S lens's recorded
    corpus (a local fit's or a fetched lens's ``corpus_spec``; the default lens
    corpus otherwise) through the tokenizer alone (no model load), up to
@@ -28,7 +30,9 @@ fetch`` or a ``lens counts`` beside a running server reaches it.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import logging
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -45,6 +49,8 @@ from drowse.lens.key import DEFAULT_COUNT_DOCUMENTS
 if TYPE_CHECKING:
     from drowse.units.catalog import UnitCatalog
 
+_log = logging.getLogger(__name__)
+
 #: ``counts.json``'s format; another is not read.
 TOKEN_COUNTS_FORMAT = 1
 #: The fewest tokens a count may cover: below it the mask would drop most of
@@ -57,6 +63,14 @@ _RECORD_FILE = "counts.json"
 def counts_dir(model_id: str) -> Path:
     """``$DROWSE_HOME/models/<safe id>/tokens``."""
     return model_dir(model_id) / "tokens"
+
+
+def tokenizer_fingerprint(tokenizer: Any) -> str:
+    """The identity counts are indexed by: the vocabulary size and a digest
+    of every ``(piece, id)`` pair (added tokens included)."""
+    vocab = sorted(tokenizer.get_vocab().items(), key=lambda item: (item[1], item[0]))
+    digest = hashlib.sha256(json.dumps(vocab, ensure_ascii=False).encode("utf-8")).hexdigest()
+    return f"{len(tokenizer)}:{digest[:16]}"
 
 
 def read_corpus_counts_record(model_id: str) -> dict[str, Any] | None:
@@ -118,8 +132,9 @@ def write_corpus_counts(
     tokenizer: str,
 ) -> dict[str, Any]:
     """Store the model's corpus counts (atomic per file, under the folder's
-    artifact lock); returns the record.  Fewer than :data:`MIN_COUNT_TOKENS`
-    tokens is a :class:`~drowse.errors.RequestError`."""
+    artifact lock); returns the record.  ``tokenizer`` is the counting
+    tokenizer's :func:`tokenizer_fingerprint`.  Fewer than
+    :data:`MIN_COUNT_TOKENS` tokens is a :class:`~drowse.errors.RequestError`."""
     from safetensors.torch import save_file
 
     from drowse.errors import RequestError
@@ -163,12 +178,22 @@ def remove_corpus_counts(model_id: str) -> bool:
         return found
 
 
-def load_corpus_counts(model_id: str) -> TokenCounts | None:
-    """The model's corpus counts as :class:`TokenCounts`, or ``None``."""
+def load_corpus_counts(model_id: str, *, tokenizer: str | None = None) -> TokenCounts | None:
+    """The model's corpus counts as :class:`TokenCounts`, or ``None``;
+    ``tokenizer`` (a :func:`tokenizer_fingerprint`), when given, must be the
+    one the counts were taken with (another tokenizer indexes other ids)."""
     from safetensors.torch import load_file
 
     record = read_corpus_counts_record(model_id)
     if record is None:
+        return None
+    if tokenizer is not None and record.get("tokenizer") != tokenizer:
+        _log.warning(
+            "the corpus counts for %s were taken with another tokenizer (%s, "
+            "this session's is %s); the S mask uses the tokenizer's rules alone "
+            "(count again with `drowse lens counts`)",
+            model_id, record.get("tokenizer"), tokenizer,
+        )
         return None
     counts = load_file(str(counts_dir(model_id) / _COUNTS_FILE))["counts"]
     if int(counts.numel()) != int(record.get("vocabulary", -1)):
@@ -205,9 +230,16 @@ class TokenCountSource:
     Disk only.
     """
 
-    def __init__(self, model_id: str, catalog: Callable[[], "UnitCatalog | None"]) -> None:
+    def __init__(
+        self, model_id: str, catalog: Callable[[], "UnitCatalog | None"],
+        *, tokenizer: Any = None,
+    ) -> None:
         self.model_id = model_id
         self._catalog = catalog
+        # The session's tokenizer: corpus counts taken with another are not
+        # read (its fingerprint is taken once, on first use).
+        self._tokenizer = tokenizer
+        self._tokenizer_id: str | None = None
         self._lock = threading.Lock()
         self._corpus_identity: _Identity = None
         self._corpus: TokenCounts | None = None
@@ -217,7 +249,11 @@ class TokenCountSource:
         identity = _identity(counts_dir(self.model_id) / _RECORD_FILE)
         with self._lock:
             if not self._corpus_loaded or identity != self._corpus_identity:
-                self._corpus = None if identity is None else load_corpus_counts(self.model_id)
+                if self._tokenizer is not None and self._tokenizer_id is None:
+                    self._tokenizer_id = tokenizer_fingerprint(self._tokenizer)
+                self._corpus = None if identity is None else load_corpus_counts(
+                    self.model_id, tokenizer=self._tokenizer_id,
+                )
                 self._corpus_identity = identity
                 self._corpus_loaded = True
             return self._corpus
@@ -246,5 +282,6 @@ __all__ = [
     "load_corpus_counts",
     "read_corpus_counts_record",
     "remove_corpus_counts",
+    "tokenizer_fingerprint",
     "write_corpus_counts",
 ]

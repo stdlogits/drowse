@@ -381,7 +381,8 @@ def run_counts(args: argparse.Namespace) -> None:
     """Count the S lens's corpus through the tokenizer: the S read's token mask
     when the model has no neuron-lens catalog."""
     from drowse.lens.token_counts import (
-        count_tokens, read_corpus_counts_record, remove_corpus_counts, write_corpus_counts,
+        count_tokens, read_corpus_counts_record, remove_corpus_counts, tokenizer_fingerprint,
+        write_corpus_counts,
     )
 
     if args.remove:
@@ -430,7 +431,7 @@ def run_counts(args: argparse.Namespace) -> None:
     with user_errors(ValueError, exit_code=2):
         record = write_corpus_counts(
             args.model, counts, corpus=spec, documents=n_docs, tokens=n_tokens,
-            tokenizer=str(getattr(tokenizer, "name_or_path", args.model)),
+            tokenizer=tokenizer_fingerprint(tokenizer),
         )
     if args.json_output:
         emit_json(record)

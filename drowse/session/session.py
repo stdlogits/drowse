@@ -376,7 +376,9 @@ class DrowseSession:
         # and the S mask's token counts when the model has one), and the
         # S mask's token counts: the catalog's, else the model's corpus counts.
         self._unit_catalog = CatalogBinding(self.model_id)
-        self._token_counts = TokenCountSource(self.model_id, self._unit_catalog.get)
+        self._token_counts = TokenCountSource(
+            self.model_id, self._unit_catalog.get, tokenizer=self._tokenizer,
+        )
         self._units_runtime = UnitsRuntime(
             model=self._model, device=self._device,
             exclusive=self._model_exclusive, stats=self._require_unit_stats,

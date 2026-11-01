@@ -145,7 +145,10 @@ view, which reopens when either source changes on disk):
 2. the model's corpus counts, `drowse lens counts MODEL`: a derived cache at
    `models/<id>/tokens/counts.safetensors` (`counts`, `[ids]` int64) with
    `counts.json` (format 1: the corpus spec, documents, tokens, threshold,
-   vocabulary size; another format, model or size is not read). It streams
+   vocabulary size and the counting tokenizer's `tokenizer_fingerprint`, its
+   size plus a digest of every `(piece, id)`; another format, model or size is
+   not read, and a session whose tokenizer has another fingerprint falls back
+   to the tokenizer rules with a warning). It streams
    the S lens's recorded `corpus_spec` (a local fit's or a fetched lens's;
    else the default lens corpus; `--corpus FILE` / `--hf-corpus` override)
    through the tokenizer alone, `DEFAULT_COUNT_DOCUMENTS = 32768` documents

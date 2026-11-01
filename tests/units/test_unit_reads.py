@@ -257,14 +257,14 @@ def test_contrast_cache_persists_and_follows_the_lens(lensed: Any) -> None:
 
 def _count_some_tokens(session: Any, *, dropped: int) -> None:
     """Write corpus counts that keep every vocabulary id but the first ``dropped``."""
-    from drowse.lens.token_counts import MIN_COUNT_TOKENS, write_corpus_counts
+    from drowse.lens.token_counts import MIN_COUNT_TOKENS, tokenizer_fingerprint, write_corpus_counts
 
     rows = int(session.model.get_input_embeddings().weight.shape[0])
     counts = torch.full((rows,), 1_000, dtype=torch.int64)
     counts[:dropped] = 0
     write_corpus_counts(
         session.model_id, counts, corpus="test", documents=10,
-        tokens=MIN_COUNT_TOKENS, tokenizer="test",
+        tokens=MIN_COUNT_TOKENS, tokenizer=tokenizer_fingerprint(session.tokenizer),
     )
 
 
