@@ -594,9 +594,10 @@ too. The node keeps its reply's settled aggregate once
 the rack and the probe inspector draw after a reload. A row nothing replays (an
 authored prompt row) and a row of a call with `persist_per_layer_scores` keep
 `summary_measurements(envelope, per_layer=True)`, every reading whole with its
-traces but never the probe inspector's subspace coordinates. A SmolLM2 row
-with the 17 default probes and the lens readout is about 1 kB (it was about
-6 kB as a summary row), where the whole envelope is about 118 kB.
+traces but never the probe inspector's subspace coordinates. A SmolLM2
+generated row's measurements with the 17 default probes are about 1.6 kB
+(about 2 kB a row with its alternatives; a summary row was about 9.7 kB),
+where the whole envelope is about 118 kB.
 Bindings record source and steering context, so a historical row stays
 interpretable after the active lens or SAE changes; the lens binding names a
 source per lens family (`sources.R`, `sources.S`) that produced the row. A
