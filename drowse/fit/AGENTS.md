@@ -208,18 +208,28 @@ the kept/dropped line for a cached probe from its sidecar (`dls_load_note`:
 `fitted_layers` against the pre-DLS `node_spread_per_layer`, no tensor read),
 so a probe DLS cut to a few layers is visible (`tests/fit/test_dls_narration.py`).
 
-Known limit: ν is the model's default answers, so on an axis whose one pole is
-the default (honest, compliant, sincere) ν sits on that pole and the near
-pole's sign is noise. Measured as ν's position along the axis (0 at the − pole,
-1 at the + pole): `honest.deceptive` 1.03–1.13 at Qwen3-8B L3–35 (kept L1–2) and
-1.01–1.20 at every SmolLM2-360M layer (all-fail fallback);
-`refusing.compliant` −0.04–0.06; `sincere.manipulative` 0.82–1.03. A `%pole`
-push targets the pole's neutral-anchored coordinate, so where ν lies past the
-near pole that push points at the far pole: on SmolLM2 the all-fail fallback
-keeps every layer and `0.5 honest` pushes deceptive-ward at all 32. Loosening
-the test would spread that to more layers; the remedy is the axis's shape
-(a monopolar re-author) or its corpus (poles written past the default
-answer), and it is open (ARCHITECTURE.md §17).
+Default-pole axes: ν is the model's default answers, so on a 2-node axis whose
+one pole is the default answer ν sits on that pole and the near pole's sign is
+noise. A `%pole` push targets the pole's neutral-anchored coordinate, so where
+ν lies past the near pole the push points at the far pole. Measured as ν's
+position s along the axis (0 at the − pole, 1 at the + pole), the old
+`honest.deceptive` sat at 1.01–1.20 on every SmolLM2-360M layer (all-fail
+fallback, and `0.5 honest` pushed deceptive-ward at all 32) and 1.03–1.13 at
+Qwen3-8B L3–35 (DLS kept L1–2); `refusing.compliant` at −0.31–0.02 and
+−0.04–0.06; `sincere.manipulative` at 0.85–1.04 and 0.82–1.03. 6.0 made them
+the one-node `deceptive`, `refusing` and `manipulative` (the default answer is
+their other end): a monopolar fold keeps every layer, and `0.5 deceptive`
+pushes toward its centroid and `-0.5 deceptive` away at every layer (SmolLM2
+32 of 32, Qwen3-8B 36 of 36). The `deceptive` probe reads the model's own
+default replies at −0.11–0.17 on SmolLM2 and 0.38–0.59 on Qwen3-8B (whose
+default style sits away from the bundled neutral corpus, written by another
+model), the old honest pole's corpus at 0.31 and 0.44, and the deceptive
+corpus at 1.01 and 1.20. Of the 14 remaining axes,
+`religious.secular` sits at its secular pole on most layers (median s 0.03,
+19 of 32 SmolLM2 layers at or below 0.05; 0.04, 28 of 36 on Qwen3-8B), which
+is open (ARCHITECTURE.md §17); `humorous.serious` reaches its serious pole on
+half of Qwen3-8B's layers (median 0.05) and `confident.uncertain` its
+confident pole on 12 of SmolLM2's 32.
 
 ## Publish and concurrency
 

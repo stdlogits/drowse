@@ -362,7 +362,7 @@ drowse.ai too.
   away is refused by composition everywhere. Chips hold, but the editor does not write, a gate
   on any channel but a probe's main reading (`:membership`, `@label`, `~label`, `[i]`, a flat
   probe's `:fraction`), a gate on the Prompt window (it never fires), and a projection whose
-  base is not a raw two-node flat concept: an agent writes those, and the chip keeps them.
+  base is not a raw one- or two-node flat concept: an agent writes those, and the chip keeps them.
   A cast member's steering is set from the chips ("Use the recipe") and shown as written. The
   agent and API inputs that take a full expression stay: they are the grammar's other
   frontends.
@@ -437,7 +437,7 @@ drowse.ai too.
   whose number its card shows, `terms.ts::gateProbeKey`, a curved probe's `:fraction` and
   every other probe's bare name; a comparison; a threshold; the probe's reading now beside
   it. A gate never reads the prompt, so adding one moves Always or Prompt to Response, and a
-  gated term is not offered those two), Which part (a raw two-node flat concept, pushed: All
+  gated term is not offered those two), Which part (a raw one- or two-node flat concept, pushed: All
   of it, Along or Not along a second fitted concept; a relation re-keys the chip as a
   projection, `relateSteerEntry`, at its own strength with its pole's sign), the position on
   its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
