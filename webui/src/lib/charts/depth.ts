@@ -20,6 +20,24 @@ export function layerDepth(layer: number, deepest: number): number | null {
   return Math.max(0, Math.min(1, layer / deepest));
 }
 
+/** The layer a depth centre of mass (``layer / (layers - 1)``) falls on, or null. The model's
+ *  layer count is the session's (``modelLayers``); a runtime that does not report it leaves a
+ *  fit that covers every layer (0 to the last) as the only measure of the model's depth, so a
+ *  probe fitted on a subset (DLS kept some layers) then shows none. */
+export function depthLayer(
+  com: number | null | undefined,
+  modelLayers: number | null | undefined,
+  fittedLayers: readonly number[] = [],
+): number | null {
+  if (com == null || !Number.isFinite(com)) return null;
+  let last = modelLayers != null && Number.isFinite(modelLayers) && modelLayers > 1 ? modelLayers - 1 : 0;
+  if (last === 0) {
+    const deepest = Math.max(0, ...fittedLayers);
+    if (deepest > 0 && new Set(fittedLayers).size === deepest + 1) last = deepest;
+  }
+  return last > 0 ? Math.round(Math.max(0, Math.min(1, com)) * last) : null;
+}
+
 /** The layer whose reading is largest in magnitude (where a probe peaks), or null with none. */
 export function peakLayer(perLayer: Record<string, number> | null | undefined): number | null {
   let best: number | null = null;

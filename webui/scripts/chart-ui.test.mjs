@@ -24,6 +24,15 @@ try {
   const { depthTint, layerDepth, peakLayer, traceBars, readingText, bucketed, aggregateReadingText } = await server.ssrLoadModule("/src/lib/charts/depth.ts");
   // Regression: the Readings list printed raw values ("0" for a jlens/ probability of 2e-6).
   assert.equal(aggregateReadingText("jlens/Paris", 2.4e-6), "<0.1%");
+  // Regression: a probe DLS fitted on a subset of layers (confident.uncertain kept 23 of 32) showed
+  // no depth label; the label reads the model's layer count, falling back to a full fit's.
+  {
+    const { depthLayer } = await server.ssrLoadModule("/src/lib/charts/depth.ts");
+    assert.equal(depthLayer(0.434, 32, [3, 4, 5, 9, 30]), 13);
+    assert.equal(depthLayer(0.5, null, [0, 1, 2, 3, 4]), 2, "a full fit stands in for the model");
+    assert.equal(depthLayer(0.5, null, [3, 4, 5]), null, "a subset fit alone gives no depth");
+    assert.equal(depthLayer(null, 32), null);
+  }
   assert.equal(aggregateReadingText("slens/Paris", 0.0538), "+0.05");
   assert.equal(aggregateReadingText("default/verbose.concise", -0.31), "−0.31");
   assert.deepEqual(bucketed([1, -3, null, 2, NaN], 3), { values: [-3, 2, null], size: 2 }, "a folded bar keeps its largest magnitude, sign and all");

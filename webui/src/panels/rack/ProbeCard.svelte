@@ -8,7 +8,8 @@
   import type { GeometryProbeInfo, ProbeReadingJSON, ProbeRackEntry } from "../../lib/types";
   import Bar from "../../lib/charts/Bar.svelte";
   import Trace from "../../lib/charts/Trace.svelte";
-  import { depthTint, readingText } from "../../lib/charts/depth";
+  import { depthLayer, depthTint, readingText } from "../../lib/charts/depth";
+  import { sessionState } from "../../lib/stores/session.svelte";
   import { MorphText } from "@stdlogits/ledger";
   import { nodeCoordExtent, parseProbeTarget } from "../../lib/tokens";
   import { highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
@@ -37,15 +38,9 @@
     return entry.savedFraction ?? entry.savedAggregate ?? null;
   });
 
-  /** The layer its reading's depth centre of mass falls on. The client knows the model's depth only
-   *  through a fit that covers every layer (0 to the last), so a probe fitted on a subset shows none. */
-  const atLayer = $derived.by((): number | null => {
-    const com = settled?.depth_com?.[0];
-    const layers = info.layers ?? [];
-    const last = Math.max(0, ...layers);
-    const covers = last > 0 && new Set(layers).size === last + 1;
-    return com == null || !Number.isFinite(com) || !covers ? null : Math.round(com * last);
-  });
+  /** The layer its reading's depth centre of mass falls on, over the model's layers (a probe DLS
+   *  fitted on a subset has one too). */
+  const atLayer = $derived(depthLayer(settled?.depth_com?.[0], sessionState.info?.architecture?.layers, info.layers ?? []));
   /** The probe's place on the ramp: its measured depth (layer / (layers - 1)), when it has one. */
   const tint = $derived(depthTint(settled?.depth_com?.[0]));
 
