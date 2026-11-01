@@ -1265,122 +1265,22 @@ class Monitor:
                 pooled[layer_idx] = stack[row]
         return self._score_full(pooled)
 
-    def probe_geometry(
-        self, name: str, *, grid_resolution: int = 24,
-    ) -> dict[str, Any]:
-        """Static geometry payload for one attached probe (inspector plot).
-
-        Everything in the **whitened frame** the reads use: per-layer node
-        centroids (``wh.node_white``), the neutral anchor (``wh.neutral_white``),
-        a top-3 PCA rotation of the node cloud when ``rank >= 3``, and — for a
-        curved fit of intrinsic dim 1/2 embedded in a higher-rank subspace — the
-        manifold curve/surface sampled and whitened into the same frame.  Pairs
-        with the per-token ``ProbeReading.subspace_coords_per_layer`` (the live
-        point + trail), which carries the same ``cdist_query`` whitened coord.
-        CPU/fp32 for the SVD + grid (MPS-fallback discipline); off the hot path.
-        """
+    def probe_geometry(self, name: str) -> dict[str, Any]:
+        """Static geometry payload for one attached probe (inspector plot):
+        :func:`~drowse.readout.monitor_attach.probe_geometry_payload`, built on
+        the host at attach.  It reads no resident tensor, so it answers beside
+        a model op that holds the device.  ``KeyError`` for a name not
+        attached."""
         probe = self._probes.get(name)
         if probe is None:
             raise KeyError(name)
-        manifold = probe.manifold
-        domain = manifold.domain
-        n = int(domain.intrinsic_dim)
-        layers_out: dict[str, Any] = {}
-        ranks: set[int] = set()
-        for layer_idx in sorted(manifold.layers):
-            wh = probe.whitened.get(layer_idx)
-            if wh is None:
-                continue
-            sub = manifold.layers[layer_idx]
-            node_white = wh.node_white.detach().to(torch.float32).cpu()   # (K, R)
-            R = int(node_white.shape[1])
-            ranks.add(R)
-            neutral_white = (
-                wh.neutral_white.detach().to(torch.float32).cpu().reshape(-1)
-            )
-            pca_rotation: list[list[float]] | None = None
-            ev_pcs: list[float] | None = None
-            if R >= 3 and node_white.shape[0] >= 2:
-                centered = node_white - node_white.mean(dim=0, keepdim=True)
-                try:
-                    _u, s, vh = torch.linalg.svd(centered, full_matrices=False)
-                    pca_rotation = vh[:3].transpose(0, 1).contiguous().tolist()
-                    var = s ** 2
-                    tot = float(var.sum().clamp(min=1e-12))
-                    ev_pcs = [float(v) / tot for v in var[:3].tolist()]
-                except Exception:
-                    pca_rotation, ev_pcs = None, None
-            overlay: dict[str, Any] | None = None
-            if (
-                (not sub.is_affine)
-                and n in (1, 2)
-                and n < R
-                and isinstance(domain, BoxDomain)
-            ):
-                overlay = self._sample_overlay(sub, domain, wh, n, grid_resolution)
-            layers_out[str(layer_idx)] = {
-                "layer": layer_idx,
-                "rank": R,
-                "intrinsic_dim": n,
-                "is_affine": bool(sub.is_affine),
-                "node_white": node_white.tolist(),
-                "neutral_white": neutral_white.tolist(),
-                "pca_rotation": pca_rotation,
-                "explained_variance_pcs": ev_pcs,
-                "mahalanobis_share": float(
-                    manifold.mahalanobis_share[layer_idx],
-                ),
-                "overlay": overlay,
-            }
-        return {
-            "name": name,
-            "manifold": manifold.name,
-            "intrinsic_dim": n,
-            "is_affine": bool(probe.is_affine),
-            "node_labels": list(manifold.node_labels),
-            "rank_uniform": len(ranks) <= 1,
-            "layers": layers_out,
-        }
+        return _listed(probe.geometry)
 
-    @staticmethod
-    def _sample_overlay(
-        sub: Any, domain: BoxDomain, wh: Any, n: int, res: int,
-    ) -> dict[str, Any] | None:
-        """Sample a curved manifold's curve (n=1) / surface (n=2), whitened.
 
-        Returns the sampled points already in the ``node_white`` frame
-        (``r @ chol``), so the frontend overlays them on the same plot without a
-        second transform.  Off the hot path — CPU/fp32 throughout.
-        """
-        cpu = torch.device("cpu")
-        sub_c = sub.to(device=cpu, dtype=torch.float32)
-        chol = wh.chol.detach().to(torch.float32).cpu()       # (R, R)
-        basis = sub_c.basis                                   # (R, D)
-        mean = sub_c.mean                                     # (D,)
-        axes = domain.axes
-
-        def _axis_grid(ax: Any) -> torch.Tensor:
-            if ax.periodic:
-                return torch.linspace(
-                    0.0, float(ax.period), res + 1, dtype=torch.float32,
-                )[:-1]
-            return torch.linspace(
-                float(ax.lo), float(ax.hi), res, dtype=torch.float32,
-            )
-
-        def _whiten(coords: torch.Tensor) -> torch.Tensor:
-            world = sub_c.eval_at(domain.embed(domain.clamp_position(coords)))
-            reduced = (world - mean) @ basis.transpose(0, 1)  # (.., R)
-            return reduced @ chol                             # (.., R) whitened
-
-        if n == 1:
-            g = _axis_grid(axes[0]).reshape(-1, 1)            # (S, 1)
-            return {"kind": "curve", "points": _whiten(g).tolist()}
-        gu, gv = _axis_grid(axes[0]), _axis_grid(axes[1])
-        uu, vv = torch.meshgrid(gu, gv, indexing="ij")
-        grid = torch.stack([uu.reshape(-1), vv.reshape(-1)], dim=1)  # (nu*nv, 2)
-        return {
-            "kind": "surface",
-            "points": _whiten(grid).tolist(),
-            "grid_shape": [int(gu.numel()), int(gv.numel())],
-        }
+def _listed(value: Any) -> Any:
+    """``value`` with every tensor under its dicts as nested lists."""
+    if isinstance(value, torch.Tensor):
+        return value.tolist()
+    if isinstance(value, dict):
+        return {key: _listed(item) for key, item in value.items()}
+    return value

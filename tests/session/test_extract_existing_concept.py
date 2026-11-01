@@ -242,3 +242,30 @@ def test_extract_reuses_a_folder_authored_during_generation(
     assert rig.fitted == [folder]
     # The concurrent writer's corpus is kept, not replaced.
     assert json.loads((folder / "nodes" / "00_formal.json").read_text()) == ["Good day."]
+
+
+def _install_moods(namespace: str) -> Path:
+    """A three-node manifold, which no vector can fold."""
+    folder = create_discover_manifold_folder(
+        namespace, "moods", "Three moods.", fit_mode="pca",
+        node_corpora={"calm": ["Breathe."], "tense": ["Hurry!"], "glad": ["Yay."]},
+        hyperparams={"max_dim": 2, "var_threshold": 0.7},
+        node_kinds={"calm": "abstract", "tense": "abstract", "glad": "abstract"},
+    )
+    selectors.invalidate()
+    return folder
+
+
+def test_extract_refuses_a_multi_node_manifold_before_fitting_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reusing a multi-node folder used to fit every node, adopt the fit and
+    only then fail to fold it (a bare ``ValueError``, a scrubbed 500)."""
+    from drowse.errors import ManifoldSpecError
+
+    _install_moods("default")
+    rig = make_extraction(monkeypatch)
+
+    with pytest.raises(ManifoldSpecError, match="drowse manifold fit default/moods"):
+        rig.extraction.extract("moods")
+    assert rig.generated == [] and rig.fitted == []

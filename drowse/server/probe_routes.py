@@ -50,8 +50,10 @@ def _probe_info(name: str, probe: AttachedManifoldProbe) -> GeometryProbeInfo:
     manifold = probe.manifold
     domain_spec = manifold.domain.to_spec()
     intrinsic_dim = int(manifold.domain.intrinsic_dim)
-    nc = manifold.node_coords
-    node_coords = nc.tolist() if nc is not None else None
+    # The host copy taken at attach: this route is lock-free, and copying the
+    # resident (MPS) tensor here would share the device's one command buffer
+    # with whatever model op holds it, which aborts the process.
+    node_coords = probe.node_coords_host
     is_affine = manifold.is_affine
     return {
         "family": "geometry",
@@ -138,7 +140,9 @@ def register_probe_routes(app: FastAPI) -> None:
         Per-layer node centroids + neutral + (rank>=3) a top-3 PCA rotation +
         the curve/surface overlay for a curved fit — all in the whitened frame
         the reads use, so the per-token live point (the reading's
-        ``subspace_coords_per_layer``) overlays directly.
+        ``subspace_coords_per_layer``) overlays directly.  Lock-free: attach
+        built the payload on the host, so it answers mid-generation and never
+        copies off the device.
         """
         try:
             return session.monitor.probe_geometry(name)

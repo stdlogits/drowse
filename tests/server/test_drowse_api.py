@@ -261,8 +261,9 @@ class TestProbes:
             whitener=isotropic_whitener(means, 2),
         )
         session.add_probe.return_value = "happy"
+        coords = mani.node_coords.tolist()
         session.monitor.attached_probes.return_value = {
-            "happy": SimpleNamespace(top_n=3, manifold=mani),
+            "happy": SimpleNamespace(top_n=3, manifold=mani, node_coords_host=coords),
         }
         resp = client.post(
             "/drowse/v1/sessions/default/probes", json={"selector": "happy"},

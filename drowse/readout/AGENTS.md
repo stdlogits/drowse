@@ -276,7 +276,14 @@ gates are the sole consumer and final readings are off. The binding freezes
 names only. `is_live` (default on) is the all-or-nothing per-token switch;
 `set_live` rejects extras with `TypeError`. `probe_hash` is sha256 over
 fp32 bytes: the folded direction for a foldable fit, else per-layer
-mean/basis/node coords. `token_readout` captures the roster's layer union
+mean/basis/node coords (`monitor_attach.py::probe_digest`). Attach takes it,
+the listing's node coords and the inspector's geometry payload
+(`probe_geometry_payload`, served by `Monitor.probe_geometry`) from the host
+copy before the upload (`AttachedManifoldProbe.digest`, `.node_coords_host`,
+`.geometry`), because transcript exports, the probe listing and the inspector
+run without the GPU lock and a copy off a resident MPS tensor beside another
+thread's model op aborts the process.
+`token_readout` captures the roster's layer union
 (resolved inside the exclusive section) and scores with a cold foot.
 
 ## ProbeRoster

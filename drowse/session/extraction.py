@@ -26,7 +26,7 @@ from drowse.fit.pipeline import ManifoldExtractionPipeline
 from drowse.geometry.fold import folded_directions
 from drowse.geometry.profile import Profile
 from drowse.naming import _slug, canonical_concept_name
-from drowse.errors import RequestError
+from drowse.errors import ManifoldSpecError, RequestError
 
 if TYPE_CHECKING:
     from drowse.fit.pipeline import ModelHandle
@@ -292,6 +292,7 @@ class Extraction:
         while True:
             with _locked_manifest(folder):
                 if manifest.exists() and not force:
+                    self._check_vector_shape(folder, target, name)
                     self._check_role_baseline(folder, target, name, role)
                     break
                 if node_corpora is not None:
@@ -310,6 +311,28 @@ class Extraction:
         return self._fit_vector(
             name, folder, sae=sae, sae_revision=sae_revision,
             role=role, on_progress=on_progress,
+        )
+
+    @staticmethod
+    def _check_vector_shape(folder: Path, target: ExtractionTarget, name: str) -> None:
+        """Refuse to reuse a folder of more than two nodes as a vector.
+
+        A vector folds to one direction per layer, which only a one- or
+        two-node fit has.  Reusing a multi-node manifold (``emotions``,
+        ``personas``) would fit every node, adopt the fit and only then fail
+        to fold it, so a probe attach on an unfitted manifold answered 500
+        after minutes of work.
+        """
+        from drowse.store.manifold_folder import ManifoldFolder
+
+        nodes = len(ManifoldFolder.load(folder, verify_manifest=False).node_labels)
+        if nodes <= 2:
+            return
+        where = f"{target.namespace}/{name}"
+        raise ManifoldSpecError(
+            f"manifold {where} has {nodes} nodes, and extraction fits one- and "
+            f"two-node concept axes; fit it as a manifold (`drowse manifold fit "
+            f"{where}`), then steer or attach it by name"
         )
 
     @staticmethod

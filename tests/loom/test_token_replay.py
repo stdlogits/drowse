@@ -264,11 +264,12 @@ def test_replay_reopens_the_recipe_steering_outside_the_exclusive_section() -> N
     token, _ = rig.replay(node_id, 2, layers=layers, read=read, label="test replay")
     assert token.steering == "0.3 formal.casual"
     assert rig.steering_scopes == ["0.3 formal.casual"]
-    # The scope wraps the render (the steering role shapes it) and the
-    # exclusive section; the composer's push/pop would deadlock inside it.
-    # The layer set and the read both resolve inside the exclusive section.
+    # The scope wraps the exclusive section (the composer's push/pop would
+    # deadlock inside it) and so the render (the steering role shapes it).
+    # The render uploads the ids to the device, so it runs inside the section
+    # with the layer set and the read.
     assert rig.events == [
-        "scope-open", "render", "exclusive-enter", "layers", "capture",
+        "scope-open", "exclusive-enter", "render", "layers", "capture",
         "read", "exclusive-exit", "scope-close",
     ]
     assert rig.exclusive_messages == [(
