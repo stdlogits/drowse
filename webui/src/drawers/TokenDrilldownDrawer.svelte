@@ -75,7 +75,7 @@
   import { formatP, lastLayer } from "./token/layers";
   import { lensReplay, tokenPins } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
-  import { geometryTracesKept, wholeEnvelope } from "../lib/tokenRows";
+  import { geometryTracesKept, rowGeometry, wholeEnvelope, withRowValues } from "../lib/tokenRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
 
@@ -457,6 +457,8 @@
     anatomyPins: anatomyReadout.pins,
     lensPins: lensReadout.pins,
     saePins: saeReadout.pins,
+    saeSteered,
+    scores: token?.measurements?.scores ?? null,
   }));
 
   // One effect per family: adopt the capture while steered, else replay. Declared geometry, SAE,
@@ -483,9 +485,12 @@
     geometryReadout.replay("geometry", nodeId, rawIndex, { steered, raw: effectiveRawMode() }, (m) => {
       const geometry = m.instruments.geometry;
       if (!geometry) throw new Error("No probe readings came back. Check that the probes are attached.");
-      // Steered, the replay reads the generation again: a probe detached since keeps its capture.
+      // Steered, the replay reads the generation again: a probe detached since keeps its capture,
+      // and a generated row's share and coordinates stay as the row kept them.
       const kept = steered && captured ? captured.readings : {};
-      return { data: { steering: geometry?.binding?.steering ?? null, readings: { ...kept, ...(geometry?.readings ?? {}) } }, source: null };
+      const replayed = geometry?.readings ?? {};
+      const readings = steered && !captured ? withRowValues(replayed, rowGeometry(token?.measurements)) : replayed;
+      return { data: { steering: geometry?.binding?.steering ?? null, readings: { ...kept, ...readings } }, source: null };
     }, base);
   });
 

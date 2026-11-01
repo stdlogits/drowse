@@ -10,18 +10,29 @@ import type { Pins } from "./readout.svelte";
  *  read pinned them (a capture's, or the replay's: the lens and SAE replays and the anatomy return
  *  the attached probes' readings). Where the anatomy stands in for the lens readout, a steered view
  *  keeps the pins captured with the token (a live token's; a generated row keeps none), else the
- *  anatomy's own. */
+ *  anatomy's own. A steered family's pin keeps the value the token's row kept (``scores``: what the
+ *  thread and the rack read), its band and depth as replayed; an unsteered one is all replay. */
 export function tokenPins(opts: {
   anatomy: boolean;
   steered: boolean;
+  saeSteered?: boolean;
   captured: Pins | null | undefined;
   anatomyPins: Pins | null;
   lensPins: Pins | null;
   saePins: Pins | null;
+  scores?: Record<string, number> | null;
 }): Record<string, ScalarReadingJSON> {
   const captured = opts.steered ? opts.captured ?? null : null;
   const lens = opts.anatomy ? captured ?? opts.anatomyPins : opts.lensPins;
-  return { ...(lens ?? {}), ...(opts.saePins ?? {}) };
+  const kept = (pins: Pins | null, steered: boolean): Pins => {
+    const out: Pins = {};
+    for (const [name, pin] of Object.entries(pins ?? {})) {
+      const value = steered ? opts.scores?.[name] : undefined;
+      out[name] = typeof value === "number" && Number.isFinite(value) ? { ...pin, value } : pin;
+    }
+    return out;
+  };
+  return { ...kept(lens, opts.steered), ...kept(opts.saePins, opts.saeSteered ?? opts.steered) };
 }
 
 /** Whether the lens side replays (as the anatomy, where the runtime has it, else as the lens

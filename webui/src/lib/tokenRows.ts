@@ -147,6 +147,24 @@ export function rowGeometry(m: TokenRowEnvelopeJSON | null | undefined): Record<
   return (m?.instruments.geometry?.readings ?? {}) as Record<string, RowProbeReadingJSON>;
 }
 
+/** ``readings`` (a steered replay of the token) with the values its generated row kept: each
+ *  geometry reading's ``fraction`` and ``coords`` as captured, the rest (nearest, assignment,
+ *  residual, depth, traces) as replayed. A replay's forward rounds a little differently from the
+ *  decode's, so the headline numbers stay the ones the thread and the rack read. */
+export function withRowValues(
+  readings: Record<string, ProbeReadingJSON>,
+  row: Record<string, RowProbeReadingJSON>,
+): Record<string, ProbeReadingJSON> {
+  const out: Record<string, ProbeReadingJSON> = {};
+  for (const [name, reading] of Object.entries(readings)) {
+    const kept = row[name];
+    out[name] = kept && kept.coords.length === reading.coords.length
+      ? { ...reading, fraction: kept.fraction, coords: kept.coords }
+      : reading;
+  }
+  return out;
+}
+
 /** Whether every geometry reading in ``readings`` kept its per-layer traces (a live token frame,
  *  or a row kept whole). A node's aggregate summary has none: those layers replay. */
 export function geometryTracesKept(readings: Record<string, ProbeReadingJSON> | null | undefined): boolean {

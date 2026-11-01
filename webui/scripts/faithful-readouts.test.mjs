@@ -276,6 +276,16 @@ try {
   assert.deepEqual(tokenPins({ anatomy: true, steered: false, captured, anatomyPins: replayedLens }), replayedLens,
     "an unsteered anatomy lists its own (unsteered) pins, never the captured ones");
   assert.deepEqual(tokenPins({ anatomy: true, lensPins: replayedLens }), {}, "the hidden readout's pins never show");
+  // Steered, a replayed pin keeps the value the row kept (its score); unsteered, it is all replay.
+  const scores = { "lens-pin": 0.25 };
+  assert.equal(tokenPins({ anatomy: true, anatomyPins: replayedLens, scores })["lens-pin"].value, 0.25);
+  assert.equal(tokenPins({ anatomy: true, steered: false, anatomyPins: replayedLens, scores })["lens-pin"].value, 0.24);
+  assert.equal(tokenPins({ saePins: { "lens-pin": pin(0.3) }, saeSteered: false, scores })["lens-pin"].value, 0.3);
+  const { withRowValues } = await server.ssrLoadModule("/src/lib/tokenRows.ts");
+  const replayedGeometry = { calm: { fraction: 0.41, nearest: [["calm", 1]], coords: [0.26], residual: 0, assignment: [], membership: 1, depth_com: [0.5], depth_spread: [0.1] } };
+  assert.deepEqual(withRowValues(replayedGeometry, { calm: { fraction: 0.4, coords: [0.25] } }).calm,
+    { ...replayedGeometry.calm, fraction: 0.4, coords: [0.25] }, "a generated row's share and coordinates stand; the rest replays");
+  assert.deepEqual(withRowValues(replayedGeometry, {}), replayedGeometry);
   // The lens side replays as the anatomy (any active lens, an S lens alone included) or as the
   // readout (the R lens only); the view and the WebMCP inspector gate Unsteered on the same answer.
   const gate = (o) => readings.lensReplay({ anatomy: false, tokenReadout: false, rLens: false, activeLens: false, replayContext: true, ...o });
