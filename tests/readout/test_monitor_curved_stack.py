@@ -9,67 +9,18 @@ sums), including layers of different rank.
 """
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import pytest
 import torch
 
-from drowse.geometry.domains import BoxAxis, BoxDomain
+from drowse.geometry.domains import BoxDomain
 from drowse.geometry.invert import invert_parameterization, invert_stacked
 from drowse.geometry.manifold import Manifold
-from drowse.geometry.rbf import RbfFitPlan
-from drowse.geometry.subspace import LayerSubspace, StackedRbf, fit_curved_subspace
+from drowse.geometry.subspace import LayerSubspace, StackedRbf
 from drowse.readout.monitor import Monitor, _mean_coordinate_space, _mean_domain_coordinates
+from tests.support.curved import DIM, curved_stack_manifold as _curved
 from tests.support.whitener import isotropic_whitener
-
-DIM = 8
-
-
-def _curved(n_layers: int = 4, *, periodic: bool = False) -> Manifold:
-    """A curved 1-D manifold whose layers differ in scale, rank and σ-field.
-
-    Even layers bend into a second direction (rank 2); odd layers add a third
-    bend (rank 3), so the stack pads ranks.  Every layer carries a σ-field of
-    its own thickness.
-    """
-    axis = (
-        BoxAxis("t", periodic=True, period=6.0) if periodic
-        else BoxAxis("u", periodic=False, lo=-1.0, hi=1.0)
-    )
-    domain = BoxDomain([axis])
-    if periodic:
-        coords = torch.arange(6, dtype=torch.float32).reshape(-1, 1)
-        ang = coords.reshape(-1) * (2 * math.pi / 6)
-        u, v = torch.cos(ang), torch.sin(ang)
-    else:
-        coords = torch.tensor([[-1.0], [-0.5], [0.0], [0.5], [1.0]])
-        u = coords.reshape(-1)
-        v = u ** 2
-    e = torch.eye(DIM)
-    layers: dict[int, LayerSubspace] = {}
-    share: dict[int, float] = {}
-    for layer in range(n_layers):
-        s = 1.0 + 0.3 * layer
-        cents = s * (u.unsqueeze(1) * e[0] + v.unsqueeze(1) * e[1])
-        if layer % 2:
-            cents = cents + 0.4 * (u ** 3).unsqueeze(1) * e[2 + layer % 3]
-        cents = cents + 0.05 * layer * e[5]
-        fit = fit_curved_subspace(cents, domain.embed(coords))
-        sub = fit.subspace
-        np_, _rw, _pc = sub.rbf_params()
-        log_sigma = torch.log(torch.full((np_.shape[0], 1), 0.2 + 0.05 * layer))
-        sigma = RbfFitPlan.build(np_).fit(log_sigma)
-        sub.sigma_rbf_weights, sub.sigma_poly_coeffs = sigma.weights, sigma.poly
-        layers[layer] = sub
-        share[layer] = 0.5 + 0.1 * layer
-    return Manifold(
-        name="curve", domain=domain,
-        node_labels=[f"n{i}" for i in range(coords.shape[0])],
-        node_coords=coords, layers=layers, mahalanobis_share=share,
-        origin={layer: torch.zeros(1) for layer in layers},
-    )
-
 
 def _monitor(m: Manifold) -> Monitor:
     mon = Monitor(whitener=isotropic_whitener(list(m.layers), DIM), n_layers=8)
@@ -111,6 +62,7 @@ def _reference(mon: Monitor, hidden: dict[int, torch.Tensor]) -> dict[str, Any]:
         mem = w[L] * mem_t if mem is None else mem + w[L] * mem_t
         resid = w[L] * r_t if resid is None else resid + w[L] * r_t
     assert ref_coord is not None and coords is not None and dist is not None
+    assert frac_mean is not None and mem is not None and resid is not None
     return {
         "fraction": float(frac_mean),
         "coords": _mean_domain_coordinates(m.domain, coords, ref_coord).tolist(),
@@ -165,8 +117,8 @@ def test_a_read_of_some_layers_reweighs_over_them() -> None:
     assert got.membership == pytest.approx(ref["membership"], abs=1e-5)
 
 
-def test_one_foot_solve_per_read_whatever_the_layer_count(monkeypatch: pytest.MonkeyPatch) -> None:
-    import drowse.readout.monitor as monitor_mod
+def test_one_foot_solve_per_rank_whatever_the_layer_count(monkeypatch: pytest.MonkeyPatch) -> None:
+    import drowse.readout.monitor_attach as monitor_mod
 
     calls: list[int] = []
 
@@ -178,7 +130,8 @@ def test_one_foot_solve_per_read_whatever_the_layer_count(monkeypatch: pytest.Mo
     m = _curved(n_layers=6)
     mon = _monitor(m)
     mon.score_single_token(_hidden(m, torch.Generator().manual_seed(1)))
-    assert calls == [6]
+    ranks = [sub.rank for sub in m.layers.values()]
+    assert sorted(calls) == sorted(ranks.count(r) for r in set(ranks))
 
 
 def test_subspace_coords_drop_the_rank_padding() -> None:
@@ -193,20 +146,27 @@ def test_subspace_coords_drop_the_rank_padding() -> None:
 
 def test_invert_stacked_matches_invert_parameterization() -> None:
     m = _curved(periodic=True)
-    subs = list(m.layers.values())
-    surfaces = StackedRbf.build(subs, torch.device("cpu"))
-    R = max(s.rank for s in subs)
     gen = torch.Generator().manual_seed(4)
-    query = torch.zeros(len(subs), R)
-    for i, s in enumerate(subs):
-        query[i, :s.rank] = torch.randn(s.rank, generator=gen)
-    for warm in (None, torch.rand(len(subs), 1, generator=gen) * 6.0):
-        pos, dist = invert_stacked(surfaces, m.domain, query, m.node_coords, warm_start=warm)
-        for i, s in enumerate(subs):
-            p_ref, d_ref = invert_parameterization(
-                s, m.domain, query[i:i + 1, :s.rank], m.node_coords,
-                warm_start=None if warm is None else warm[i:i + 1],
-            )
-            gap = (pos[i] - p_ref.reshape(-1) + 3.0) % 6.0 - 3.0
-            assert float(gap.abs().max()) < 1e-4
-            assert float(dist[i]) == pytest.approx(float(d_ref), abs=1e-5)
+    by_rank: dict[int, list[LayerSubspace]] = {}
+    for sub in m.layers.values():
+        by_rank.setdefault(sub.rank, []).append(sub)
+    assert len(by_rank) > 1
+    for rank, subs in by_rank.items():
+        surfaces = StackedRbf.build(subs, torch.device("cpu"))
+        query = torch.randn(len(subs), rank, generator=gen)
+        for warm in (None, torch.rand(len(subs), 1, generator=gen) * 6.0):
+            pos, dist = invert_stacked(surfaces, m.domain, query, m.node_coords, warm_start=warm)
+            for i, sub in enumerate(subs):
+                p_ref, d_ref = invert_parameterization(
+                    sub, m.domain, query[i:i + 1], m.node_coords,
+                    warm_start=None if warm is None else warm[i:i + 1],
+                )
+                gap = (pos[i] - p_ref.reshape(-1) + 3.0) % 6.0 - 3.0
+                assert float(gap.abs().max()) < 1e-4
+                assert float(dist[i]) == pytest.approx(float(d_ref), abs=1e-5)
+
+
+def test_a_surface_stack_holds_one_rank() -> None:
+    subs = list(_curved().layers.values())
+    with pytest.raises(ValueError, match="one rank"):
+        StackedRbf.build(subs, torch.device("cpu"))

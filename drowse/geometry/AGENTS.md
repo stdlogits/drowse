@@ -24,7 +24,7 @@ Internal order: `domains`, `rbf` → `subspace` → `invert`, `manifold`, `tube`
 |---|---|
 | `domains.py` | `ManifoldDomain`; `BoxDomain`/`BoxAxis`, `SphereDomain`, `KleinBottleDomain`, `ProjectivePlaneDomain`, `CustomDomain`; the `manifold.json` domain union (`validate_domain_spec`, `normalize_domain_spec`, `domain_from_spec`). |
 | `rbf.py` | `RbfFitPlan` (the one layout factorization: exact, fixed-λ, GCV), `RbfFit`, `eval_rbf`/`eval_rbf_jacobian`/`eval_rbf_jet` (one layer's parameters, or a stack of them against an `(L, X, m)` query), `rbf_cardinal_weights`. |
-| `subspace.py` | `LayerSubspace`, `StackedRbf` (several curved layers' surfaces and σ-fields stacked, ranks zero-padded), `pca_basis`, `fit_affine_subspace`, `fit_curved_subspace`, `LayerFit`, `subspace_share`, `DEFAULT_N_COMPONENTS = 64`. |
+| `subspace.py` | `LayerSubspace`, `StackedRbf` (several curved layers' surfaces and σ-fields of one rank, stacked), `pca_basis`, `fit_affine_subspace`, `fit_curved_subspace`, `LayerFit`, `subspace_share`, `DEFAULT_N_COMPONENTS = 64`. |
 | `manifold.py` | `Manifold`, `MANIFOLD_FIT_POLICY_VERSION`. |
 | `packing.py` | `pack_to_device`: moves an object tree's tensors to a device as one buffer per dtype (what `Manifold.to` and probe attach use off the CPU). |
 | `invert.py` | `_gn_step` (the one damped Gauss-Newton step), `invert_parameterization`, `invert_stacked`, `neutral_origin`. |

@@ -269,11 +269,14 @@ read and one transfer. A curved probe's per-layer factors and surfaces are
 stacked at attach (`monitor_attach.py::_CurvedStack`, `StackedRbf`, packed
 with the probe), and a read runs every layer at once: elementwise work over the
 stack, the reductions (the basis projections, the norms) on each layer's own
-rows at its own rank, one batched foot solve (`invert_stacked`), and the
-share-weighted means as a left fold in layer order. Every kernel computes a
-layer as the per-layer read did, so a reading does not depend on how many
-layers ran together (bit-identical to the per-layer read on MPS, pinned to it
-by `tests/readout/test_monitor_curved_stack.py`). A read that saw only some of
+rows at its own rank, one batched foot solve (`invert_stacked`) per rank
+(one for a rank-uniform fit), and the share-weighted means as a left fold in
+layer order. Every kernel computes a layer as the per-layer read did, so a
+reading does not depend on how many layers ran together: bit-identical to the
+per-layer read on MPS (`tests/gpu/test_curved_stack_gpu.py`; on CPU
+`tests/readout/test_monitor_curved_stack.py` pins it to tolerance). A
+reduction batched across layers moves values by an ulp, and an off-surface
+state's foot to another basin, so keep reductions per layer. A read that saw only some of
 a probe's layers uses a cached `_CurvedStack.subset`. Curved feet warm-start
 per `(probe, layers)` only while `enable_curved_warm(True)` (sequential
 per-token scoring). Aggregates, replays and `FULL` stacks read cold so one-shot

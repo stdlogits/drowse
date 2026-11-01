@@ -21,6 +21,7 @@ import torch
 
 from drowse.errors import WhitenerError
 from drowse.geometry.domains import BoxDomain
+from drowse.geometry.invert import invert_stacked
 from drowse.geometry.packing import pack_to_device
 from drowse.geometry.subspace import StackedRbf
 
@@ -863,18 +864,29 @@ def _compute_assign_bandwidth(
 
 
 @dataclass(eq=False)
+class _RankGroup:
+    """A curved stack's layers of one rank and their stacked surfaces."""
+
+    rows: tuple[int, ...]          # the layers' rows in the stack
+    index: torch.Tensor            # (Lg,) the same rows, on the read device
+    surfaces: StackedRbf
+
+
+@dataclass(eq=False)
 class _CurvedStack:
     """A curved probe's per-layer read factors, stacked over its layers.
 
     The curved read's per-layer algebra (the M-projection, the whitened node
     distances, the foot solve, the σ-field) is a few small kernels per layer;
     run layer by layer it is thousands of kernel launches per token.  Stacked
-    over the probe's layers (``L``, manifold order) it is one fixed sequence
-    whatever ``L`` is.  Ranks may differ by layer: every ``R`` axis is
-    zero-padded to the widest rank, which the projections, distances and the
-    solve carry as exact zeros.  Built on the host at attach from the probe's
-    :class:`_LayerWhiten` factors and uploaded packed with the probe;
-    :meth:`subset` serves a read that saw only some of the layers.
+    over the probe's layers (``L``, manifold order) the elementwise work and
+    the foot solve are one fixed sequence whatever ``L`` is.  The factors'
+    ``R`` axes are zero-padded to the widest rank (every reduction reads a
+    layer at its own rank); the surfaces stack per rank (``groups``, one entry
+    for the usual rank-uniform fit), so the solve never pads.  Built on the
+    host at attach from the probe's :class:`_LayerWhiten` factors and uploaded
+    packed with the probe; :meth:`subset` serves a read that saw only some of
+    the layers.
     """
 
     layers: tuple[int, ...]
@@ -891,7 +903,9 @@ class _CurvedStack:
     chol: torch.Tensor             # (L, R, R)
     node_white_aug: torch.Tensor   # (L, Kc, R)
     node_coords: torch.Tensor      # (K, n) authoring node coords (solve seeds)
-    surfaces: StackedRbf
+    groups: dict[int, _RankGroup]  # rank -> its layers' surfaces
+    # Each layer's row in the groups' concatenation (read with several groups).
+    order: torch.Tensor
 
     @staticmethod
     def build(probe: "AttachedManifoldProbe") -> "_CurvedStack":
@@ -900,6 +914,7 @@ class _CurvedStack:
         whs = [probe.whitened[L] for L in layers]
         ranks = tuple(int(wh.basis.shape[0]) for wh in whs)
         R = max(ranks)
+        device = whs[0].mean.device
 
         def pad_rows(t: torch.Tensor, r: int) -> torch.Tensor:   # (r, X) -> (R, X)
             return torch.nn.functional.pad(t, (0, 0, 0, R - r))
@@ -907,6 +922,16 @@ class _CurvedStack:
         def pad_cols(t: torch.Tensor, r: int) -> torch.Tensor:   # (X, r) -> (X, R)
             return torch.nn.functional.pad(t, (0, R - r))
 
+        groups: dict[int, _RankGroup] = {}
+        for rank in sorted(set(ranks)):
+            rows = tuple(i for i, r in enumerate(ranks) if r == rank)
+            groups[rank] = _RankGroup(
+                rows=rows,
+                index=torch.tensor(rows, device=device, dtype=torch.long),
+                surfaces=StackedRbf.build(
+                    [manifold.layers[layers[i]] for i in rows], device,
+                ),
+            )
         stacked = _CurvedStack(
             layers=layers,
             ranks=ranks,
@@ -926,9 +951,8 @@ class _CurvedStack:
                 pad_cols(wh.node_white_aug, r) for wh, r in zip(whs, ranks)
             ]),
             node_coords=manifold.node_coords.to(torch.float32).clone(),
-            surfaces=StackedRbf.build(
-                [manifold.layers[L] for L in layers], whs[0].mean.device,
-            ),
+            groups=groups,
+            order=_concat_order(groups, len(layers), device),
         )
         stacked._reweigh(probe.share_weights)
         return stacked
@@ -943,17 +967,72 @@ class _CurvedStack:
         heaviest = max(self.layers, key=lambda layer: self.w_shared[layer])
         self.reference = self.layers.index(heaviest)
 
+    @property
+    def has_sigma(self) -> bool:
+        return next(iter(self.groups.values())).surfaces.sigma_rbf_weights is not None
+
+    def solve(
+        self, domain: Any, c: torch.Tensor, warm_start: torch.Tensor | None,
+    ) -> "tuple[torch.Tensor, torch.Tensor]":
+        """Every layer's foot (``(L, n)``) and residual (``(L,)``) for ``c`` ``(L, R)``."""
+        if len(self.groups) == 1:
+            ((rank, group),) = self.groups.items()
+            return invert_stacked(
+                group.surfaces, domain, c[:, :rank], self.node_coords,
+                warm_start=warm_start,
+            )
+        feet: list[torch.Tensor] = []
+        dists: list[torch.Tensor] = []
+        for rank, group in self.groups.items():
+            pos, dist = invert_stacked(
+                group.surfaces, domain,
+                c.index_select(0, group.index)[:, :rank].contiguous(), self.node_coords,
+                warm_start=(
+                    None if warm_start is None
+                    else warm_start.index_select(0, group.index)
+                ),
+            )
+            feet.append(pos)
+            dists.append(dist)
+        return (
+            torch.cat(feet).index_select(0, self.order),
+            torch.cat(dists).index_select(0, self.order),
+        )
+
+    def sigma_at(self, embedded: torch.Tensor) -> torch.Tensor:
+        """Every layer's σ at its own embedded foot ``(L, m)`` → ``(L,)``."""
+        if len(self.groups) == 1:
+            return next(iter(self.groups.values())).surfaces.sigma_at(embedded)
+        return torch.cat([
+            group.surfaces.sigma_at(embedded.index_select(0, group.index))
+            for group in self.groups.values()
+        ]).index_select(0, self.order)
+
     def subset(
         self, layers: tuple[int, ...], share_weights: dict[int, float],
     ) -> "_CurvedStack":
         """The stack restricted to ``layers`` (a read that saw only some)."""
+        device = self.mean.device
         rows = [self.layers.index(L) for L in layers]
-        idx = torch.tensor(rows, device=self.mean.device, dtype=torch.long)
+        new_row = {old: new for new, old in enumerate(rows)}
+        idx = torch.tensor(rows, device=device, dtype=torch.long)
 
         def pick(t: torch.Tensor) -> torch.Tensor:
             return t.index_select(0, idx)
 
-        s = self.surfaces
+        groups: dict[int, _RankGroup] = {}
+        for rank, group in self.groups.items():
+            local = [j for j, old in enumerate(group.rows) if old in new_row]
+            if not local:
+                continue
+            kept = tuple(new_row[group.rows[j]] for j in local)
+            groups[rank] = _RankGroup(
+                rows=kept,
+                index=torch.tensor(kept, device=device, dtype=torch.long),
+                surfaces=group.surfaces.select(
+                    torch.tensor(local, device=device, dtype=torch.long),
+                ),
+            )
         out = _CurvedStack(
             layers=layers,
             ranks=tuple(self.ranks[i] for i in rows),
@@ -967,23 +1046,20 @@ class _CurvedStack:
             chol=pick(self.chol),
             node_white_aug=pick(self.node_white_aug),
             node_coords=self.node_coords,
-            surfaces=StackedRbf(
-                node_params=pick(s.node_params),
-                rbf_weights=pick(s.rbf_weights),
-                poly_coeffs=pick(s.poly_coeffs),
-                coord_offset=pick(s.coord_offset),
-                coord_scale=pick(s.coord_scale),
-                ranks=tuple(s.ranks[i] for i in rows),
-                sigma_rbf_weights=(
-                    pick(s.sigma_rbf_weights) if s.sigma_rbf_weights is not None else None
-                ),
-                sigma_poly_coeffs=(
-                    pick(s.sigma_poly_coeffs) if s.sigma_poly_coeffs is not None else None
-                ),
-            ),
+            groups=groups,
+            order=_concat_order(groups, len(layers), device),
         )
         out._reweigh(share_weights)
         return out
+
+
+def _concat_order(
+    groups: dict[int, _RankGroup], n: int, device: torch.device,
+) -> torch.Tensor:
+    """Each stack row's position in the rank groups' concatenation."""
+    concat = [row for group in groups.values() for row in group.rows]
+    position = {row: k for k, row in enumerate(concat)}
+    return torch.tensor([position[i] for i in range(n)], device=device, dtype=torch.long)
 
 
 def _curved_geometry(
@@ -1027,19 +1103,27 @@ def _curved_geometry(
     x_mnorm = torch.sqrt(
         torch.stack([xsx[i].sum() for i in range(len(ranks))]).clamp(min=0.0)
     ).clamp(min=_FRACTION_EPSILON)
-    g = stack_rows([cs.basis[i, :r] @ sx[i] for i, r in enumerate(ranks)])      # B Σ⁻¹ x
-    c = stack_rows([cs.m_r_inv[i, :r, :r] @ g[i, :r] for i, r in enumerate(ranks)])  # M_R⁻¹ g
+    # A layer below the widest rank reads a strided slice of the padded
+    # stack; ``.contiguous()`` (a no-op at the full rank) hands its reduction
+    # the dense operand a one-layer tensor is, so it runs the same kernel.
+    g = stack_rows([                                       # B Σ⁻¹ x
+        cs.basis[i, :r].contiguous() @ sx[i] for i, r in enumerate(ranks)
+    ])
+    c = stack_rows([                                       # M_R⁻¹ g
+        cs.m_r_inv[i, :r, :r].contiguous() @ g[i, :r] for i, r in enumerate(ranks)
+    ])
     gc = g * c
     par_mnorm = torch.sqrt(                                # ‖P_M x‖_M
         torch.stack([gc[i, :r].sum() for i, r in enumerate(ranks)]).clamp(min=0.0)
     )
     frac = (par_mnorm / x_mnorm).clamp(min=0.0, max=1.0)
     cq = stack_rows([                                      # Lᵀc as a row
-        (c[i, :r].reshape(1, -1) @ cs.chol[i, :r, :r]).reshape(-1)
+        (c[i, :r].reshape(1, -1) @ cs.chol[i, :r, :r].contiguous()).reshape(-1)
         for i, r in enumerate(ranks)
     ])
     off = cs.node_white_aug - cq.unsqueeze(-2)             # (L, Kc, R)
     dist = torch.stack([
-        torch.linalg.vector_norm(off[i, :, :r], dim=-1) for i, r in enumerate(ranks)
+        torch.linalg.vector_norm(off[i, :, :r].contiguous(), dim=-1)
+        for i, r in enumerate(ranks)
     ])                                                     # (L, Kc)
     return frac, cq, c, dist

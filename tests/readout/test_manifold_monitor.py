@@ -643,7 +643,7 @@ def test_gate_scalar_fraction_label_assignment_skip_curved_foot(
     def _fail_foot(*args: Any, **kwargs: Any) -> Any:
         raise AssertionError("gate scalar path should not solve a curved foot")
 
-    monkeypatch.setattr("drowse.readout.monitor.invert_stacked", _fail_foot)
+    monkeypatch.setattr("drowse.readout.monitor_attach.invert_stacked", _fail_foot)
     keys = {"curve:fraction", "curve@c", "curve~c"}
     scalars = _gate_scalars(mon, hidden, keys)
     assert scalars["curve:fraction"] == pytest.approx(full["curve:fraction"])

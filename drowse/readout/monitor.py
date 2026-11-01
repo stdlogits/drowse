@@ -12,7 +12,6 @@ from drowse.geometry.domains import (
     KleinBottleDomain,
     ProjectivePlaneDomain,
 )
-from drowse.geometry.invert import invert_stacked
 from drowse.readout.monitor_attach import (
     DEFAULT_NEAREST_TOP_N,
     _FRACTION_EPSILON,
@@ -631,9 +630,7 @@ class Monitor:
         if foot:
             foot_key = (probe.name, cs.layers)
             warm = self._curved_feet.get(foot_key) if self._curved_warm else None
-            pos, res = invert_stacked(
-                cs.surfaces, manifold.domain, c, cs.node_coords, warm_start=warm,
-            )                                                     # (L, n), (L,)
+            pos, res = cs.solve(manifold.domain, c, warm)        # (L, n), (L,)
             if self._curved_warm:
                 self._curved_feet[foot_key] = pos.detach()
             space = _mean_coordinate_space(manifold.domain, pos)
@@ -642,9 +639,8 @@ class Monitor:
             if membership:
                 # Tube-fit membership ``exp(−res²/2σ²)`` at the foot (both raw
                 # reduced-space distances); no σ-field ⇒ full membership.
-                surfaces = cs.surfaces
-                if surfaces.sigma_rbf_weights is not None:
-                    sig_foot = surfaces.sigma_at(manifold.domain.embed(pos))
+                if cs.has_sigma:
+                    sig_foot = cs.sigma_at(manifold.domain.embed(pos))
                     mem = torch.exp(
                         -(res ** 2)
                         / (2.0 * (sig_foot ** 2).clamp(min=_FRACTION_EPSILON))
