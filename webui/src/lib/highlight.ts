@@ -52,6 +52,7 @@ export function highlightScoreFor(
  *  is picked. */
 export function highlightStyleFor(
   t: TokenScore,
+  ground = "transparent",
 ): { backgroundColor?: string; backgroundImage?: string } {
   const a = highlightState.target;
   if (!a) return {};
@@ -67,8 +68,14 @@ export function highlightStyleFor(
     compare === null ? undefined : highlightScale(compare),
     probeHue(a),
     compare === null ? undefined : probeHue(compare),
+    ground,
   );
 }
+
+/** The thread's tint ground: each tint is mixed opaquely over the surface it sits on (the page,
+ *  or a bubble's ``--tok-ground``), so where neighbouring tokens' 2px spreads overlap the colour
+ *  does not add up into a darker seam. */
+export const THREAD_TINT_GROUND = "var(--tok-ground, var(--paper))";
 
 function probeHue(target: string) {
   const info = probeRack.entries.get(parseProbeTarget(target).base)?.info;
@@ -80,9 +87,10 @@ function probeHue(target: string) {
 
 /** ``highlightStyleFor`` flattened to an inline ``style`` attribute. A single tint also
  *  spreads 2px in its own colour (Ledger's marked token), so a run of tinted tokens reads as
- *  one wash; an empty string means the token is not tinted. */
-export function highlightStyleString(t: TokenScore): string {
-  const style = highlightStyleFor(t);
+ *  one wash; an empty string means the token is not tinted. ``ground`` is what a translucent tint
+ *  mixes with: ``THREAD_TINT_GROUND`` where tinted tokens run together on a known surface. */
+export function highlightStyleString(t: TokenScore, ground = "transparent"): string {
+  const style = highlightStyleFor(t, ground);
   const parts: string[] = [];
   if (style.backgroundColor) {
     parts.push(`background-color: ${style.backgroundColor}`);
