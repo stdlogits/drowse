@@ -100,14 +100,21 @@ async def session_lock_or_busy(app: FastAPI) -> AsyncIterator[None]:
 
     For a quick check that is worthless once stale (steering validation):
     the session lock is held for a whole generation, so waiting for it would
-    answer only after the reply ends.  On the one event loop, a free
-    ``asyncio.Lock`` is taken without yielding, so nothing slips in between
-    the probe and the acquire.
+    answer only after the reply ends.  ``locked()`` alone is not enough: a
+    lock just released to a queued waiter (a second reply, woken but not yet
+    running) reads unlocked, yet ``acquire()`` queues behind that waiter's
+    whole hold.  A zero timeout takes the lock only on ``acquire()``'s
+    no-wait path (free, nobody queued) and cancels the wait otherwise, which
+    the lock unwinds cleanly.
     """
     lock: asyncio.Lock = app.state.session_lock
     if lock.locked():
         raise EngineBusyError()
-    await lock.acquire()
+    try:
+        async with asyncio.timeout(0):
+            await lock.acquire()
+    except TimeoutError:
+        raise EngineBusyError() from None
     try:
         yield
     finally:

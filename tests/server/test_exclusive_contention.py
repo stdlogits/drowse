@@ -223,3 +223,49 @@ def test_transcript_export_never_hashes_on_the_device(
     assert resp.status_code == 200
     assert calls == []
     assert recorded in resp.text
+
+
+def test_validate_answers_409_while_the_session_lock_passes_to_a_queued_reply() -> None:
+    """Regression: the busy check read ``locked()``, which is False in the
+    moment a holder has released the lock to a queued waiter that has not run
+    yet, and ``acquire()`` then queued behind that waiter's whole hold."""
+    import asyncio
+
+    from fastapi import FastAPI
+
+    from drowse.server.runtime import EngineBusyError, session_lock_or_busy
+
+    async def scenario() -> tuple[bool, float, list[str]]:
+        app = FastAPI()
+        lock = asyncio.Lock()
+        app.state.session_lock = lock
+        order: list[str] = []
+        await lock.acquire()
+
+        async def reply() -> None:
+            async with lock:
+                order.append("reply")
+                await asyncio.sleep(0.2)
+
+        queued = asyncio.create_task(reply())
+        await asyncio.sleep(0)  # the reply queues on the held lock
+        lock.release()          # ... and is woken, but has not run yet
+        assert not lock.locked()
+        start = asyncio.get_running_loop().time()
+        busy = False
+        try:
+            async with session_lock_or_busy(app):
+                order.append("validate")
+        except EngineBusyError:
+            busy = True
+        waited = asyncio.get_running_loop().time() - start
+        await queued
+        # The lock still works after the cancelled try: free, it is taken.
+        async with session_lock_or_busy(app):
+            order.append("validate again")
+        return busy, waited, order
+
+    busy, waited, order = asyncio.run(scenario())
+    assert busy
+    assert waited < 0.1
+    assert order == ["reply", "validate again"]
