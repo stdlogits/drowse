@@ -423,8 +423,11 @@
   .rooms { min-width: 0; }
   .notices { max-height: 25dvh; overflow-y: auto; overscroll-behavior: contain; }
   .rooms-host { min-width: 0; }
-  /* Not inert while booting: a piece that measures itself on mount (a gliding thumb) must see it. */
+  /* Not inert while booting: a piece that measures itself on mount (a gliding thumb) must see it.
+     Hidden, though (it still lays out and measures): the boot skeleton is fixed over the room, and a
+     room drawn under it showed its controls through the blocks (the Units room's tools at 375). */
   .rooms-host.waiting { pointer-events: none; }
+  .rooms-host.waiting > .room { visibility: hidden; }
   .room[hidden] { display: none; }
   .booting { position: fixed; inset: 96px var(--s6) auto; z-index: 30; max-width: 720px; margin: 0 auto; pointer-events: none; }
   .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in oklab, var(--wash2) 88%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }

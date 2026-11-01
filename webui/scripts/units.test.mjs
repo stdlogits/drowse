@@ -425,6 +425,14 @@ try {
   await edit({ selector: "neuron/L30n637", ablate: true, alpha: 0.5 });
   assert.equal(steering.currentSteeringExpression(), "0.5 !neuron/L30n637", "an explicit alpha wins");
 
+  // Wave 3 (Qwen, 375): the boot skeleton is fixed over the room, and the Units room drawn under it
+  // showed its Neurons/Heads and Strongest/All pills through the blocks. The room hides (still laid
+  // out, so a gliding thumb measures) until boot ends.
+  const { readFileSync } = await import("node:fs");
+  const app = readFileSync(new URL("../src/App.svelte", import.meta.url), "utf8");
+  assert.match(app, /class="rooms-host" class:waiting=\{bootStatus !== "ready"\}/);
+  assert.match(app, /\.rooms-host\.waiting > \.room \{ visibility: hidden; \}/);
+
   console.log("units: ids, reads, activity, atlas, search, recipe, probes, WebMCP and both catalog states");
 } finally {
   await server.close();
