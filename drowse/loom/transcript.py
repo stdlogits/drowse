@@ -71,7 +71,7 @@ import math
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from drowse.errors import DrowseError
 from drowse.generation.results import FINISH_REASONS, FinishReason
@@ -243,7 +243,7 @@ class Turn:
             thinking=_optional_str(data, "thinking", label),
             recipe=recipe,
             readings=readings,
-            finish_reason=finish_reason,
+            finish_reason=cast("FinishReason | None", finish_reason),
         )
 
 
