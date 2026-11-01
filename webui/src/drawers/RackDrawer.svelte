@@ -659,7 +659,7 @@
           <div class="meta">
             <span class="row-name">{key}</span>
             <span class="row-sub">
-              {m.domain_label} · {m.node_count} nodes
+              {m.domain_label} · {m.node_count} {m.node_count === 1 ? "node" : "nodes"}
               {#if badge} · <span class="fit-badge fit-{badge}">{badge}</span>{/if}
               {#if isRoleAugmented(m)} · <span class="fit-badge fit-persona" {...{ "aria-description": "role-paired manifold" }}>persona</span>{/if}
               {#if m.stale} · <span class="stale">stale</span>{/if}
@@ -760,7 +760,7 @@
           <div class="meta">
             <span class="row-name">{key}</span>
             <span class="row-sub">
-              {m.domain_label} · {m.node_count} nodes
+              {m.domain_label} · {m.node_count} {m.node_count === 1 ? "node" : "nodes"}
               {#if badge} · <span class="fit-badge fit-{badge}">{badge}</span>{/if}
             </span>
           </div>

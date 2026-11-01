@@ -354,7 +354,7 @@ def _format_term(name: str, alpha: float, *, sign_prefix: bool = True) -> str:
     """Render one term in the delta label.
 
     ``sign_prefix=True`` emits ``+`` / ``-`` ahead of the magnitude so
-    edge labels read like ``+0.2 calm`` / ``-0.3 honest``; turn off for
+    edge labels read like ``+0.2 calm`` / ``-0.3 deceptive``; turn off for
     the leading position in compound labels.
     """
     if sign_prefix and alpha >= 0:

@@ -48,7 +48,7 @@ export function gateProbeKey(name: string, info: ProbeInfo): string {
   return curved && !bareName(name).includes(".") ? `${name}:fraction` : name;
 }
 
-/** A gate as words: ``while honest.deceptive > 1`` (its probe's last segment, its comparison as a
+/** A gate as words: ``while deceptive > 0.5`` (its probe's last segment, its comparison as a
  *  sign, its threshold as the expression writes it, with a true minus). */
 export function gateWord(gate: SteerGate): string {
   const op = GATE_OPS.find(row => row.value === gate.op)?.label ?? gate.op;

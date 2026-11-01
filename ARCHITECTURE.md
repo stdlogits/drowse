@@ -1029,8 +1029,9 @@ executable statement of why a boundary is strict.
 - **The depth band.** The S/R crossover band is a prior (15–35% of depth,
   from neuron-lens's Qwen3-8B measurements); measuring it per model is open.
 - **Axes whose neutral sits at a pole.** The neutral corpus is the model's
-  default answers, which is one pole of some bundled axes
-  (`honest.deceptive`, `refusing.compliant`, `sincere.manipulative`): DLS
-  keeps few or no layers there, and a `%pole` push can point the wrong way
-  (`drowse/fit/AGENTS.md`). Re-authoring those axes, or a corpus past the
-  default answer, is open.
+  default answers, which is one pole of some axes: DLS keeps few or no layers
+  there, and a `%pole` push can point the wrong way (`drowse/fit/AGENTS.md`).
+  6.0 recast the three where it was so (honest.deceptive,
+  refusing.compliant, sincere.manipulative) as the one-node `deceptive`,
+  `refusing` and `manipulative`. `religious.secular` sits at its secular pole
+  on most layers of SmolLM2-360M and Qwen3-8B; what to do with it is open.

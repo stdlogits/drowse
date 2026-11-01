@@ -3746,6 +3746,78 @@ def test_bundled_manifold_names_skips_incomplete_package_data(
     assert bundled.bundled_manifold_names() == ["complete"]
 
 
+def _planted_default(home: Path, name: str, source: str) -> Path:
+    """A materialized-looking ``default/<name>`` with a fake fitted pair."""
+    target = home / "manifolds" / "default" / name
+    (target / "nodes").mkdir(parents=True)
+    (target / "manifold.json").write_text(json.dumps({
+        "format_version": MANIFOLD_FORMAT_VERSION,
+        "name": name, "description": "old", "fit_mode": "pca",
+        "hyperparams": {},
+        "nodes": [
+            {"label": "honest", "role": None, "kind": "abstract"},
+            {"label": "deceptive", "role": None, "kind": "abstract"},
+        ],
+        "files": {}, "tags": ["epistemic"], "source": source,
+        "template_ref": None,
+    }))
+    (target / "nodes" / "00_honest.json").write_text('["a"]')
+    (target / "nodes" / "01_deceptive.json").write_text('["b"]')
+    _fake_fit(target)
+    return target
+
+
+def test_bootstrap_removes_bundled_manifold_that_no_longer_ships(
+    isolated_home: Path,
+) -> None:
+    """6.0 recast honest.deceptive as the one-node ``deceptive``: a home that
+    materialized the old axis must lose it, or it still resolves as a bare
+    atom and still joins the epistemic probe roster."""
+    from drowse.store.bundled import (
+        bundled_manifold_names,
+        materialize_bundled_artifacts,
+    )
+    from drowse.store.bundled_probes import load_default_manifolds
+
+    assert "honest.deceptive" not in bundled_manifold_names()
+    assert "deceptive" in bundled_manifold_names()
+    retired = _planted_default(isolated_home, "honest.deceptive", "bundled")
+
+    with pytest.warns(UserWarning, match="default/honest.deceptive: it no longer ships"):
+        materialize_bundled_artifacts()
+
+    assert not retired.exists()
+    roster = load_default_manifolds()
+    assert "honest.deceptive" not in roster["epistemic"]
+    assert "deceptive" in roster["epistemic"]
+    assert {"refusing", "manipulative"} <= set(roster["alignment"])
+
+
+def test_bootstrap_keeps_non_bundled_folders_under_default(
+    isolated_home: Path,
+) -> None:
+    """Only a ``source: "bundled"`` copy is retired; anything else stays."""
+    from drowse.store.bundled import materialize_bundled_artifacts
+
+    kept = _planted_default(isolated_home, "mine.theirs", "local")
+    materialize_bundled_artifacts()
+    assert (kept / "manifold.json").is_file()
+
+
+def test_retire_keeps_copy_of_incomplete_package_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A package folder mid-regen still counts as shipped."""
+    from drowse.store import bundled
+
+    root = tmp_path / "bundled"
+    _bundled_axis_package(root, monkeypatch)
+    (root / "partial").mkdir()
+    target = _planted_default(tmp_path, "partial", "bundled")
+    bundled._retire_unshipped_manifolds()
+    assert (target / "manifold.json").is_file()
+
+
 # =================================================== baked (corpus-less) ===
 #
 # A baked manifold is a pre-fitted, corpus-less artifact (merge output /

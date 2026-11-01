@@ -269,7 +269,7 @@ def resolve_options(
     if steer is not None and not isinstance(steer, str):
         raise OllamaBadRequest(
             "Ollama 'steer' must be a steering expression string, "
-            "e.g. \"0.5 honest + 0.3 warm\""
+            "e.g. \"-0.5 deceptive + 0.3 warm\""
         )
     num_predict = opts["num_predict"] if "num_predict" in opts else body.num_predict
     sampling = build_sampling_config(

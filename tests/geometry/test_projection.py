@@ -480,8 +480,8 @@ class TestComputeDlsAxesBipolarGuard:
         # Layer 2 is checkable but failed; fallback returns just it.
         # Layers 0+1 stay dropped despite the fallback.
         assert out == {2}
-        msgs = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
-        assert any("DLS" in m for m in msgs)
+        # The fit's DLS line reports the fallback; this function is silent.
+        assert not [w for w in caught if "DLS" in str(w.message)]
 
     def test_partial_layer_means_runs_check(self):
         """Layers with a baseline get checked; layers without fall through
@@ -559,8 +559,7 @@ class TestComputeDlsAxes:
             _warnings.simplefilter("always")
             out = compute_dls_axes(node_centroids, bases, layer_means)
         assert out == {0: {0, 1}}
-        msgs = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
-        assert any("DLS" in m for m in msgs)
+        assert not [w for w in caught if "DLS" in str(w.message)]
 
 # ------------------------------- v2.1 nested projection scope restore ---
 

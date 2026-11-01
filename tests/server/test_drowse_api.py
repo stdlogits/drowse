@@ -127,31 +127,31 @@ class TestSessions:
         session.layers = [object()] * 6
         scope = session.steering.return_value.__enter__.return_value
         scope.term_layers.return_value = {
-            "default/honest.deceptive%honest": TermLayers((1, 2, 3), (0.5, 1.0, 1.5), (2, 3)),
+            "default/deceptive%deceptive": TermLayers((1, 2, 3), (0.5, 1.0, 1.5), (2, 3)),
         }
         resp = client.post(
             "/drowse/v1/sessions/default/steering/validate",
-            json={"expression": "0.2 default/honest.deceptive@response"},
+            json={"expression": "-0.2 deceptive@response"},
         )
         assert resp.status_code == 200
         assert resp.json() == {
             "valid": True,
-            "expression": "0.2 default/honest.deceptive%honest@response",
+            "expression": "-0.2 default/deceptive%deceptive@response",
             "error": None,
             "n_layers": 6,
             "terms": [{
-                "key": "default/honest.deceptive%honest",
+                "key": "default/deceptive%deceptive",
                 "fitted": [1, 2, 3],
                 "share": [0.5, 1.0, 1.5],
                 "layers": [2, 3],
             }],
             "parts": [{
-                "text": "0.2 default/honest.deceptive%honest@response",
+                "text": "-0.2 default/deceptive%deceptive@response",
                 "op": "position",
-                "target": "default/honest.deceptive",
-                "coeff": 0.2,
+                "target": "default/deceptive",
+                "coeff": -0.2,
                 "onto": 0.0,
-                "position": "honest",
+                "position": "deceptive",
                 "layers": None,
                 "trigger": "response",
                 "phase": "response",

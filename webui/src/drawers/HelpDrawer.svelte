@@ -62,7 +62,7 @@
   ];
 
   const examples = [
-    { expr: "0.3 honest", what: "A light push toward honesty" },
+    { expr: "-0.3 deceptive", what: "A light push past the default, toward honesty" },
     { expr: "0.4 warm@response", what: "Warmth only during the reply" },
     { expr: "0.5 personas%pirate", what: "The pirate point on the persona manifold" },
     { expr: "!sycophantic", what: "The sycophantic direction removed" },

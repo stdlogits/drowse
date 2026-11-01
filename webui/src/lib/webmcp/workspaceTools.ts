@@ -474,7 +474,7 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
           const info = steerRack.catalog.find(row => `${row.namespace}/${row.name}` === selector);
           if (!info) throw new ToolError("NOT_FOUND", "Choose an exact namespace/name from the control catalog.");
           const curved = fitGeometry(info) === "curved";
-          const label = !curved && info.node_count === 2 ? info.node_labels[0] : null;
+          const label = !curved && (info.node_count === 1 || info.node_count === 2) ? info.node_labels[0] : null;
           const common = { coords: label ? [...info.node_coords[0]] : manifoldCentroid(info), label, variant: "raw" as Variant, enabled: true, trigger: "BOTH" as Trigger };
           return curved ? { ...common, mode: "manifold", blend: 0.5, onto: 0 } : { ...common, mode: "subspace", ablate: false };
         }

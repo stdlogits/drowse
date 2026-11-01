@@ -125,6 +125,22 @@ try {
   assert.equal(steerRack.entries.get("default/honest.deceptive").label, "honest");
   removeSteerEntry("default/honest.deceptive");
 
+  // Regression: a one-node concept (the bundled ``deceptive``, ``refusing``, ``manipulative``) was
+  // added at the middle of its nodes, ``default/deceptive%0``: the neutral end, no push. It starts at its node, and a
+  // relation and back keeps it there.
+  steerRack.catalog = [...steerRack.catalog, {
+    namespace: "default", name: "deceptive", node_count: 1, node_labels: ["deceptive"],
+    node_coords: [[1]], intrinsic_dim: 1, domain: { type: "custom" },
+  }];
+  addSubspaceToRack("default/deceptive");
+  assert.deepEqual([steerRack.entries.get("default/deceptive").label, steerRack.entries.get("default/deceptive").coords], ["deceptive", [1]]);
+  assert.match(currentSteeringExpression(), /default\/deceptive%deceptive(?![\d,])/);
+  relateSteerEntry("default/deceptive", { operator: "|", onto: "default/formal.casual" }, (key) => selected.push(key));
+  assert.equal(steerRack.entries.get("default/deceptive|default/formal.casual").alpha, steerRack.subspaceAlong);
+  relateSteerEntry("default/deceptive|default/formal.casual", null, (key) => selected.push(key));
+  assert.equal(steerRack.entries.get("default/deceptive").label, "deceptive");
+  removeSteerEntry("default/deceptive");
+
   // Regression: the round trip kept its direction only at a positive shared strength and a labelled
   // pole. Back from a projection the pole is the side of its strength over the shared one's sign;
   // forward, a free coordinate's side signs the strength (it pushed toward the first pole before).

@@ -1,20 +1,32 @@
 """DLS narrates the layers it drops, at fit time and on serve's startup roster.
 
-Regression: on Qwen3-8B DLS kept 2 of 36 layers of ``default/honest.deceptive``
-and nothing said so; the probe looked healthy until a scoped term was refused.
+Regression: on Qwen3-8B DLS kept 2 of 36 layers of the former bundled
+``default/honest.deceptive`` and nothing said so; the probe looked healthy
+until a scoped term was refused.  Serve's startup then printed a degenerate
+axis twice, the DLS line and an older ``UserWarning`` from
+``compute_dls_axes``; the DLS line is the one message.
 """
 from __future__ import annotations
 
 import types
+import warnings
+from pathlib import Path
 from typing import Any
 
 import pytest
 import torch
 
+from drowse.events import EventBus
 from drowse.fit import capture
-from drowse.fit.pipeline import dls_drop_note, dls_fit_note, dls_load_note
+from drowse.fit.pipeline import (
+    ManifoldExtractionPipeline,
+    dls_drop_note,
+    dls_fit_note,
+    dls_load_note,
+)
 from drowse.geometry.subspace import LayerSubspace
 from drowse.store.manifold_authoring import create_discover_manifold_folder
+from tests.support.capture import DIM, N_LAYERS, StubHandle, install_capture
 from tests.support.sessions import baseline_corpus
 
 
@@ -113,3 +125,33 @@ def test_serve_startup_narrates_a_probe_once_whether_fitted_or_cached(
     n_layers = len(session.layers)
     kept = sorted(session.manifolds["default/w4axis"].layers)
     assert load_notes == [dls_drop_note("default/w4axis", kept, list(range(n_layers)))]
+
+
+def test_a_degenerate_axis_is_reported_once_by_the_dls_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Neutral far past both nodes: every layer fails the straddle, the fit
+    keeps them all and says so in one DLS line, and no ``UserWarning``
+    repeats it (serve printed both)."""
+    monkeypatch.setenv("DROWSE_HOME", str(tmp_path / "home"))
+    install_capture(monkeypatch)
+    folder = create_discover_manifold_folder(
+        "local", "lopsided", "both poles on one side of neutral", fit_mode="pca",
+        node_corpora={
+            "pos": [f"pos statement {i}" for i in range(4)],
+            "neg": [f"neg statement {i}" for i in range(4)],
+        },
+        hyperparams={"max_dim": 1},
+    )
+    far = {layer: torch.full((DIM,), 1000.0) for layer in range(N_LAYERS)}
+    pipe = ManifoldExtractionPipeline(StubHandle(layer_means=far), EventBus())
+    lines: list[str] = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        manifold = pipe.fit(folder, on_progress=lines.append)
+    assert sorted(manifold.layers) == list(range(N_LAYERS))
+    notes = [line for line in lines if line.startswith("DLS")]
+    assert len(notes) == 1 and notes[0].startswith(
+        "DLS: at no layer of 'lopsided' do its nodes sit on both sides"
+    ), lines
+    assert not [w for w in caught if "DLS" in str(w.message)]

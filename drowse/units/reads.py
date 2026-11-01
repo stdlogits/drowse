@@ -1850,7 +1850,7 @@ class UnitReader:
         k: int = 16,
         layers: "Sequence[int] | str | None" = None,
     ) -> "FindResult":
-        """Decompose a steerable selector (``honest``, ``jlens/Paris``,
+        """Decompose a steerable selector (``deceptive``, ``jlens/Paris``,
         ``0.5 personas%pirate`` is not: one selector), a ``[d]`` vector at
         ``layer`` or a per-layer mapping over each layer's neuron writes
         (the ``neurons`` dictionary, Mahalanobis), with each neuron's pole

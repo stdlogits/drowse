@@ -22,7 +22,7 @@ export interface FanoutSampling {
 const FANOUT_SAMPLING_FIELDS = ["temperature", "top_p", "top_k", "max_tokens"] as const;
 
 /** One variation's partial recipe: steered by ``info`` toward its node ``toward`` alone, at
- *  ``alpha``, written as the chips write it (``steering=-0.5 default/honest.deceptive%honest``),
+ *  ``alpha``, written as the chips write it (``steering=-0.5 default/formal.casual%formal``),
  *  then the composer's ``sampling`` (``temperature``, ``top_p``, ``top_k``, ``max_tokens``). A
  *  variation anchors on a committed turn, whose regen anchor is the nearest generated ancestor's
  *  recipe, and that anchor outranks the call's own sampling; the partial recipe outranks the

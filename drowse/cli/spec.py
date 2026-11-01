@@ -127,7 +127,7 @@ YES = arg("-y", "--yes", action="store_true",
           help="Confirm removal (required)")
 VERBOSE = arg("-v", "--verbose", action="store_true")
 STEER = arg("-S", "--steer", default=None, metavar="EXPR",
-            help='Steering expression, e.g. "0.5 honest + 0.3 warm"')
+            help='Steering expression, e.g. "-0.5 deceptive + 0.3 warm"')
 DESCRIPTION = arg("--description", default="", metavar="TEXT",
                   help="Human-readable description for the folder")
 

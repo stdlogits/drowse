@@ -59,7 +59,7 @@ default 1024): rebind it with `dataclasses.replace`; an in-flight generation
 keeps its own. A per-call `SamplingConfig` overrides fields for one call only.
 
 The probe roster is built last (`store/bundled_probes.py::bootstrap_probe_roster`,
-neutral baseline first). `probes=None` attaches the bundled 2-node axes tagged
+neutral baseline first). `probes=None` attaches the bundled concepts tagged
 in `PROBE_CATEGORIES` (`epistemic`, `alignment`, `register`, `cultural`),
 fitting stale ones through `self.fit`, plus every bundled multi-node manifold
 *already* fitted for this model (attach-only: fitting `personas` would block
