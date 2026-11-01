@@ -7,6 +7,15 @@ import { withRowValues } from "../../lib/tokenRows";
 import type { MeasurementsEnvelopeJSON, RowProbeReadingJSON, ScalarReadingJSON } from "../../lib/types";
 import type { GeometryTokenReadout, Pins, ReadoutView } from "./readout.svelte";
 
+/** An axis's name wherever a probe's coordinates are listed (the token view, the probe
+ *  inspector): a one-axis concept of one or two nodes reads by its first node (+1 there: the
+ *  pole, or the one node against the default), any other axis by its 1-based number. */
+export function axisName(labels: readonly string[] | undefined, axis: number, rank: number): string {
+  return rank === 1 && axis === 0 && labels && (labels.length === 1 || labels.length === 2)
+    ? labels[0]
+    : `axis ${axis + 1}`;
+}
+
 /** The geometry replay's map from a replayed envelope to the view, bound to the token it was asked
  *  for: ``row`` (its generated row's share and coordinates) and ``captured`` (a live token's
  *  capture) are taken when the replay is requested, never read again when it lands, so a replay

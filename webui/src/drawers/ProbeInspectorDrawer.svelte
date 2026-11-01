@@ -56,6 +56,7 @@
   } from "../lib/pointerGesture";
   import { nodeCoordExtent, parseProbeTarget } from "../lib/tokens";
   import { polesOf } from "../lib/concepts";
+  import { axisName } from "./token/readings";
   import { coefficientText } from "../lib/steering/terms";
   import ManifoldMiniMap from "../panels/manifold/ManifoldMiniMap.svelte";
   import { probeTitle } from "../panels/rack/probeRows";
@@ -569,7 +570,7 @@
           {/if}
           {#each axes as ax (ax.i)}
             <div class="coord">
-              <span class="cl">{showPoles ? (poles.negative ?? "") : `axis ${ax.i}`}</span>
+              <span class="cl">{showPoles ? (poles.negative ?? "") : axisName(geo.node_labels, ax.i, nDim)}</span>
               <Bar value={ax.value} max={ax.scale} width={200} height={4} bipolar />
               <span class="cv">{readingText(ax.value, { signed: true })}</span>
               {#if showPoles}<span class="pole">{poles.positive}</span>{/if}

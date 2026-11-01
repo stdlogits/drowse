@@ -11,7 +11,7 @@
   import type { GeometryTokenReadout, ReplayReadout } from "./readout.svelte";
   import ReadingWait from "./ReadingWait.svelte";
   import { depthTint, formatSigned, readingText } from "./layers";
-  import { layersNote, probeNote } from "./readings";
+  import { axisName, layersNote, probeNote } from "./readings";
 
   let { readout, pinned, hasGeometryProbes, hasReplayContext, replayAvailable, returnToToken }: {
     readout: ReplayReadout<GeometryTokenReadout>;
@@ -43,11 +43,10 @@
     return info?.family === "geometry" ? info.is_affine : null;
   }
 
-  /** Axis 0 on a two-node concept is pole-normalized (+1 at the first node), so it takes that name. */
+  /** Axis 0 on a one- or two-node concept is node-normalized (+1 at the first node), so it takes that name. */
   function axisLabel(name: string, axis: number, rank: number): string {
     const info = probeRack.entries.get(name)?.info;
-    const labels = info?.family === "geometry" ? info.node_labels : undefined;
-    return rank === 1 && axis === 0 && labels?.length === 2 ? labels[0] : `axis ${axis + 1}`;
+    return axisName(info?.family === "geometry" ? info.node_labels : undefined, axis, rank);
   }
 
   function series(source: Record<string, number | null | undefined>): Bar[] {

@@ -113,7 +113,13 @@ try {
   await flush();
   assert.equal(view.refused, false, "the unsteered read is not refused");
   assert.deepEqual(view.data, { strength: 0.4 });
-  const { layersNote } = await server.ssrLoadModule("/src/drawers/token/readings.ts");
+  const { layersNote, axisName } = await server.ssrLoadModule("/src/drawers/token/readings.ts");
+  // One naming for a probe's axes in the token view and the inspector: a one-node concept reads by
+  // its node (it was "axis 1"), a two-node one by its first pole, any other axis from 1.
+  assert.equal(axisName(["deceptive"], 0, 1), "deceptive");
+  assert.equal(axisName(["formal", "casual"], 0, 1), "formal");
+  assert.equal(axisName(["jan", "feb", "mar"], 0, 2), "axis 1");
+  assert.equal(axisName(["jan", "feb", "mar"], 1, 2), "axis 2");
   assert.match(layersNote(true, true, "the probe is attached"), /replay while this model is loaded and the probe is attached/);
   assert.match(layersNote(true, false, "x"), /no replay record/);
   assert.match(layersNote(false, true, "x"), /does not replay them/);
