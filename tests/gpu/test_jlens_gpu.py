@@ -105,6 +105,8 @@ def test_jlens_steering_atom_generates(session: Any, micro_lens: Any) -> None:
         steering="0.5 jlens/ocean",
         sampling=SamplingConfig(max_tokens=16, seed=7),
         stateless=True,
+        # A thinking model (Qwen3) spends 16 tokens inside <think>: off.
+        thinking=False,
     )
     assert result.first.text
     assert "jlens/ocean" in (result.first.applied_steering or "")
@@ -121,6 +123,7 @@ def test_live_lens_does_not_break_static_steerable(session: Any, micro_lens: Any
             "Count to three.",
             sampling=SamplingConfig(max_tokens=8, seed=3),
             stateless=True,
+            thinking=False,
         )
         assert result.first.text
     finally:

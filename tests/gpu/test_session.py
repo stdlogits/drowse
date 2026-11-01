@@ -250,7 +250,8 @@ class TestStreamingGeneration:
         # A character spanning several tokens (an emoji, say) streams as one
         # merged event, so events can be fewer than tokens; the text matches.
         assert len(tokens) <= result.token_count
-        assert "".join(t.text for t in tokens) == result.text
+        # A thinking model streams its thinking too; ``text`` is the response.
+        assert "".join(t.text for t in tokens if not t.thinking) == result.text
 
     def test_stream_with_alphas(self, session: DrowseSession) -> None:
         name, profile = session.extract_from_corpora(

@@ -727,11 +727,11 @@ class TestDiscoverManifoldEndToEnd:
             with session.steering(
                 f"1.0 local/smoke_personas%{pos_a}@response",
             ):
-                r_a = session.generate(prompt, sampling=sampling).first
+                r_a = session.generate(prompt, sampling=sampling, thinking=False).first
             with session.steering(
                 f"1.0 local/smoke_personas%{pos_b}@response",
             ):
-                r_b = session.generate(prompt, sampling=sampling).first
+                r_b = session.generate(prompt, sampling=sampling, thinking=False).first
             assert r_a.text != r_b.text, (
                 f"steering at node {label_a!r} produced identical text "
                 f"to node {label_b!r} — the manifold hook isn't moving "
