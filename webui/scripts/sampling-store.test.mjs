@@ -262,7 +262,7 @@ async function queuedSamplingAndReset() {
     assert.equal(current.config.top_p, 0.7);
     assert.equal(sampling.modelDefaultsState.info.config.temperature, 0.9);
     Object.assign(sampling.samplingState, { seed: 42, stop_sequences: "STOP", logit_bias_text: "123: 2", presence_penalty: 1, frequency_penalty: 1, assistant_role: "pirate" });
-    steerRack.customExpression = "0.3 jlens/orange";
+    steerRack.readOnlyRecipe = "0.3 jlens/orange";
     await resetSettings();
     assert.deepEqual(current.config, original.config);
     assert.equal(sampling.samplingState.seed, null);
@@ -271,7 +271,7 @@ async function queuedSamplingAndReset() {
     assert.equal(sampling.samplingState.presence_penalty, 0);
     assert.equal(sampling.samplingState.frequency_penalty, 0);
     assert.equal(sampling.samplingState.assistant_role, "pirate", "generation-only reset preserves role changes");
-    assert.equal(steerRack.customExpression, "0.3 jlens/orange");
+    assert.equal(steerRack.readOnlyRecipe, "0.3 jlens/orange");
     probeRack.active = ["jlens/orange"];
     current.instruments[0].live.enabled = false;
     current.instruments[1].source = "changed-lens";
@@ -281,7 +281,7 @@ async function queuedSamplingAndReset() {
     assert.deepEqual(detached, ["jlens/orange"]);
     assert.deepEqual(probeRack.active, []);
     assert.deepEqual(current.instruments, original.instruments);
-    assert.equal(steerRack.customExpression, null);
+    assert.equal(steerRack.readOnlyRecipe, null);
     assert.equal(sampling.samplingState.assistant_role, "model");
     genStatus.active = true;
     const before = calls.length;

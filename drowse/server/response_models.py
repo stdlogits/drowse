@@ -154,11 +154,36 @@ class SteeringTermLayersJSON(TypedDict):
     layers: list[int]
 
 
+class SteeringPartJSON(TypedDict):
+    """One term of a validated expression, in order (``grammar.TermPart``).
+
+    ``text`` is the term alone as ``format_expr`` writes it (``expression``
+    is these joined); ``op`` is ``push``, ``ablate``, ``project`` or
+    ``position``; ``target`` the selector without coefficient, clause or
+    trigger (a projection's ``a~b``, a position's manifold); ``coeff`` the
+    coefficient (a position's along) and ``onto`` a position's collapse (0
+    otherwise); ``position`` a position's node label or coordinates;
+    ``layers`` the ``{…}`` clause (``null`` for none); ``trigger`` the ``@``
+    clause without the ``@`` (``null`` for both phases).
+    """
+
+    text: str
+    op: Literal["push", "ablate", "project", "position"]
+    target: str
+    coeff: float
+    onto: float
+    position: str | list[float] | None
+    layers: Literal["workspace"] | list[int] | None
+    trigger: str | None
+
+
 class SteeringValidationResponse(TypedDict):
     """``POST .../steering/validate`` — a form result, not a failed request.
 
-    A valid, non-empty expression also carries the model's depth and where
-    each of its terms acts (the term editor's depth strip).
+    A valid, non-empty expression also carries the model's depth, where each
+    of its terms acts (the term editor's depth strip) and each term in order
+    with its fields (``parts``: the recipe row shows a recipe from elsewhere
+    as chips from them).
     """
 
     valid: bool
@@ -166,6 +191,7 @@ class SteeringValidationResponse(TypedDict):
     error: str | None
     n_layers: NotRequired[int]
     terms: NotRequired[list[SteeringTermLayersJSON]]
+    parts: NotRequired[list[SteeringPartJSON]]
 
 
 # -------------------------------------------------------------------- loom --
@@ -428,9 +454,12 @@ class GeometryProbeInfo(TypedDict):
 
 
 class LensProbeInfo(TypedDict):
-    """One pinned J-lens token probe (the readout channel)."""
+    """One pinned lens token probe (the readout channel). ``namespace`` says
+    which: ``jlens`` (toward saying the word; it reads the mean fitted-layer
+    probability) or ``slens`` (toward having read it; the mean footprint z)."""
 
     family: Literal["lens"]
+    namespace: Literal["jlens", "slens"]
     name: str
     layers: list[int]
     intrinsic_dim: int

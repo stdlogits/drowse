@@ -321,7 +321,7 @@ try {
 
 function snapshot(modelId, prompt, rev = 1) {
   return {
-    version: 7,
+    version: 8,
     savedAt: "2026-09-03T12:00:00.000Z",
     model_id: modelId,
     session_id: "default",
@@ -343,7 +343,7 @@ function snapshot(modelId, prompt, rev = 1) {
     },
     steerRack: [],
     subspaceAlong: 0.5,
-    customSteeringExpression: null,
+    readOnlyRecipe: null,
     probeRack: { sortMode: "name", active: [], entries: [] },
     highlightState: {
       target: null,

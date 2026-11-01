@@ -13,7 +13,7 @@
 // surface).
 
 import { SvelteMap } from "svelte/reactivity";
-import { apiManifolds, apiProfiles } from "../runtime/services";
+import { apiManifolds, apiProfiles, apiSessions } from "../runtime/services";
 import { userFacingError } from "../runtime/userFacingError";
 import type { CorrelationData, ManifoldInfo, VectorInfo } from "../types";
 import type {
@@ -22,11 +22,13 @@ import type {
   LayerScope,
   ManifoldSteerEntry,
   SteerEntry,
+  SteeringPartJSON,
   SubspaceSteerEntry,
   UnitSteerEntry,
   Variant,
 } from "../types";
 import { formatLayerIndices } from "../steering/layers";
+import { recipeAsChips } from "../steering/recipe";
 import { forgetTermLayers } from "../steering/termLayers.svelte";
 import { serializeExpression } from "../expression";
 import { parseUnit } from "../units";
@@ -44,9 +46,14 @@ export interface SteerRack {
    *  (flat) vs manifold (curved).  Variant lives on the entry, not the key —
    *  matching the drowse parser's Steering.alphas semantics. */
   entries: Map<string, SteerEntry>;
-  /** Advanced full-grammar expression. ``null`` means serialize the visual
-   * rack; a string (including empty = explicitly unsteered) is authoritative. */
-  customExpression: string | null;
+  /** A recipe from elsewhere (an agent's expression, a saved conversation's, the command line's
+   *  default) that the chips cannot hold: shown as one read-only chip and sent as written. ``null``
+   *  when the chips are the recipe. People never type one; the chips are how they write recipes
+   *  (``applyRecipe`` turns a recipe into chips whenever every term fits one). */
+  readOnlyRecipe: string | null;
+  /** Why ``readOnlyRecipe`` is not chips (``null`` while that is being checked), and whether
+   *  checking again could change it (the check could not run). */
+  recipeNote: { text: string; retry: boolean } | null;
   /** Shared "subspace along" master — the single slide magnitude every
    *  subspace (flat) term serializes with (the merged affine subspace has one
    *  slide).  Unclamped (a high-share layer is meant to overshoot; the engine
@@ -75,7 +82,8 @@ export interface SteerRack {
 // callers that mutate an entry must reassign via .set(name, {...e, …}).
 export const steerRack: SteerRack = $state({
   entries: new SvelteMap(),
-  customExpression: null,
+  readOnlyRecipe: null,
+  recipeNote: null,
   subspaceAlong: DEFAULT_SUBSPACE_ALONG,
   profiles: new SvelteMap(),
   correlation: null,
@@ -234,7 +242,7 @@ export function setSubspaceAlong(along: number): void {
  *  shared ``subspaceAlong`` master, not per-card. */
 export function addSubspaceToRack(name: string, variant: Variant = "raw"): void {
   if (steerRack.entries.has(name)) return;
-  steerRack.customExpression = null;
+  dropRecipe();
   const info = manifoldByName(name);
   let coords: number[] = [];
   let label: string | null = null;
@@ -267,18 +275,87 @@ export function removeSteerEntry(name: string): void {
  * Recomputed on demand; cheap.  Subspace terms first (at the shared
  * ``subspaceAlong`` master), then manifold (curved) terms. */
 export function currentSteeringExpression(): string {
-  return steerRack.customExpression
+  return steerRack.readOnlyRecipe
     ?? serializeExpression(steerRack.entries, steerRack.subspaceAlong);
 }
 
-/** Make a validated full-grammar expression authoritative.  The visual rack
- * cannot faithfully represent every binary projection/gate form, so mixing
- * the two would lie about what generation uses; switching modes clears it. */
-export function applyCustomSteeringExpression(expression: string): void {
-  enqueueOrApply("apply custom steering expression", () => {
+// ------------------------------------------------ recipes from elsewhere --
+//
+// An agent's expression (WebMCP ``drowse_set_steering``), a saved conversation's read-only recipe
+// and the command line's default (``drowse serve -S``) arrive as text. Each becomes chips when the
+// server's validation describes every term and every term fits a chip exactly
+// (lib/steering/recipe.ts); otherwise it stays one read-only chip that can be cleared. Mixing a
+// read-only recipe with chips would misstate what generation uses, so a chip added afterwards
+// replaces it.
+
+/** Bumped by every change of the recipe, so a check that answers late never overwrites a newer
+ *  rack. */
+let recipeTicket = 0;
+
+/** Make ``expression`` the recipe the next reply uses (queued behind a running generation like
+ *  every rack edit): as chips when they can hold it, else read-only. ``parts`` is the caller's
+ *  validation of it when it has one; otherwise the server is asked. Empty means unsteered. */
+export function applyRecipe(expression: string, parts?: readonly SteeringPartJSON[]): void {
+  enqueueOrApply("use a recipe", () => {
     steerRack.entries.clear();
-    steerRack.customExpression = expression;
+    holdRecipe(expression, parts);
   });
+}
+
+/** Restore a saved rack: its chips, its shared flat strength and the read-only recipe it held,
+ *  checked again (the chips may hold it now). */
+export function restoreRack(entries: Iterable<[string, SteerEntry]>, subspaceAlong: number, readOnlyRecipe: string | null): void {
+  steerRack.entries.clear();
+  for (const [name, entry] of entries) steerRack.entries.set(name, entry);
+  steerRack.subspaceAlong = subspaceAlong;
+  holdRecipe(readOnlyRecipe ?? "");
+}
+
+/** Check a read-only recipe again (its check could not run before). */
+export function retryRecipe(): void {
+  if (steerRack.readOnlyRecipe !== null) holdRecipe(steerRack.readOnlyRecipe);
+}
+
+function holdRecipe(expression: string, parts?: readonly SteeringPartJSON[]): void {
+  const text = expression.trim();
+  const ticket = ++recipeTicket;
+  steerRack.readOnlyRecipe = text || null;
+  steerRack.recipeNote = null;
+  if (!text) return;
+  if (parts) settleRecipe(text, parts, ticket);
+  else void checkRecipe(text, ticket);
+}
+
+async function checkRecipe(text: string, ticket: number): Promise<void> {
+  try {
+    const result = await apiSessions.validateSteering(text);
+    if (ticket !== recipeTicket) return;
+    if (!result.valid) steerRack.recipeNote = { text: result.error ?? "It does not resolve on this model.", retry: false };
+    else if (!result.parts) steerRack.recipeNote = { text: "This runtime does not describe its terms.", retry: false };
+    else settleRecipe(text, result.parts, ticket);
+  } catch (error) {
+    if (ticket === recipeTicket) steerRack.recipeNote = { text: userFacingError(error, "It could not be checked now."), retry: true };
+  }
+}
+
+function settleRecipe(text: string, parts: readonly SteeringPartJSON[], ticket: number): void {
+  if (ticket !== recipeTicket || steerRack.readOnlyRecipe !== text) return;
+  const made = recipeAsChips(parts, steerRack.catalog, steerRack.subspaceAlong);
+  if ("problem" in made) {
+    steerRack.recipeNote = { text: `Chips cannot hold it: ${made.problem}.`, retry: false };
+    return;
+  }
+  steerRack.entries.clear();
+  for (const [name, entry] of made.chips.entries) steerRack.entries.set(name, entry);
+  steerRack.subspaceAlong = made.chips.subspaceAlong;
+  steerRack.readOnlyRecipe = null;
+}
+
+/** A chip added while a read-only recipe stands replaces it (and any check still running). */
+function dropRecipe(): void {
+  recipeTicket += 1;
+  steerRack.readOnlyRecipe = null;
+  steerRack.recipeNote = null;
 }
 
 // ------------------------------------------------ manifold catalog --
@@ -326,7 +403,7 @@ export function manifoldCentroid(m: ManifoldInfo): number[] {
 /** Add a curved manifold to the rack at its domain centroid, along 0.5. */
 export function addManifoldToRack(name: string, variant: Variant = "raw"): void {
   if (steerRack.entries.has(name)) return;
-  steerRack.customExpression = null;
+  dropRecipe();
   const info = manifoldByName(name);
   const coords = info ? manifoldCentroid(info) : [];
   steerRack.entries.set(name, {
@@ -364,7 +441,7 @@ export const ATOM_PREFIX: Record<AtomMode, string> = {
 function addAtomToRack(mode: AtomMode, id: string): void {
   const name = `${ATOM_PREFIX[mode]}${id}`;
   if (steerRack.entries.has(name)) return;
-  steerRack.customExpression = null;
+  dropRecipe();
   steerRack.entries.set(name, {
     mode,
     ablate: false,
@@ -419,7 +496,7 @@ export function setUnitTerm(id: string, term: { ablate: boolean; alpha: number }
       return;
     }
     const prev = steerRack.entries.get(name);
-    steerRack.customExpression = null;
+    dropRecipe();
     steerRack.entries.set(name, {
       mode: "unit",
       ablate: term.ablate,

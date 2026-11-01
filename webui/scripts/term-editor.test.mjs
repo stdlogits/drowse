@@ -70,7 +70,7 @@ try {
     ["default/emotions", { mode: "manifold", blend: 0.35, onto: 0, coords: [0], label: "wonder", variant: "raw", trigger: "RESPONSE", enabled: true, layers: "workspace" }],
   ]);
   assert.equal(serializeExpression(rack, 0.5),
-    "0.5 default/honest%honest{12-14,20} + 1 !jlens/storm{20-22} - 0.2 neuron/L31n4410@response + 1 !head/L28h12 + 0.35 default/emotions%wonder{workspace}@response",
+    "0.5 default/honest%honest{12-14,20} + !jlens/storm{20-22} - 0.2 neuron/L31n4410@response + !head/L28h12 + 0.35 default/emotions%wonder{workspace}@response",
     "the clause follows the selector and precedes the trigger; a term at no layer sits out; a unit takes no clause");
   assert.equal(formatTerm("sae/7", rack.get("sae/7"), 0.5), "0.3 sae/7", "on its own, an inert term writes no clause");
 
@@ -102,9 +102,9 @@ try {
   setSteerLayers("jlens/storm", [4, 5]);
   setSteerLayers("neuron/L1n3", [1]);
   assert.equal(steerRack.entries.get("neuron/L1n3").layers, undefined, "a unit takes no clause");
-  assert.equal(currentSteeringExpression(), "0.3 jlens/storm{4-5} + 1 !head/L2h0 + 0.2 neuron/L1n3");
+  assert.equal(currentSteeringExpression(), "0.3 jlens/storm{4-5} + !head/L2h0 + 0.2 neuron/L1n3");
   setSteerLayers("jlens/storm", null);
-  assert.equal(currentSteeringExpression(), "0.3 jlens/storm + 1 !head/L2h0 + 0.2 neuron/L1n3");
+  assert.equal(currentSteeringExpression(), "0.3 jlens/storm + !head/L2h0 + 0.2 neuron/L1n3");
   for (const name of ["jlens/storm", "neuron/L1n3", "head/L2h0"]) removeSteerEntry(name);
 
   // ---- where a term acts, as the server says
@@ -249,9 +249,9 @@ try {
   // ---- snapshot rows keep a clause and a unit
   const { validateConversationSnapshot } = await server.ssrLoadModule("/src/lib/conversationSnapshot.ts");
   const snapshot = steerRows => ({
-    version: 7, savedAt: "2026-10-31T00:00:00Z", model_id: "m", session_id: "s",
+    version: 8, savedAt: "2026-10-31T00:00:00Z", model_id: "m", session_id: "s",
     tree: { tree_format: 2, drowse_version: "6", root_id: "r", active_node_id: "r", rev: 0, model_id: "m", session_id: "s", nodes: [], children_of: {}, cast: {} },
-    steerRack: steerRows, subspaceAlong: 0.5, customSteeringExpression: null,
+    steerRack: steerRows, subspaceAlong: 0.5, readOnlyRecipe: null,
     probeRack: { sortMode: "name", active: [], entries: [] },
     highlightState: { target: null, compareTarget: null, compareTwo: false, smoothBlend: false },
     samplingState: {
@@ -296,6 +296,30 @@ try {
   assert.equal(terms.termTitle("default/months", { ...free, label: "july" }, monthsInfo), "july");
   assert.equal(terms.strengthSays("default/months", free, 0.5, monthsInfo), "Toward month 6.00", "the strength names it the same way");
   assert.equal(terms.termSource("slens/Paris", read), "lens token, as read");
+  assert.equal(terms.termSource("jlens/Paris", { ...read, mode: "jlens" }), "lens token, as said", "the pair's twin wording");
+  // The one pair the Lens panel and the token view share: its choice when that lens is ready, the
+  // other when only that one is, so a model with one lens family offers it alone.
+  const lens = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+  const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+  const sessionBefore = sessionState.info;
+  sessionState.info = { ...(sessionBefore ?? {}), jlens_fitted: true };
+  lens.lensSourceState.sources = [];
+  assert.equal(lens.lensNamespaceReady("slens"), false, "no S source, no slens/");
+  lens.lensPairState.namespace = "slens";
+  assert.equal(lens.lensNamespaceInUse(), "jlens", "the R lens alone is offered alone");
+  lens.lensSourceState.sources = [{ source: "local:s", family: "S", active: true, sites: ["mid"] }];
+  assert.equal(lens.lensNamespaceReady("slens"), false, "slens/ needs the S lens's out site");
+  lens.lensSourceState.sources = [{ source: "local:s", family: "S", active: true, sites: ["out", "mid"], compatible: true }];
+  assert.equal(lens.lensNamespaceInUse(), "slens");
+  sessionState.info = { ...(sessionBefore ?? {}), jlens_fitted: false };
+  lens.lensPairState.namespace = "jlens";
+  assert.equal(lens.lensNamespaceInUse(), "slens", "the S lens alone is offered alone");
+  lens.lensSourceState.sources = [{ source: "local:s", family: "S", active: true, sites: ["out"], compatible: false }];
+  assert.equal(lens.lensNamespaceReady("slens"), false, "an S source not loaded for these weights");
+  assert.deepEqual(lens.LENS_NAMESPACES.map(row => row.label), ["As said", "As read"]);
+  sessionState.info = sessionBefore;
+  lens.lensSourceState.sources = [];
+  lens.lensPairState.namespace = "jlens";
   assert.ok(terms.canRemove("slens/Paris", read, null));
   assert.equal(layersProbe("slens/Paris", read, true), "1 slens/Paris{2-4}@response");
   const { addSLensToRack } = steering;

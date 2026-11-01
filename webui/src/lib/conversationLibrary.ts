@@ -1,6 +1,6 @@
 import {
   validateConversationSnapshot,
-  type ConversationSnapshotV7,
+  type ConversationSnapshotV8,
 } from "./conversationSnapshot";
 import { migrateLegacyDatabase } from "./brandMigration";
 
@@ -31,7 +31,7 @@ export interface SavedConversationRecord {
   modelType?: "chat" | "base";
   createdAt: number;
   updatedAt: number;
-  snapshot: ConversationSnapshotV7;
+  snapshot: ConversationSnapshotV8;
 }
 
 export type SavedConversationSummary = Omit<SavedConversationRecord, "snapshot"> & {
@@ -218,7 +218,7 @@ export class ConversationLibrary {
     avatarSeed?: string;
     accent?: ConversationAccent;
     modelType?: "chat" | "base";
-    snapshot: ConversationSnapshotV7;
+    snapshot: ConversationSnapshotV8;
     createdAt?: number;
     updatedAt?: number;
   }): Promise<SavedConversationRecord> {
@@ -317,7 +317,7 @@ export class ConversationLibrary {
     });
   }
 
-  async autosave(snapshot: ConversationSnapshotV7, activeId: string | null, modelType?: "chat" | "base"): Promise<SavedConversationRecord | null> {
+  async autosave(snapshot: ConversationSnapshotV8, activeId: string | null, modelType?: "chat" | "base"): Promise<SavedConversationRecord | null> {
     validateConversationSnapshot(snapshot, this.samplingKeys);
     await this.initialize();
     return this.runExclusive(async () => {

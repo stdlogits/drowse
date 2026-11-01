@@ -248,7 +248,7 @@ export async function fetchCatalog(): Promise<void> {
 /** The unit's one term in the recipe, if it has one. */
 export function unitTerm(id: string): UnitTerm | null {
   const entry = steerRack.entries.get(id);
-  if (entry?.mode !== "unit" || steerRack.customExpression !== null) return null;
+  if (entry?.mode !== "unit" || steerRack.readOnlyRecipe !== null) return null;
   if (entry.ablate) return "silence";
   return entry.alpha < 0 ? "minus" : "plus";
 }

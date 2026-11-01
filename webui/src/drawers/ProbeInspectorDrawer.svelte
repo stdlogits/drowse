@@ -166,7 +166,8 @@
   const isHighlight = $derived(
     highlightState.target !== null && parseProbeTarget(highlightState.target).base === probeName,
   );
-  const percent = $derived(info?.family === "lens");
+  /** A word as said reads as a probability; as read, as a footprint z. */
+  const percent = $derived(info?.family === "lens" && info.namespace === "jlens");
   const value = $derived.by((): number | null => {
     if (!entry) return null;
     if (latest !== null || sparkline.length > 0) return entry.current;

@@ -134,9 +134,9 @@ function snapshot() {
   alternate.edited_at = 110;
   alternate.edit_count = 1;
   return {
-    version: 7, savedAt: "2026-09-05T12:00:00.000Z", model_id: "fixture/model", session_id: "default",
+    version: 8, savedAt: "2026-09-05T12:00:00.000Z", model_id: "fixture/model", session_id: "default",
     tree: { tree_format: 2, drowse_version: "0.1", model_id: "fixture/model", session_id: "default", name: "Research", rev: 4, root_id: "root", active_node_id: "reply", nodes: [root, user, reply, alternate], children_of: { root: ["user"], user: ["reply", "alternate"], reply: [], alternate: [] }, cast: {} },
-    steerRack: [{ name: "jlens/calm", mode: "jlens", alpha: 0.3, trigger: "RESPONSE", enabled: true }], subspaceAlong: 0.5, customSteeringExpression: null,
+    steerRack: [{ name: "jlens/calm", mode: "jlens", ablate: false, alpha: 0.3, trigger: "RESPONSE", enabled: true }], subspaceAlong: 0.5, readOnlyRecipe: null,
     probeRack: { sortMode: "name", active: ["jlens/calm"], entries: [{ name: "jlens/calm", request: { selector: "jlens/calm", name: "jlens/calm" }, sparkline: [0.1, 0.2], current: 0.2, previous: 0.1 }] },
     highlightState: { target: "jlens/calm", compareTarget: null, compareTwo: false, smoothBlend: true },
     samplingState: { temperature: 0.7, top_p: 0.95, top_k: null, max_tokens: 256, seed: 42, system_prompt: "Be precise", stop_sequences: "", logit_bias_text: "", presence_penalty: 0, frequency_penalty: 0, thinking: true, return_top_k: 8, user_role: "user", assistant_role: "assistant" },

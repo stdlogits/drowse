@@ -109,8 +109,10 @@ try {
   const { probeRack, highlightScale, probeEntryForDisplay, highlightState } =
     await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
   const { tokenHoverState } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
-  probeRack.entries.set("word alias", { info: { family: "lens", name: "word alias", word: "word", layers: [0] },
+  probeRack.entries.set("word alias", { info: { family: "lens", namespace: "jlens", name: "word alias", word: "word", layers: [0] },
     current: 0.5, previous: 0.5, sparkline: [0.5], reading: null, aggregate: null });
+  probeRack.entries.set("read alias", { info: { family: "lens", namespace: "slens", name: "read alias", word: "word", layers: [0] },
+    current: 1.5, previous: 1.5, sparkline: [1.5], reading: null, aggregate: null });
   probeRack.entries.set("feature alias", { info: { family: "sae", name: "feature alias", feature_id: 7, max_act: 10, layers: [0] },
     current: 5, previous: 5, sparkline: [5], reading: { value: 5, unit: "raw_activation", per_layer: {}, depth: null }, aggregate: null });
   probeRack.active = ["word alias", "feature alias"];
@@ -124,6 +126,15 @@ try {
   assert.equal(probeEntryForDisplay("word alias").reading, null, "hover cannot borrow a whitespace variant's probability");
   tokenHoverState.lensAggregate = [["word", 0.2, 0.5, 0.1]];
   assert.equal(probeEntryForDisplay("word alias").reading.value, 0.2);
+  // A word as read is the S lens's footprint z: never filled from the R lens's probability, and
+  // re-attached as the slens/ probe it is.
+  assert.equal(probeEntryForDisplay("read alias").reading, null, "an slens/ probe never borrows the R read");
+  tokenHoverState.probes = { "read alias": 2.5 };
+  assert.equal(probeEntryForDisplay("read alias").reading.unit, "mean_footprint_z");
+  tokenHoverState.probes = null;
+  const { probeRequestFromInfo } = await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
+  assert.deepEqual(probeRequestFromInfo(probeRack.entries.get("read alias").info), { selector: "slens/word", name: "read alias" });
+  assert.deepEqual(probeRequestFromInfo(probeRack.entries.get("word alias").info), { selector: "jlens/word", name: "word alias" });
   tokenHoverState.saeReadout = [{ id: 7, activation: 3, max_act: null }];
   assert.equal(probeEntryForDisplay("feature alias").reading.unit, "raw_activation");
   assert.equal(probeEntryForDisplay("feature alias").reading.value, 3, "historical rows are not normalized using current metadata");

@@ -3,29 +3,26 @@
   // term is a chip: its strength (or "without", for a removal), its name, where it comes from, a
   // span over the model's depth where it acts, its layers when it is scoped and its trigger. A chip
   // selects its term and opens its editor in place, right under the chips (TermEditor, the Steering
-  // canvas); the selected chip closes it. "+ Steer" adds a concept or a manifold position; "Edit as
-  // text" shows the expression the next reply is generated with, editable in the steering grammar
-  // (the server's parser is the only parser).
-  import { tick } from "svelte";
+  // canvas); the selected chip closes it. "+ Steer" adds a concept or a manifold position. Recipes
+  // are written with the chips, never typed: a recipe from elsewhere (an agent's, a saved
+  // conversation's, the command line's) becomes chips when they can hold it, and otherwise shows
+  // as one read-only chip that says why and can be cleared.
   import { MorphText, expand, reducedMotion } from "@stdlogits/ledger";
   import TermEditor from "./rack/TermEditor.svelte";
   import {
     steerRack,
-    currentSteeringExpression,
-    applyCustomSteeringExpression,
+    applyRecipe,
+    retryRecipe,
     removeSteerEntry,
     manifoldByName,
   } from "../lib/stores/steering.svelte";
   import { openDrawer } from "../lib/stores/drawers.svelte";
-  import { apiSessions } from "../lib/runtime/services";
-  import { ApiError, describeError } from "../lib/runtime/errors";
-  import { pushToast } from "../lib/stores/toasts.svelte";
   import { clearSelection, select, selection } from "../lib/stores/selection.svelte";
   import { sessionState } from "../lib/stores/session.svelte";
   import { unitTermLabel } from "../lib/stores/units.svelte";
   import { depthSpan, layerRunsText } from "../lib/steering/layers";
   import { placeOf } from "../lib/steering/termLayers.svelte";
-  import { chipStrength, termSource, termTitle, triggerWord, unitLayer } from "../lib/steering/terms";
+  import { chipStrength, termSource, termTitle, triggerWord, unitLayer, wrapPieces } from "../lib/steering/terms";
   import type { SteerEntry } from "../lib/types";
 
   /** The order families show in: flat terms, curved terms, then atoms and units. */
@@ -49,26 +46,25 @@
         meta: [layers, triggerWord(entry.trigger)].filter(Boolean).join(" · "),
       };
     }));
-  const expression = $derived(currentSteeringExpression());
-  const custom = $derived(steerRack.customExpression !== null);
+  const recipe = $derived(steerRack.readOnlyRecipe);
+  const note = $derived(steerRack.recipeNote);
   const open = $derived(selection.current.kind === "term" && steerRack.entries.has(selection.current.name) ? selection.current.name : null);
   const openEntry = $derived(open === null ? undefined : steerRack.entries.get(open));
 
   $effect(() => {
-    // A term taken off the rack elsewhere (a text recipe, a tool) leaves nothing to edit.
+    // A term taken off the rack elsewhere (a recipe from an agent, a tool) leaves nothing to edit.
     const current = selection.current;
     if (current.kind === "term" && !steerRack.entries.has(current.name)) clearSelection();
   });
 
   let adding = $state(false);
-  let editing = $state(false);
-  let draft = $state("");
-  /** Why the server refused the drafted recipe, shown under the text. */
-  let draftError: string | null = $state(null);
-  let checking = $state(false);
-  let field: HTMLTextAreaElement | null = $state(null);
+  /** The read-only recipe's panel. */
+  let recipeOpen = $state(false);
   /** The term just removed, until the next change: the row offers it back. */
   let removed: { name: string; entry: SteerEntry; title: string } | null = $state(null);
+  $effect(() => {
+    if (recipe === null) recipeOpen = false;
+  });
 
   function toggle(name: string): void {
     removed = null;
@@ -85,66 +81,26 @@
   }
 
   function undo(): void {
-    if (!removed || steerRack.customExpression !== null) return;
+    if (!removed || steerRack.readOnlyRecipe !== null) return;
     steerRack.entries.set(removed.name, removed.entry);
     select({ kind: "term", name: removed.name });
     removed = null;
   }
 
-  async function edit(): Promise<void> {
-    editing = !editing;
-    adding = false;
-    removed = null;
-    if (!editing) return;
-    if (open !== null) clearSelection();
-    draftError = null;
-    draft = expression;
-    await tick();
-    field?.focus();
-  }
-
-  /** Use the drafted recipe once the server accepts it (its parser is the only parser): a refusal
-   *  stays under the text. The chips' own recipe, unchanged, keeps the chips (and their switched-off
-   *  terms); anything else becomes the text recipe. */
-  async function apply(): Promise<void> {
-    const text = draft.trim();
-    if (checking) return;
-    draftError = null;
-    if (!text) {
-      // Nothing steers already: an empty recipe changes nothing.
-      if (custom || expression) applyCustomSteeringExpression("");
-      editing = false;
-      return;
-    }
-    checking = true;
-    try {
-      const result = await apiSessions.validateSteering(text);
-      if (!result.valid) {
-        draftError = result.error ?? "This recipe does not resolve.";
-        return;
-      }
-      if (!custom && expression && (result.expression === expression
-        || result.expression === (await apiSessions.validateSteering(expression)).expression)) {
-        editing = false;
-        return;
-      }
-      applyCustomSteeringExpression(result.expression || text);
-      editing = false;
-    } catch (error) {
-      // A busy model cannot check it now: use it, and the reply says if it does not resolve.
-      if (error instanceof ApiError && error.status === 409) {
-        applyCustomSteeringExpression(text);
-        editing = false;
-      } else draftError = describeError(error);
-    } finally {
-      checking = false;
-    }
-  }
-
+  let copied = $state(false);
   async function copy(): Promise<void> {
-    try { await navigator.clipboard.writeText(expression); pushToast("Copied the recipe.", { kind: "info" }); }
-    catch { pushToast("Could not copy the recipe. Select its text and copy it.", { kind: "error" }); }
+    if (recipe === null) return;
+    try {
+      await navigator.clipboard.writeText(recipe);
+      copied = true;
+    } catch {
+      copied = false;
+    }
   }
+  $effect(() => {
+    void recipe;
+    copied = false;
+  });
 
   function add(kind: "subspace" | "manifolds"): void {
     adding = false;
@@ -155,9 +111,10 @@
 
 <div class="recipe">
   <div class="dw-recipe" role="group" aria-label="Steering">
-    {#if custom}
-      <button type="button" class="dw-term custom" onclick={() => void edit()} aria-expanded={editing}>
-        <span class="dw-alpha">text</span><span class="dw-term-name">{expression || "unsteered"}</span>
+    {#if recipe !== null}
+      <button type="button" class="dw-term held" aria-expanded={recipeOpen} data-tip="A recipe from elsewhere, as it was written"
+        onclick={() => { recipeOpen = !recipeOpen; adding = false; }}>
+        <span class="dw-alpha">recipe</span><span class="dw-term-name">{recipe}</span>
       </button>
     {:else}
       {#each chips as chip (chip.name)}
@@ -175,8 +132,7 @@
         <button type="button" class="dw-text undo" onclick={undo}>Undo</button>
       {/if}
     {/if}
-    <button type="button" class="dw-add" aria-expanded={adding} onclick={() => { adding = !adding; editing = false; removed = null; }}>+ Steer</button>
-    <button type="button" class="dw-text end" aria-expanded={editing} onclick={() => void edit()}>{editing ? "Done" : "Edit as text"}</button>
+    <button type="button" class="dw-add" aria-expanded={adding} onclick={() => { adding = !adding; recipeOpen = false; removed = null; }}>+ Steer</button>
   </div>
 
   {#if open !== null && openEntry}
@@ -187,6 +143,20 @@
     </div>
   {/if}
 
+  {#if recipeOpen && recipe !== null}
+    <section class="held-recipe" aria-label="Recipe" transition:expand>
+      <div class="expr">
+        <p class="text">{#each wrapPieces(recipe) as piece, i}{#if i}<wbr>{/if}{piece}{/each}</p>
+        <button type="button" class="dw-text" onclick={() => void copy()}><MorphText text={copied ? "Copied" : "Copy"} numbers={false} /></button>
+      </div>
+      <p class="meta" role="status">{note === null ? "Checking whether chips can hold it…" : note.text} Adding a term replaces it.</p>
+      <div class="foot">
+        {#if note?.retry}<button type="button" class="dw-text" onclick={retryRecipe}>Check again</button>{:else}<span></span>{/if}
+        <button type="button" class="dw-text" onclick={() => applyRecipe("")}>Clear</button>
+      </div>
+    </section>
+  {/if}
+
   {#if adding}
     <div class="dw-row more" transition:expand>
       <button type="button" class="dw-quiet" onclick={() => add("subspace")}>A concept</button>
@@ -194,41 +164,29 @@
       <span class="meta">lens tokens and SAE features steer from the instruments</span>
     </div>
   {/if}
-
-  {#if editing}
-    <form class="text" transition:expand onsubmit={(event) => { event.preventDefault(); void apply(); }}>
-      <label class="sr-only" for="recipe-text">Steering expression</label>
-      <textarea id="recipe-text" bind:this={field} bind:value={draft} rows="2" spellcheck="false"
-        placeholder="0.4 honest + 0.2 emotions%wonder{'{'}14-24{'}'}@response"
-        aria-invalid={draftError !== null} aria-describedby={draftError !== null ? "recipe-text-error" : undefined}
-        oninput={() => { draftError = null; }}
-        onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void apply(); } }}></textarea>
-      {#if draftError !== null}<p class="meta problem" id="recipe-text-error" role="alert">{draftError}</p>{/if}
-      <div class="dw-row">
-        <button type="submit" class="dw-quiet" disabled={checking}>Use this recipe</button>
-        <button type="button" class="dw-text" disabled={!expression} onclick={() => void copy()}>Copy</button>
-        {#if custom}<button type="button" class="dw-text" onclick={() => { applyCustomSteeringExpression(""); editing = false; }}>Clear</button>{/if}
-      </div>
-    </form>
-  {/if}
 </div>
 
 <style>
   .recipe { display: grid; gap: var(--s2); min-width: 0; }
-  .end { margin-left: auto; height: 36px; padding: 0 var(--s2); }
-  .custom .dw-term-name { max-width: 48ch; }
+  .held .dw-term-name { max-width: 48ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .gone { padding: 0 var(--s2) 0 var(--s3); white-space: nowrap; }
   .undo { height: 36px; padding: 0 var(--s2); }
   .dw-span > i { transition: left var(--glide) var(--ease), width var(--glide) var(--ease); }
   .editor { min-width: 0; padding-top: var(--s2); }
   .more { padding: var(--s1) 0; }
-  .text { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
-  .problem { margin: 0; color: var(--ink2); }
-  .text textarea { width: 100%; min-height: 48px; padding: 0; border: 0; outline: 0; resize: vertical; background: transparent; color: var(--ink); font: var(--type-body); font-variant-numeric: tabular-nums; }
+  /* The read-only recipe, open: the term editor's surface, its expression on paper. */
+  .held-recipe { display: grid; gap: var(--s3); min-width: 0; padding: var(--s5); border-radius: var(--r-row); background: var(--wash); }
+  .held-recipe .meta { margin: 0; overflow-wrap: anywhere; }
+  .expr { display: flex; align-items: center; gap: var(--s4); min-width: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--paper); }
+  .text { flex: 1 1 0; min-width: 0; margin: 0; color: var(--ink); font: var(--type-body); font-variant-numeric: tabular-nums; overflow-wrap: break-word; }
+  .foot { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
   @media (max-width: 720px) {
     .dw-recipe { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin: 0 calc(-1 * var(--s4)); padding: 0 var(--s4); }
     .dw-recipe::-webkit-scrollbar { display: none; }
     .dw-recipe > * { flex: none; }
-    .dw-recipe .dw-term, .dw-recipe .dw-add, .end, .undo { height: 44px; }
+    .dw-recipe .dw-term, .dw-recipe .dw-add, .undo { height: 44px; }
+    .held-recipe { padding: var(--s4); }
+    .held-recipe .dw-text { position: relative; }
+    .held-recipe .dw-text::after { content: ""; position: absolute; inset: -14px -8px; }
   }
 </style>

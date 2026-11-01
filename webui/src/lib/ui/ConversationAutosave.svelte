@@ -60,7 +60,7 @@
     JSON.stringify(samplingState);
     JSON.stringify([...steerRack.entries]);
     void steerRack.subspaceAlong;
-    void steerRack.customExpression;
+    void steerRack.readOnlyRecipe;
     JSON.stringify(probeRack.active.map(name => probeRack.entries.get(name)?.request));
     void probeRack.sortMode;
     JSON.stringify(highlightState);

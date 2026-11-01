@@ -72,7 +72,8 @@ export function highlightStyleFor(
 
 function probeHue(target: string) {
   const info = probeRack.entries.get(parseProbeTarget(target).base)?.info;
-  if (info?.family === "lens") return "surprise";
+  // A word as said is a probability (unsigned); as read, a signed footprint z.
+  if (info?.family === "lens") return info.namespace === "jlens" ? "surprise" : "signed";
   if (info?.family === "sae") return "sae";
   return highlightHue(target);
 }

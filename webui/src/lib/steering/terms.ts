@@ -77,7 +77,7 @@ export function termSource(name: string, entry: SteerEntry): string {
   switch (entry.mode) {
     case "subspace": return !entry.ablate && entry.label !== null && entry.label !== bareName(name) ? bareName(name) : "";
     case "manifold": return bareName(name);
-    case "jlens": return "lens token";
+    case "jlens": return "lens token, as said";
     case "slens": return "lens token, as read";
     case "sae": return "SAE feature";
     case "unit": return name.startsWith("head/") ? "attention head" : "MLP neuron";

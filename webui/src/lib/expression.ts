@@ -115,8 +115,7 @@ export function formatSubspaceTerm(
 ): string {
   const clause = layerClause(entry.layers);
   if (entry.ablate) {
-    const selector = `!${nameWithVariant(name, entry.variant)}`;
-    return `${formatCoeff(subspaceAlong)} ${selector}${clause}${formatTriggerSuffix(entry.trigger)}`;
+    return `${formatBang(`${nameWithVariant(name, entry.variant)}${clause}`, subspaceAlong)}${formatTriggerSuffix(entry.trigger)}`;
   }
   const position = entry.label ?? entry.coords.map((c) => formatCoeff(c)).join(",");
   const selector = `${nameWithVariant(name, entry.variant)}%${position}`;
@@ -127,11 +126,29 @@ function nameWithVariant(name: string, variant: Variant): string {
   return variant === "raw" ? name : `${name}:${variant}`;
 }
 
-function formatCoeff(coeff: number): string {
-  // Number.toString trims trailing zeros while preserving precision.
-  // The leading sign rides the term; the joiner above splits +/-.
+/** A number as the server's ``format_expr`` writes it: Python's ``%g`` (six significant digits,
+ *  trailing zeros dropped, an exponent below 1e-4 or from 1e6 on: ``1e-05``, ``1.5e+06``), so the
+ *  chips' expression is the canonical one. (An exact binary tie at the seventh digit, an integer
+ *  such as 1234565, rounds up here and to even in Python; no dial reaches one.) The leading sign
+ *  rides the term; the joiner above splits +/-. */
+export function formatCoeff(coeff: number): string {
   if (Number.isNaN(coeff) || !Number.isFinite(coeff)) return "0";
-  return String(coeff);
+  if (coeff === 0) return Object.is(coeff, -0) ? "-0" : "0";
+  const [mantissa, power] = coeff.toExponential(5).split("e");
+  const exponent = Number(power);
+  const trim = (digits: string) => digits.includes(".") ? digits.replace(/0+$/u, "").replace(/\.$/u, "") : digits;
+  if (exponent < -4 || exponent >= 6) {
+    return `${trim(mantissa)}e${exponent < 0 ? "-" : "+"}${String(Math.abs(exponent)).padStart(2, "0")}`;
+  }
+  return trim(coeff.toFixed(5 - exponent));
+}
+
+/** An ablation as the server writes it: ``!x`` at full strength, ``-!x`` at −1, ``0.5 !x``
+ *  otherwise. ``target`` carries the clause (``jlens/storm{20-30}``); the trigger follows. */
+function formatBang(target: string, coeff: number): string {
+  if (coeff === 1) return `!${target}`;
+  if (coeff === -1) return `-!${target}`;
+  return `${formatCoeff(coeff)} !${target}`;
 }
 
 function formatTriggerSuffix(trigger: Trigger): string {
@@ -145,19 +162,26 @@ function formatTriggerSuffix(trigger: Trigger): string {
  *  ``register_direction`` / ``register_input_direction``); per-chip
  *  ``alpha`` because lens atoms run hotter than concept vectors. */
 export function formatJLensTerm(name: string, entry: JLensSteerEntry | SLensSteerEntry): string {
-  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
+  return formatAtomTerm(name, entry);
 }
 
 export function formatSaeTerm(name: string, entry: SaeSteerEntry): string {
-  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
+  return formatAtomTerm(name, entry);
+}
+
+/** One single-direction atom: ``<alpha> <atom>{clause}`` pushed, or its ablation. */
+function formatAtomTerm(name: string, entry: JLensSteerEntry | SLensSteerEntry | SaeSteerEntry): string {
+  const target = `${name}${layerClause(entry.layers)}`;
+  return `${entry.ablate ? formatBang(target, entry.alpha) : `${formatCoeff(entry.alpha)} ${target}`}${formatTriggerSuffix(entry.trigger)}`;
 }
 
 /** Render one unit term — ``<alpha> neuron/L31n4410`` (a push; a negative α takes the other pole)
- *  or ``<alpha> !neuron/…`` / ``<alpha> !head/…`` (mean-ablated, 1 exactly).  A unit carries its
- *  own layer, so it never writes a clause (the grammar refuses one); which terms a unit takes is
- *  lib/unitTerms.ts's rule, held by the rack. */
+ *  or ``!neuron/…`` / ``!head/…`` (mean-ablated: α 1, written bare like every full ablation;
+ *  ``0.5 !head/…`` blends halfway).  A unit carries its own layer, so it never writes a clause
+ *  (the grammar refuses one); which terms a unit takes is lib/unitTerms.ts's rule, held by the
+ *  rack. */
 export function formatUnitTerm(name: string, entry: UnitSteerEntry): string {
-  return `${formatCoeff(entry.alpha)} ${entry.ablate ? "!" : ""}${name}${formatTriggerSuffix(entry.trigger)}`;
+  return `${entry.ablate ? formatBang(name, entry.alpha) : `${formatCoeff(entry.alpha)} ${name}`}${formatTriggerSuffix(entry.trigger)}`;
 }
 
 /** Render one manifold (curved) rack entry — ``<along[,onto]>
@@ -170,11 +194,13 @@ export function formatManifoldTerm(name: string, entry: ManifoldSteerEntry): str
     ? entry.label
     : entry.coords.map((c) => formatCoeff(c)).join(",");
   const selector = `${nameWithVariant(name, entry.variant)}%${position}`;
-  // Coefficient slot: ``along`` alone, or ``along,onto`` when onto is set
-  // (> 0) — the curved-manifold residual-collapse fraction.
+  // Coefficient slot: ``along`` alone, or ``along,onto`` when onto is set — the curved-manifold
+  // residual-collapse fraction. The term's sign applies to the whole run, so ``onto`` is written
+  // relative to ``along``'s sign, as format_expr writes it.
+  const onto = entry.onto ?? 0;
   const coeff =
-    (entry.onto ?? 0) > 0
-      ? `${formatCoeff(entry.blend)},${formatCoeff(entry.onto)}`
+    onto !== 0
+      ? `${formatCoeff(entry.blend)},${formatCoeff(entry.blend < 0 ? -onto : onto)}`
       : formatCoeff(entry.blend);
   return `${coeff} ${selector}${layerClause(entry.layers)}${formatTriggerSuffix(entry.trigger)}`;
 }

@@ -13,7 +13,7 @@ and the OpenAI / Ollama reading extensions, not a route here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
@@ -82,6 +82,10 @@ def _probe_info(name: str, probe: AttachedManifoldProbe) -> GeometryProbeInfo:
     }
 
 
+#: A lens probe's side (``LensInstrument.attach``) as its selector namespace.
+_LENS_NAMESPACES: dict[str, Literal["jlens", "slens"]] = {"output": "jlens", "input": "slens"}
+
+
 def _lens_probe_info(name: str, spec: dict[str, Any]) -> LensProbeInfo:
     """Serialize one pinned J-lens token probe (readout channel) to JSON.
 
@@ -90,10 +94,13 @@ def _lens_probe_info(name: str, spec: dict[str, Any]) -> LensProbeInfo:
     exists), ``top_n: 0``, ``domain: {}``, ``is_affine``, ``node_coords``,
     ``node_count`` and the ``node_labels: [word]`` stand-in are gone.  What
     remains is real: the fitted layer set, the one strength axis, and the
-    word / vocabulary id the channel reads.
+    word / vocabulary id the channel reads, and its namespace (an ``slens/``
+    probe reads the S lens's footprint z, a ``jlens/`` one the R lens's
+    probability).
     """
     return {
         "family": "lens",
+        "namespace": _LENS_NAMESPACES[spec["side"]],
         "name": name,
         "layers": sorted(int(l) for l in spec.get("layers", ())),
         "intrinsic_dim": 1,

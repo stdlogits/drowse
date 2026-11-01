@@ -132,7 +132,7 @@ export async function explainCurrentControl(control: string, context: ToolContex
     const { probeRack } = await import("../stores/probes.svelte");
     effective.probes = { attached: probeRack.active.map(name => ({ name, info: probeRack.entries.get(name)?.info ?? null })), instruments: info.instruments, error: probeRack.error };
   } else if (["manifold_position", "triggers"].includes(reference.id)) {
-    effective[reference.id] = { expression: currentSteeringExpression(), custom_expression: steerRack.customExpression, subspace_along: steerRack.subspaceAlong, entries: [...steerRack.entries].map(([selector, entry]) => ({ selector, ...entry })), catalogue: steerRack.catalog, catalogue_error: steerRack.error };
+    effective[reference.id] = { expression: currentSteeringExpression(), read_only_recipe: steerRack.readOnlyRecipe, subspace_along: steerRack.subspaceAlong, entries: [...steerRack.entries].map(([selector, entry]) => ({ selector, ...entry })), catalogue: steerRack.catalog, catalogue_error: steerRack.error };
   } else if (reference.id === "pirate") {
     effective.pirate = { conversation_format: raw ? "raw" : "chat", system_prompt: samplingState.system_prompt, role_labels: effective.role_labels, steering: currentSteeringExpression() };
   }

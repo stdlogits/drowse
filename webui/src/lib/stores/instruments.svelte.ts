@@ -90,6 +90,41 @@ export const lensState: LensState = $state({
   busy: false,
 });
 
+// ------------------------------------------- the lens token pair ---
+//
+// A lens token atom or probe names a word one of two ways: ``jlens/`` reads and steers toward
+// saying it (the R family), ``slens/`` toward having read it (the S family's ``out`` site). Every
+// surface that offers one offers the other (the Lens panel's Watch, Steer and pins, the token
+// view's Probe and Steer toward it), through one pair whose choice they share.
+
+export type LensNamespace = "jlens" | "slens";
+
+/** The pair, as each surface shows it: the namespace, its word, and what it does. */
+export const LENS_NAMESPACES: readonly { value: LensNamespace; label: string; hint: string }[] = [
+  { value: "jlens", label: "As said", hint: "Toward saying it (jlens/, the R lens)" },
+  { value: "slens", label: "As read", hint: "Toward having read it (slens/, the S lens)" },
+];
+
+/** Which of the pair the Lens panel and the token view act with (one choice, both surfaces). */
+export const lensPairState: { namespace: LensNamespace } = $state({ namespace: "jlens" });
+
+/** Whether a namespace's atoms and probes resolve now: ``jlens/`` through the session's R lens,
+ *  ``slens/`` through the active S-family source's ``out`` site, loaded for these weights. */
+export function lensNamespaceReady(namespace: LensNamespace): boolean {
+  if (namespace === "jlens") return sessionState.info?.jlens_fitted === true;
+  const row = lensSourceState.sources.find((source) => source.family === "S" && source.active === true);
+  return row !== undefined && row.compatible !== false && (row.sites === undefined || row.sites.includes("out"));
+}
+
+/** The namespace a surface acts with: the pair's choice when it is ready, else the other one when
+ *  that is (a model with only one lens family offers it alone), else the choice. */
+export function lensNamespaceInUse(): LensNamespace {
+  const chosen = lensPairState.namespace;
+  if (lensNamespaceReady(chosen)) return chosen;
+  const other: LensNamespace = chosen === "jlens" ? "slens" : "jlens";
+  return lensNamespaceReady(other) ? other : chosen;
+}
+
 /** The lens sources and what the Lens room draws them with. ``providers``, ``band`` and
  *  ``fitDocuments`` are the server's; a runtime that sends none leaves them empty, and the room
  *  hides what they draw. */

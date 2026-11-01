@@ -206,7 +206,11 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   error}`), not a failed request. A valid, non-empty expression also carries
   `n_layers` and `terms` (`SteeringScope.term_layers`: each term's key, fitted
   layers, share and selected layers), which the term editor draws its depth
-  strip from.
+  strip from, and `parts` (`grammar.term_parts`: each term in parse order with
+  its own `format_expr` text, op, target, coefficient(s), position, clause and
+  trigger), from which the dashboard shows a recipe from elsewhere as chips
+  without a parser of its own. A lens probe row names its `namespace`
+  (`jlens` or `slens`).
 - **Profiles.** `pairwise` and `correlation` read `session.analytics_profile`,
   CPU snapshots built inside the exclusive-GPU section, so a polled read never
   copies off the device during a model op. Both are Mahalanobis-only and 409

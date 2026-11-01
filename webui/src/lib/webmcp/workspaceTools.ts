@@ -16,7 +16,7 @@ import { isPendingBusy, pendingActions } from "../stores/pending.svelte";
 import { manifoldJobs } from "../stores/manifoldJobs.svelte";
 import { loomTree, castState } from "../stores/loom.svelte";
 import { loomUiState } from "../stores/loomUi.svelte";
-import { steerRack, currentSteeringExpression, applyCustomSteeringExpression, manifoldCentroid } from "../stores/steering.svelte";
+import { steerRack, currentSteeringExpression, applyRecipe, manifoldCentroid } from "../stores/steering.svelte";
 import { probeRack, attachProbe, detachProbe, highlightState, setHighlightTarget, setCompareTarget, setCompareTwo, setProbeSortMode } from "../stores/probes.svelte";
 import { inspectorState, setInspectorTab, lensFetch, saeLoad } from "../stores/instruments.svelte";
 import { lensFit, saeTrain } from "../stores/instrumentAuthoring.svelte";
@@ -39,7 +39,7 @@ import { fitGeometry } from "../manifolds/fitKind";
 import { setTheme, theme } from "../theme";
 import type { Choice } from "@stdlogits/ledger";
 import { SURPRISE_TARGET, ENTROPY_TARGET, PROBABILITY_TARGET } from "../tokens";
-import type { DrawerName, SteerEntry, Trigger, Variant, ProbeSortMode } from "../types";
+import type { DrawerName, SteerEntry, SteeringValidationResponse, Trigger, Variant, ProbeSortMode } from "../types";
 
 const string = (description: string, maxLength = 4096): InputSchema => ({ type: "string", description, maxLength });
 const number = (description: string, minimum?: number, maximum?: number): InputSchema => ({ type: "number", description, ...(minimum === undefined ? {} : { minimum }), ...(maximum === undefined ? {} : { maximum }) });
@@ -101,7 +101,7 @@ export function readWorkspaceState() {
     sampling: samplingState,
     role_capabilities: { assistant: sessionState.info!.role_substitution_supported, user: sessionState.info!.user_role_supported, scene: sessionState.info!.scene_mode },
     cast: castState.roster,
-    steering: { expression: currentSteeringExpression(), custom: steerRack.customExpression !== null, subspace_along: steerRack.subspaceAlong, entries: [...steerRack.entries].map(([selector, entry]) => ({ selector, ...entry })) },
+    steering: { expression: currentSteeringExpression(), read_only: steerRack.readOnlyRecipe !== null, read_only_note: steerRack.recipeNote?.text ?? null, subspace_along: steerRack.subspaceAlong, entries: [...steerRack.entries].map(([selector, entry]) => ({ selector, ...entry })) },
     probes: probeRack.active.map(name => ({ name, info: probeRack.entries.get(name)?.info })),
     highlighting: highlightState,
     automatic_comparison: autoRegenState,
@@ -115,11 +115,15 @@ function result(value: Record<string, unknown> = {}) {
 }
 
 async function validateExpression(expression: string, context: ToolContext): Promise<string> {
+  return (await validateSteering(expression, context)).expression;
+}
+
+async function validateSteering(expression: string, context: ToolContext): Promise<SteeringValidationResponse> {
   context.signal.throwIfAborted();
   const validation = await apiSessions.validateSteering(expression);
   context.signal.throwIfAborted();
   if (!validation.valid) throw new ToolError("INVALID_STEERING", validation.error ?? "This steering expression cannot run on the current model.");
-  return validation.expression;
+  return validation;
 }
 
 function changedSince(revision: string, context: ToolContext): void {
@@ -373,14 +377,14 @@ export function createWorkspaceTools(): AppTool[] {
       await tick();
       return result({ label, member: copy(castState.roster[label] ?? null) });
     }, { surfaces: ["cast"], services: ["tree.cast", "tree.castPut", "tree.castDelete"] }),
-    tool("drowse_set_steering", "Set complete steering expression", "Validate and apply the exact expression used by the next generation. Replaces the current visual rack. Empty clears steering. Use full selectors and modest coefficients; inspect existing controls before fitting new ones. This does not train or rename the model.", objectSchema({ expression: string("Complete steering grammar, e.g. 0.3 default/personas%pirate. Empty disables steering.", 100000) }, ["expression"]), async (input, context) => {
+    tool("drowse_set_steering", "Set complete steering expression", "Validate and apply the exact expression used by the next generation. Replaces the current visual rack: it shows as chips when every term fits one (as_chips), else as one read-only recipe chip people can clear but not edit. Empty clears steering. Use full selectors and modest coefficients; inspect existing controls before fitting new ones. This does not train or rename the model.", objectSchema({ expression: string("Complete steering grammar, e.g. 0.3 default/personas%pirate. Empty disables steering.", 100000) }, ["expression"]), async (input, context) => {
       assertWorkspaceIdle(context);
       const revision = workspaceRevision();
-      const expression = await validateExpression(input.expression as string, context);
+      const validation = await validateSteering(input.expression as string, context);
       changedSince(revision, context);
-      applyCustomSteeringExpression(expression);
+      applyRecipe(validation.expression, validation.parts);
       await tick();
-      return result({ expression: currentSteeringExpression(), rack_replaced: true });
+      return result({ expression: currentSteeringExpression(), rack_replaced: true, as_chips: steerRack.readOnlyRecipe === null, read_only_note: steerRack.recipeNote?.text ?? null });
     }, { surfaces: ["RecipeBar", "TermEditor"], services: ["sessions.validateSteering"] }),
     tool("drowse_edit_steer_rack", "Edit a visible steering card", "Add, update, remove, or clear visible steering cards after validating the resulting expression. Flat cards share subspace_along; curved cards have individual along/onto; lens/SAE atoms have alpha. Custom expressions require set_steering instead of implicit replacement.", objectSchema({
       action: choice(["upsert", "remove", "clear", "strength"], "Card mutation or shared flat strength."), selector: string("Exact namespace/name, jlens/word (toward saying it), slens/word (toward having read it), sae/feature_id, or a unit (neuron/L8n344, head/L20h17); pass geometry variant separately.", 256),
@@ -388,7 +392,7 @@ export function createWorkspaceTools(): AppTool[] {
       subspace_along: number("Shared slide coefficient for EVERY flat card; 0 disables their push."), along: number("Curved card slide coefficient."), onto: number("Curved residual collapse; zero leaves it unchanged.", 0, 1), alpha: number("Lens/SAE atom or unit coefficient. Values are model dependent; start modestly. A unit ablation runs at 1 (the unit held at its neutral mean) and refuses a negative alpha."),
       enabled: boolean("Include this card in the expression."), ablate: boolean("Mean-ablate a flat concept or atom instead of pushing."), trigger: choice(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"], "Trigger phase: BOTH (default) steers the prompt and every generated token, BEFORE only the prompt prefill, AFTER the reply after thinking, THINKING only thinking tokens, RESPONSE every generated token."),
     }, ["action"]), async (input, context) => editRack(input, context), { surfaces: ["subspace", "manifolds", "RecipeBar", "TermEditor", "JLensPanel", "SaePanel"] }),
-    tool("drowse_attach_probe", "Attach a reading", "Attach a geometry, lens-token, or SAE-feature probe and synchronize the visible probe rack. Reading measures the current representation; attaching does not apply steering.", objectSchema({ selector: string("Full geometry selector, jlens/word, or sae/feature_id.", 256), name: string("Optional unique display/channel name.", 256), top_n: integer("Number of nearest geometry labels to retain.", 1, 1000) }, ["selector"]), async (input, context) => {
+    tool("drowse_attach_probe", "Attach a reading", "Attach a geometry, lens-token, or SAE-feature probe and synchronize the visible probe rack. Reading measures the current representation; attaching does not apply steering.", objectSchema({ selector: string("Full geometry selector, jlens/word (the word as said: its probability), slens/word (the word as read: its footprint z), or sae/feature_id.", 256), name: string("Optional unique display/channel name.", 256), top_n: integer("Number of nearest geometry labels to retain.", 1, 1000) }, ["selector"]), async (input, context) => {
       assertWorkspaceIdle(context);
       const info = await attachProbe(input.selector as string, { ...(input.name === undefined ? {} : { name: input.name as string }), ...(input.top_n === undefined ? {} : { top_n: input.top_n as number }) });
       await tick(); return result({ probe: copy(info) });
@@ -443,7 +447,7 @@ export function createWorkspaceTools(): AppTool[] {
 
 async function editRack(input: Record<string, unknown>, context: ToolContext) {
   assertWorkspaceIdle(context);
-  if (steerRack.customExpression !== null && input.action !== "clear") throw new ToolError("CUSTOM_EXPRESSION", "A custom expression is active. Edit it with set_steering or explicitly clear it before creating visual cards.");
+  if (steerRack.readOnlyRecipe !== null && input.action !== "clear") throw new ToolError("READ_ONLY_RECIPE", "A read-only recipe (one chips cannot hold) is active. Replace it with set_steering or explicitly clear it before creating visual cards.");
   const revision = workspaceRevision();
   const entries = new Map<string, SteerEntry>([...steerRack.entries].map(([name, entry]) => [name, copy(entry)]));
   const along = input.subspace_along === undefined ? steerRack.subspaceAlong : input.subspace_along as number;
@@ -521,7 +525,8 @@ async function editRack(input: Record<string, unknown>, context: ToolContext) {
   steerRack.entries.clear();
   for (const [name, entry] of entries) steerRack.entries.set(name, entry);
   steerRack.subspaceAlong = along;
-  steerRack.customExpression = null;
+  steerRack.readOnlyRecipe = null;
+  steerRack.recipeNote = null;
   await tick();
   return result({ expression: currentSteeringExpression(), entries: copy([...steerRack.entries]), subspace_along: along });
 }

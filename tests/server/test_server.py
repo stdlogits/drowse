@@ -1304,7 +1304,7 @@ class TestWSTokenEventLens:
 class TestLensProbeRoutes:
     """Lens (readout-channel) probes on the unified ``/probes`` routes."""
 
-    _SPEC = {"word": "fake", "token_id": 42, "layers": [12, 14, 18]}
+    _SPEC = {"word": "fake", "token_id": 42, "layers": [12, 14, 18], "side": "output"}
 
     def test_list_includes_lens_probes(self, session_and_client: Any) -> None:
         session, client = session_and_client
@@ -1317,6 +1317,7 @@ class TestLensProbeRoutes:
         # actually produce — no invented manifold/domain/node geometry.
         assert row == {
             "family": "lens",
+            "namespace": "jlens",
             "name": "jlens/fake",
             "layers": [12, 14, 18],
             "intrinsic_dim": 1,  # the one strength axis
@@ -1324,6 +1325,18 @@ class TestLensProbeRoutes:
             "word": "fake",
             "token_id": 42,
         }
+
+    def test_slens_probe_names_its_namespace(self, session_and_client: Any) -> None:
+        # The client re-attaches a probe from its row and reads its unit from
+        # it: an slens/ probe must not come back as jlens/<word> (a percent).
+        session, client = session_and_client
+        session.monitor.attached_probes.return_value = {}
+        session.lens.specs.return_value = {
+            "slens/fake": {**self._SPEC, "side": "input"},
+        }
+        (row,) = client.get("/drowse/v1/sessions/default/probes").json()["probes"]
+        assert row["namespace"] == "slens"
+        assert row["name"] == "slens/fake"
 
     def test_attach_returns_lens_info(self, session_and_client: Any) -> None:
         session, client = session_and_client
