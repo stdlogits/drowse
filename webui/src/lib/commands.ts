@@ -1,6 +1,7 @@
-// The command palette's index (⌘K, the header's search): the rooms, the instruments, every room's
-// sections (findable by what they do: "fit a lens", "fetch the unit catalog", "build a probe"),
-// then every other tool in the drawer registry.
+// The command palette's index (⌘K, the header's search): the rooms, the ways to steer ("+ Steer"
+// on each kind, neurons and heads first), the instruments, every room's sections (findable by what
+// they do: "fit a lens", "fetch the unit catalog", "build a probe"), then every other tool in the
+// drawer registry.
 //
 // The tool categories are NOT declared here: they are derived from the drawer registry
 // (``drawers/index.ts``), the one place a drawer's component, sizing and reachability are written
@@ -14,7 +15,7 @@ import { unitsAvailable } from "./stores/units.svelte";
 import type { DrawerName } from "./types";
 import { setInspectorTab, type InspectorTab } from "./stores.svelte";
 import { clearSelection } from "./stores/selection.svelte";
-import { showConversation } from "./stores/workbench.svelte";
+import { openSteerPicker, showConversation, type SteerKind } from "./stores/workbench.svelte";
 
 export type { RailCategory, RailTool } from "../drawers";
 export { RAIL_CATEGORIES } from "../drawers";
@@ -23,7 +24,8 @@ export type PaletteAction =
   | { kind: "room"; room: Room }
   | { kind: "section"; room: Room; section: string }
   | { kind: "drawer"; drawer: DrawerName }
-  | { kind: "instrument"; tab: InspectorTab | "units" };
+  | { kind: "instrument"; tab: InspectorTab | "units" }
+  | { kind: "steer"; with: SteerKind };
 
 export interface PaletteCommand {
   label: string;
@@ -41,9 +43,20 @@ const ROOM_KEYWORDS: Record<Room, string> = {
   model: "health device runtime api access key layers neurons heads shape",
 };
 
-/** The flattened index: the rooms first, then the instruments (in the dashboard's order of
- *  priority, the Inspector's: the unit probes where units read, the lens, the probes, the SAE's
- *  features), then the rooms' sections, then every other registry tool. */
+/** "+ Steer"'s kinds in the palette, in the order of priority (a runtime that reads no units
+ *  leaves the first out, as the picker does). */
+const STEER_COMMANDS: readonly { with: SteerKind; label: string; keywords: string }[] = [
+  { with: "unit", label: "Steer a neuron or head", keywords: "push silence ablate steer steering neuron head unit" },
+  { with: "lens", label: "Steer toward a lens token", keywords: "push steer steering lens word token jlens slens say read" },
+  { with: "concept", label: "Steer with a concept", keywords: "push steer steering concept vector pole flat" },
+  { with: "position", label: "Steer to a manifold position", keywords: "push steer steering manifold position node curved" },
+  { with: "feature", label: "Steer with an SAE feature", keywords: "push steer steering sae feature sparse autoencoder" },
+];
+
+/** The flattened index: the rooms first, then the ways to steer (neurons and heads first), then
+ *  the instruments (in the dashboard's order of priority, the Inspector's: the unit probes where
+ *  units read, the lens, the probes, the SAE's features), then the rooms' sections, then every
+ *  other registry tool. */
 export function paletteCommands(): PaletteCommand[] {
   const cmds: PaletteCommand[] = shownRooms().map(room => ({
     label: room.label,
@@ -51,6 +64,10 @@ export function paletteCommands(): PaletteCommand[] {
     action: { kind: "room", room: room.value },
     keywords: ROOM_KEYWORDS[room.value],
   }));
+  for (const steer of STEER_COMMANDS) {
+    if (steer.with === "unit" && !unitsAvailable()) continue;
+    cmds.push({ label: steer.label, group: "Steer", action: { kind: "steer", with: steer.with }, keywords: steer.keywords });
+  }
   if (unitsAvailable()) {
     cmds.push({ label: "Unit probes", group: "Instruments", action: { kind: "instrument", tab: "units" }, keywords: "neurons heads units probed readings" });
   }
@@ -102,6 +119,12 @@ export function searchCommands(commands: readonly PaletteCommand[], query: strin
   return commands
     .filter(command => terms.every(term => `${command.label} ${command.group} ${command.keywords ?? ""}`.toLowerCase().includes(term)))
     .sort((a, b) => rank(a) - rank(b));
+}
+
+/** Opens "+ Steer" on ``kind`` in the workbench. */
+export function showSteerPicker(kind: SteerKind): void {
+  goto("workbench");
+  openSteerPicker(kind);
 }
 
 /** Shows the workbench's instruments at one of them (the Inspector with nothing selected). */

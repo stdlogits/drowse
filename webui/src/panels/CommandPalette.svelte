@@ -5,7 +5,7 @@
   import { tick } from "svelte";
   import { Icon, fadeIn, fadeOut, glide, rise } from "@stdlogits/ledger";
   import { paletteState, closePalette } from "../lib/stores/palette.svelte";
-  import { paletteCommands, searchCommands, showInstrument, type PaletteCommand } from "../lib/commands";
+  import { paletteCommands, searchCommands, showInstrument, showSteerPicker, type PaletteCommand } from "../lib/commands";
   import { openDrawer } from "../lib/stores.svelte";
   import { goto } from "../lib/stores/rooms.svelte";
   import { containTab } from "../lib/focusTrap";
@@ -53,6 +53,9 @@
       }
       case "instrument":
         showInstrument(cmd.action.tab);
+        break;
+      case "steer":
+        showSteerPicker(cmd.action.with);
         break;
     }
   }

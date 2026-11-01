@@ -57,6 +57,25 @@ try {
   assert.deepEqual(first("create a concept"), { kind: "section", room: "artifacts", section: "build" }, "the builder's old name still finds it");
   assert.deepEqual(first("api key"), { kind: "section", room: "model", section: "access" });
   assert.ok(!searchCommands(commands, "fit a lens").some(c => c.action.kind === "room" && c.action.room === "lens"), "the Lens room reads; it does not fit");
+  // W6 review (live): "push" and "silence" found nothing and "steer" only the Workbench. Each of
+  // "+ Steer"'s kinds is a palette entry, neurons and heads first, opening the picker on its kind.
+  assert.deepEqual(commands.filter(c => c.group === "Steer").map(c => c.action.with), ["unit", "lens", "concept", "position", "feature"]);
+  assert.deepEqual(first("push"), { kind: "steer", with: "unit" });
+  assert.deepEqual(first("silence"), { kind: "steer", with: "unit" });
+  assert.deepEqual(searchCommands(commands, "steer").slice(0, 5).map(c => c.action.with), ["unit", "lens", "concept", "position", "feature"]);
+  assert.deepEqual(first("steer toward a lens token"), { kind: "steer", with: "lens" });
+  {
+    const { showSteerPicker } = await server.ssrLoadModule("/src/lib/commands.ts");
+    const { steerPicker } = await server.ssrLoadModule("/src/lib/stores/workbench.svelte.ts");
+    const before = steerPicker.requested;
+    rooms.goto("lens");
+    showSteerPicker("feature");
+    assert.deepEqual([rooms.route.room, steerPicker.kind, steerPicker.requested], ["workbench", "feature", before + 1]);
+    steerPicker.kind = "unit";
+    assert.match(read("panels/CommandPalette.svelte"), /case "steer":\s*showSteerPicker\(cmd\.action\.with\);/);
+    assert.match(read("panels/RecipeBar.svelte"), /const requested = steerPicker\.requested;[^]*?adding = true;/, "RecipeBar opens + Steer on a request");
+    assert.match(read("panels/rack/SteerPicker.svelte"), /let chosen = \$state<Kind>\(steerPicker\.kind\);/);
+  }
 
   // The Units section: a catalogued model's labels to fetch (the one primary action), then bound
   // (what is installed: the catalog, its commit and files, the credit), then an uncatalogued

@@ -6,7 +6,7 @@
   // pole, a persona), a manifold position (a curved fit's node) and an SAE feature (its number, or a
   // label among the features seen). A pick adds the term through lib/steerActions.ts, which selects
   // its chip, so its editor opens for the strength. A kind this runtime cannot read is left out.
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, untrack } from "svelte";
   import { Icon, Segmented, Tabs, tokenParts } from "@stdlogits/ledger";
   import { apiInstruments, describeError } from "../../lib/runtime/services";
   import { userFacingError } from "../../lib/runtime/userFacingError";
@@ -26,6 +26,7 @@
   import { saeLoaded, sessionState } from "../../lib/stores/session.svelte";
   import { refreshManifoldList, steerRack } from "../../lib/stores/steering.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
+  import { steerPicker, type SteerKind } from "../../lib/stores/workbench.svelte";
   import {
     latestReply,
     nodeActivity,
@@ -46,7 +47,7 @@
 
   let { onpicked }: { onpicked: () => void } = $props();
 
-  type Kind = "unit" | "lens" | "concept" | "position" | "feature";
+  type Kind = SteerKind;
   const KINDS: readonly { value: Kind; label: string; placeholder: string }[] = [
     { value: "unit", label: "Neuron or head", placeholder: "An ID like L20 n512, or a word" },
     { value: "lens", label: "Lens token", placeholder: "A word" },
@@ -59,7 +60,12 @@
   // Every kind is listed (a runtime that reads no units leaves those out): a lens token or a feature
   // with no lens or SAE yet is one link to the Artifacts section that prepares it.
   const kinds = $derived(KINDS.filter((k) => k.value !== "unit" || unitsAvailable()));
-  let chosen = $state<Kind>(lastKind);
+  let chosen = $state<Kind>(steerPicker.kind);
+  // A request to open on a kind (the palette's Steer entries) while the picker is open.
+  $effect(() => {
+    void steerPicker.requested;
+    chosen = untrack(() => steerPicker.kind);
+  });
   const kind = $derived<Kind>(kinds.some((k) => k.value === chosen) ? chosen : kinds[0]?.value ?? "concept");
   const placeholder = $derived(KINDS.find((k) => k.value === kind)?.placeholder ?? "");
   const missing = $derived(kind === "lens" && !lensReady ? { head: "No lens", label: "Lenses", section: "lenses" }
@@ -77,7 +83,7 @@
   }
   function choose(next: Kind): void {
     chosen = next;
-    lastKind = next;
+    steerPicker.kind = next;
     query = "";
     settled = "";
     void tick().then(() => field?.focus());
@@ -267,11 +273,6 @@
       }
     }
   }
-</script>
-
-<script lang="ts" module>
-  /** The kind "+ Steer" opens on: the last one chosen (this page's memory). */
-  let lastKind: "unit" | "lens" | "concept" | "position" | "feature" = "unit";
 </script>
 
 <section class="picker" aria-label="Add a steering term">

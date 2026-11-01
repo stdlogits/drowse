@@ -10,6 +10,7 @@
   // never typed: a recipe from elsewhere (an agent's, a saved conversation's, the command line's)
   // becomes chips when they can hold it, and otherwise shows as one read-only chip that says why and
   // can be cleared.
+  import { untrack } from "svelte";
   import { MorphText, expand, reducedMotion } from "@stdlogits/ledger";
   import TermEditor from "./rack/TermEditor.svelte";
   import SteerPicker from "./rack/SteerPicker.svelte";
@@ -25,6 +26,7 @@
   import { sessionState } from "../lib/stores/session.svelte";
   import { unitTermLabel } from "../lib/stores/units.svelte";
   import { rackEditQueued } from "../lib/stores/pending.svelte";
+  import { steerPicker } from "../lib/stores/workbench.svelte";
   import { UnitLabels } from "../drawers/token/labels.svelte";
   import { depthSpan, layerRunsText } from "../lib/steering/layers";
   import { placeOf } from "../lib/steering/termLayers.svelte";
@@ -80,6 +82,18 @@
   });
 
   let adding = $state(false);
+  // The palette's Steer entries open "+ Steer" on their kind (stores/workbench.svelte.ts).
+  let seenRequest = steerPicker.requested;
+  $effect(() => {
+    const requested = steerPicker.requested;
+    if (requested === seenRequest) return;
+    seenRequest = requested;
+    untrack(() => {
+      adding = true;
+      recipeOpen = false;
+      closeTermEditor();
+    });
+  });
   /** The read-only recipe's panel. */
   let recipeOpen = $state(false);
   /** The term just removed, until the next change: the row offers it back. */
