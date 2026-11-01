@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 import torch
 from drowse.geometry.profile import Profile
+from drowse.generation.finalize import MIN_ELAPSED_FOR_RATE
 from drowse.generation.results import GenerationResult, RunSet, TokenEvent
 from tests.support.gpu import gpu_model_id, load_or_skip_inaccessible
 
@@ -179,8 +180,13 @@ class TestGeneration:
         single = result.first
         assert len(single.text) > 0
         assert single.token_count > 0
-        assert single.tok_per_sec > 0
         assert single.elapsed > 0
+        # A one-word reply can finish inside the rate's resolution floor,
+        # which reports 0 rather than a timer-dominated rate.
+        if single.elapsed >= MIN_ELAPSED_FOR_RATE:
+            assert single.tok_per_sec > 0
+        else:
+            assert single.tok_per_sec == 0
         assert single.steering_alphas == {}
 
     def test_generate_blocking_messages(self, session: DrowseSession) -> None:
