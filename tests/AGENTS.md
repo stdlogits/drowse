@@ -195,6 +195,16 @@ files from it, so their paths are part of its interface:
   `schemaVersion` (`-v1`, `post-block-rank-one-v2`).
 - Add a case to `browser_steering_expression.json` only once drowse.ai's
   TypeScript parser agrees: both sides run the same table.
+- `tests/fixtures/steering_ir.json` is the parsed-IR golden, Python-only for
+  now (`tests/steering/test_steering_ir.py`): per accepted expression, the
+  ordered terms (key, kind, coefficient or along/onto, operands, position,
+  layer scope, trigger text and fields, term text) and the canonical
+  `format_expr` string; per rejected one, the error class. It carries its own
+  manifold registry, installed into a fresh home before parsing. It is the
+  target drowse.ai's parser will match; once it does, the browser fixture can
+  grow to this scope. After a deliberate grammar change, regenerate it with
+  `PYTHONPATH=. python -m tests.steering.test_steering_ir` (inputs stay,
+  outputs recompute).
 - The measurement envelope wire shape is part of the same seam
   (`measurement-envelope-v2.json`, plus the exact key sets in
   `tests/readout/test_measurements_envelope.py`).

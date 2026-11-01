@@ -200,7 +200,15 @@ The browser edition reimplements this grammar.
 `tests/fixtures/browser_steering_expression.json` (accepted expressions with
 their `referenced_selectors`, plus rejected ones) is pinned by
 `tests/browser/test_browser_parity.py`; a grammar change updates the fixture
-and is an interface change for drowse.ai.
+and is an interface change for drowse.ai. The parsed form is pinned
+separately by `tests/fixtures/steering_ir.json`
+(`tests/steering/test_steering_ir.py`): every accepted expression's ordered
+terms (key, kind, coefficient or along/onto, operands, position, layer scope,
+trigger) and canonical string against a small fixture registry, and every
+rejected expression's error class. It is Python-only today and is the target
+drowse.ai's parser will match; a change to any parsed value regenerates it
+(`PYTHONPATH=. python -m tests.steering.test_steering_ir`) and is the same
+interface change.
 
 ## Names, atoms and resolution
 
@@ -489,7 +497,7 @@ belong in compose or lower.
 
 All CPU, in `tests/steering/`: grammar and round trips
 (`test_steering_expr.py`, `test_manifold_grammar.py`, unit atoms in
-`test_unit_grammar.py`), triggers
+`test_unit_grammar.py`, the parsed-IR golden in `test_steering_ir.py`), triggers
 (`test_triggers.py`), scopes on a real session and on
 `tests/support/composer.py::SteeringRig` (`test_steering_context.py`,
 `test_steering_context_ablation.py`), installed state and offset buffers
