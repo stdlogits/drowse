@@ -93,6 +93,27 @@ async def session_lock(app: FastAPI) -> AsyncIterator[None]:
         lock.release()
 
 
+@asynccontextmanager
+async def session_lock_or_busy(app: FastAPI) -> AsyncIterator[None]:
+    """Hold the session lock if it is free now, else raise
+    :class:`EngineBusyError` (409) without queueing.
+
+    For a quick check that is worthless once stale (steering validation):
+    the session lock is held for a whole generation, so waiting for it would
+    answer only after the reply ends.  On the one event loop, a free
+    ``asyncio.Lock`` is taken without yielding, so nothing slips in between
+    the probe and the acquire.
+    """
+    lock: asyncio.Lock = app.state.session_lock
+    if lock.locked():
+        raise EngineBusyError()
+    await lock.acquire()
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 def refuse_if_busy(session: "DrowseSession") -> None:
     """Raise :class:`EngineBusyError` (409) while the engine gen-lock is held.
 

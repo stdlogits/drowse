@@ -99,6 +99,27 @@ def test_validate_does_not_block_the_event_loop(tiny_session: Any, app_client: A
     assert waited < 2.0 and other < 2.0
 
 
+def test_validate_answers_409_while_a_reply_holds_the_session_lock(
+    tiny_session: Any, app_client: Any,
+) -> None:
+    """Regression: validate awaited the session lock, which a generation holds
+    for its whole reply, so a check sent mid-reply answered only after the
+    reply ended instead of 409 at once."""
+    register_vectors(tiny_session, "mood")
+    client = app_client(tiny_session)
+    lock = client.app.state.session_lock
+    client.portal.call(lock.acquire)
+    try:
+        start = time.monotonic()
+        resp = client.post(f"{_BASE}/steering/validate", json={"expression": "0.3 mood"})
+        waited = time.monotonic() - start
+    finally:
+        client.portal.call(lock.release)
+    assert resp.status_code == 409
+    assert waited < 2.0
+    assert client.post(f"{_BASE}/steering/validate", json={"expression": "0.3 mood"}).json()["valid"]
+
+
 def test_units_find_does_not_resolve_its_selector_while_the_model_is_held(
     tiny_session: Any, app_client: Any, monkeypatch: Any,
 ) -> None:

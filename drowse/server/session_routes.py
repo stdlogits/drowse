@@ -13,7 +13,9 @@ from drowse.server.response_models import (
     SteeringPartJSON,
     SteeringValidationResponse,
 )
-from drowse.server.runtime import exclusive_or_busy, run_in_thread, session_lock, session_router
+from drowse.server.runtime import (
+    exclusive_or_busy, run_in_thread, session_lock_or_busy, session_router,
+)
 from drowse.server.session_models import (
     PatchSessionRequest,
     ValidateSteeringRequest,
@@ -64,9 +66,10 @@ def register_session_routes(app: FastAPI) -> None:
         would, then rolls straight back — so a green validation cannot hide a
         rack-time failure.  It touches shared hook state, so it serializes on
         the session lock, and it runs in a worker thread holding the model
-        lock: while a generation, fit or training holds the model it answers
-        409 rather than waiting (on the event loop that wait would stall
-        every other request).  A rejected expression is an in-band form
+        lock: while a generation, fit or training holds either it answers
+        409 rather than waiting (a generation holds the session lock for the
+        whole reply, and on the event loop a wait for the model lock would
+        stall every other request).  A rejected expression is an in-band form
         result (``valid: false``), not a failed request.  A valid one also
         reports the model's depth and where each term acts (its fitted
         layers, its share there, the layers its clause selects): the term
@@ -86,7 +89,7 @@ def register_session_routes(app: FastAPI) -> None:
             with exclusive_or_busy(session), session.steering(parsed) as scope:
                 return scope.term_layers()
 
-        async with session_lock(app):
+        async with session_lock_or_busy(app):
             try:
                 terms = await run_in_thread(dry_install)
             except DrowseError as exc:
