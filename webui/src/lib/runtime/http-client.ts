@@ -54,15 +54,17 @@ class HttpRuntimeEventChannel implements RuntimeEventChannel {
       }
       for (const listener of this.listeners) listener(message);
     });
-    socket.addEventListener("close", () => {
+    socket.addEventListener("close", (event: CloseEvent) => {
       if (this.connectionRevision !== revision) return;
       if (this.socket === socket) this.socket = null;
       const expected = this.expectedClosures.has(socket);
       this.expectedClosures.delete(socket);
+      const detail = event.reason ? `${event.code}: ${event.reason}` : String(event.code);
       this.emitState({
         state: "closed",
         expected,
-        reason: expected ? null : "The Drowse runtime connection closed unexpectedly",
+        reason: expected ? null : `The connection to the drowse server closed (${detail})`,
+        code: "RUNTIME_CONNECTION_LOST",
       });
     });
 
@@ -120,7 +122,7 @@ class HttpRuntimeEventChannel implements RuntimeEventChannel {
   }
 
   private emitState(state: RuntimeEventChannelState): void {
-    for (const listener of this.stateListeners) listener(state);
+    for (const listener of [...this.stateListeners]) listener(state);
   }
 }
 

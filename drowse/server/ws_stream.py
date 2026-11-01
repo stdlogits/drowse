@@ -65,6 +65,15 @@ MAX_WS_PENDING_BYTES = 4 * MAX_WS_MESSAGE_BYTES
 #: queued or pending; past it the connection lags and later gets a ``resync``.
 MAX_WS_OUTBOUND_EVENTS = 256
 WS_SEND_TIMEOUT_SECONDS = 30
+#: The server's WebSocket keepalive (``uvicorn.run(ws_ping_interval=...,
+#: ws_ping_timeout=...)``).  Pings still go out (they keep idle connections
+#: open through proxies, and a peer that is gone fails the TCP write), but a
+#: late pong never closes the socket: a reader slower than generation answers
+#: the ping only after the token backlog queued in front of it, which would
+#: close a live page about 40 s into a long reply and record the reply
+#: ``cancelled``.  ``WS_SEND_TIMEOUT_SECONDS`` is the one dead-peer rule.
+WS_PING_INTERVAL_SECONDS = 20.0
+WS_PING_TIMEOUT_SECONDS: float | None = None
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 JSONObject = dict[str, JSONValue]

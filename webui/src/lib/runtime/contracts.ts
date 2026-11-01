@@ -391,6 +391,10 @@ export type RuntimeEventChannelState =
       state: "closed";
       expected: boolean;
       reason: string | null;
+      /** Why it closed, as an error code. Omitted: ``RUNTIME_CHANNEL_CLOSED`` (the runtime went
+       *  away). ``RUNTIME_CONNECTION_LOST``: the connection to a server dropped while the server
+       *  may still hold the conversation, so the client re-reads it from there. */
+      code?: "RUNTIME_CHANNEL_CLOSED" | "RUNTIME_CONNECTION_LOST";
     };
 
 export interface RuntimeEventChannel {

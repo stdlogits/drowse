@@ -54,6 +54,7 @@ try {
   let pendingRead = null;
   let reads = 0;
   const listeners = new Set();
+  const stateListeners = new Set();
   let open = false;
   const { installRuntimeClient } = await server.ssrLoadModule("/src/lib/runtime/registry.ts");
   installRuntimeClient({
@@ -74,7 +75,7 @@ try {
       get isOpen() { return open; },
       async open() { open = true; },
       subscribe: (listener) => { listeners.add(listener); return () => listeners.delete(listener); },
-      subscribeState: () => () => {},
+      subscribeState: (listener) => { stateListeners.add(listener); return () => stateListeners.delete(listener); },
       send() {},
       async stop() {},
       acknowledgeSnapshot() {},
@@ -163,6 +164,31 @@ try {
   const compared = chatLog.turns[steeredIdx].abPair;
   assert.equal(compared.text, words.slice(0, 3).join(""), "the comparison's text is whole");
   assert.equal(compared.tokens?.length ?? 0, 0, "its gapped rows give way to the text");
+
+  // A server connection that drops mid-reply says so (not "the local model is not ready") and
+  // reconnects, which reads the tree: the page shows the reply as the server kept it.
+  const { toasts } = await server.ssrLoadModule("/src/lib/stores/toasts.svelte.ts");
+  const second = { ...reply([0, 1].map(row)), id: "reply2", text: "" };
+  emit({ type: "started", generation_id: "g2", node_id: null, sibling_index: 0, sibling_count: 1 });
+  emit({ type: "tree_mutated", op: "begin_assistant", rev: 4, added: [second], removed: [], updated: [], active_node_id: "reply2", cast: {} });
+  emit({ ...token(0), node_id: "reply2" });
+  const kept = { ...second, tokens: [0, 1, 2, 3, 4].map(row), text: words.slice(0, 5).join(""), finish_reason: "cancelled" };
+  snapshot = tree(5, [root, ask, final, kept], "reply2");
+  pendingRead = null;
+  open = false;
+  for (const listener of [...stateListeners]) listener({ state: "closed", expected: false, reason: "closed (1011)", code: "RUNTIME_CONNECTION_LOST" });
+  assert.ok(toasts.entries.some((entry) => /connection to the drowse server dropped/.test(entry.message)),
+    "the toast names the dropped connection");
+  assert.ok(!toasts.entries.some((entry) => /local model is not ready/.test(entry.message)));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  await tick();
+  assert.equal(typeof pendingRead, "function", "the client reconnects and reads the tree");
+  pendingRead();
+  await tick();
+  await tick();
+  const caught = chatLog.turns.find((candidate) => candidate.nodeId === "reply2");
+  assert.equal(caught.tokens.length, 5, "the reply shows every row the server kept");
+  assert.equal(caught.finishReason, "cancelled");
   console.log("stream resync: a lagging reader rebuilds its reply from the tree, no token lost or doubled");
 } finally {
   await server.close();

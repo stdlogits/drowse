@@ -307,8 +307,9 @@ export function ensureRuntimeChannel(
       state.state !== "closed" || state.expected || wsConn.channel !== channel
     ) return;
     const reason = state.reason ?? "The Drowse runtime connection closed unexpectedly";
+    const code = state.code ?? "RUNTIME_CHANNEL_CLOSED";
     const friendly = userFacingError(
-      { code: "RUNTIME_CHANNEL_CLOSED", message: reason },
+      { code, message: reason },
       "The local model connection closed. Reopen the model and try again.",
     );
     if (rehydrating) {
@@ -321,9 +322,18 @@ export function ensureRuntimeChannel(
       genStatus.active || chatLog.pendingIndex !== null ||
       loomTree.pendingNodeId !== null || abState.processingAb || isPendingBusy()
     ) {
-      dispatch({ type: "error", code: "RUNTIME_CHANNEL_CLOSED", message: reason });
+      dispatch({ type: "error", code, message: reason });
     } else {
       pushToast(friendly, { kind: "error", ttlMs: null });
+    }
+    // A dropped server connection leaves the conversation on the server: reconnect, which reads
+    // the authoritative tree, so the page shows the reply as the server kept it.
+    // After this close has reached every listener: a channel opened inside it would hear it too.
+    if (code === "RUNTIME_CONNECTION_LOST") {
+      setTimeout(() => {
+        if (wsConn.channel) return;
+        void ensureRuntimeChannel().then(() => { loomTree.error = null; }, () => {});
+      }, 0);
     }
   });
 

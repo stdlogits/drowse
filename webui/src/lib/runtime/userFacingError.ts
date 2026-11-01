@@ -66,6 +66,8 @@ const MESSAGES: Array<[RegExp, ErrorMessage]> = [
     "This model needs more graphics memory than this device could provide. Try a smaller model or a shorter context."],
   [/MODEL_(?:NOT_INSTALLED|VARIANT_NOT_FOUND|VARIANT_AMBIGUOUS)/u,
     "Drowse could not find the selected model on this device. Choose or download the model again."],
+  [/RUNTIME_CONNECTION_LOST/u,
+    "The connection to the drowse server dropped. The conversation now shows what the server kept."],
   [/MODEL_(?:NOT_LOADED|RUNTIME_NOT_READY|LOAD_FAILED|RECOVERY)|RUNTIME_(?:CHANNEL_CLOSED|WORKER_FAILED|CLEANUP_FAILED|STOP_FAILED)/u,
     "The local model is not ready. Reopen it and try again."],
   [/DOWNLOAD_(?:CANCELLED|REQUEST_CANCELLED)/u,

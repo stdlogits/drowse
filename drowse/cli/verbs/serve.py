@@ -291,7 +291,11 @@ def run(args: argparse.Namespace) -> None:
             if args.steer else None
         )
         from drowse.server import create_app
-        from drowse.server.ws_stream import MAX_WS_MESSAGE_BYTES
+        from drowse.server.ws_stream import (
+            MAX_WS_MESSAGE_BYTES,
+            WS_PING_INTERVAL_SECONDS,
+            WS_PING_TIMEOUT_SECONDS,
+        )
 
         web = not args.no_web
         app = create_app(
@@ -315,6 +319,8 @@ def run(args: argparse.Namespace) -> None:
         uvicorn.run(
             app, host=args.host, port=args.port, log_level="info",
             ws_max_size=MAX_WS_MESSAGE_BYTES,
+            ws_ping_interval=WS_PING_INTERVAL_SECONDS,
+            ws_ping_timeout=WS_PING_TIMEOUT_SECONDS,
         )
 
 
