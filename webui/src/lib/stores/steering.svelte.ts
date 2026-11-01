@@ -578,6 +578,9 @@ export function addSaeToRack(featureId: number): void {
 
 // ------------------------------------------------------ unit terms
 
+/** A unit's term as the rack holds it: a push (signed ``alpha``) or an ablation. */
+export type UnitTermValue = { ablate: boolean; alpha: number };
+
 /** Put a unit's one term into the recipe, or take it out (``null``). ``id`` names the unit in any
  *  form ``parseUnit`` reads (``neuron/L31n4410``, ``L28 h12``); the rack key is the engine's
  *  reference. A push runs along the neuron's write (``alpha`` signed, the − pole's below zero), an
@@ -585,23 +588,38 @@ export function addSaeToRack(featureId: number): void {
  *  holds one term at a time, so a push replaces an ablation and back, keeping its trigger. The one
  *  rule (lib/unitTerms.ts) refuses a head push and a negative ablation: nothing changes and the
  *  answer is null. Otherwise the answer is the rack key; the edit queues behind a running
- *  generation like every rack edit. */
-export function setUnitTerm(id: string, term: { ablate: boolean; alpha: number } | null): string | null {
+ *  generation like every rack edit. ``term`` may be a function of the unit's term when the edit
+ *  applies (null: none), so a queued edit decides against the rack as the queue left it, not as it
+ *  was when clicked; a term the unit already holds changes nothing. */
+export function setUnitTerm(
+  id: string,
+  term: UnitTermValue | null | ((held: UnitTermValue | null) => UnitTermValue),
+): string | null {
   const name = parseUnit(id)?.id ?? null;
   if (name === null) return null;
-  if (term !== null && unitTermProblem(name, term) !== null) return null;
-  const what = term === null ? `remove ${name}` : term.ablate ? `ablate ${name}` : `push ${name} ${term.alpha}`;
+  const heldOf = (): UnitTermValue | null => {
+    const prev = steerRack.entries.get(name);
+    return prev?.mode === "unit" ? { ablate: prev.ablate, alpha: prev.alpha } : null;
+  };
+  const resolve = (): UnitTermValue | null => (typeof term === "function" ? term(heldOf()) : term);
+  const preview = resolve();
+  if (preview !== null && unitTermProblem(name, preview) !== null) return null;
+  const what = preview === null ? `remove ${name}` : preview.ablate ? `ablate ${name}` : `push ${name} ${preview.alpha}`;
   enqueueOrApply(what, () => {
-    if (term === null) {
+    const next = resolve();
+    if (next === null) {
       steerRack.entries.delete(name);
       return;
     }
+    if (unitTermProblem(name, next) !== null) return;
+    const held = heldOf();
+    if (held !== null && held.ablate === next.ablate && held.alpha === next.alpha && steerRack.readOnlyRecipe === null) return;
     const prev = steerRack.entries.get(name);
     dropRecipe();
     steerRack.entries.set(name, {
       mode: "unit",
-      ablate: term.ablate,
-      alpha: term.alpha,
+      ablate: next.ablate,
+      alpha: next.alpha,
       ...(prev?.mode === "unit" ? timingOf(prev) : { trigger: "BOTH" as const }),
       enabled: prev?.mode === "unit" ? prev.enabled : true,
     });

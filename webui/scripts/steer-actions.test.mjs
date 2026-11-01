@@ -130,6 +130,43 @@ try {
   assert.doesNotMatch(unitView, /toggleUnitTerm/);
   assert.ok(unitView.indexOf('class="dw-sec acts"') < unitView.indexOf('class="dw-sec reads"'), "what a unit can do comes first");
 
+  // ---- behind a running reply the last click wins (W6 review): Silence then Push + on a pushed
+  // neuron ends pushed, Push then Silence ends silenced, and Push − then Push + on a silenced one
+  // ends on the + pole at the default. Each queued edit decides against the rack as the edits
+  // before it leave it, not against the rack as it was when clicked.
+  const { genStatus } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
+  const pending = await server.ssrLoadModule("/src/lib/stores/pending.svelte.ts");
+  const drain = async () => {
+    genStatus.active = false;
+    while (pending.pendingActions.queue.length > 0) await pending.drainNextPendingAction();
+  };
+  const unitTerm = (id) => {
+    const entry = steerRack.entries.get(id);
+    return entry ? [entry.ablate, entry.alpha] : null;
+  };
+  actions.pushUnit("neuron/L4n2", "+");
+  patchSteerEntry("neuron/L4n2", { alpha: 0.7 }, ["unit"]);
+  genStatus.active = true;
+  actions.silenceUnit("neuron/L4n2");
+  actions.pushUnit("neuron/L4n2", "+");
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.7], "nothing lands while the reply runs");
+  await drain();
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.2], "Silence then Push +: pushed, at the default (it was silenced when the push landed)");
+  genStatus.active = true;
+  actions.pushUnit("neuron/L4n2", "-");
+  actions.silenceUnit("neuron/L4n2");
+  await drain();
+  assert.deepEqual(unitTerm("neuron/L4n2"), [true, 1], "Push then Silence: silenced");
+  genStatus.active = true;
+  actions.pushUnit("neuron/L4n2", "-");
+  actions.pushUnit("neuron/L4n2", "+");
+  await drain();
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.2], "Push − then Push +: the + pole, keeping the strength the first push set");
+  genStatus.active = true;
+  actions.pushUnit("neuron/L4n2", "+");
+  await drain();
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.2], "a push the unit already holds changes nothing");
+
   for (const name of [...steerRack.entries.keys()]) removeSteerEntry(name);
   sessionState.info = null;
   console.log("Steer actions: the helpers, the strip's order, + Steer's kinds, the instruments' order and their one-click shortcuts passed");

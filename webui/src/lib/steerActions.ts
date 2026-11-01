@@ -32,27 +32,26 @@ export function openTerm(name: string): void {
 
 /** Push a neuron along its write, on ``pole`` (``-``: its − pole, a negative strength). A neuron
  *  already pushed keeps its strength and takes the pole; one silenced is pushed at the default.
- *  A head has no push: nothing changes and the answer is null. Else the answer is the rack key. */
+ *  Behind a running reply the choice is made when the queued edit lands, against the rack as the
+ *  edits before it left it, so the last click wins. A head has no push: nothing changes and the
+ *  answer is null. Else the answer is the rack key. */
 export function pushUnit(id: string, pole: "+" | "-" = "+"): string | null {
   const ref = parseUnit(id);
   if (ref?.kind !== "neuron") return null;
-  const held = steerRack.entries.get(ref.id);
-  const strength = held?.mode === "unit" && !held.ablate && held.alpha !== 0 ? Math.abs(held.alpha) : UNIT_PUSH_ALPHA;
-  const alpha = pole === "-" ? -strength : strength;
-  const same = held?.mode === "unit" && !held.ablate && held.alpha === alpha && steerRack.readOnlyRecipe === null;
-  const name = same ? ref.id : setUnitTerm(ref.id, { ablate: false, alpha });
+  const name = setUnitTerm(ref.id, (held) => {
+    const strength = held !== null && !held.ablate && held.alpha !== 0 ? Math.abs(held.alpha) : UNIT_PUSH_ALPHA;
+    return { ablate: false, alpha: pole === "-" ? -strength : strength };
+  });
   if (name !== null) openTerm(name);
   return name;
 }
 
 /** Silence a neuron or a head: hold it at its neutral mean (exact mean-ablation). One already
- *  silenced keeps its strength. */
+ *  silenced keeps its strength (decided when the edit lands, as for a push). */
 export function silenceUnit(id: string): string | null {
   const ref = parseUnit(id);
   if (!ref) return null;
-  const held = steerRack.entries.get(ref.id);
-  const same = held?.mode === "unit" && held.ablate && steerRack.readOnlyRecipe === null;
-  const name = same ? ref.id : setUnitTerm(ref.id, { ablate: true, alpha: UNIT_ABLATE_ALPHA });
+  const name = setUnitTerm(ref.id, (held) => (held?.ablate ? held : { ablate: true, alpha: UNIT_ABLATE_ALPHA }));
   if (name !== null) openTerm(name);
   return name;
 }
