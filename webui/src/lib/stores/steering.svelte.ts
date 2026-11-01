@@ -233,13 +233,38 @@ export function setSteerTiming(name: string, timing: SteerTiming): void {
   });
 }
 
+/** The side of a flat concept's axis a position sits on: ``+1`` toward its first pole, ``-1``
+ *  toward its second, ``0`` at the middle. A label takes its node's coordinate sign (the pole
+ *  order when the catalog has no coordinates); a free position its coordinate's sign. */
+function flatPositionSign(info: ManifoldInfo | null, label: string | null, coords: readonly number[]): number {
+  if (label !== null) {
+    const index = info ? info.node_labels.indexOf(label) : -1;
+    const coord = index >= 0 ? info?.node_coords[index]?.[0] : undefined;
+    if (coord !== undefined && coord !== 0) return Math.sign(coord);
+    return index === 1 ? -1 : 1;
+  }
+  const coord = coords[0];
+  return coord === undefined ? 1 : Math.sign(coord);
+}
+
+/** The pole of a flat concept on the ``sign`` side of its axis (the first pole for ``0``). */
+function flatPoleOnSide(info: ManifoldInfo | null, sign: number): number {
+  const count = info?.node_labels.length ?? 0;
+  if (count < 2) return 0;
+  const wanted = sign < 0 ? -1 : 1;
+  const index = info!.node_coords.findIndex((coord) => Math.sign(coord?.[0] ?? 0) === wanted);
+  return index >= 0 ? index : wanted < 0 ? 1 : 0;
+}
+
 /** A flat concept's relation to a second one: push only the part of it along ``onto``
  *  (``operator`` ``~``), or all but that part (``|``); ``null`` pushes all of it again. The term's
  *  key is its selector, so a relation re-keys it (``base~onto``): ``onselect`` gets the new key
  *  once the change has applied (queued behind a running generation like every rack edit). A
- *  projection keeps its own signed strength, from the shared flat one with the sign of the pole
- *  it pushed toward; all of it again rejoins the shared strength at the pole its sign points to.
- *  Nothing changes when the new key is already a chip. */
+ *  projection keeps its own signed strength toward the first pole: the shared flat strength times
+ *  the side its position sat on (a pole's, or a free coordinate's). All of it again rejoins the
+ *  shared strength at the pole on the side that strength over the shared one's sign points to, so
+ *  the round trip keeps its direction at either sign of the shared strength. Nothing changes when
+ *  the new key is already a chip. */
 export function relateSteerEntry(
   name: string,
   relation: { operator: "~" | "|"; onto: string } | null,
@@ -255,7 +280,8 @@ export function relateSteerEntry(
     if (relation === null) {
       if (entry.mode !== "projection") return;
       const info = manifoldByName(entry.base);
-      const pole = entry.alpha < 0 && (info?.node_labels.length ?? 0) > 1 ? 1 : 0;
+      const along = Math.sign(steerRack.subspaceAlong) || 1;
+      const pole = flatPoleOnSide(info, Math.sign(entry.alpha) * along);
       const label = info?.node_labels[pole] ?? null;
       const coords = info?.node_coords[pole] ? [...info.node_coords[pole]] : [];
       // The rack keys a concept by its catalog name (an agent may have written it bare).
@@ -266,8 +292,7 @@ export function relateSteerEntry(
       let alpha: number;
       if (entry.mode === "projection") alpha = entry.alpha;
       else {
-        const info = manifoldByName(name);
-        alpha = entry.label !== null && info?.node_labels.indexOf(entry.label) === 1 ? -steerRack.subspaceAlong : steerRack.subspaceAlong;
+        alpha = flatPositionSign(manifoldByName(name), entry.label, entry.coords) * steerRack.subspaceAlong;
       }
       key = `${base}${relation.operator}${relation.onto}`;
       next = { mode: "projection", base, operator: relation.operator, onto: relation.onto, alpha: alpha || 0, ...common };

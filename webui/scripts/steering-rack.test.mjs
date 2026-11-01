@@ -121,6 +121,34 @@ try {
   assert.equal(steerRack.entries.get("default/honest.deceptive").label, "honest");
   removeSteerEntry("default/honest.deceptive");
 
+  // Regression: the round trip kept its direction only at a positive shared strength and a labelled
+  // pole. Back from a projection the pole is the side of its strength over the shared one's sign;
+  // forward, a free coordinate's side signs the strength (it pushed toward the first pole before).
+  const sharedAlong = steerRack.subspaceAlong;
+  const roundTrip = (along, place) => {
+    steerRack.subspaceAlong = along;
+    addSubspaceToRack("default/honest.deceptive");
+    place();
+    const before = currentSteeringExpression();
+    relateSteerEntry("default/honest.deceptive", { operator: "~", onto: "default/formal.casual" });
+    const related = steerRack.entries.get("default/honest.deceptive~default/formal.casual").alpha;
+    relateSteerEntry("default/honest.deceptive~default/formal.casual", null);
+    const after = steerRack.entries.get("default/honest.deceptive");
+    removeSteerEntry("default/honest.deceptive");
+    return { before, related, label: after.label };
+  };
+  for (const along of [0.5, -0.5]) {
+    for (const [pole, side] of [["honest", 1], ["deceptive", -1]]) {
+      const trip = roundTrip(along, () => setSteerLabel("default/honest.deceptive", pole));
+      assert.equal(trip.related, side * along, `${pole} at ${along}: strength toward honest`);
+      assert.equal(trip.label, pole, `${pole} at ${along}: the round trip keeps the pole`);
+    }
+    const free = roundTrip(along, () => setSteerCoords("default/honest.deceptive", [-0.8]));
+    assert.equal(free.related, -along, `a free coordinate on deceptive's side at ${along}`);
+    assert.equal(free.label, "deceptive");
+  }
+  steerRack.subspaceAlong = sharedAlong;
+
   // Correlation freshness: nothing fetches per generation, but a generation
   // (which can register vectors and fill null cells) or a vector-roster change
   // leaves the cached matrix stale, so the open drawer refetches.
