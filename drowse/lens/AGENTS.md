@@ -404,7 +404,7 @@ refused, since one artifact has one corpus identity. Pass the full layer set or
 `force`. A fit over another corpus publishes over the artifact, so it is
 refused too when the artifact (same weights, `seq_len` and policy) holds
 more documents than the request, or a site or layer it omits: the default
-dropped from 100 documents and `out` only to 25 at both sites, and a re-run
+dropped from 100 documents and `out` only to 64 at both sites, and a re-run
 with defaults would otherwise discard an hours-long fit. Ask for at least its
 documents of the same corpus (which tops up the missing site), or pass
 `force`. Both refusals raise `LensReplaceRefused` (a `JacobianLensError`), so

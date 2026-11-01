@@ -7,7 +7,7 @@ token-replay endpoints — carries this single versioned shape.
 Shape::
 
     {
-      "version": 1,
+      "version": 2,
       "scope": "token" | "aggregate" | "replay",
       "provenance": "captured" | "replayed",
       "scores": {probe: axis0, ...},              # flat cross-family view
