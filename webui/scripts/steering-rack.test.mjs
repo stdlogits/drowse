@@ -112,6 +112,14 @@ try {
     mode: "subspace", ablate: false, coords: [-1], label: "deceptive", variant: "raw", trigger: "THINKING", layers: [3, 4], enabled: true,
   });
   removeSteerEntry("default/honest.deceptive");
+  // An agent may write the concepts bare; all of it again keys the chip by its catalog name.
+  steerRack.entries.set("honest.deceptive~formal.casual", {
+    mode: "projection", base: "honest.deceptive", operator: "~", onto: "formal.casual", alpha: 0.3, trigger: "BOTH", enabled: true,
+  });
+  relateSteerEntry("honest.deceptive~formal.casual", null, (key) => selected.push(key));
+  assert.equal(selected.at(-1), "default/honest.deceptive");
+  assert.equal(steerRack.entries.get("default/honest.deceptive").label, "honest");
+  removeSteerEntry("default/honest.deceptive");
 
   // Correlation freshness: nothing fetches per generation, but a generation
   // (which can register vectors and fill null cells) or a vector-roster change

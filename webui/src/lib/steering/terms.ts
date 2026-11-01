@@ -202,6 +202,11 @@ export function strengthDial(name: string, entry: SteerEntry, subspaceAlong: num
  *  below zero it adds to the component instead (``50% more of it``). */
 export function strengthSays(name: string, entry: SteerEntry, value: number, info?: ManifoldInfo | null): string {
   const title = termTitle(name, entry, info);
+  // A projection of a two-node concept pushes toward one pole or the other.
+  if (entry.mode === "projection" && info?.node_labels.length === 2) {
+    if (value === 0) return "Off";
+    return `Toward ${info.node_labels[value > 0 ? 0 : 1]}`;
+  }
   if (removes(name, entry)) {
     if (value === 0) return "Off";
     const percent = Math.round(Math.abs(value) * 100);

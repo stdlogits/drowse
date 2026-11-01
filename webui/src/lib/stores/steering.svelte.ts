@@ -258,7 +258,8 @@ export function relateSteerEntry(
       const pole = entry.alpha < 0 && (info?.node_labels.length ?? 0) > 1 ? 1 : 0;
       const label = info?.node_labels[pole] ?? null;
       const coords = info?.node_coords[pole] ? [...info.node_coords[pole]] : [];
-      key = entry.base;
+      // The rack keys a concept by its catalog name (an agent may have written it bare).
+      key = info ? `${info.namespace}/${info.name}` : entry.base;
       next = { mode: "subspace", ablate: false, coords, label, variant: "raw", ...common };
     } else {
       const base = entry.mode === "projection" ? entry.base : name;

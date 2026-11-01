@@ -93,7 +93,7 @@
   // ---------- strength
 
   const dial = $derived(strengthDial(name, entry, steerRack.subspaceAlong));
-  const says = $derived(strengthSays(name, entry, dial.value, entry.mode === "manifold" ? info : null));
+  const says = $derived(strengthSays(name, entry, dial.value, entry.mode === "manifold" || entry.mode === "projection" ? info : null));
   const label = $derived(dial.shared ? "Shared strength" : removal ? "How much" : "Strength");
 
   function setStrength(raw: number): void {
@@ -185,7 +185,7 @@
    *  that number; a gate set elsewhere on a probe not attached (or a channel) stays one. */
   const gateProbes = $derived.by(() => {
     const rows: { value: string; label: string; now: number | null }[] = [...probeRack.entries]
-      .map(([probe, row]) => ({ value: gateProbeKey(probe, row.info), label: probe, now: row.reading || row.aggregate ? row.current : null }));
+      .map(([probe, row]) => ({ value: gateProbeKey(probe, row.info), label: probe, now: row.reading || row.aggregate ? row.current : row.savedAggregate }));
     const set = entry.gate?.probe;
     if (set !== undefined && !rows.some(row => row.value === set)) rows.unshift({ value: set, label: `${set}, not attached`, now: null });
     return rows;
@@ -214,15 +214,23 @@
     .filter(row => row.node_count === 2 && fitGeometry(row) === "flat")
     .map(row => `${row.namespace}/${row.name}`));
   const part = $derived<"all" | "~" | "|">(entry.mode === "projection" ? entry.operator : "all");
-  const base = $derived(entry.mode === "projection" ? entry.base : name);
+  /** A concept's catalog name (``ns/name``), whichever way a term wrote it (an agent may write the
+   *  bare ``honest.deceptive``). */
+  function catalogName(written: string): string {
+    const row = manifoldByName(written);
+    return row ? `${row.namespace}/${row.name}` : written;
+  }
+  const base = $derived(catalogName(entry.mode === "projection" ? entry.base : name));
+  /** The second concepts on offer; the term's own keeps the spelling it was written with. */
   const ontoOptions = $derived.by(() => {
-    const options = concepts.filter(concept => concept !== base).map(concept => ({ value: concept, label: concept }));
-    if (entry.mode === "projection" && !options.some(row => row.value === entry.onto)) options.unshift({ value: entry.onto, label: entry.onto });
+    const written = entry.mode === "projection" ? entry.onto : null;
+    const options = concepts.filter(concept => concept !== base)
+      .map(concept => ({ value: written !== null && catalogName(written) === concept ? written : concept, label: concept }));
+    if (written !== null && !options.some(row => row.value === written)) options.unshift({ value: written, label: written });
     return options;
   });
-  const relatable = $derived(ontoOptions.length > 0 && (entry.mode === "projection"
-    ? concepts.includes(entry.base)
-    : entry.mode === "subspace" && !entry.ablate && entry.variant === "raw" && concepts.includes(name)));
+  const relatable = $derived(ontoOptions.length > 0 && concepts.includes(base) && (entry.mode === "projection"
+    || (entry.mode === "subspace" && !entry.ablate && entry.variant === "raw")));
   const reselect = (key: string) => select({ kind: "term", name: key });
 
   function setPart(value: "all" | "~" | "|"): void {
@@ -351,7 +359,7 @@
   {#if entry.gate}
     {@const gate = entry.gate}
     <div class="gate">
-      <div class="dw-sec-head"><span class="head" id="{uid}-gate">Only while</span>{#if gateNow !== null}<span class="meta">reads {coefficientText(gateNow, { fixed: true })} now</span>{/if}</div>
+      <div class="dw-sec-head"><span class="head" id="{uid}-gate">Only while</span>{#if gateNow !== null}<span class="meta">last read {coefficientText(gateNow, { fixed: true })}</span>{/if}</div>
       <div class="gate-row">
         <span class="probe"><Select value={gate.probe} options={gateProbes.map(({ value, label }) => ({ value, label }))} ariaLabel="The probe whose reading gates {title}"
           onchange={(probe) => setGate({ probe })} /></span>

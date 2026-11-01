@@ -65,6 +65,9 @@ try {
   assert.equal(strengthDial("default/emotions", gated.get("default/emotions"), 0.5).min, 0, "a curved position has no opposite");
   assert.equal(strengthSays("default/honest.deceptive", away.get("default/honest.deceptive"), -0.5), "Away from honest");
   assert.equal(strengthSays("slens/tower", away.get("slens/tower"), -0.5), "50% more of it");
+  const poles = fixture.catalog.find(row => row.name === "calm.anxious");
+  const projection = related.get("default/calm.anxious|default/honest.deceptive");
+  assert.deepEqual([0.6, -0.6, 0].map(v => strengthSays("x", projection, v, poles)), ["Toward calm", "Toward anxious", "Off"], "a projection pushes toward a pole");
   assert.equal(chipStrength("slens/tower", away.get("slens/tower"), 0.5), "more");
   assert.equal(chipStrength("default/calm.anxious", away.get("default/calm.anxious"), -0.5), "more", "a flat removal on a negative shared strength");
   // A gate reads the number a probe's card shows: a curved probe's share, any other's value.
