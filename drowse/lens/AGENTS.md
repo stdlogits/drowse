@@ -662,7 +662,9 @@ the per-layer softmax probability `p_l(v)`.
   object and the store, `test_lens_depth.py` the depth rule,
   `test_lens_rs_sources.py` the rs-lenses bindings over a synthetic Hub,
   `test_lens_footprint.py` footprint z, the mask, `read_vectors` and
-  `TokensIn`, `test_slens.py` the S family through a tiny session with a
+  `TokensIn`, `test_token_counts.py` the counts part of the mask, the
+  corpus-counts cache, the source order, the session's rebuild, `lens counts`
+  and reading a recorded corpus spec back, `test_slens.py` the S family through a tiny session with a
   hand-built S lens) run on the toy model in `tests/support/jlens_toys.py`, a
   genuine tiny llama the transport fits. `test_lens_transport.py` holds every
   dense family × kind × site to the autograd oracle

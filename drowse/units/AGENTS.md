@@ -122,14 +122,16 @@ lasts: a later load of a cache whose units are unavailable for a model
 A unit probe is one `ScalarReading` in the `activation_over_scale` unit at one
 layer (`per_layer = {L: value}`, depth basis `single_layer`, center
 `L / (n_layers − 1)`), with the raw firing in `meta` (`activation` for a
-neuron, `write_norm` for a head) and `meta.unit` the canonical reference:
+neuron, `write_norm` for a head), `meta.unit` the canonical reference and
+`meta.scale` the reading scale's source (`"catalog"` or `"neutral"`):
 
-- neuron: `act / scale[pole]`, the pole the sign of `act` picks, so `1.0` is
-  the pole's typical high firing on either side (`< 0` on the − pole);
+- neuron: `act / scale[pole]` (the reading scale, above), the pole the sign
+  of `act` picks, so `1.0` is the pole's typical high firing on either side
+  (`< 0` on the − pole);
 - head: `‖W_O^h z_h‖ / scale`, never negative. The write norm is Euclidean
   in the residual: one of the deliberate exceptions to Mahalanobis-only
   (`drowse/geometry/AGENTS.md`), since it is a scalar firing read against the
-  head's own neutral scale, never a geometric comparison.
+  head's own reading scale, never a geometric comparison.
 
 Scales are floored at `SCALE_FLOOR = 1e-6`: a pole silent on the neutral corpus
 reads large rather than infinite. One channel (`<name>`, `<name>[0]`);
@@ -165,7 +167,7 @@ units plan declares no residual layers: the family is invisible to
 
 **Other surfaces.** `attach(selector, as_name=)` (the roster routes `neuron/`
 and `head/`), `try_detach`, `specs` (`{unit, kind, layer, index}`), `names`,
-`probe_hash` (the unit plus its neutral scale), `live_state`/`set_live`
+`probe_hash` (the unit plus its reading scale and source), `live_state`/`set_live`
 (all-or-nothing, no extras), `active_source` (`None`: no source lifecycle),
 `token_readout` (replays the producing forward with a depth-1 tap attached
 inside the replay's exclusive section; `top_k` and `layers` are 400).

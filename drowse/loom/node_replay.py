@@ -20,7 +20,7 @@ Two reads are built on it:
   heads looked.  Returned inside the one measurement envelope
   (``scope="replay"``, the envelope's ``anatomy`` key).
 - :meth:`NodeReplayer.unit_activity` — every token, every unit: each neuron's
-  activation and each head's write norm over its neutral scale (the units
+  activation and each head's write norm over its reading scale (the units
   family's ``activation_over_scale``), reduced on the device to the top units
   by peak, the traces of requested units and one token's whole population.
 
@@ -985,7 +985,7 @@ class NodeReplayer:
 
         Each token is read at its producing forward, in the units family's
         unit (``activation_over_scale``: a neuron's activation over its
-        pole's soft neutral scale, signed; a head's write norm over its
+        pole's reading scale, signed; a head's write norm over its
         own), from one replay forward.  Returns the ``top`` neurons
         and the ``top`` heads across the node, each kind ranked by its own
         peak ``|value|``, with their peak token, the
