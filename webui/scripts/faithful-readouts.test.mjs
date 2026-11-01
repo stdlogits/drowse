@@ -401,10 +401,15 @@ try {
   const { probeTitle, foundLensRows, lensReadoutCells } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
   // Regression: two byte pieces that both decode to U+FFFD are two found rows with two keys (keyed
   // by text they collided and the keyed each threw each_key_duplicate mid-reply).
-  const found = foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5], ["\uFFFD", 0.2, 0.6, 0.1, 6], [" Paris", 0.1, 0.9, 0.1, 7]], [7]);
+  const found = foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5], ["\uFFFD", 0.2, 0.6, 0.1, 6], [" Paris", 0.1, 0.9, 0.1, 7]], [{ namespace: "jlens", id: 7 }]);
   assert.deepEqual(found.map(row => row.key), ["aggregate:5", "aggregate:6"], "keyed by id; a pinned id keeps its own row");
   assert.deepEqual(found.map(row => row.id), [5, 6]);
-  assert.equal(foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5]], [6]).length, 1, "a pinned id hides only itself, not its text");
+  assert.equal(foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5]], [{ namespace: "jlens", id: 6 }]).length, 1, "a pinned id hides only itself, not its text");
+  // Regression: an As read (slens/) pin hid the word's R discovery row and its As said pin action.
+  assert.deepEqual(foundLensRows([[" Paris", 0.1, 0.9, 0.1, 42]], [{ namespace: "slens", id: 42 }]).map(row => row.id), [42],
+    "an slens/ pin leaves the found probability row");
+  assert.deepEqual(foundLensRows([[" Paris", 0.1, 0.9, 0.1, 42]], [{ namespace: "slens", id: 42 }, { namespace: "jlens", id: 42 }]), [],
+    "a jlens/ pin of the same id takes its place");
   const { lensReadoutSnapshot } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
   const lensSnap = lensReadoutSnapshot({
     layers: [{ layer: 0, tokens: [{ token: "\uFFFD", id: 5, logprob: Math.log(0.8) }, { token: "\uFFFD", id: 6, logprob: Math.log(0.1) }] }],

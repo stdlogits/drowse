@@ -128,9 +128,9 @@
   const foundRows = $derived.by((): WorkspaceRow[] => {
     const rows = displayAggregate;
     if (!rows || rows.length === 0) return [];
-    // A pinned token already has its row; the rest key by vocabulary id (foundLensRows), and their
+    // A token pinned As said already has its row; the rest key by vocabulary id (foundLensRows), and their
     // cells join the per-layer reads by id too.
-    return foundLensRows(rows, pinnedRows.map((row) => row.id)).map((row) => ({
+    return foundLensRows(rows, pinnedRows).map((row) => ({
       ...row,
       measured: true,
       cells: lensReadoutCells(displayReadout, displayLayers, row.id),

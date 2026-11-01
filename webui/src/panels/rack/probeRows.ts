@@ -68,12 +68,16 @@ export function mergeInstrumentProbeRows<T extends InstrumentProbeRow>(
 
 /** A lens aggregate chip as a found row, before its per-layer cells: keyed by its vocabulary id,
  *  since two ids can decode to the same text (byte pieces that both render as U+FFFD) and a keyed
- *  each throws on a repeated key. A token with a pinned row of its own (the same id) is left out. */
+ *  each throws on a repeated key. A token with a ``jlens/`` pin of its own (the same id) is left
+ *  out: that pin is the same probability. An ``slens/`` pin reads the word as read (a footprint z),
+ *  so the found row, its probability and its As said pin action, stay beside it. */
 export function foundLensRows(
   aggregate: readonly (readonly [string, number, number, number, number])[],
-  pinnedIds: readonly (number | null | undefined)[],
+  pins: readonly { namespace: "jlens" | "slens"; id: number | null | undefined }[],
 ): { key: string; id: number; sortName: string; token: string; strength: number; com: number; spread: number }[] {
-  const pinned = new Set(pinnedIds.filter((id): id is number => typeof id === "number"));
+  const pinned = new Set(
+    pins.filter((pin) => pin.namespace === "jlens").map((pin) => pin.id).filter((id): id is number => typeof id === "number"),
+  );
   return aggregate
     .filter(([, , , , id]) => !pinned.has(id))
     .map(([token, strength, com, spread, id]) => ({
