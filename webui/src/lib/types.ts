@@ -797,7 +797,7 @@ export interface ChatTurn {
   thinkingTokens?: TokenScore[];
   /** A/B-mode pair: the unsteered same-seat shadow turn. */
   abPair?: ChatTurn;
-  /** Steering expression applied — round-trips through parseExpression. */
+  /** Steering expression applied: the server's ``format_expr`` text. Only the server parses it (``steering/validate`` answers its parts); the dashboard has no grammar of its own. */
   appliedSteering?: string | null;
   /** Aggregate probe readings for the turn (mean per probe). */
   aggregateReadings?: Record<string, number>;
