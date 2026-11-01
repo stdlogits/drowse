@@ -105,7 +105,8 @@ try {
   assert.match(render(MiniMap, { props: mapProps }).body, /Live coordinates \[0.1, 0.2\]/);
   assert.match(render(MiniMap, { props: { ...mapProps, settled: [0.3, 0.4] } }).body, /Final coordinates \[0.3, 0.4\]/);
 
-  const source = await readFile(new URL("../src/drawers/ProbeInspectorDrawer.svelte", import.meta.url), "utf8");
+  // The probe inspector's plot is its own component, shared with the Probes room.
+  const source = await readFile(new URL("../src/panels/manifold/ProbeGeometryPlot.svelte", import.meta.url), "utf8");
   assert.match(source, /new ResizeObserver\(redraw\)/);
   assert.match(source, /observer\.observe\(canvas\)/);
   assert.match(source, /observer\.disconnect\(\)/);

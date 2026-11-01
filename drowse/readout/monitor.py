@@ -334,6 +334,19 @@ class Monitor:
         self._curved_feet.clear()
 
     @contextmanager
+    def subspace_coords_emitted(self) -> Iterator[None]:
+        """Every reading inside carries its per-layer whitened coordinates
+        (``subspace_coords_per_layer``, the probe plot's frame), the live
+        trail's flag restored after: a token replay places its token in the
+        fit's geometry whether or not a generation asked for the trail."""
+        emit = self._emit_subspace_coords
+        self._emit_subspace_coords = True
+        try:
+            yield
+        finally:
+            self._emit_subspace_coords = emit
+
+    @contextmanager
     def cold_reads(self) -> Iterator[None]:
         """Curved feet solved cold inside, the live path's warm state restored
         after: reads that are not that path's next decode step (an authored

@@ -302,9 +302,11 @@ it from the rows, as one prefill under the capture's steering. A prefill
 fires a term iff it has a prompt slot and no probe gate (`Trigger.active`),
 so the whole expression replays the capture's prompt-phase steering and
 `replay_segments` refuses no gate or phase window when there is no decode
-position. `raw` does not apply (the anchor records the render), and the node
-replay's unit activity refuses an authored turn (its tokens are prompt
-positions of whichever call captured them, not one decode record). The forward fires the open terms as generation
+position. `raw` does not apply (the anchor records the render). The node replay's
+unit activity reads an authored turn's every row in one prefill: it anchors
+the row latest in the render, and `ReplayForward.spans()` places each
+channel's rows at their producing positions (a gap between the thinking and
+visible channels included). The forward fires the open terms as generation
 fired them (`TokenReplayer.segments`, the **Triggers** rule below, shared with
 the node replay), so a family's token readout, the token anatomy and the unit
 activity read one number for one token; a probe-gated term replays one decode

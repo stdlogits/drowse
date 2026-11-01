@@ -247,6 +247,8 @@ class PromptAnchor:
     channel_start: int
     #: The index of the channel's first row.
     channel_offset: int
+    #: How many of the captured rows are thinking rows (they come first).
+    thinking_rows: int
 
     @property
     def token_id(self) -> int:
@@ -261,6 +263,18 @@ class PromptAnchor:
     def channel_prefix(self) -> list[int]:
         """The token's channel before it (what follows the channel's head)."""
         return list(self.token_ids[self.channel_offset:self.index])
+
+    @property
+    def runs(self) -> tuple[tuple[int, int], ...]:
+        """Each captured channel as ``(first_row, render_position)``: the
+        thinking rows, then the visible rows, each channel's rows at
+        consecutive render positions from its start."""
+        out: list[tuple[int, int]] = []
+        if self.thinking_rows > 0 and self.capture.thinking_start is not None:
+            out.append((0, int(self.capture.thinking_start)))
+        if len(self.token_ids) > self.thinking_rows and self.capture.start is not None:
+            out.append((self.thinking_rows, int(self.capture.start)))
+        return tuple(out)
 
 
 def resolve_prompt_anchor(
@@ -311,6 +325,7 @@ def resolve_prompt_anchor(
         token_ids=token_ids,
         channel_start=int(start),
         channel_offset=0 if in_thinking else len(thinking),
+        thinking_rows=len(thinking),
     )
     if anchor.position < 1:
         raise InvalidNodeOperationError(

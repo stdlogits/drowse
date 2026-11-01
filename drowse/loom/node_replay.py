@@ -27,7 +27,10 @@ Two reads are built on it:
 **Positions.**  Raw token ``i`` is *produced* at position ``prompt_length +
 i − 1`` (its input is the token before it), so a token's anatomy and its
 unit activity are those of its producing forward, exactly as its loom row's
-live readings and the families' token readouts are.  Position 0 is the
+live readings and the families' token readouts are.  An authored turn's
+captured prompt row is produced at the position before its place in the
+capture's render, and the whole turn reads in one prefill
+(:meth:`~drowse.loom.replay.ReplayForward.spans`).  Position 0 is the
 attention sink: unit activity there is out of distribution (the unit
 statistics never count it) and is reported as 0 and excluded from the peaks,
 as the units runtime excludes it.  Every value reads over the unit's reading
@@ -71,8 +74,7 @@ from typing_extensions import TypedDict
 
 from drowse.errors import RequestError
 from drowse.lens.read import LensRead, VectorRead
-from drowse.loom.errors import InvalidNodeOperationError
-from drowse.loom.ops import resolve_token_anchor
+from drowse.loom.ops import resolve_prompt_anchor, resolve_token_anchor
 from drowse.loom.replay import (
     ReplayForward,
     ReplaySegment,
@@ -1005,7 +1007,12 @@ class NodeReplayer:
         per-token trace of each unit in ``units``, and, with ``raw_index``,
         that token's whole population at ``layers`` (default every layer),
         packed (:data:`POPULATION_ENCODING`).  The forward runs as generation's triggers ran it
-        (:func:`~drowse.loom.replay.replay_segments`).  Raises ``UnitsUnavailableError`` (422)
+        (:func:`~drowse.loom.replay.replay_segments`).  An authored turn's
+        tokens are its captured prompt rows (thinking, then visible), read
+        at their producing positions in one prefill through the node's
+        prompt capture, under the capture's steering (the token readouts'
+        replay); an earlier turn edited since the capture refuses it (400).
+        Raises ``UnitsUnavailableError`` (422)
         when the model has no unit statistics, ``SteeringCompositionError``
         (422) for steering whose firing the node does not record, and a 400
         for a malformed or out-of-range unit.
@@ -1017,18 +1024,7 @@ class NodeReplayer:
         refs = [self._units.parse(selector) for selector in units]
         if len({ref.qualified for ref in refs}) != len(refs):
             raise RequestError("units names a unit twice")
-        if self._tree().get(node_id).recipe is None:
-            # An authored turn's tokens are prompt positions of whichever
-            # generation captured them, not one decode record: each replays
-            # on its own (the token readouts and the anatomy).
-            raise InvalidNodeOperationError(
-                f"session.unit_activity: {node_id!r} is an authored turn; unit "
-                f"activity reads a generated turn's decode"
-            )
-        anchor = resolve_token_anchor(
-            self._tree(), node_id, 0 if raw_index is None else int(raw_index),
-            label="session.unit_activity",
-        )
+        last = self._last_row(node_id, raw_index)
         spec = self._units.spec()
         scales = self._units.scales()
         pop_layers = (
@@ -1043,12 +1039,28 @@ class NodeReplayer:
             )
 
         token, result = self._replayer.forward(
-            node_id, len(anchor.raw_ids) - 1, run=run,
+            node_id, last, run=run,
             apply_steering=apply_steering, raw=raw, label="session.unit_activity",
         )
         result["node_id"] = node_id
         result["steering"] = token.steering
         return result
+
+    def _last_row(self, node_id: str, raw_index: int | None) -> int:
+        """The row whose producing forward covers every row of the node (its
+        last in the token stream), after checking ``raw_index`` addresses
+        one.  A generated node's rows are its raw decode record; an authored
+        turn's are its captured prompt rows (thinking, then visible), which
+        replay through its prompt capture as one prefill."""
+        tree = self._tree()
+        label = "session.unit_activity"
+        at = 0 if raw_index is None else int(raw_index)
+        if tree.get(node_id).recipe is not None:
+            return len(resolve_token_anchor(tree, node_id, at, label=label).raw_ids) - 1
+        prompt = resolve_prompt_anchor(tree, node_id, at, label=label)
+        first, position = max(prompt.runs, key=lambda run: run[1])
+        stops = [row for row, _ in prompt.runs if row > first]
+        return (min(stops) if stops else len(prompt.token_ids)) - 1
 
     def _activity(
         self, spec: ModelSpec, scales: UnitScales, forward: ReplayForward,
@@ -1061,12 +1073,18 @@ class NodeReplayer:
         ids = forward.ids
         device = ids.device
         count = len(forward.raw_ids)
-        # Token row ``r`` is read at position ``first + r``; the rows before
+        # Each span of token rows is read at consecutive producing positions
+        # (a generated node: one span after its prompt; an authored turn: its
+        # thinking rows, then its visible rows).  The rows produced before
         # ``UNIT_POSITIONS_FROM`` sit on the attention sink (host arithmetic:
         # nothing about them is read back from the device).
-        first = forward.prompt_length - 1
-        n_sink = max(0, min(count, UNIT_POSITIONS_FROM - first))
-        sink = torch.arange(count, device=device) < n_sink                      # [N]
+        spans = forward.spans()
+        at_sink = [False] * count
+        for r_first, r_stop, at in spans:
+            for row in range(r_first, r_stop):
+                at_sink[row] = at + row - r_first < UNIT_POSITIONS_FROM
+        n_sink = sum(at_sink)
+        sink = torch.tensor(at_sink, dtype=torch.bool, device=device)            # [N]
         window = ReplayWindow()
         wanted = {int(layer) for layer in pop_layers}
         picks: dict[tuple[str, int], list[int]] = {}
@@ -1074,14 +1092,20 @@ class NodeReplayer:
             kind = "neuron" if isinstance(ref, NeuronRef) else "head"
             picks.setdefault((kind, ref.layer), []).append(ref.index)
         peaks: dict[tuple[str, int], tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = {}
-        traces: dict[tuple[str, int], list[torch.Tensor]] = {}
+        traces: dict[tuple[str, int], list[tuple[int, torch.Tensor]]] = {}
         pops: dict[tuple[str, int], torch.Tensor] = {}
         seen: dict[tuple[str, int], int] = {}
 
-        def rows_here() -> tuple[int, int]:
-            """The token rows the running forward holds, ``(r0, r1)``; row
-            ``r0`` is its column ``first + r0 − start``."""
-            return max(0, window.start - first), min(count, window.stop - first)
+        def rows_here() -> list[tuple[int, int, int]]:
+            """The token rows the running forward holds, as ``(r0, r1,
+            column of r0)`` pieces, one per span it reaches."""
+            pieces: list[tuple[int, int, int]] = []
+            for r_first, r_stop, at in spans:
+                r0 = r_first + max(0, window.start - at)
+                r1 = min(r_stop, r_first + window.stop - at)
+                if r1 > r0:
+                    pieces.append((r0, r1, at + r0 - r_first - window.start))
+            return pieces
 
         def reduce(key: tuple[str, int], values: torch.Tensor, r0: int) -> None:
             """``values`` ``[rows, units]`` for token rows ``r0…``, merged into
@@ -1104,7 +1128,7 @@ class NodeReplayer:
             chosen = picks.get(key)
             if chosen:
                 traces.setdefault(key, []).append(
-                    values[:, torch.tensor(chosen, device=values.device)],
+                    (r0, values[:, torch.tensor(chosen, device=values.device)]),
                 )
             if population is not None and key[1] in wanted and r0 <= population < r0 + rows:
                 pops[key] = values[population - r0]
@@ -1116,9 +1140,7 @@ class NodeReplayer:
             last = block.layer == n - 1
 
             def hook(_m: nn.Module, args: tuple[Any, ...], _output: Any) -> None:
-                r0, r1 = rows_here()
-                if r1 > r0:
-                    col = first + r0 - window.start
+                for r0, r1, col in rows_here():
                     act = args[0][0, col:col + r1 - r0].float()                  # [rows, d_ff]
                     scale = torch.where(act >= 0, plus, minus)
                     reduce(("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR), r0)
@@ -1133,19 +1155,16 @@ class NodeReplayer:
             out_norm = block.attn_out_norm
 
             def hook(_m: nn.Module, args: tuple[Any, ...], output: Any) -> None:
-                r0, r1 = rows_here()
-                if r1 <= r0:
-                    return
-                col = first + r0 - window.start
-                z = args[0][0, col:col + r1 - r0].float()
-                zh = z.reshape(-1, attn.n_heads, attn.head_dim)
-                norm = torch.einsum("nhi,hij,nhj->nh", zh, grams, zh).clamp_min(0.0).sqrt()
-                if out_norm is not None:
-                    o = _first(output)[0, col:col + r1 - r0].float()
-                    norm = norm * torch.rsqrt(
-                        o.pow(2).mean(-1, keepdim=True) + float(out_norm.eps),
-                    )
-                reduce(("head", block.layer), norm / scale, r0)
+                for r0, r1, col in rows_here():
+                    z = args[0][0, col:col + r1 - r0].float()
+                    zh = z.reshape(-1, attn.n_heads, attn.head_dim)
+                    norm = torch.einsum("nhi,hij,nhj->nh", zh, grams, zh).clamp_min(0.0).sqrt()
+                    if out_norm is not None:
+                        o = _first(output)[0, col:col + r1 - r0].float()
+                        norm = norm * torch.rsqrt(
+                            o.pow(2).mean(-1, keepdim=True) + float(out_norm.eps),
+                        )
+                    reduce(("head", block.layer), norm / scale, r0)
             return hook
 
         handles: list[Any] = []
@@ -1181,7 +1200,10 @@ class NodeReplayer:
             top_slots = (
                 pack.add(signed[best]), pack.add(best), pack.add(at[best]), pack.add(rank[best]),
             )
-            trace_slots = {key: pack.add(torch.cat(parts)) for key, parts in traces.items()}
+            trace_slots = {
+                key: pack.add(torch.cat([part for _r0, part in sorted(parts, key=lambda p: p[0])]))
+                for key, parts in traces.items()
+            }
             pop_slots = {key: pack.add(value) for key, value in pops.items()}
             host = pack.host()
 
@@ -1230,7 +1252,7 @@ class NodeReplayer:
                 {"raw_index": i, "token_id": int(t), "token": self._decode(int(t))}
                 for i, t in enumerate(forward.raw_ids)
             ],
-            "sink_raw_index": 0 if n_sink > 0 else None,
+            "sink_raw_index": at_sink.index(True) if n_sink > 0 else None,
             "top": peaks_out,
             "traces": traces_out,
             "population": population_out,

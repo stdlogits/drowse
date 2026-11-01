@@ -290,7 +290,8 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   and the anatomy's `raw_index` addresses its captured prompt rows (thinking
   rows, then visible rows) and replays through the node's `prompt_capture`
   (`raw` does not apply); a prompt whose earlier turns changed since the
-  capture answers 400, and `units/activity` refuses an authored node (400).
+  capture answers 400. `units/activity` on an authored node reads its captured
+  rows (one prefill through the same anchor; `raw_index` indexes them).
 - **Units** (`unit_routes.py`, under `S/instruments/units/`; the CLI's
   `drowse unit`). `GET read?unit=&k=&hide_hubs=` is the unit view
   (`NeuronReadJSON | HeadReadJSON`, discriminated by `kind`), `GET

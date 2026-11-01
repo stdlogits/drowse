@@ -556,13 +556,155 @@ def test_an_edit_reads_the_original_and_an_edited_earlier_turn_refuses(
         _replay(session, "geometry", second.id, 0)
 
 
-def test_an_authored_turn_has_no_unit_activity(
+def test_a_geometry_replay_places_its_token_in_the_probe_geometry(
+    make_tiny_session: TinySessionFactory,
+) -> None:
+    """The geometry replay carries each reading's per-layer whitened
+    coordinates (where the Probes room's plot places the token): the live
+    trail's, which a generation streams only when asked, and a replay leaves
+    the trail's flag as it found it."""
+    session, _script = make_tiny_session.scripted("Hi there, friend.")
+    register_vectors(session, "mood")
+    session.add_probe("mood")
+    events: list[TokenEvent] = []
+    session.generate(
+        "Say hi.", on_token=_live_consumer(events),
+        sampling=SamplingConfig(max_tokens=4, persist_subspace_coords=True),
+    )
+    node = session.tree.get(session.tree.active_node_id)
+    for event in events:
+        live = cast(Any, event.measurements)["instruments"]["geometry"]["readings"]["mood"]
+        want = live["subspace_coords_per_layer"]
+        assert want, "the live trail streams them when asked"
+        session.monitor.set_subspace_coords(False)
+        got = _replay(session, "geometry", node.id, int(cast(int, event.raw_index)))
+        assert session.monitor._emit_subspace_coords is False
+        coords = got["readings"]["mood"]["subspace_coords_per_layer"]
+        assert set(coords) == set(want)
+        for layer, value in want.items():
+            assert coords[layer] == pytest.approx(value, rel=1e-4, abs=1e-5)
+
+
+_UNITS = ("neuron/L1n3", "head/L2h1")
+
+
+def _assert_activity_is_the_unit_probes(
+    session: Any, node_id: str, *, apply_steering: bool = True,
+) -> dict[str, list[float]]:
+    """Unit activity over an authored turn reads every captured row as its
+    own token replay reads the attached unit probes there; returns the
+    traces."""
+    activity = session.unit_activity(
+        node_id, top=4, units=list(_UNITS), raw_index=1, apply_steering=apply_steering,
+    )
+    node = session.tree.get(node_id)
+    rows = [*(node.thinking_tokens or ()), *(node.tokens or ())]
+    assert activity["node_id"] == node_id
+    assert [t["token_id"] for t in activity["tokens"]] == [r["token_id"] for r in rows]
+    capture = node.prompt_capture
+    assert activity["steering"] == (capture.steering if apply_steering else None)
+    traces = activity["traces"]
+    for k in range(len(rows)):
+        replay = session.units.token_readout(node_id, k, apply_steering=apply_steering)
+        readings = replay["measurements"]["instruments"]["units"]["readings"]
+        for name in _UNITS:
+            assert traces[name][k] == pytest.approx(readings[name]["value"], abs=1e-5), (name, k)
+    population = cast(Any, activity["population"])
+    neurons = {layer["layer"]: layer["neurons"] for layer in population["layers"]}
+    from drowse.loom.node_replay import decode_population
+    assert float(decode_population(neurons[1])[3]) == pytest.approx(
+        traces["neuron/L1n3"][1], rel=2e-3, abs=2e-3,
+    )
+    return traces
+
+
+def test_an_authored_turn_has_unit_activity_steered(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: unit activity refused an authored turn (400) once its
+    prompt rows could replay; it reads them through the node's prompt
+    capture in one prefill, as the token readouts do."""
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    for name in _UNITS:
+        session.add_probe(name)
+    node, _reply = _capture_whole(session, "Say hi there, my friend.", steering=_STEERING)
+    steered = _assert_activity_is_the_unit_probes(session, node.id)
+    # The rows the capture scored live read the same values.
+    for k, row in enumerate(node.tokens):
+        scores = row.get("measurements", {}).get("scores", {})
+        for name in _UNITS:
+            if name in scores:
+                assert steered[name][k] == pytest.approx(scores[name], abs=1e-4), (name, k)
+    unsteered = _assert_activity_is_the_unit_probes(session, node.id, apply_steering=False)
+    assert unsteered["neuron/L1n3"] != pytest.approx(steered["neuron/L1n3"], rel=1e-3)
+
+
+def test_an_authored_turn_has_unit_activity_unsteered(
     make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     session = _all_families_session(make_tiny_session, monkeypatch)
-    node, _reply = _capture_whole(session, "Say hi.", steering=None)
-    with pytest.raises(InvalidNodeOperationError, match="authored turn"):
-        session.unit_activity(node.id)
+    for name in _UNITS:
+        session.add_probe(name)
+    node, _reply = _capture_whole(session, "Say hi there, my friend.", steering=None)
+    plain = _assert_activity_is_the_unit_probes(session, node.id)
+    assert plain == _assert_activity_is_the_unit_probes(session, node.id, apply_steering=False)
+
+
+def test_authored_unit_activity_reads_each_channel_at_its_place(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two captured channels with a gap between them (a thinking channel,
+    then the visible one): every row reads at its own producing position."""
+    from drowse.loom.tree import PromptCapture, prompt_digest
+
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    for name in _UNITS:
+        session.add_probe(name)
+    node, _reply = _capture_whole(session, "Say hi there, my friend.", steering=None)
+    capture = node.prompt_capture
+    assert capture is not None and capture.start is not None and len(node.tokens) >= 5
+    twin = session.tree.add_user_turn(node.text, node.parent_id, dedup_existing=False)
+    render = session.renderer.prepare_input(
+        None, raw=capture.raw, thinking=capture.thinking, parent_node_id=twin,
+        system_prompt=capture.system_prompt, add_generation_prompt=False,
+    )[0].tolist()
+    start = capture.start
+    rows = [{"token_id": int(r["token_id"]), "text": r["text"]} for r in node.tokens]
+    session.tree.set_authored_capture(
+        twin,
+        PromptCapture(
+            steering=None, system_prompt=capture.system_prompt, thinking=capture.thinking,
+            raw=capture.raw, start=start + 3, thinking_start=start,
+            digest=prompt_digest(render[:start + 3]),
+        ),
+        thinking_tokens=rows[:2], tokens=rows[3:],
+    )
+    traces = _assert_activity_is_the_unit_probes(session, twin)
+    whole = session.unit_activity(node.id, top=1, units=list(_UNITS))["traces"]
+    for name in _UNITS:
+        assert traces[name] == pytest.approx(whole[name][:2] + whole[name][3:], abs=1e-5)
+
+
+def test_authored_unit_activity_refuses_an_edited_earlier_turn(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    first, _reply = _capture_whole(session, "Say hi.", steering=None)
+    second, _ = _capture_whole(session, "And again, please.", steering=_STEERING)
+    session.tree.edit(second.id, "Something else entirely.")
+    assert session.unit_activity(second.id, top=2)["tokens"]
+    session.tree.edit(first.id, "Say hello.")
+    with pytest.raises(InvalidNodeOperationError, match="no longer renders the same"):
+        session.unit_activity(second.id, top=2)
+
+
+def test_an_authored_forward_places_each_channel() -> None:
+    rig = ReplayRig()
+    user_id, _render = _rig_authored(rig)
+    _token, forward = rig.replay.forward(user_id, 4, run=lambda f: f, label="t")
+    # Thinking rows 0-1 at render positions 5-6, visible rows 2-4 at 9-11.
+    assert forward.spans() == ((0, 2, 4), (2, 5, 8))
+    assert [forward.producing_position(k) for k in range(5)] == [4, 5, 8, 9, 10]
 
 
 def _rig_authored(
