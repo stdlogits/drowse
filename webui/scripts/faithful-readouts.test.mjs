@@ -443,6 +443,51 @@ try {
   assert.match(saeCard, /Unpin probe custom feature alias/);
   assert.doesNotMatch(saeCard, /Activation 0/);
 
+  // Regression: after a reload the rack, the Lens panel's pins and the inspector lost what the live
+  // view showed (a curved probe's share, a lens pin's value, nearest, residual, depth), though the
+  // tree keeps it: the node's aggregate and its last measured row. The hydrate reads both.
+  {
+    const { hydrateProbeRackFromActiveNode, probeRack: rack } =
+      await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
+    const { applyTreeSnapshot: applySnapshot } = await server.ssrLoadModule("/src/lib/stores/loom.svelte.ts");
+    const months = { family: "geometry", name: "default/months", is_affine: false, intrinsic_dim: 2, layers: [0, 1] };
+    const paris = { family: "lens", namespace: "slens", name: "slens/Paris", word: "Paris", layers: [0, 1] };
+    const blank = { sparkline: [], current: 0, previous: 0, perLayer: {}, reading: null, aggregate: null,
+      savedAggregate: null, savedReading: null, nearest: [], trajectory: [], subspaceTrail: [] };
+    rack.entries.clear();
+    rack.entries.set("default/months", { request: { selector: "default/months" }, info: months, ...blank });
+    rack.entries.set("slens/Paris", { request: { selector: "slens/Paris" }, info: paris, ...blank });
+    const monthsReading = { fraction: 0.341, nearest: [["october", 24.19]], coords: [2.37, 0.5], residual: 1.02,
+      assignment: [["october", 0.9]], membership: 0.8, depth_com: [0.5], depth_spread: [0.26] };
+    const parisReading = { value: 0.9205, unit: "mean_footprint_z", per_layer: { 0: 0.8, 1: 1.04 },
+      depth: { center: [0.6], spread: [0.1], basis: "footprint_z" } };
+    const row = (readings) => ({ text: "x", raw_index: 0, measurements: { version: 2, scope: "token", provenance: "captured",
+      instruments: { geometry: { readings: { "default/months": readings.months } }, lens: { binding: { sources: { R: null, S: "s" }, steering: null }, readings: { "slens/Paris": readings.paris } } } } });
+    applySnapshot({
+      tree_format: 2, drowse_version: "test", session_id: "default", model_id: "fixture",
+      root_id: "root", active_node_id: "reply", rev: 9, children_of: { root: ["reply"], reply: [] }, cast: {},
+      nodes: [
+        { id: "root", parent_id: null, role: "system", text: "", recipe: null, applied_steering: null, finish_reason: null, tokens: null, thinking_tokens: null, aggregate_readings: {} },
+        { id: "reply", parent_id: "root", role: "assistant", text: "x y", recipe: null, applied_steering: null, finish_reason: "stop",
+          aggregate_readings: { "default/months": 2.3732, "slens/Paris": 0.9205 },
+          tokens: [row({ months: { ...monthsReading, fraction: 0.2 }, paris: { ...parisReading, value: 0.1 } }), row({ months: monthsReading, paris: parisReading }), { text: "\n" }],
+          thinking_tokens: null },
+      ],
+    });
+    hydrateProbeRackFromActiveNode();
+    const m = rack.entries.get("default/months");
+    assert.equal(m.savedFraction, 0.341, "a curved probe's share comes from the last measured row");
+    assert.equal(m.current, 0.341);
+    assert.deepEqual(m.savedCoordinates, [2.3732, 0.5], "axis 0 from the exact aggregate, the rest from the row");
+    assert.equal(m.savedReading.residual, 1.02);
+    assert.deepEqual(m.nearest, [["october", 24.19]]);
+    const p = rack.entries.get("slens/Paris");
+    assert.equal(p.savedAggregate, 0.9205, "a lens pin keeps its saved value");
+    assert.equal(p.savedReading.depth.center[0], 0.6);
+    assert.deepEqual(p.perLayer, { 0: 0.8, 1: 1.04 }, "a scalar reading's band comes back from the row");
+    rack.entries.clear();
+  }
+
   console.log("Faithful readout checks passed (cache lifetimes, provenance, token identity, missing data, and aliases)");
 } finally {
   await server.close();

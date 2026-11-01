@@ -105,15 +105,18 @@
     for (const name of activeProbeNames()) {
       const entry = probeEntryForDisplay(name);
       if (entry?.info.family !== "lens") continue;
-      const latest = (entry.aggregate ?? entry.reading) as ScalarReadingJSON | null;
+      const live = (entry.aggregate ?? entry.reading) as ScalarReadingJSON | null;
+      // After a reload the live reading is gone: the saved reply's aggregate and its last row's
+      // reading (band and depth) stand in, so a measured pin never reads "Not measured".
+      const latest = live ?? ((entry.savedReading ?? null) as ScalarReadingJSON | null);
       const word = entry.info.word;
       const namespace = entry.info.namespace;
       rows.push({
         key: name,
         sortName: word,
         token: word,
-        strength: latest?.value ?? entry.current ?? 0,
-        measured: latest !== null || entry.sparkline.length > 0,
+        strength: live?.value ?? entry.savedAggregate ?? latest?.value ?? entry.current ?? 0,
+        measured: latest !== null || entry.sparkline.length > 0 || entry.savedAggregate !== null,
         com: latest?.depth?.center?.[0] ?? null,
         spread: latest?.depth?.spread?.[0] ?? null,
         cells: pinnedCells(entry),

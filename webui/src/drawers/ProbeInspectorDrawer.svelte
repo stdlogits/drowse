@@ -99,8 +99,13 @@
 
   // ---------- the reading ----------
   const latest = $derived((entry?.aggregate ?? entry?.reading ?? null) as ProbeReadingJSON | ScalarReadingJSON | null);
-  const geoReading = $derived(geometric ? (latest as ProbeReadingJSON | null) : null);
-  const scalarReading = $derived(geometric ? null : (latest as ScalarReadingJSON | null));
+  /** The live reading, else the saved reply's (its last measured row: share, coordinates, nearest,
+   *  residual and depth, without layers), so a reload shows what the live view showed but the trail. */
+  const settled = $derived((latest ?? entry?.savedReading ?? null) as ProbeReadingJSON | ScalarReadingJSON | null);
+  /** The reply's settled reading: its aggregate live, else the saved one. */
+  const replySettled = $derived((entry?.aggregate ?? entry?.savedReading ?? null) as ProbeReadingJSON | null);
+  const geoReading = $derived(geometric ? (settled as ProbeReadingJSON | null) : null);
+  const scalarReading = $derived(geometric ? null : (settled as ScalarReadingJSON | null));
   const sparkline = $derived(entry?.sparkline ?? []);
   const affine = $derived(geo?.is_affine ?? false);
   /** A curved probe reads the share on its surface: its trace, its layers and "reads" all follow it. */
@@ -186,7 +191,7 @@
   const poles = $derived(polesOf(geo?.manifold || probeName));
   const showPoles = $derived(affine && nDim === 1 && (geo?.node_count ?? 0) <= 2);
   const nearest = $derived(entry?.nearest?.[0] ?? null);
-  const residual = $derived((entry?.aggregate as ProbeReadingJSON | null)?.residual ?? null);
+  const residual = $derived(replySettled?.residual ?? null);
   const showMiniMap = $derived.by(() => {
     if (!geo || geo.intrinsic_dim !== 2) return false;
     const d = geo.domain as { type?: string };
@@ -570,7 +575,7 @@
           {/each}
         </div>
         {#if showMiniMap}
-          <div class="map"><ManifoldMiniMap info={geo} trajectory={entry.trajectory ?? []} settled={(entry.aggregate as ProbeReadingJSON | null)?.coords ?? null} /></div>
+          <div class="map"><ManifoldMiniMap info={geo} trajectory={entry.trajectory ?? []} settled={replySettled?.coords ?? null} /></div>
         {/if}
       </section>
 

@@ -25,6 +25,8 @@
   const displayName = $derived(probeTitle(info, name).text);
 
   const latest = $derived((entry.aggregate ?? entry.reading) as ProbeReadingJSON | null);
+  /** The live reading, else the saved reply's (its last measured row, after a reload). */
+  const settled = $derived((latest ?? entry.savedReading ?? null) as ProbeReadingJSON | null);
   const sparkline = $derived(entry.sparkline ?? []);
   /** The latest reply token by token (a curved probe's share, from each token's reading), else the
    *  live buffer (the same primary reading). */
@@ -38,14 +40,14 @@
   /** The layer its reading's depth centre of mass falls on. The client knows the model's depth only
    *  through a fit that covers every layer (0 to the last), so a probe fitted on a subset shows none. */
   const atLayer = $derived.by((): number | null => {
-    const com = latest?.depth_com?.[0];
+    const com = settled?.depth_com?.[0];
     const layers = info.layers ?? [];
     const last = Math.max(0, ...layers);
     const covers = last > 0 && new Set(layers).size === last + 1;
     return com == null || !Number.isFinite(com) || !covers ? null : Math.round(com * last);
   });
   /** The probe's place on the ramp: its measured depth (layer / (layers - 1)), when it has one. */
-  const tint = $derived(depthTint(latest?.depth_com?.[0]));
+  const tint = $derived(depthTint(settled?.depth_com?.[0]));
 
   const isHighlight = $derived(
     highlightState.target !== null && parseProbeTarget(highlightState.target).base === name,

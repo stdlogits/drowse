@@ -1001,6 +1001,11 @@ export interface ProbeRackEntry {
   savedAggregate: number | null;
   savedCoordinates?: number[];
   savedFraction?: number | null;
+  /** The selected saved node's reading of this probe on its last measured row (the token its
+   *  aggregate reads), as the row keeps it: a geometry summary without per-layer traces, a scalar
+   *  reading whole. The rack, the Lens panel and the inspector read it after a reload where the
+   *  live ``aggregate`` is gone, so they show what the live view showed (but the trail). */
+  savedReading?: AnyReadingJSON | null;
   /** Most-recent per-token nearest list (ascending distance).  Drives the
    *  inline nearest readout + mini-map hover; empty until the first token. */
   nearest: [string, number][];

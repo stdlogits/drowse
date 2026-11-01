@@ -40,7 +40,8 @@ import {
 } from "./instruments.svelte";
 import { loomTree } from "./loom.svelte";
 import { invalidateCorrelation } from "./steering.svelte";
-import { savedProbeSummary } from "../probeHistory";
+import { savedProbeReading, savedProbeSummary } from "../probeHistory";
+import { readingLayers } from "../tokenRows";
 
 /** Sparkline depth (tokens).  Exported because the lens aggregate history
  *  and the SAE activation history are capped to the same window — the
@@ -178,6 +179,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
           savedAggregate: null,
           savedCoordinates: [],
           savedFraction: null,
+          savedReading: null,
         };
       }
       const usesCoords = base.info.is_affine;
@@ -215,6 +217,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       nearest: [],
       trajectory: [],
     };
@@ -236,6 +239,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
     savedAggregate: null,
     savedCoordinates: [],
     savedFraction: null,
+    savedReading: null,
     nearest: _readingNearest(reading),
     trajectory: [],
   };
@@ -297,6 +301,7 @@ function _emptyProbeEntry(
     savedAggregate: null,
     savedCoordinates: [],
     savedFraction: null,
+    savedReading: null,
     nearest: [],
     trajectory: [],
     subspaceTrail: [],
@@ -503,6 +508,7 @@ export function resetProbeStreams(): void {
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       trajectory: [],
       subspaceTrail: [],
     });
@@ -566,6 +572,7 @@ export function updateProbesFromReadings(
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       nearest,
       trajectory,
       subspaceTrail,
@@ -588,6 +595,7 @@ export function setProbeAggregates(
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       current: _primaryScalar(prev.info, agg),
       perLayer: _primaryPerLayer(prev.info, agg),
       nearest: _readingNearest(agg),
@@ -620,18 +628,25 @@ export function hydrateProbeRackFromActiveNode(): void {
     : undefined;
   const readings = node?.aggregate_readings ?? {};
   for (const [name, prev] of probeRack.entries) {
-    const { value, coordinates, fraction } = savedProbeSummary(prev.info, readings);
+    // The node keeps each probe's axis-0 aggregate; its last measured row keeps the rest of the
+    // reading the live aggregate showed (a curved probe's share, nearest, residual, depth, a lens
+    // probe's band), so a reload shows what the live view showed but the trail.
+    const saved = savedProbeReading(prev.info, name, node) ?? savedProbeReading(prev.info, prev.info.name, node);
+    const { value, coordinates, fraction } = savedProbeSummary(prev.info, readings, saved);
+    const geometry = saved && !isScalarReading(saved) ? saved : null;
+    const share = prev.info.family === "geometry" && !prev.info.is_affine;
     probeRack.entries.set(name, {
       ...prev,
       current: value ?? 0,
       previous: prev.current,
-      perLayer: {},
+      perLayer: readingLayers(saved, share) ?? {},
       reading: null,
       aggregate: null,
       savedAggregate: value,
       savedCoordinates: coordinates,
       savedFraction: fraction,
-      nearest: [],
+      savedReading: saved,
+      nearest: geometry ? geometry.nearest.map(([label, distance]) => [label, distance] as [string, number]) : [],
       trajectory: [],
       subspaceTrail: [],
     });
