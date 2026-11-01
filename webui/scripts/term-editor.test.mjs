@@ -360,5 +360,13 @@ try {
   assert.equal(escapeAction({ ...idle, paletteOpen: true, modalOpen: true }), "palette");
   assert.equal(escapeAction(idle), "none");
 
+  // Regression (Wave 4): the position rows' grid (a 44px label column) was an unscoped `.dial` rule
+  // after the strength dial's, so the strength readout (124px, 40px type) sat in a 44px column over
+  // its slider, and the squeezed range ran "-2" into "0". Only the strength dial is a bare `.dial`.
+  const { readFileSync } = await import("node:fs");
+  const editor = readFileSync(new URL("../src/panels/rack/TermEditor.svelte", import.meta.url), "utf8");
+  const style = editor.slice(editor.indexOf("<style>"));
+  assert.deepEqual([...style.matchAll(/^\s*\.dial \{([^}]*)\}/gm)].map((m) => m[1].trim()), ["display: flex; align-items: center; gap: var(--s4); min-width: 0;"]);
+  assert.match(style, /\.position \.dial \{ display: grid;/);
   console.log("Term editor: the layer clause, unit terms, slens terms, where a term acts, the chips' words, the snapshot rows and Escape's order passed");
 } finally { await server.close(); }

@@ -508,8 +508,10 @@
   .position { display: grid; gap: var(--s3); min-width: 0; }
   .position .dw-sec-head { align-items: center; }
   .pick { display: inline-flex; min-width: 0; max-width: 60%; }
-  .dial { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(40px, max-content); align-items: center; gap: var(--s3); }
-  .dial .meta { text-align: right; white-space: nowrap; }
+  /* A position row (Node, Onto): label, slider, value. Scoped, so it never reaches the strength dial,
+     whose 124px readout it once squeezed into a 44px column over the slider. */
+  .position .dial { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(40px, max-content); align-items: center; gap: var(--s3); }
+  .position .dial .meta { text-align: right; white-space: nowrap; }
 
   .waiting { height: 156px; border-radius: var(--r-box); background: var(--wash2); }
   .error { margin: 0; color: var(--ink2); font: var(--type-small); overflow-wrap: anywhere; }
