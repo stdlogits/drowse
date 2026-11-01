@@ -1382,13 +1382,15 @@
           >{clearConversationArmed ? "Confirm clear" : "Clear"}</button>
         {/if}
         </span>
-        {#if genStatus.active}
-          <button type="button" class="dw-quiet" onclick={sendStop} data-tip="Escape stops the reply">Stop</button>
-        {/if}
-        <button type="submit" class="dw-button" disabled={primaryDisabled}
-          data-tip={appendSelected ? "Enter adds your message only" : hasText ? "Enter sends and generates a reply" : "Generates the next reply"}>
-          <MorphText text={sendLabel} numbers={false} />
-        </button>
+        <span class="send">
+          {#if genStatus.active}
+            <button type="button" class="dw-quiet" onclick={sendStop} data-tip="Escape stops the reply">Stop</button>
+          {/if}
+          <button type="submit" class="dw-button" disabled={primaryDisabled}
+            data-tip={appendSelected ? "Enter adds your message only" : hasText ? "Enter sends and generates a reply" : "Generates the next reply"}>
+            <MorphText text={sendLabel} numbers={false} />
+          </button>
+        </span>
       </div>
     </form>
   </div>
@@ -1581,7 +1583,10 @@
   .dw-compose-row { gap: var(--s2) var(--s4); }
   .extras { display: contents; }
   .small { font: var(--type-meta); }
-  .dw-sampling { min-width: 0; }
+  /* The sampling summary takes the row's free space, so Send keeps the right edge on one line and,
+   * when the row wraps, its own auto margin keeps it there instead of flush left. */
+  .dw-sampling { min-width: 0; flex: 1 1 auto; }
+  .send { display: inline-flex; align-items: center; gap: var(--s2); margin-left: auto; }
   .turn-plan-summary { max-width: 24ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
   .clear-conversation.armed { color: var(--ink); }
   .dw-compose .dw-button, .dw-compose .dw-quiet { flex: none; }
