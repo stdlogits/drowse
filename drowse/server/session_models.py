@@ -8,7 +8,7 @@ from drowse.session.session import DrowseSession
 from drowse.steering.terms import Steering
 from drowse.server.instrument_routes import instrument_families
 from drowse.server.runtime import NativeRequest
-from drowse.server.response_models import SamplingFields, SessionInfo
+from drowse.server.response_models import ModelArchitectureJSON, SamplingFields, SessionInfo
 
 
 class PatchSessionRequest(NativeRequest):
@@ -79,6 +79,19 @@ def _scene_capabilities(session: DrowseSession) -> tuple[bool, bool, bool]:
     )
 
 
+def model_architecture(session: DrowseSession) -> ModelArchitectureJSON:
+    """The loaded model's shape from its load-time ``model_info`` (metadata only)."""
+    info = session.model_info
+    return {
+        "model_type": str(info["model_type"]),
+        "layers": int(info["num_layers"]),
+        "hidden_size": int(info["hidden_dim"]),
+        "neurons_per_layer": info["mlp_width"],
+        "heads_per_layer": info["num_heads"],
+        "parameters": int(info["param_count"]),
+    }
+
+
 def session_info(
     session: DrowseSession,
     default_steering: Steering | None,
@@ -123,4 +136,5 @@ def session_info(
         "scene_mode": scene_mode,
         "thinking_input_supported": thinking_input,
         "strips_history_thinking": strips_history_thinking,
+        "architecture": model_architecture(session),
     }

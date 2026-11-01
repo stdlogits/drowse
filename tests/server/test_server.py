@@ -1129,6 +1129,19 @@ class TestSessionInfoInstrumentFields:
         got = client.get("/drowse/v1/sessions/default").json()
         assert got["jlens_fitted"] is True
 
+    def test_architecture_describes_the_model_for_the_model_room(
+        self, session_and_client: Any,
+    ) -> None:
+        """Wave 2 finding 27: the Model room shows layers, neurons and heads a
+        layer; session info carries them from the load-time model info."""
+        _session, client = session_and_client
+        info = client.get("/drowse/v1/sessions/default").json()
+        assert info["architecture"] == {
+            "model_type": "gemma2", "layers": 26, "hidden_size": 2304,
+            "neurons_per_layer": 9216, "heads_per_layer": 8,
+            "parameters": 2_614_000_000,
+        }
+
     @staticmethod
     def _families(client: Any) -> dict[str, Any]:
         info = client.get("/drowse/v1/sessions/default").json()

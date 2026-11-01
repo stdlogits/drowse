@@ -78,6 +78,8 @@ def mock_session(**overrides: Any) -> Any:
         "model_type": "gemma2",
         "num_layers": 26,
         "hidden_dim": 2304,
+        "mlp_width": 9216,
+        "num_heads": 8,
         "vram_used_gb": 5.2,
         "param_count": 2_614_000_000,
         "device": "cpu",
@@ -201,6 +203,9 @@ class StubSession:
             "model_type": "gemma2",
             "num_layers": 4,
             "hidden_dim": 16,
+            "mlp_width": 32,
+            "num_heads": 2,
+            "param_count": 4096,
             "device": "cpu",
             "dtype": "torch.float32",
         }

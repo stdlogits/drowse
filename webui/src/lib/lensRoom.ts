@@ -121,6 +121,11 @@ export function coveredText(series: SiteSeries): string {
 
 const KIND_NAMES: Record<string, string> = { J: "J-lens", R: "R-lens", K: "K-lens", S: "S-lens" };
 
+/** ``R-lens`` for a kind letter; the letter itself when unknown, "Lens" when absent. */
+export function lensKindName(lens: string | undefined): string {
+  return lens ? (KIND_NAMES[lens] ?? lens) : "Lens";
+}
+
 /** A kind's name when it is not its family's own (a J-lens in the R family), else "". */
 export function foreignKind(lens: string | undefined, family: LensFamily): string {
   return lens && lens !== family ? (KIND_NAMES[lens] ?? lens) : "";

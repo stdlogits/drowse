@@ -1,9 +1,11 @@
 <script lang="ts">
-  // A room of tools: Manifolds (build, packs, combine, templates, roles) and Model (health or the
-  // local runtime, API access). Its sections are tabs, each a tool that used to open as a drawer,
-  // shown in place (``openDrawer`` of one of these lands here; see lib/stores/rooms.svelte.ts).
+  // A room of tools: Manifolds (build, packs, combine, templates, roles) and Model (its shape, depth
+  // and lenses, then health or the local runtime, API access). Its sections are tabs, each a tool
+  // that used to open as a drawer, shown in place (``openDrawer`` of one of these lands here; see
+  // lib/stores/rooms.svelte.ts).
   import { Swap, Tabs } from "@stdlogits/ledger";
   import DrawerOutlet from "../../drawers/DrawerOutlet.svelte";
+  import ModelFacts from "./ModelFacts.svelte";
   import { drawerParams } from "../../drawers";
   import { ROOMS, ROOM_SECTIONS, goto, route, type Room } from "../../lib/stores/rooms.svelte";
   import { runtimeClient } from "../../lib/runtime/client";
@@ -34,7 +36,13 @@
     </div>
     <h2 class="dw-title">{title}</h2>
     {#if room === "model" && sessionState.info}
+      {@const shape = sessionState.info.architecture}
       <div class="dw-facts">
+        {#if shape}
+          <span><b>{shape.layers.toLocaleString("en-US")}</b> layers</span>
+          {#if shape.neurons_per_layer !== null}<span><b>{shape.neurons_per_layer.toLocaleString("en-US")}</b> neurons a layer</span>{/if}
+          {#if shape.heads_per_layer !== null}<span><b>{shape.heads_per_layer.toLocaleString("en-US")}</b> heads a layer</span>{/if}
+        {/if}
         <span>on <b>{sessionState.info.device.split(":")[0].toUpperCase()}</b></span>
         <span><b>{sessionState.info.dtype}</b></span>
         {#if sessionState.info.is_base_model}<span>base model</span>{/if}
@@ -44,6 +52,10 @@
       </div>
     {/if}
   </div>
+
+  {#if room === "model"}
+    <ModelFacts />
+  {/if}
 
   {#if sections.length > 1}
     <Tabs label={`${title} sections`} value={section?.value ?? ""} onchange={(value) => goto(room, value)}

@@ -217,8 +217,9 @@ opportunistically and never blocks the current store. `lib/theme.ts` (the stored
 main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
 panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread
 panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace)
-panels/rooms/         RoomSections (Manifolds, Model), LensRoom (lens/: the depth axis, a family
-                      column, a card), UnitsRoom (+ UnitAtlas)
+panels/rooms/         RoomSections (Manifolds, Model), ModelFacts (the Model room's depth ramp
+                      and lenses), LensRoom (lens/: the depth axis, a family column, a card),
+                      UnitsRoom (+ UnitAtlas)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/ (the probe
                       cards; TermEditor and LayerStrip, the term editor under the chips)
@@ -278,6 +279,13 @@ provider's offers Fetch again), and a failed fit offers Replace only when the st
 `replaceable`. The room's fit always covers every layer, since each family reads its own span of
 the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is one line per family and the SAE, with a link to the
 room; its Features shows a "Choose an SAE" button that leads there until an SAE is loaded.
+
+The Model room (`#/model`) opens on the model's facts: its layers, neurons and heads a layer
+(session info's optional `architecture`, read from the config at load; a runtime that sends none
+leaves them and the depth ramp out), the device and versions, the depth ramp, the prepared lenses
+(the Lens room's sources: origin, documents, split-half range) and "Fit a lens here", which goes to
+the Lens room with the server's `fit_documents`. Its tabs (health or the local runtime, API
+access) follow.
 
 Slices import each other directly, never through the barrel. The import graph has cycles
 (loom ↔ ws, chat ↔ pending). These are safe only because every cross-slice reference sits

@@ -133,3 +133,23 @@ def test_a_stop_mid_reply_records_cancelled_on_the_loom_node(tiny_session: Any) 
     assert node.role == "assistant"
     assert node.finish_reason == "cancelled"
     assert node.to_dict()["finish_reason"] == "cancelled"
+
+
+def test_model_info_names_the_layer_shape(tiny_session: Any) -> None:
+    """The Model room's facts: neurons and heads a layer, from the config."""
+    info = tiny_session.model_info
+    config = tiny_session.model.config
+    assert info["num_layers"] == len(tiny_session.layers)
+    assert info["mlp_width"] == config.intermediate_size
+    assert info["num_heads"] == config.num_attention_heads
+
+
+def test_config_width_reads_per_layer_lists_and_refuses_junk() -> None:
+    from types import SimpleNamespace
+
+    from drowse.model.arch import _config_width
+
+    assert _config_width(SimpleNamespace(intermediate_size=[8, 16, 12]), "intermediate_size") == 16
+    assert _config_width(SimpleNamespace(), "intermediate_size") is None
+    assert _config_width(SimpleNamespace(num_attention_heads=True), "num_attention_heads") is None
+    assert _config_width(SimpleNamespace(num_attention_heads=0), "num_attention_heads") is None
