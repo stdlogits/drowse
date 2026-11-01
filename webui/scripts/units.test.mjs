@@ -123,7 +123,7 @@ try {
           heads: f16([0.5, layer / 4]),
         }));
         return {
-          node_id: nodeId, steering: null, unit: "activation_over_scale", tokens, sink_raw_index: null,
+          node_id: nodeId, steering: null, unit: "activation_over_scale", scale: { source: "catalog", detail: "neuron-lens catalog stdlogits/neuron-lens@b5bf11a2b9e3" }, tokens, sink_raw_index: null,
           top: [
             { unit: "neuron/L3n3", kind: "neuron", layer: 3, index: 3, peak: 3.9 * sign, raw_index: 2, label: catalogued ? { fires: flip ? "daylight words" : "night-sky and starlight words", credit: CREDIT, url: "u" } : null },
             { unit: "head/L2h1", kind: "head", layer: 2, index: 1, peak: 3.1, raw_index: 2 },
@@ -364,6 +364,7 @@ try {
   assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");
   assert.match(html, /−2\.2/);
   assert.match(html, />Labelled</, "a bound catalog offers the labelled units");
+  assert.match(html, /Values over each unit&#39;s typical firing in text \(Neuron Lens\)|Values over each unit.s typical firing in text \(Neuron Lens\)/, "the room names the scale source");
   assert.match(html, new RegExp(CREDIT));
   assert.match(html, /the 40 most active of 8 a layer/);
   assert.match(html, /L3 · 6 of 8 active here/);

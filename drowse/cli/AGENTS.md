@@ -277,11 +277,19 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   (`rs-r`/`rs-s` bind every site the repository holds). `show` / `rm` default
   to the active R-family source, else the active S-family one; removing a
   binding never touches the cache. `ls` prints each source's kind and sites,
-  `show` its layers per site, `use` the family it selected.
+  `show` its layers per site (an S source also its token mask's source, `-j`
+  `token_mask`), `use` the family it selected.
+- `counts MODEL` never loads the model: it streams the S lens's recorded
+  corpus (else the default lens corpus; `--corpus FILE` or `--hf-corpus`
+  instead) through the tokenizer alone, `--documents` 16384 by default, and
+  writes the model's corpus counts (`lens/token_counts.py`; under 1M tokens
+  exits 2). A current count is kept without `-f`; `--remove` drops it. The
+  S mask uses it when no neuron-lens catalog is bound.
 - `top MODEL PROMPT [--site out|mid]` is `session.lens.read_prompt`: each
   layer's residual read through both families (S footprint z, R readout
   probability), S line first, each with its depth weight and lens label or
-  the reason it is absent; `-j` emits `LensRead.to_dict()` per position.
+  the reason it is absent, after one line naming the S token mask's source;
+  `-j` emits `LensRead.to_dict()` per position and `token_mask`.
   `decompose --dictionary tokens-out|tokens-in|neurons` (default `tokens-out`;
   `neurons` needs no lens, and `unit find` is it with poles and labels). A
   neuron's coefficient is signed, the sign its pole: the text prints

@@ -73,6 +73,7 @@ drowse template ls | show NAME | rm NAME [-y] | score NAME -m MODEL [-S EXPR] [-
 drowse lens fit MODEL [--kind r|j|s|k] [--sites out,mid] [--corpus FILE | --hf-corpus REPO[:CFG][@REV][,K=V...]...]
                 [--prompts N] [--seq-len T] [--dim-batch K] [--checkpoint-every N] [--no-split-half] [--layers L] [-f]
 drowse lens fetch MODEL [rs-r|rs-s|neuronpedia|workspace-r|workspace-j] [--repo R] [--revision REV] [-f]
+drowse lens counts MODEL [--corpus FILE | --hf-corpus SPEC...] [--documents N] [--remove] [-f]   # S mask counts
 drowse lens ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
 drowse lens top MODEL "PROMPT" [-k K] [--layers L|sample|workspace|all] [--position P] [--site out|mid]
 drowse lens decompose SELECTOR -m MODEL [-k K] [--dictionary tokens-out|tokens-in|neurons] [--layers L]

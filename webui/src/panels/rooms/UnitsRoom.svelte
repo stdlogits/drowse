@@ -413,7 +413,7 @@
         {/if}
         <div class="split">
           {#if rows.length > shown}<button type="button" class="dw-text" onclick={() => (shown += 16)}>{rows.length - shown} more</button>{/if}
-          {#if data && scaleText(data.scale.source)}<span class="meta" data-tip={data.scale.detail}>Values over each unit's {scaleText(data.scale.source)}</span>{/if}
+          {#if data?.scale && scaleText(data.scale.source)}<span class="meta" data-tip={data.scale.detail}>Values over each unit's {scaleText(data.scale.source)}</span>{/if}
           {#if credit}<span class="meta credit">{credit}</span>{:else if canFetch}
             <button type="button" class="dw-text credit" disabled={unitsState.fetching} onclick={() => void fetchCatalog()}><MorphText text={unitsState.fetching ? "Fetching labels…" : "Fetch labels"} /></button>
           {/if}

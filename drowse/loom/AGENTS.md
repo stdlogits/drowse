@@ -304,9 +304,11 @@ without the node's own terms. Pinned against the live unit readings of
   the R target) and `mid` for heads, pinned against an autograd Jacobian;
   across layers the top `units`; and the attention rows of the top `patterns`
   heads from the token's producing position. Each layer's unit row carries its
-  raw activation and `activation_over_scale` (over the unit's soft neutral
-  scale, `units/stats.py::soft_scale`), so a unit shows the number its probe,
-  unit activity and the unit view show. No R lens: `units_absent`.
+  raw activation and `activation_over_scale` (over the unit's reading scale,
+  the bound catalog's `act_top` or the neutral statistics', soft-floored:
+  `units/stats.py::UnitScales`; `units_scale` names which), so a unit shows the
+  number its probe, unit activity and the unit view show. No R lens:
+  `units_absent`.
   It returns the `scope="replay"` envelope's `anatomy`.
 - **Unit activity** (`unit_activity(node_id, top=32, units=(), raw_index=None,
   layers=None)`): anchored at the node's last token, so one forward covers

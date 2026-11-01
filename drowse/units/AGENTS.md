@@ -56,28 +56,46 @@ v5 shards beside each layer's activations (`store/neutral.py`), loaded by
 | `head_mean` | `[n_heads, head_dim]` | mean `z_h` over positions `>= 1` |
 | `head_scale` | `[n_heads]` | `act_top` of the write norm `‖W_O^h z_h‖` (sandwich scale included) over positions `>= HEAD_SCALE_FROM = 16` |
 
-**The reading scale.** A reading (`activation_over_scale`) divides by a
-soft scale, never the bare `act_top`: `stats.soft_scale` blends the unit's own
-scale `s` with a floor from its layer's typical scale `m` for its kind,
-`sqrt(s² + (c · m)²)`, where `m` is `typical_scale`, the median of the layer's
-positive scales (a neuron's over both poles of every neuron, a head's over the
-layer's heads), and `c = SCALE_FLOOR_SHARE = 0.25`
-(`LayerUnitStats.neuron_reading_scale`, `.head_reading_scale`). A pole that
-barely fired on the neutral corpus otherwise reads ordinary firings in the
-hundreds (SmolLM2's `L31n2394+`, `act_top` 0.055 against its layer's 2.28,
-topped the activity list at 169). Why a quarter, measured on SmolLM2-360M (96
-documents): a neuron pole's `act_top` over its layer's median has its 0.1%,
-1% and 5% quantiles at 0.20, 0.33 and 0.47 (heads 0.13, 0.24, 0.45), and 0.24%
-of neuron poles (1.25% of heads) sit below a quarter of it. At `c = 0.25` a
-unit at the median reads 3% lower than over its own scale and one at half the
-median 11% lower, while the tail is held: `L31n2394+` sits at 0.024 of the
-median and its reading falls by about ten. It is soft, not a cut: every unit
-reads and ranks, and a pole with no neutral scale at all (`act_top` 0; 49 of
-163,840 poles on SmolLM2) reads over `c · m`. Probes, gates, the units
-token readout, unit activity and the anatomy's unit rows all divide by it, so
-one unit shows one number everywhere; `Firing.neutral` reports it as `scale`
-beside `act_top`. `capture.SCALE_FLOOR` (1e-6) stays only as the numeric guard
-of a layer whose units never fired.
+**The reading scale** (`stats.UnitScales`, `UnitsRuntime.scales()`). A
+reading (`activation_over_scale`) divides by one of two sources' `act_top`:
+
+- `"catalog"`: with a neuron-lens catalog bound (`unit fetch`), its
+  `act_top` per pole and `out_top` per head (the same statistic over 15.4M
+  positions; `UnitCatalog.reading_scales`, read once per opened binding and
+  checked against the model's shape, a mismatch a `UnitCatalogError`). 1.0 is
+  the pole's typical high firing in text.
+- `"neutral"`: otherwise, the neutral statistics' (`UnitStats.reading_scales`).
+  96 statements are too few for a top-24-of-documents statistic: on Qwen3-8B
+  the catalog's `act_top` is a median 12x the neutral one (by layer: L0 8.5,
+  L2 8.6, L8 12.2, L17 9.7, L24 13.1, L33 15.9, L35 22.9), so a reading is
+  relative to the neutral text, and every view says so.
+
+Either way it is a soft scale, never the bare `act_top`: `stats.soft_scale`
+blends the unit's own `s` with a floor, `sqrt(s² + (c · m)²)`, `c =
+SCALE_FLOOR_SHARE = 0.25` (`stats.reading_scales`). Over the catalog `m` is
+`typical_scale`, the median of the layer's positive scales (a neuron's over
+both poles of every neuron, a head's over the layer's heads); the catalog is
+robust, so a quiet layer is truly quiet (Qwen3-8B's L1-L2 catalog medians are
+0.009 and 0.014, with 1,559 and 3,149 poles at 0). Over the neutral statistics
+`m` is the larger of the layer's and the model's typical scale, a floor that
+cannot collapse with the layer: Qwen3-8B's neutral L2 median is 0.0024 with
+4,856 of 24,576 poles at 0, and a quarter of it read `L2n7950+` (neutral
+`act_top` 0, catalog 0.867) at 849, topping the Strongest list. Why a quarter,
+measured on SmolLM2-360M (96 documents): a neuron pole's `act_top` over its
+layer's median has its 0.1%, 1% and 5% quantiles at 0.20, 0.33 and 0.47 (heads
+0.13, 0.24, 0.45), and 0.24% of neuron poles (1.25% of heads) sit below a
+quarter of it. At `c = 0.25` a unit at the median reads 3% lower than over its
+own scale and one at half the median 11% lower, while the tail is held
+(SmolLM2's `L31n2394+`, 0.055 against its layer's 2.28, topped the activity
+list at 169 over its bare scale). It is soft, not a cut: every unit reads and
+ranks, and a pole with no scale at all reads over `c · m`. Probes, gates, the
+units token readout, unit activity and the anatomy's unit rows all divide by
+it, so one unit shows one number everywhere, and every one names the source:
+a reading's `meta.scale`, unit activity's `scale` (`{"source", "detail"}`),
+the anatomy's `units_scale`, the unit view's `Firing.scale` and the CLI's
+firing line. The tap takes its scales when a run binds, so a catalog bound
+mid-generation reaches the next one. `capture.SCALE_FLOOR` (1e-6) stays only
+as the numeric guard of a layer whose units never fired.
 
 Position 0 is the attention sink (massive activations) and never counts; a
 head's scale starts where neuron-lens's does, because a head with few keys
@@ -268,9 +286,11 @@ dictionary="neurons")` (`NeuronWrites`: each layer's writes, signed, in the
 whitened metric) with each neuron's pole and label. `stats(unit)` is the
 firing block alone.
 
-**Firing.** `Firing.neutral` is drowse's own statistics (a pole's
-`act_top`, its reading `scale`, the mean, the document count; a head's write
-`act_top`, its `scale` and mean `‖z_h‖`). The neutral cache has no firing rate, so "fires on X% of tokens"
+**Firing.** `Firing.scale` is what the unit's readings divide by:
+`{"source": "catalog" | "neutral", "detail", "top", "value"}` (`top` the
+source's `act_top` of the pole or head, `value` the soft scale over it).
+`Firing.neutral` is drowse's own statistics (a pole's `act_top`, the mean,
+the document count; a head's write `act_top` and mean `‖z_h‖`). The neutral cache has no firing rate, so "fires on X% of tokens"
 (`rate`: the catalog's share of tokens with `|act| > act_top / 4` over its
 activation corpora, 15.4M positions) comes from a bound catalog, else is
 absent with the reason.
@@ -283,11 +303,14 @@ instruction-tuned checkpoint has other neurons and gets none). `unit fetch`
 binds it at `CATALOG_REVISION`, copying `neurons/labels/L<LL>.parquet` and
 `heads/labels.parquet` whole and the `acts` and `legible` tables projected to
 their scalar columns (`NEURON_COLUMNS`/`HEAD_COLUMNS`), read over HTTP ranges
-so the bulk columns never download; never `reads`, `drivers`, media or the
-causal sample. The binding is staged and promoted to
-`models/<id>/units/catalog/` with `catalog.json` (format 1: repository,
-commit, slug, per file the upstream LFS sha256, the columns kept, the row
-count and the local sha256). A binding of another format, repository or
+so the bulk columns never download, and `token_counts.pt`'s total counts
+(downloaded whole, loaded `weights_only`, stored as
+`token_counts.safetensors`: the S read's token mask, `drowse/lens/AGENTS.md`);
+never `reads`, `drivers`, media or the causal sample. The binding is staged
+and promoted to `models/<id>/units/catalog/` with `catalog.json` (format 2:
+repository, commit, slug, per file the upstream LFS sha256, the columns kept,
+the row count and the local sha256; a format 1 binding, without the counts,
+is not read). A binding of another format, repository or
 commit is not read (fetch again with `-f`). Labels are data: every label
 carries `LABEL_CREDIT` ("Labels by Claude Haiku 5.5") and the unit's page,
 `https://neuron-lens.com/<slug>/L<layer>/n<index>` or `/h<index>` (the

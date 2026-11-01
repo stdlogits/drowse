@@ -238,6 +238,13 @@ having read it; as probes, `jlens/` reads the mean readout probability and
 faithful read (weighted by depth, early layers most), and either can gate a
 term (`@when:slens/owl > 3`).
 
+An S read ranks only tokens the model saw often enough in text: a token it
+almost never saw has an untrained embedding that would top early reads. The
+counts come from the neuron-lens catalog when it is bound (`unit fetch`), else
+from `drowse lens counts MODEL`, which streams the S lens's corpus through the
+tokenizer (no model load); without either, the tokenizer's own rules decide,
+and `lens show` and `lens top` say so.
+
 ### Neurons and heads
 
 Every MLP neuron (`neuron/L8n344`) and attention head (`head/L20h17`) is an
@@ -258,7 +265,11 @@ For Qwen3-8B and Gemma 4 12B the
 adds a label to every neuron pole and head, written by Claude Haiku 5.5, and
 how often each fires; `drowse unit fetch MODEL` binds it (labels and small
 tables only, pinned to a commit), and every unit view then links to the unit's
-page on [neuron-lens.com](https://neuron-lens.com).
+page on [neuron-lens.com](https://neuron-lens.com). A unit's readings then
+divide by the catalog's typical high firing, so 1.0 means "as strong as this
+unit usually fires in text"; without a catalog they divide by its typical
+firing on Drowse's neutral statements, a smaller sample, so the same firing
+reads several times larger, and every view says which.
 
 ### Sparse autoencoders
 
@@ -409,6 +420,8 @@ drowse lens use org/model local:r
 # rs-lenses' R- and S-lens, both sites, for Qwen3-8B and Gemma 4 12B
 drowse lens fetch Qwen/Qwen3-8B rs-r
 drowse lens fetch Qwen/Qwen3-8B rs-s
+# Without a neuron-lens catalog, count the S lens's corpus for the S token mask
+drowse lens counts org/model
 # Read a prompt's residuals through both (--site mid: after each attention)
 drowse lens top Qwen/Qwen3-8B "The capital of France is" --site out
 # Which input tokens' footprints a direction resembles
