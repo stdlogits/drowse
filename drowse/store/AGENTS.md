@@ -38,6 +38,7 @@ $DROWSE_HOME/
     manifold_capture/              content-addressed fit captures (fit/capture_cache.py)
     lens/, sae/                    source families (lens/AGENTS.md, sae/AGENTS.md)
     units/contrast/, units/catalog/  unit reads' contrast cache and the neuron-lens binding (units/AGENTS.md)
+    tokens/counts.safetensors + .json  corpus token counts for the S mask (`lens counts`; lens/AGENTS.md)
   .staging/<uuid>/                 scratch for one whole-folder build (base/staging.py)
   .staging/backup/<path>           the parked old folder during a swap
 ```

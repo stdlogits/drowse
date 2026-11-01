@@ -194,6 +194,57 @@ def parse_lens_corpus(sources: Sequence[str] | None) -> LensCorpus:
     )
 
 
+def corpus_from_spec(spec: str) -> LensCorpus | None:
+    """The Hub corpus a lens recorded as its ``corpus_spec``, or ``None``.
+
+    Reads :attr:`HfLensCorpus.spec` (``hf:REPO/CONFIG@COMMIT;…``),
+    :attr:`LensCorpusMix.spec` (``mix:W*SPEC|…``) and the plain
+    ``REPO[:CONFIG]@COMMIT`` an imported lens records (``rs-lenses``); a
+    file corpus, or anything else, is ``None`` (it cannot be streamed
+    again).  ``lens counts`` streams more of the same corpus.
+    """
+    spec = spec.strip()
+    if spec.startswith("mix:"):
+        parts: list[HfLensCorpus] = []
+        weights: list[int] = []
+        for member in spec[len("mix:"):].split("|"):
+            weight, star, rest = member.partition("*")
+            corpus = corpus_from_spec(rest) if star else None
+            if not isinstance(corpus, HfLensCorpus) or not weight.isdigit():
+                return None
+            parts.append(corpus)
+            weights.append(int(weight))
+        try:
+            return LensCorpusMix(tuple(parts), tuple(weights))
+        except SourceSpecError:
+            return None
+    if spec.startswith("hf:"):
+        head, *options = spec[len("hf:"):].split(";")
+        path, at, revision = head.partition("@")
+        owner, _slash, rest = path.partition("/")
+        name, _slash, config = rest.partition("/")
+        if not (owner and name and config and at and revision):
+            return None
+        values: dict[str, str] = {}
+        for option in options:
+            key, _eq, value = option.partition("=")
+            values[key] = value
+        try:
+            files = int(values["files"]) if "files" in values else None
+            seed = int(values.get("seed", "0"))
+        except ValueError:
+            return None
+        return HfLensCorpus(
+            f"{owner}/{name}", config, revision,
+            values.get("text_field", "text"), files, seed,
+        )
+    try:
+        corpus, weight = _parse_source(spec)
+    except SourceSpecError:
+        return None
+    return corpus if weight is None and corpus.revision is not None else None
+
+
 def _parse_source(raw: str) -> tuple[HfLensCorpus, int | None]:
     source, *options = raw.strip().split(",")
     head, at, revision = source.partition("@")

@@ -105,7 +105,7 @@
     const parts = [
       `${unit} · ${formatContribution(contribution)} to the logit`,
       kind === "neuron" && pole ? `${pole === "+" ? "+" : "−"} pole` : "",
-      activityText(kind, activation, overScale),
+      activityText(kind, activation, overScale, data?.units_scale ?? null),
       label ?? "",
     ];
     return parts.filter(Boolean).join(" · ");

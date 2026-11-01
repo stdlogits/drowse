@@ -68,8 +68,10 @@ from drowse.base.lru import BoundedLRU
 from drowse.model.layers import LayerSelector
 from drowse.lens.depth import LensBand, s_weights
 from drowse.lens.footprint import (
+    TokenCounts,
     TokenEmbeddings,
     footprint_probe_rows,
+    mask_detail,
     pullback_rows,
     token_mask,
 )
@@ -362,8 +364,13 @@ class LensInstrument:
         replay: TokenReplay,
         whitener: Callable[[], Any],
         neutral_means: Callable[[str], Mapping[int, torch.Tensor]],
+        token_counts: "Callable[[], TokenCounts | None] | None" = None,
     ) -> None:
         self.model_id = model_id
+        #: The S mask's token counts (the catalog's, else the model's corpus
+        #: counts; ``None``: the tokenizer's rules alone), the same object
+        #: while neither changed on disk (:mod:`drowse.lens.token_counts`).
+        self._token_counts = token_counts or (lambda: None)
         #: The R family's (J/R) resident lens and readout primitives.
         self.runtime = LensRuntime(
             model=model, tokenizer=tokenizer, model_id=model_id,
@@ -377,9 +384,11 @@ class LensInstrument:
         )
         #: The depth rule's S→R crossover band for :meth:`read`.
         self.band = LensBand()
-        # Model-level, built once on the first S-family read: the masked
-        # embedding mean and covariance (fp32) every footprint z divides by.
+        # Model-level, built on the first S-family read and rebuilt when the
+        # token counts change: the masked embedding mean and covariance (fp32)
+        # every footprint z divides by, beside the counts it was masked with.
         self._embeddings: TokenEmbeddings | None = None
+        self._embeddings_counts: TokenCounts | None = None
         # Whitened tokens-in atom norms by (S lens identity, layer), each
         # beside the whitener they were taken in (runtime.cached_norms).
         self._footprint_norms: BoundedLRU[tuple[str | None, int], tuple[Any, torch.Tensor]] = (
@@ -1018,6 +1027,7 @@ class LensInstrument:
             self.probes.clear()
             self.live = None
             self._embeddings = None
+            self._embeddings_counts = None
             self._footprint_norms.clear()
         self.runtime.close()
         self.input_runtime.close()
@@ -1400,8 +1410,9 @@ class LensInstrument:
         if not bool(embeddings.keep[token_id]):
             raise InvalidTokenIdError(
                 f"slens/{word} names token {token_id}, which the S read's token "
-                f"mask drops (special, added and byte-fallback pieces and "
-                f"embedding padding rows never rank in an S read)"
+                f"mask drops (special, added and byte-fallback pieces, embedding "
+                f"padding rows and tokens too rare in the counted text never rank "
+                f"in an S read; mask: {embeddings.mask_source})"
             )
         return token_id
 
@@ -1410,26 +1421,45 @@ class LensInstrument:
         the first call is model work, so hold the exclusive section)."""
         return self._token_embeddings()
 
-    def _token_embeddings(self) -> TokenEmbeddings:
-        """The masked embedding statistics, built once per model.
+    def token_mask_info(self) -> dict[str, Any]:
+        """Where the S read's token mask comes from, disk only: ``{"source":
+        "catalog" | "corpus" | "tokenizer", "detail", "kept"}`` (``kept``:
+        the built mask's size, ``None`` before the first S read or when the
+        counts changed since)."""
+        counts = self._token_counts()
+        source, detail = mask_detail(counts)
+        built = self._embeddings
+        fresh = built is not None and self._embeddings_counts is counts
+        return {
+            "source": source, "detail": detail,
+            "kept": built.n_kept if fresh and built is not None else None,
+        }
 
-        Model work on the first call (the block description is discovered
-        to read the embedding scale): call it inside the exclusive section.
+    def _token_embeddings(self) -> TokenEmbeddings:
+        """The masked embedding statistics, built once per model and rebuilt
+        when the token counts change (a catalog fetched, a corpus counted).
+
+        Model work when it builds (the block description is discovered to
+        read the embedding scale): call it inside the exclusive section.
         """
+        counts = self._token_counts()
         cached = self._embeddings
-        if cached is not None:
+        if cached is not None and self._embeddings_counts is counts:
             return cached
         from drowse.model.blocks import model_spec
 
         base = getattr(self.runtime.model, "_orig_mod", self.runtime.model)
         spec = model_spec(base)
         weight = spec.embed.weight
-        keep = token_mask(self.runtime.tokenizer, int(weight.shape[0]))
+        keep = token_mask(self.runtime.tokenizer, int(weight.shape[0]), counts)
         with torch.inference_mode():
-            built = TokenEmbeddings.build(weight, spec.embed_scale, keep)
+            built = TokenEmbeddings.build(weight, spec.embed_scale, keep, counts=counts)
         with self.state_lock:
-            if self._embeddings is None:
+            if self._embeddings is None or self._embeddings_counts is not counts:
                 self._embeddings = built
+                self._embeddings_counts = counts
+                # Tokens-in atom norms were taken over the old centring.
+                self._footprint_norms.clear()
             return self._embeddings
 
     # ------------------------------------------------------------------ reads

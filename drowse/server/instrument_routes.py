@@ -55,6 +55,7 @@ from drowse.server.response_models import (
     SaeReleaseJSON,
     SourceSwitchResponse,
     SourcesResponse,
+    TokenMaskJSON,
 )
 from drowse.server.runtime import NativeRequest, run_in_thread, session_lock, session_router
 
@@ -393,6 +394,7 @@ def register_instrument_routes(app: FastAPI) -> None:
                 "providers": cast(list[LensProviderJSON], lens_providers()),
                 "band": {"lo": band.lo, "hi": band.hi, "weights": [[w_s, w_r] for w_s, w_r in weights]},
                 "fit_documents": DEFAULT_FIT_DOCUMENTS,
+                "token_mask": cast(TokenMaskJSON, session.lens.token_mask_info()),
             }
         from drowse.sae.backend import list_sae_releases
         from drowse.sae.sources import list_sae_sources

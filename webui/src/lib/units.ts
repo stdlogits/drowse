@@ -13,6 +13,7 @@ import type {
   UnitHalfJSON,
   UnitLabelJSON,
   UnitPlaceJSON,
+  UnitScaleJSON,
   UnitTokenJSON,
 } from "./types";
 
@@ -113,8 +114,11 @@ export function labelText(label: UnitLabelJSON | null | undefined): string | nul
 }
 
 export interface UnitFacts {
-  /** A pole's typical high firing (neutral ``act_top``), or a head's typical write norm. */
+  /** A pole's typical high firing (its ``act_top``), or a head's typical write norm: what its
+   *  readings divide by, before the soft floor. */
   typical: number | null;
+  /** Where ``typical`` comes from: the Neuron Lens catalog, or the neutral statements. */
+  scale: UnitScaleJSON | null;
   /** Share of tokens it fires on (the catalog's rate), 0–1. */
   rate: number | null;
   /** The neuron's write norm. */
@@ -130,7 +134,8 @@ export function unitFacts(read: NeuronReadJSON | HeadReadJSON, pole: "+" | "-" =
   if (read.kind === "neuron") {
     const p = poleOf(read, pole);
     return {
-      typical: num(p?.firing.neutral?.act_top),
+      typical: num(p?.firing.scale?.top),
+      scale: p?.firing.scale ?? null,
       rate: num(p?.firing.rate),
       writeNorm: num(read.scalars.w_norm),
       copy: null,
@@ -138,11 +143,21 @@ export function unitFacts(read: NeuronReadJSON | HeadReadJSON, pole: "+" | "-" =
   }
   const { primary } = orderedHalves(read.copies);
   return {
-    typical: num(read.firing.neutral?.write_top),
+    typical: num(read.firing.scale?.top),
+    scale: read.firing.scale ?? null,
     rate: num(read.firing.rate),
     writeNorm: null,
     copy: num(read.copy_score[primary.family]),
   };
+}
+
+/** Where a unit reading's scale comes from, in a view's words: over the Neuron Lens catalog's
+ *  typical firing in text, or over the typical firing on the neutral statements (a reading there
+ *  is relative to the neutral text, often several times the catalog's). */
+export function scaleText(source: "catalog" | "neutral" | null | undefined): string | null {
+  if (source === "catalog") return "typical firing in text (Neuron Lens)";
+  if (source === "neutral") return "typical firing on the neutral text";
+  return null;
 }
 
 // ---------------------------------------------------------------- activity

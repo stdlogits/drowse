@@ -440,6 +440,10 @@ class TestSources:
         assert flat == pytest.approx([w for pair in expected for w in pair])
         assert all(w_s + w_r == pytest.approx(1.0) for w_s, w_r in band["weights"])
         assert body["fit_documents"] == DEFAULT_FIT_DOCUMENTS
+        # The S read's token mask and where it comes from (decision 2).
+        mask = {"source": "tokenizer", "detail": "the tokenizer's rules only", "kept": None}
+        session.lens.token_mask_info = MagicMock(return_value=mask)
+        assert client.get(f"{_BASE}/lens/sources").json()["token_mask"] == mask
         providers = {row["source"]: row for row in body["providers"]}
         assert providers["rs-r"] == {
             "source": "rs-r", "lens": "R", "family": "R",
@@ -459,7 +463,7 @@ class TestSources:
         monkeypatch.setattr("drowse.sae.sources.list_sae_sources", lambda _m: [])
         monkeypatch.setattr("drowse.sae.backend.list_sae_releases", lambda _m: [])
         body = client.get(f"{_BASE}/sae/sources").json()
-        assert not {"band", "providers", "fit_documents"} & set(body)
+        assert not {"band", "providers", "fit_documents", "token_mask"} & set(body)
 
     def test_sae_merges_prepared_and_releases(
         self, session_and_client: Any, monkeypatch: Any,

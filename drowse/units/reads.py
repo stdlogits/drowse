@@ -70,9 +70,10 @@ through them in chunks, so a head read holds ``[V, hd]`` at most and never a
 ``[V, d]`` tensor (one is 2.5 GB on Qwen3-8B); the OV z takes two streamed
 passes (``A``'s mean and scatter merged chunk by chunk, then each token's z).
 
-Where drowse differs from neuron-lens: the token mask is the tokenizer's
-(:func:`~drowse.lens.footprint.token_mask`; neuron-lens keeps tokens seen five
-times in its corpora); S raw reads report footprint z (same order as its raw
+Where drowse differs from neuron-lens: the token mask
+(:func:`~drowse.lens.footprint.token_mask`) is neuron-lens's kept set only with
+the bound catalog's counts (else corpus counts, else the tokenizer's rules
+alone); S raw reads report footprint z (same order as its raw
 score); the R head reads hold the final norm's scale constant (as it does);
 the head norms' derivative averages over drowse's neutral residuals (one
 pooled position per neutral statement) where neuron-lens averages over every
@@ -206,18 +207,24 @@ class PlaceRead:
 
 @dataclass(frozen=True)
 class Firing:
-    """How a unit (or a pole) fires: the neutral statistics drowse measured
-    and the catalog's activation table, each present or absent with why.
+    """How a unit (or a pole) fires: the reading scale, the neutral
+    statistics drowse measured and the catalog's activation table, each
+    present or absent with why.
 
-    ``rate`` is the share of tokens the unit fires on (the catalog's
-    ``|act| > act_top / 4`` over its corpora); drowse's neutral statistics
-    carry no rate, so without a bound catalog it is absent.
+    ``scale`` is what the unit's readings divide by: ``{"source": "catalog"
+    | "neutral", "detail", "top", "value"}``, ``top`` the pole's (head's)
+    ``act_top`` in that source and ``value`` the soft scale over it
+    (:class:`~drowse.units.stats.UnitScales`).  ``rate`` is the share of
+    tokens the unit fires on (the catalog's ``|act| > act_top / 4`` over its
+    corpora); drowse's neutral statistics carry no rate, so without a bound
+    catalog it is absent.
     """
 
     neutral: dict[str, float] | None = None
     neutral_absent: str | None = None
     catalog: dict[str, Any] | None = None
     catalog_absent: str | None = None
+    scale: dict[str, Any] | None = None
 
     @property
     def rate(self) -> float | None:
@@ -233,6 +240,7 @@ class Firing:
             "rate_absent": None if rate is not None else (
                 self.catalog_absent or "the catalog row has no firing rate"
             ),
+            "scale": self.scale,
             "neutral": self.neutral,
             "neutral_absent": self.neutral_absent,
             "catalog": self.catalog,
@@ -633,7 +641,9 @@ class UnitReader:
         self._whitener = whitener
         self.contrast = ContrastCache(model_id)
         self._null: torch.Tensor | None = None
-        self._kept_ids: torch.Tensor | None = None
+        # The kept token ids beside the embedding statistics they came from
+        # (a token-count change rebuilds those, and with them the mask).
+        self._kept_ids: tuple[Any, torch.Tensor] | None = None
         #: Per block, the head norms' mean derivatives and what they were
         #: averaged over (the whitener or the token embeddings).
         self._norm_cache: dict[int, tuple[object, dict[str, torch.Tensor | None]]] = {}
@@ -722,9 +732,12 @@ class UnitReader:
 
     def _kept(self) -> torch.Tensor:
         """The kept token ids (the mask's), on the device."""
-        if self._kept_ids is None:
-            self._kept_ids = self._embeddings().keep.nonzero().squeeze(1).to(self.device)
-        return self._kept_ids
+        emb = self._embeddings()
+        cached = self._kept_ids
+        if cached is None or cached[0] is not emb:
+            cached = (emb, emb.keep.nonzero().squeeze(1).to(self.device))
+            self._kept_ids = cached
+        return cached[1]
 
     def _check_k(self, k: int) -> int:
         if not 1 <= int(k) <= MAX_K:
@@ -1044,29 +1057,44 @@ class UnitReader:
             return None
         return float(stats.layer(ref.layer).neuron_mean[ref.index])
 
+    def _scales(self, stats: Any) -> Any:
+        """The reading scales (``None`` without unit statistics)."""
+        return None if stats is None else self.runtime.scales(stats=stats)
+
+    @staticmethod
+    def _scale_block(scales: Any, top: torch.Tensor, value: torch.Tensor) -> dict[str, Any]:
+        return {
+            **scales.describe(),
+            "top": round(float(top), 6),
+            "value": round(float(value), 6),
+        }
+
     def _neuron_firing(self, ref: NeuronRef) -> tuple[Firing, Firing]:
         stats, reason = self._stats()
+        scales = self._scales(stats)
         catalog, status = self.catalog.view()
         cat_absent = status["reason"]
         out: list[Firing] = []
         for row, pole in enumerate((1, -1)):
-            neutral = None
+            neutral = scale = None
             if stats is not None:
                 layer = stats.layer(ref.layer)
                 neutral = {
                     "act_top": round(float(layer.neuron_scale[row, ref.index]), 6),
-                    # What this pole's readings divide by (stats.soft_scale).
-                    "scale": round(float(layer.neuron_reading_scale[row, ref.index]), 6),
                     "mean": round(float(layer.neuron_mean[ref.index]), 6),
                     "documents": float(stats.n_documents),
                 }
+                at = scales.layer(ref.layer)
+                scale = self._scale_block(
+                    scales, at.neuron_top[row, ref.index], at.neuron[row, ref.index],
+                )
             cat_row: dict[str, Any] | None = None
             absent = cat_absent
             if catalog is not None:
                 cat_row = catalog.neuron_acts(ref.layer, ref.index, pole)
                 if cat_row is None:
                     absent = "the catalog has no activation table for this unit"
-            out.append(Firing(neutral, reason, cat_row, absent))
+            out.append(Firing(neutral, reason, cat_row, absent, scale))
         return out[0], out[1]
 
     def _neuron_labels(self, ref: NeuronRef) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -1545,22 +1573,25 @@ class UnitReader:
 
     def _head_firing(self, ref: HeadRef) -> Firing:
         stats, reason = self._stats()
-        neutral = None
+        scales = self._scales(stats)
+        neutral = scale = None
         if stats is not None:
             layer = stats.layer(ref.layer)
             neutral = {
                 "write_top": round(float(layer.head_scale[ref.index]), 6),
-                "scale": round(float(layer.head_reading_scale[ref.index]), 6),
                 "mean_z_norm": round(float(layer.head_mean[ref.index].norm()), 6),
                 "documents": float(stats.n_documents),
             }
+            at = scales.layer(ref.layer)
+            scale = self._scale_block(scales, at.head_top[ref.index], at.head[ref.index])
         catalog, status = self.catalog.view()
         if catalog is None:
-            return Firing(neutral, reason, None, status["reason"])
+            return Firing(neutral, reason, None, status["reason"], scale)
         row = catalog.head_acts(ref.layer, ref.index)
         return Firing(
             neutral, reason, row,
             None if row is not None else "the catalog has no activation table for this unit",
+            scale,
         )
 
     def _head_label(self, ref: HeadRef) -> dict[str, Any] | None:
@@ -1679,7 +1710,8 @@ class UnitReader:
             if not bool(emb.keep[token_id]):
                 raise RequestError(
                     f"{token!r} is token {token_id}, which the token mask drops "
-                    f"(special, added and byte-fallback pieces never rank)"
+                    f"(special, added and byte-fallback pieces and tokens too rare "
+                    f"in the counted text never rank; mask: {emb.mask_source})"
                 )
             ids = torch.tensor([token_id], device=self.device)
             for layer in sorted({int(layer) for layer in selected}):

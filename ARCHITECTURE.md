@@ -459,7 +459,7 @@ Channel units and semantics: `drowse/readout/AGENTS.md`.
 | `geometry` | `session.geometry` (`GeometryInstrument` over `Monitor`) | `ProbeReading` | domain coordinate; Mahalanobis fraction and label distance; curved membership and assignment |
 | `lens` | `session.lens` (`LensInstrument`) | `ScalarReading` | mean fitted-layer probability of one vocabulary token |
 | `sae` | `session.sae` (`SaeInstrument`) | `ScalarReading` | feature activation over Neuronpedia's `maxActApprox` when known, else raw activation |
-| `units` | `session.units` (`UnitsInstrument`) | `ScalarReading` | a neuron's activation over its pole's soft neutral scale (signed), a head's write norm over its own: `act_top` blended with a floor from the layer's typical scale (`units/stats.py::soft_scale`) |
+| `units` | `session.units` (`UnitsInstrument`) | `ScalarReading` | a neuron's activation over its pole's reading scale (signed), a head's write norm over its own: the bound neuron-lens catalog's `act_top`, else the neutral statistics', soft-floored (`units/stats.py::UnitScales`); `meta.scale` names the source |
 
 The units family reads the model's own parts rather than the residual: its
 bound run owns a tap (one forward hook per touched down or output projection,
@@ -934,8 +934,11 @@ executable statement of why a boundary is strict.
   steered generation with `!neuron/…`/`!head/…` (or a unit probe's tap) runs
   the eager module on a compiled session. Unit statistics measure the neutral
   corpus only (96 documents, so `act_top` is the median of the top quarter of
-  document maxima), taken from position 1 on, and a mean-ablation replaces
-  every position but the attention sink, which keeps its own activation.
+  document maxima, a median 12x below neuron-lens's on Qwen3-8B), taken from
+  position 1 on, and a mean-ablation replaces every position but the
+  attention sink, which keeps its own activation. A catalogued model (Qwen3-8B,
+  Gemma 4 12B) with its catalog bound reads units over the catalog's
+  `act_top` instead; any other reads relative to the neutral text, and says so.
 - `BlockSpec` (`model/blocks.py`) describes dense decoders only: llama,
   mistral, qwen2/3 and gemma2/3/4 without per-layer inputs, KV sharing or MoE.
   MoE, fused gate-up or qkv projections, hybrid linear-attention stacks,

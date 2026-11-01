@@ -62,6 +62,9 @@ class _Lens:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
+    def token_mask_info(self) -> dict[str, Any]:
+        return {"source": "catalog", "detail": "neuron-lens catalog x, kept at 5+", "kept": 7}
+
     def read_prompt(self, prompt: str, **kwargs: Any) -> Any:
         self.calls.append(("read_prompt", {"prompt": prompt, **kwargs}))
         r = FamilyRead("R", 0.4, "probability", lens="R:mid", tokens=(TokenScore(5, " Paris", 0.9),))
@@ -88,6 +91,7 @@ def test_top_reads_both_halves_at_the_site(
     main(["lens", "top", "m/x", "the prompt", "--site", "mid", "-k", "3", "--layers", "1-2"])
     out = capsys.readouterr().out.splitlines()
     assert out == [
+        "S mask: catalog (neuron-lens catalog x, kept at 5+)",
         "  L  2  S:mid  0.60  (absent: this S lens has no 'mid' site)",
         "        R:mid  0.40  Paris",
     ]
@@ -98,6 +102,7 @@ def test_top_reads_both_halves_at_the_site(
     main(["lens", "top", "m/x", "p", "-j"])
     payload = json.loads(capsys.readouterr().out)
     assert payload["site"] == "out" and payload["positions"] == [4]
+    assert payload["token_mask"]["source"] == "catalog"
     (read,) = payload["reads"]["4"]
     assert read["r"]["tokens"] == [{"token_id": 5, "token": " Paris", "value": 0.9}]
     assert read["s"]["absent"] == "this S lens has no 'mid' site"

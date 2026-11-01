@@ -127,19 +127,53 @@ through this.
 **Footprint z** (`footprint.py`). `u_L = K_Lᵀ h`; `z_L(v) = u_L·ẽ_v /
 sqrt(u_Lᵀ Σ_E u_L)`, with `ẽ_v = scale·W_E[v] − mean` (`scale` from
 `model_spec`, Gemma's `√d`) and `Σ_E` the covariance of `ẽ` over the token
-mask. The mask is the tokenizer's alone: it drops special tokens, every added
+mask (`token_mask`). Its tokenizer part drops special tokens, every added
 token (special or not: Qwen3's `<think>`/`<tool_call>`, Gemma's
 `<unusedN>`), byte-fallback pieces (spelled `<0xNN>`, including the ASCII ones
 that decode to a control character, or decoding alone to U+FFFD) and
-embedding rows past the tokenizer. `z` is the vocabulary z-score of the raw
-score, so its top-k is neuron-lens's raw `read_S`/`write_S` wherever both keep
-the token. neuron-lens keeps the tokens seen at least five times in its
-corpora instead (rare base tokens differ, and added tokens a corpus contains),
-scores a unit covector in fp16, and its `_z` reads are layer-contrastive
-(across a layer's neurons), which a single read cannot be.
-`TokenEmbeddings` is built once per session on the first S use (model work:
-inside the exclusive section) and holds `Σ_E` on the model device (`d²` fp32).
-A one-token read (`z_of`) costs `O(d²)` per layer, not a vocabulary pass.
+embedding rows past the tokenizer. Its counts part drops every token seen too
+rarely in text (`TokenCounts`): an undertrained embedding tops early S reads
+(on Qwen3-8B, 94 of 112 of L2 neurons' "fires on" S tokens were tokens
+neuron-lens saw under five times in 88M: `clarsimp`, `邓小`, `EDIATEK`). The
+counts come from, in order (`token_counts.py::TokenCountSource`, the session's
+view, which reopens when either source changes on disk):
+
+1. a bound neuron-lens catalog (`unit fetch`; `drowse/units/AGENTS.md`): its
+   activation corpora's counts, kept at `MIN_TOKEN_COUNT = 5`, which is
+   neuron-lens's `kept` exactly but for added tokens a corpus contains (drowse
+   drops them all);
+2. the model's corpus counts, `drowse lens counts MODEL`: a derived cache at
+   `models/<id>/tokens/counts.safetensors` (`counts`, `[ids]` int64) with
+   `counts.json` (format 1: the corpus spec, documents, tokens, threshold,
+   vocabulary size; another format, model or size is not read). It streams
+   the S lens's recorded `corpus_spec` (a local fit's or a fetched lens's;
+   else the default lens corpus; `--corpus FILE` / `--hf-corpus` override)
+   through the tokenizer alone, `DEFAULT_COUNT_DOCUMENTS = 32768` documents
+   (about 19M tokens of FineWeb-Edu, 585 a document), and keeps neuron-lens's
+   rate, `count_threshold(tokens) = max(1, ceil(5 · tokens / 87,884,610))`;
+   under 1M tokens it refuses. A
+   lens fit's own documents are too few to count (64 by default), and a fetched
+   lens's pack holds no counts, so the counts live with the model, never in a
+   lens pack (lens format v7 is unchanged). Binomial thinning of neuron-lens's
+   Qwen3-8B counts: a 16M-token count at threshold 2 keeps 92.7% of its kept
+   set, 99.3% of what it keeps being in it (at threshold 1, 97.5% and 95.6%);
+3. none: the tokenizer part alone. Surfaced, never silent:
+   `TokenEmbeddings.describe()`/`LensInstrument.token_mask_info()` give
+   `{"source": "catalog" | "corpus" | "tokenizer", "detail", "kept"}`, shown
+   by `lens show` (an S source), `lens top` and the lens sources route
+   (`token_mask`), whose tokenizer detail says what to run.
+
+`z` is the vocabulary z-score of the raw score, so its top-k is neuron-lens's
+raw `read_S`/`write_S` wherever both keep the token. neuron-lens scores a
+unit covector in fp16, and its `_z` reads are layer-contrastive (across a
+layer's neurons), which a single read cannot be. `TokenEmbeddings` is built on
+the first S use and rebuilt when the counts change (model work: inside the
+exclusive section; the tokens-in footprint norms and the units reader's kept
+ids follow it; the per-token `slens/` probe path reads the built one and never
+rebuilds) and holds `Σ_E` on the model device (`d²` fp32). A one-token read
+(`z_of`) costs `O(d²)` per layer, not a vocabulary pass. The mask and the
+centring are browser-seam semantics: a different mask changes the S top-k and
+every footprint z.
 
 - A local directory name carries its kind (`^[jrks](-tag)?$`: `r`, `j`,
   `r-chat`). Every writer refuses a mismatch, so a fit cannot land in or resume
@@ -650,7 +684,9 @@ the per-layer softmax probability `p_l(v)`.
   object and the store, `test_lens_depth.py` the depth rule,
   `test_lens_rs_sources.py` the rs-lenses bindings over a synthetic Hub,
   `test_lens_footprint.py` footprint z, the mask, `read_vectors` and
-  `TokensIn`, `test_slens.py` the S family through a tiny session with a
+  `TokensIn`, `test_token_counts.py` the counts part of the mask, the
+  corpus-counts cache, the source order, the session's rebuild, `lens counts`
+  and reading a recorded corpus spec back, `test_slens.py` the S family through a tiny session with a
   hand-built S lens) run on the toy model in `tests/support/jlens_toys.py`, a
   genuine tiny llama the transport fits. `test_lens_transport.py` holds every
   dense family × kind × site to the autograd oracle

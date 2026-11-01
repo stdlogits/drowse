@@ -26,6 +26,7 @@ Shape::
         "units": {
           "binding": {"source": null, "steering": ...},
           "readings": {name: ...}                 # attached neuron/… head/… probes
+                                                  # (meta.scale: "catalog" | "neutral")
         }
       },
       "anatomy": {...}                            # replay only: token anatomy
@@ -246,7 +247,10 @@ class SaeChannel(TypedDict):
 
 class UnitsChannel(TypedDict):
     """The units family: attached ``neuron/…`` / ``head/…`` probe readings.
-    ``binding.source`` is always ``None`` (units are the model's own parts)."""
+    ``binding.source`` is always ``None`` (units are the model's own parts);
+    each reading's ``meta.scale`` names its reading scale's source
+    (``"catalog"``: the bound neuron-lens catalog's ``act_top``;
+    ``"neutral"``: the neutral statistics', relative to the neutral text)."""
 
     binding: MeasurementBinding
     readings: dict[str, ScalarReadingDict]
@@ -289,9 +293,10 @@ class LensReadDict(TypedDict):
 class AnatomyUnit(TypedDict):
     """A unit's direct contribution to the anatomy token's logit through the
     R lens; ``activation`` is a neuron's raw activation or a head's write
-    norm, and ``activation_over_scale`` the same over the unit's soft neutral
+    norm, and ``activation_over_scale`` the same over the unit's reading
     scale (the units family's unit: the number its probe, unit activity and
-    the unit view show), ``None`` without unit statistics.  Both are ``None``
+    the unit view show; :attr:`TokenAnatomy.units_scale` names its source),
+    ``None`` without unit statistics.  Both are ``None``
     in the cross-layer list."""
 
     unit: str
@@ -344,13 +349,18 @@ class AnatomyToken(TypedDict):
 
 
 class TokenAnatomy(TypedDict):
-    """One token, every layer (``session.token_anatomy``)."""
+    """One token, every layer (``session.token_anatomy``).  ``units_scale``
+    names where the unit rows' ``activation_over_scale`` divides by: the
+    bound neuron-lens catalog's ``act_top`` (``"catalog"``) or the neutral
+    statistics' (``"neutral"``, relative to the neutral text); ``None``
+    without unit statistics."""
 
     token: AnatomyToken
     binding: LensBinding
     layers: list[AnatomyLayer]
     units: list[AnatomyUnit]
     units_absent: str | None
+    units_scale: Literal["catalog", "neutral"] | None
     patterns: list[AnatomyPattern] | None
     context: list[str] | None
 

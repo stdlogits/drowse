@@ -27,15 +27,17 @@ import torch.nn as nn
 from drowse.model.blocks import BlockSpec
 from drowse.model.units import head_write_matrix
 from drowse.units.runtime import UnitSite
+from drowse.units.stats import ScaleSource
 
-#: Floor under a unit's scale, so a unit silent on the neutral corpus reads
-#: large rather than infinite.
+#: Numeric guard under a unit's reading scale (already soft-floored,
+#: :class:`~drowse.units.stats.UnitScales`), for a layer whose units never
+#: fired.
 SCALE_FLOOR = 1e-6
 
 
 @dataclass(frozen=True, eq=False)
 class TapUnit:
-    """One unit the tap reads: its site, block and neutral scale (a neuron's
+    """One unit the tap reads: its site, block and reading scale (a neuron's
     ``[+, −]`` pole pair, a head's single scale)."""
 
     name: str
@@ -82,11 +84,14 @@ class UnitTap:
         device: torch.device,
         dtype: torch.dtype,
         depth: int,
+        scale_source: ScaleSource,
     ) -> None:
         if not units:
             raise ValueError("a unit tap needs at least one unit")
         self.names = [unit.name for unit in units]
         self.depth = int(depth)
+        #: Where the units' scales come from (a reading's ``meta.scale``).
+        self.scale_source: ScaleSource = scale_source
         self._device = device
         self._handles: list[Any] = []
         self._fwd = 0

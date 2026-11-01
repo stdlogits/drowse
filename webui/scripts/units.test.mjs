@@ -36,9 +36,12 @@ const half = (family, weight, lens, tokens, absent = null) => ({
   tokens: absent ? [] : tokens.map((token, i) => ({ token_id: 100 + i, token, value: 1 - i / 10 })), absent,
 });
 const place = (layer, site, r, s) => ({ layer, site, depth: layer / 35, hubs: "hidden", r, s });
+const scaleOf = (rate, top) => (rate === null
+  ? { source: "neutral", detail: "96 neutral statements", top, value: top * 1.03 }
+  : { source: "catalog", detail: "neuron-lens catalog stdlogits/neuron-lens@b5bf11a2b9e3", top, value: top * 1.03 });
 const firing = (rate, act_top) => ({
-  rate, rate_absent: rate === null ? "no neuron-lens catalog for this model" : null,
-  neutral: { act_top, mean: 0.1, documents: 96 }, neutral_absent: null, catalog: rate === null ? null : { rate }, catalog_absent: null,
+  rate, rate_absent: rate === null ? "no neuron-lens catalog for this model" : null, scale: scaleOf(rate, act_top),
+  neutral: { act_top: act_top / 10, mean: 0.1, documents: 96 }, neutral_absent: null, catalog: rate === null ? null : { rate }, catalog_absent: null,
 });
 function neuronRead({ catalogued }) {
   const label = (fires, url = "https://neuron-lens.com/qwen3-8b/L31/n4410") => (catalogued ? { fires, fires_conf: 0.9, writes: "star words", credit: CREDIT, url } : null);
@@ -120,7 +123,7 @@ try {
           heads: f16([0.5, layer / 4]),
         }));
         return {
-          node_id: nodeId, steering: null, unit: "activation_over_scale", tokens, sink_raw_index: null,
+          node_id: nodeId, steering: null, unit: "activation_over_scale", scale: { source: "catalog", detail: "neuron-lens catalog stdlogits/neuron-lens@b5bf11a2b9e3" }, tokens, sink_raw_index: null,
           top: [
             { unit: "neuron/L3n3", kind: "neuron", layer: 3, index: 3, peak: 3.9 * sign, raw_index: 2, label: catalogued ? { fires: flip ? "daylight words" : "night-sky and starlight words", credit: CREDIT, url: "u" } : null },
             { unit: "head/L2h1", kind: "head", layer: 2, index: 1, peak: 3.1, raw_index: 2 },
@@ -136,7 +139,7 @@ try {
 
   const units = await server.ssrLoadModule("/src/lib/units.ts");
   const {
-    parseUnit, unitTitle, lensText, orderedHalves, mergedTokens, withAgreement, unitFacts, labelText,
+    parseUnit, unitTitle, lensText, orderedHalves, mergedTokens, withAgreement, unitFacts, labelText, scaleText,
     firesOn, peakIndex, decodeFloat16, decileCuts, shadeOf, strongestColumns, fieldGeometry, parseQuery,
     peakPole,
   } = units;
@@ -169,10 +172,16 @@ try {
   assert.deepEqual(f.map(t => [t.token, t.agree]), [[" stars", true], [" bright", false]]);
 
   // Facts: the shown pole's typical firing and the catalog's rate; a head's typical write and copy score.
-  assert.deepEqual(unitFacts(read, "+"), { typical: 3.4, rate: 0.006, writeNorm: 0.82, copy: null });
-  assert.deepEqual(unitFacts(read, "-"), { typical: 2.1, rate: 0.004, writeNorm: 0.82, copy: null });
+  // The typical firing is the reading scale's own act_top (the catalog's when bound), named.
+  const facts = ({ scale, ...rest }) => ({ ...rest, source: scale?.source ?? null });
+  assert.deepEqual(facts(unitFacts(read, "+")), { typical: 3.4, rate: 0.006, writeNorm: 0.82, copy: null, source: "catalog" });
+  assert.deepEqual(facts(unitFacts(read, "-")), { typical: 2.1, rate: 0.004, writeNorm: 0.82, copy: null, source: "catalog" });
   assert.equal(unitFacts(neuronRead({ catalogued: false }), "+").rate, null, "no catalog, no rate");
-  assert.deepEqual(unitFacts(headRead), { typical: 1.6, rate: null, writeNorm: null, copy: 0.87 });
+  assert.equal(unitFacts(neuronRead({ catalogued: false }), "+").scale.source, "neutral");
+  assert.deepEqual(facts(unitFacts(headRead)), { typical: 1.6, rate: null, writeNorm: null, copy: 0.87, source: "neutral" });
+  assert.equal(scaleText("neutral"), "typical firing on the neutral text");
+  assert.equal(scaleText("catalog"), "typical firing in text (Neuron Lens)");
+  assert.equal(scaleText(null), null);
   assert.equal(labelText(read.poles[0].label), "night-sky and starlight words");
   assert.equal(labelText({ writes: " star words ", credit: CREDIT, url: "u" }), "star words");
   assert.equal(labelText(null), null);
@@ -355,6 +364,7 @@ try {
   assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");
   assert.match(html, /−2\.2/);
   assert.match(html, />Labelled</, "a bound catalog offers the labelled units");
+  assert.match(html, /Values over each unit&#39;s typical firing in text \(Neuron Lens\)|Values over each unit.s typical firing in text \(Neuron Lens\)/, "the room names the scale source");
   assert.match(html, new RegExp(CREDIT));
   assert.match(html, /the 40 most active of 8 a layer/);
   assert.match(html, /L3 · 6 of 8 active here/);

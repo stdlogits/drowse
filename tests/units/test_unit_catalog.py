@@ -81,12 +81,32 @@ def _head_table(table: str) -> Any:
     return pa.table({**keys, **extra})
 
 
-def _remote_paths() -> list[str]:
+def _parquet_paths() -> list[str]:
     paths = [
         f"{SLUG}/neurons/{table}/L{layer:02d}.parquet"
         for table in ("labels", "acts", "legible") for layer in range(N_LAYERS)
     ]
     return paths + [f"{SLUG}/heads/{table}.parquet" for table in ("labels", "acts", "legible")]
+
+
+#: The catalog's token counts upstream (a torch pickle of plain tensors).
+COUNTS_PATH = f"{SLUG}/token_counts.pt"
+#: The fake counts: every id seen 10 times but :data:`RARE_IDS` (twice): in the
+#: tiny byte tokenizer, "{", "|" and "~".
+COUNTS_VOCAB = 512
+RARE_IDS = (95, 96, 98)
+
+
+def _fake_counts() -> Any:
+    import torch
+
+    counts = torch.full((COUNTS_VOCAB,), 10, dtype=torch.int64)
+    counts[list(RARE_IDS)] = 2
+    return counts
+
+
+def _remote_paths() -> list[str]:
+    return [*_parquet_paths(), COUNTS_PATH]
 
 
 #: Files the dataset holds that a binding never copies: the bulk tables, the
@@ -116,14 +136,14 @@ def _upstream_sha(path: str) -> str:
 
 
 @pytest.fixture
-def hub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+def hub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     """A fake Hub: the dataset's sibling listing (the real path filter runs
     over it) and projected reads, with the calls recorded."""
     from types import SimpleNamespace
 
     import huggingface_hub
 
-    calls: dict[str, Any] = {"listings": 0, "reads": []}
+    calls: dict[str, Any] = {"listings": 0, "reads": [], "downloads": []}
 
     class FakeApi:
         def dataset_info(self, repo_id: str, *, revision: str, files_metadata: bool) -> Any:
@@ -148,8 +168,21 @@ def hub(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
         )
         return table if columns is None else table.select(list(columns))
 
+    def download(path: str, revision: str) -> Path:
+        import torch
+
+        assert (path, revision) == (COUNTS_PATH, cat.CATALOG_REVISION)
+        calls["downloads"].append(path)
+        target = tmp_path / f"download-{len(calls['downloads'])}" / "token_counts.pt"
+        target.parent.mkdir()
+        torch.save({
+            "counts": _fake_counts(), "by_slice": {"dclm": _fake_counts()}, "tokenizer": "test",
+        }, target)
+        return target
+
     monkeypatch.setattr(huggingface_hub, "HfApi", FakeApi)
     monkeypatch.setattr(cat, "_read_remote_table", read_remote)
+    monkeypatch.setattr(cat, "_download_remote", download)
     return calls
 
 
@@ -182,7 +215,11 @@ def test_fetch_binds_labels_and_projected_tables(hub: dict[str, Any], catalogued
     assert all(
         item["upstream_sha256"] == _upstream_sha(item["upstream"]) for item in record["files"].values()
     )
-    assert sorted(path for path, _ in hub["reads"]) == sorted(_remote_paths())
+    assert sorted(path for path, _ in hub["reads"]) == sorted(_parquet_paths())
+    assert hub["downloads"] == [COUNTS_PATH]
+    entry = record["files"][cat.TOKEN_COUNTS_FILE]
+    assert entry["upstream"] == COUNTS_PATH and entry["rows"] == COUNTS_VOCAB
+    assert entry["sha256"] == hash_file(root / cat.TOKEN_COUNTS_FILE)
     # Labels whole; acts and legible projected (the bulk columns never asked for).
     asked = dict(hub["reads"])
     assert asked[f"{SLUG}/neurons/labels/L00.parquet"] is None
@@ -369,9 +406,15 @@ def test_unit_activity_peaks_carry_the_label_of_the_pole_that_peaked(
     node_id = session.tree.active_node_id
     unbound = session.unit_activity(node_id, top=24)
     assert unbound["top"] and all(peak["label"] is None for peak in unbound["top"])
+    assert unbound["scale"]["source"] == "neutral"
     session.units.fetch_catalog()
-    peaks = session.unit_activity(node_id, top=24)["top"]
-    assert [(p["unit"], p["peak"]) for p in peaks] == [(p["unit"], p["peak"]) for p in unbound["top"]]
+    bound = session.unit_activity(node_id, top=24)
+    # Bound, the values read over the catalog's act_top and say so.
+    assert bound["scale"] == {
+        "source": "catalog", "detail": f"neuron-lens catalog {cat.CATALOG_REPO}@{cat.CATALOG_REVISION[:12]}",
+    }
+    peaks = bound["top"]
+    assert peaks
     for peak in peaks:
         label = peak["label"]
         assert label is not None and label["credit"] == "Labels by Claude Haiku 5.5"
@@ -409,3 +452,76 @@ def test_labels_read_every_pole_from_the_catalog(
     assert head["attends"] == "the previous token"
     assert plus["fires"] == "L1 n3 + fires" and minus["fires"] == "L1 n3 - fires"
     assert plus["url"] == f"https://neuron-lens.com/{SLUG}/L1/n3"
+
+
+def test_a_bound_catalog_sets_the_reading_scale_and_the_token_mask(
+    hub: dict[str, Any], monkeypatch: pytest.MonkeyPatch, make_tiny_session: Any,
+) -> None:
+    """Decision 1 and 2 (Qwen3-8B: the neutral act_top sat a median 12x below
+    the catalog's, and tokens neuron-lens saw under 5 times in 88M topped the
+    weighted S half).  With a catalog bound, every reading divides by the
+    catalog's act_top (soft-floored by the layer's catalog median) and says
+    so, and the S mask keeps the catalog's tokens seen 5+ times."""
+    import torch
+
+    from drowse.generation.sampling import SamplingConfig
+    from drowse.units.stats import SCALE_FLOOR_SHARE, typical_scale
+
+    session = make_tiny_session()
+    monkeypatch.setattr(cat, "CATALOG_MODELS", {
+        **cat.CATALOG_MODELS, session.model_id.lower(): cat.CatalogModel(session.model_id, SLUG),
+    })
+    session.generate("hello", sampling=SamplingConfig(max_tokens=4, seed=0))
+    node_id = session.tree.active_node_id
+    neutral_mask = session.lens.token_mask_info()
+    assert neutral_mask["source"] == "tokenizer" and "drowse lens counts" in neutral_mask["detail"]
+    neutral_kept = session.lens.token_embeddings().n_kept
+    neutral = session.unit_activity(node_id, top=4, units=["neuron/L1n3", "head/L2h1"])
+    session.units.fetch_catalog()
+
+    scales = session.units.runtime.scales()
+    assert scales.source == "catalog"
+    # The fake catalog's act_top: 0.001·row + layer (rows: + poles, then −).
+    rows = torch.arange(2 * D_FF, dtype=torch.float32).reshape(2, D_FF)
+    top = 0.001 * rows + 1
+    torch.testing.assert_close(scales.layer(1).neuron_top, top)
+    m = typical_scale(top)
+    torch.testing.assert_close(scales.layer(1).neuron, torch.sqrt(top ** 2 + (SCALE_FLOOR_SHARE * m) ** 2))
+    head_top = 0.01 * torch.arange(N_LAYERS * N_HEADS, dtype=torch.float32).reshape(N_LAYERS, N_HEADS)
+    torch.testing.assert_close(scales.layer(2).head_top, head_top[2])
+
+    bound = session.unit_activity(node_id, top=4, units=["neuron/L1n3", "head/L2h1"])
+    assert bound["scale"]["source"] == "catalog"
+    raw = session.unit_activity(node_id, top=4, units=["neuron/L1n3"])["traces"]["neuron/L1n3"]
+    # Same activation, new divisor: trace × neutral scale == trace × catalog scale.
+    stats = session.units.runtime.stats()
+    neutral_scale = stats.reading_scales.layer(1).neuron[:, 3]
+    catalog_scale = scales.layer(1).neuron[:, 3]
+    for before, after in zip(neutral["traces"]["neuron/L1n3"], raw, strict=True):
+        pole = 0 if before >= 0 else 1
+        assert before * float(neutral_scale[pole]) == pytest.approx(
+            after * float(catalog_scale[pole]), rel=1e-4, abs=1e-6,
+        )
+    # The unit view and a probe reading name the source too.
+    pole = cast(NeuronRead, session.units.read("neuron/L1n3")).to_dict()["poles"][0]
+    assert pole["firing"]["scale"]["source"] == "catalog"
+    assert pole["firing"]["scale"]["top"] == pytest.approx(float(top[0, 3]), rel=1e-5)
+    assert pole["firing"]["scale"]["value"] == pytest.approx(float(catalog_scale[0]), rel=1e-5)
+    session.add_probe("neuron/L1n3")
+    replay = session.units.token_readout(node_id, 1)["measurements"]
+    reading = replay["instruments"]["units"]["readings"]["neuron/L1n3"]
+    assert reading["meta"]["scale"] == "catalog"
+
+    # The S mask: the catalog's counts, the ids seen twice dropped.
+    info = session.lens.token_mask_info()
+    assert info["source"] == "catalog" and "kept at 5+" in info["detail"]
+    emb = session.lens.token_embeddings()
+    assert emb.mask_source == "catalog" and emb.n_kept < neutral_kept
+    keep = emb.keep.cpu()
+    assert not any(bool(keep[i]) for i in RARE_IDS)
+    assert emb.n_kept == neutral_kept - len(RARE_IDS)
+    assert session.lens.token_mask_info()["kept"] == emb.n_kept
+    # Removed: back to the neutral scale and the tokenizer mask.
+    assert session.units.reads.catalog.remove()
+    assert session.units.runtime.scales().source == "neutral"
+    assert session.lens.token_embeddings().mask_source == "tokenizer"

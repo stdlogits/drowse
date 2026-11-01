@@ -738,6 +738,7 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         cast(Any, SimpleNamespace(_n_layers=model_layer_count)),
         {units["name"]: {"layer": units["layer"], "kind": "neuron", "unit": units["unit"]}},
         {units["name"]: (units["activation"] / units["scale"], units["activation"])},
+        source=units["scaleSource"],
     )[units["name"]]
 
     sae = fixture["sae"]
@@ -862,6 +863,7 @@ def anatomy_envelope(fixture: dict[str, Any]) -> Any:
         steering=fixture["steering"], layers=layers,
         units=[anatomy_unit(kind, L, i, c, None, None) for kind, L, i, c in spec["units"]],
         units_absent=None,
+        units_scale=spec["unitsScale"],
         patterns=[
             anatomy_pattern(p["layer"], p["head"], p["contribution"], p["weights"])
             for p in spec["patterns"]

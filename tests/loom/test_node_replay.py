@@ -229,7 +229,7 @@ def test_token_anatomy_reads_every_layer_and_its_units(
         (u_brute,) = torch.autograd.grad(logit, h)
     u = unembed_cotangent(spec, taps.out[-1], v)
     torch.testing.assert_close(u, u_brute)
-    unit_stats = session.units.runtime.stats()
+    unit_scales = session.units.runtime.scales()
     for L, layer in enumerate(anatomy["layers"]):
         assert 0 < len(layer["neurons"]) <= 4 and 0 < len(layer["heads"]) <= 4
         J_out = torch.eye(u.shape[0]) if L == n - 1 else r_lens.matrix(L, "out")
@@ -243,14 +243,14 @@ def test_token_anatomy_reads_every_layer_and_its_units(
             assert unit["activation"] == pytest.approx(float(taps.acts[L][unit["index"]]), abs=1e-5)
             # The units family's number: the activation over the pole's soft scale.
             pole = 0 if unit["activation"] >= 0 else 1
-            scale = float(unit_stats.layer(L).neuron_reading_scale[pole, unit["index"]])
+            scale = float(unit_scales.layer(L).neuron[pole, unit["index"]])
             expected = float(taps.acts[L][unit["index"]]) / scale
             assert unit["activation_over_scale"] == pytest.approx(expected, abs=1e-5)
         for unit in layer["heads"]:
             assert unit["unit"] == f"head/L{L}h{unit['index']}"
             assert unit["contribution"] == pytest.approx(float(heads[unit["index"]]), abs=1e-5)
             assert unit["activation"] >= 0
-            scale = float(unit_stats.layer(L).head_reading_scale[unit["index"]])
+            scale = float(unit_scales.layer(L).head[unit["index"]])
             assert unit["activation_over_scale"] == pytest.approx(unit["activation"] / scale, rel=1e-4, abs=1e-5)
     # The cross-layer list is the largest |contribution| of every unit.
     every = sorted(
@@ -259,6 +259,7 @@ def test_token_anatomy_reads_every_layer_and_its_units(
     )[:4]
     assert [abs(u["contribution"]) for u in anatomy["units"]] == pytest.approx(every, abs=1e-6)
     assert anatomy["units_absent"] is None
+    assert anatomy["units_scale"] == "neutral"
     # Patterns: the top heads by |contribution|, over the whole context.
     patterns = anatomy["patterns"]
     assert patterns is not None and len(patterns) == 2
@@ -640,12 +641,16 @@ def test_a_pole_silent_on_the_neutral_corpus_reads_over_the_soft_floor(tiny_sess
 
     session = tiny_session
     node = _node(session, max_tokens=4)
-    layer = session.units.runtime.stats().layer(1)
-    layer.neuron_scale[:, 3] = 0.0
-    layer.__dict__.pop("neuron_reading_scale", None)    # the cached soft scale, recomputed
-    floor = SCALE_FLOOR_SHARE * typical_scale(layer.neuron_scale)
-    torch.testing.assert_close(layer.neuron_reading_scale[:, 3], floor.expand(2))
+    stats = session.units.runtime.stats()
+    stats.layer(1).neuron_scale[:, 3] = 0.0
+    stats.__dict__.pop("reading_scales", None)    # the cached soft scales, recomputed
+    scales = session.units.runtime.scales()
+    assert scales.source == "neutral"
+    every = torch.cat([stats.layer(L).neuron_scale.reshape(-1) for L in stats.layers])
+    base = torch.maximum(typical_scale(stats.layer(1).neuron_scale), typical_scale(every))
+    torch.testing.assert_close(scales.layer(1).neuron[:, 3], (SCALE_FLOOR_SHARE * base).expand(2))
     activity = session.unit_activity(node.id, top=1024, units=["neuron/L1n3"])
+    assert activity["scale"] == {"source": "neutral", "detail": f"{stats.n_documents} neutral statements"}
     trace = activity["traces"]["neuron/L1n3"]
     peak = next(p for p in activity["top"] if p["unit"] == "neuron/L1n3")
     assert abs(peak["peak"]) == pytest.approx(max(abs(v) for v in trace), abs=1e-5)

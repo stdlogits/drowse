@@ -62,7 +62,8 @@
     "unit": "neuron/L8n344",
     "layer": 8,
     "activation": -0.75,
-    "scale": 0.5
+    "scale": 0.5,
+    "scaleSource": "catalog"
   },
   "anatomy": {
     "band": [0.15, 0.35],
@@ -117,6 +118,7 @@
       }
     ],
     "units": [["neuron", 9, 7, 1.25], ["neuron", 4, 344, 0.75], ["head", 9, 0, 0.375]],
+    "unitsScale": "neutral",
     "patterns": [{"layer": 9, "head": 0, "contribution": 0.375, "weights": [0.5, 0.25, 0.25]}],
     "context": ["<s>", " calm", "."]
   },
@@ -202,7 +204,7 @@
             "unit": "activation_over_scale",
             "per_layer": {"8": -1.5},
             "depth": {"center": [0.727273], "spread": [0.0], "basis": "single_layer"},
-            "meta": {"unit": "neuron/L8n344", "activation": -0.75}
+            "meta": {"unit": "neuron/L8n344", "activation": -0.75, "scale": "catalog"}
           }
         }
       }
@@ -278,7 +280,7 @@
             "unit": "activation_over_scale",
             "per_layer": {"8": -1.5},
             "depth": {"center": [0.727273], "spread": [0.0], "basis": "single_layer"},
-            "meta": {"unit": "neuron/L8n344", "activation": -0.75}
+            "meta": {"unit": "neuron/L8n344", "activation": -0.75, "scale": "catalog"}
           }
         }
       }
@@ -580,6 +582,7 @@
         }
       ],
       "units_absent": null,
+      "units_scale": "neutral",
       "patterns": [
         {
           "unit": "head/L9h0",

@@ -75,7 +75,9 @@ def test_the_tap_reads_activation_over_scale(family: str, refs: list[Any]) -> No
             name=ref.qualified, site=_site(spec, ref, stats),
             block=spec.blocks[ref.layer], scale=scale,
         ))
-    tap = UnitTap(units, device=torch.device("cpu"), dtype=torch.float32, depth=4)
+    tap = UnitTap(
+        units, device=torch.device("cpu"), dtype=torch.float32, depth=4, scale_source="neutral",
+    )
     captured: dict[Any, Any] = {}
 
     def keep(kind: str, layer: int) -> Any:
@@ -184,8 +186,9 @@ def test_unit_probes_ride_the_generation(tiny_session: Any) -> None:
     assert neuron["depth"] == {
         "center": [round(1 / 3, 6)], "spread": [0.0], "basis": "single_layer",
     }
-    assert set(neuron["meta"]) == {"unit", "activation"}
-    assert set(head["meta"]) == {"unit", "write_norm"}
+    assert set(neuron["meta"]) == {"unit", "activation", "scale"}
+    assert set(head["meta"]) == {"unit", "write_norm", "scale"}
+    assert neuron["meta"]["scale"] == head["meta"]["scale"] == "neutral"
     assert head["value"] >= 0
     assert result.measurements["scores"]["h"] == head["value"]
     # Every loom token row carries the live readings (at the row's

@@ -34,7 +34,8 @@ from drowse.errors import DrowseError
 from drowse.model.blocks import BlockSpec, ModelSpec, model_spec
 from drowse.model.units import UnitIndexError, neuron_write
 from drowse.naming import HeadRef, NeuronRef, UnitRef, parse_unit_ref
-from drowse.units.stats import UnitStats
+from drowse.units.catalog import UnitCatalog, UnitCatalogError
+from drowse.units.stats import UnitScales, UnitStats
 
 UnitKind = Literal["neuron", "head"]
 
@@ -65,12 +66,15 @@ class UnitSite:
 
 
 class UnitsRuntime:
-    """One model's units: discovery, validation, sites and write directions.
+    """One model's units: discovery, validation, sites, write directions and
+    reading scales.
 
     ``stats`` returns the resident neutral unit statistics, building the
     neutral baseline when absent, or raises :class:`UnitsUnavailableError`;
     it runs inside this runtime's exclusive section, like the block
-    discovery.
+    discovery.  ``catalog`` returns the bound neuron-lens catalog (or
+    ``None``), whose ``act_top`` is the reading scale when there is one
+    (:meth:`scales`).
     """
 
     def __init__(
@@ -80,11 +84,13 @@ class UnitsRuntime:
         device: torch.device,
         exclusive: ExclusiveGuard,
         stats: Callable[[], UnitStats],
+        catalog: Callable[[], UnitCatalog | None] = lambda: None,
     ) -> None:
         self._model = getattr(model, "_orig_mod", model)
         self._device = device
         self._exclusive = exclusive
         self._stats = stats
+        self._catalog = catalog
         self._spec: ModelSpec | None = None
 
     # ------------------------------------------------------------- model
@@ -117,6 +123,34 @@ class UnitsRuntime:
             "retry shortly",
         ):
             return self._stats()
+
+    def scales(self, *, stats: UnitStats | None = None) -> UnitScales:
+        """What every ``activation_over_scale`` divides by: the bound
+        catalog's ``act_top`` (``source="catalog"``), else the neutral
+        statistics' (``"neutral"``, relative to the neutral text).  Units
+        must be available either way (the means and sites are neutral); a
+        catalog whose tables do not fit the model is a
+        :class:`~drowse.units.catalog.UnitCatalogError`."""
+        stats = self.stats() if stats is None else stats
+        catalog = self._catalog()
+        if catalog is None:
+            return stats.reading_scales
+        scales = catalog.reading_scales
+        spec = self.spec()
+        if len(scales.layers) != spec.n_layers:
+            raise UnitCatalogError(
+                f"the bound catalog has {len(scales.layers)} layers; the model "
+                f"has {spec.n_layers}"
+            )
+        for block in spec.blocks:
+            layer = scales.layer(block.layer)
+            if tuple(layer.neuron.shape) != (2, block.d_ff) or tuple(layer.head.shape) != (block.n_heads,):
+                raise UnitCatalogError(
+                    f"the bound catalog's L{block.layer} has "
+                    f"{tuple(layer.neuron.shape)} poles and {tuple(layer.head.shape)} "
+                    f"heads; the model has (2, {block.d_ff}) and ({block.n_heads},)"
+                )
+        return scales
 
     def block(self, layer: int) -> BlockSpec:
         """Block ``layer``'s description; a layer outside the model is a 400."""

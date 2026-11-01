@@ -5,6 +5,7 @@ and the two readouts (``top``, ``decompose``)."""
 from __future__ import annotations
 
 import argparse
+import os
 import signal
 import threading
 from collections.abc import Iterator
@@ -20,7 +21,7 @@ from drowse.cli.spec import (
     layers_arg, positive_int,
 )
 from drowse.lens.key import (  # torch-free
-    DEFAULT_FIT_DOCUMENTS, FITTABLE_KINDS, LENS_SITES, LensKey,
+    DEFAULT_COUNT_DOCUMENTS, DEFAULT_FIT_DOCUMENTS, FITTABLE_KINDS, LENS_SITES, LensKey,
 )
 
 if TYPE_CHECKING:
@@ -305,6 +306,15 @@ def run_use(args: argparse.Namespace) -> None:
     print(f"Active {family}-family lens for {args.model}: {args.source}")
 
 
+def _token_mask(model_id: str) -> dict[str, str]:
+    """Where the S read's token mask comes from (disk only): the bound
+    catalog's counts, the model's corpus counts, or the tokenizer's rules."""
+    from drowse.lens.token_counts import TokenCountSource
+    from drowse.units.catalog import CatalogBinding
+
+    return TokenCountSource(model_id, CatalogBinding(model_id).get).describe()
+
+
 def run_show(args: argparse.Namespace) -> None:
     from drowse.lens.sources import LENS_SOURCES, lens_family, load_lens_source_sidecar
     from drowse.lens.store import lens_artifact_size, lens_layers
@@ -322,6 +332,7 @@ def run_show(args: argparse.Namespace) -> None:
             "model": args.model, "source": label, "path": str(path),
             "size_mb": None if size_mb is None else round(size_mb, 1),
             "active": is_active, **sidecar,
+            **({"token_mask": _token_mask(args.model)} if lens_family(sidecar["kind"]) == "S" else {}),
         })
         return
     skip_first = (
@@ -344,6 +355,9 @@ def run_show(args: argparse.Namespace) -> None:
         corpus += f" (sha256 {str(sidecar['corpus_sha256'])[:12]}…)"
     print(corpus)
     print(f"  seq_len:  {sidecar.get('seq_len', '?')}, skip_first: {skip_first}")
+    if family == "S":
+        mask = _token_mask(args.model)
+        print(f"  mask:     {mask['source']}: {mask['detail']}")
     if size_mb is None:
         meta = sidecar["_source"]
         print(f"  source:   {meta['provider']} ({meta['repo_id']}@{meta['repo_revision']})")
@@ -351,6 +365,82 @@ def run_show(args: argparse.Namespace) -> None:
         print("  payload:  Hugging Face cache (provider-owned)")
     else:
         print(f"  artifact: {path} ({size_mb:.0f} MB across layer shards)")
+
+
+def _s_lens_corpus(model_id: str) -> str | None:
+    """The selected S-family lens's recorded corpus spec, if any."""
+    from drowse.lens.sources import LENS_SOURCES, load_lens_source_sidecar
+
+    ref = LENS_SOURCES.active(model_id, "input")
+    sidecar = None if ref is None else load_lens_source_sidecar(model_id, ref)
+    spec = None if sidecar is None else sidecar.get("corpus_spec")
+    return spec if isinstance(spec, str) and spec else None
+
+
+def run_counts(args: argparse.Namespace) -> None:
+    """Count the S lens's corpus through the tokenizer: the S read's token mask
+    when the model has no neuron-lens catalog."""
+    from drowse.lens.token_counts import (
+        count_tokens, read_corpus_counts_record, remove_corpus_counts, write_corpus_counts,
+    )
+
+    if args.remove:
+        if not remove_corpus_counts(args.model):
+            raise CliError(f"no corpus token counts for {args.model}", exit_code=1)
+        print(f"Removed the corpus token counts for {args.model}; S reads mask by the tokenizer.")
+        return
+    existing = read_corpus_counts_record(args.model)
+    if existing is not None and not args.force:
+        if args.json_output:
+            emit_json(existing)
+            return
+        print(
+            f"Already counted: {existing['tokens']:,} tokens of {existing['corpus']} "
+            f"(kept at {existing['min_count']}+); -f to count again"
+        )
+        return
+    from transformers import AutoTokenizer
+
+    from drowse.lens.corpus import (
+        corpus_from_spec, parse_lens_corpus, pin_lens_corpus, read_corpus_file,
+        stream_lens_corpus,
+    )
+
+    if args.corpus is not None:
+        with user_errors(FileNotFoundError, ValueError, exit_code=2):
+            documents = read_corpus_file(Path(args.corpus), args.documents)
+        spec = f"file:{Path(args.corpus).name}"
+    else:
+        with user_errors(ValueError, exit_code=2):
+            chosen = parse_lens_corpus(args.hf_corpus)
+        if args.hf_corpus is None:
+            recorded = _s_lens_corpus(args.model)
+            again = None if recorded is None else corpus_from_spec(recorded)
+            if again is not None:
+                chosen = again
+            elif recorded is not None:
+                note(f"The S lens's corpus ({recorded}) cannot be streamed again; counting the default corpus")
+        with user_errors(ValueError, exit_code=2):
+            corpus = pin_lens_corpus(chosen)
+        note(f"Streaming {args.documents} documents of {corpus} through the tokenizer...")
+        documents, spec = stream_lens_corpus(args.documents, corpus)
+    trust = os.environ.get("DROWSE_TRUST_REMOTE_CODE", "").strip().lower() in {"1", "true", "yes", "on"}
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=trust)
+    counts, n_docs, n_tokens = count_tokens(tokenizer, documents)
+    with user_errors(ValueError, exit_code=2):
+        record = write_corpus_counts(
+            args.model, counts, corpus=spec, documents=n_docs, tokens=n_tokens,
+            tokenizer=str(getattr(tokenizer, "name_or_path", args.model)),
+        )
+    if args.json_output:
+        emit_json(record)
+        return
+    kept = int((counts >= record["min_count"]).sum())
+    print(
+        f"Counted {n_tokens:,} tokens in {n_docs:,} documents of {spec}: "
+        f"{kept:,} of {len(counts):,} token ids seen {record['min_count']}+ times."
+    )
+    note("S reads now mask by these counts (a bound neuron-lens catalog's take precedence).")
 
 
 def run_rm(args: argparse.Namespace) -> None:
@@ -390,12 +480,14 @@ def run_top(args: argparse.Namespace) -> None:
             args.prompt, site=args.site, layers=layers,
             positions=args.position, k=args.top_k,
         )
+        mask = session.lens.token_mask_info()
     if args.json_output:
         emit_json({
             "model": args.model,
             "prompt": args.prompt,
             "site": args.site,
             "positions": sorted(reads),
+            "token_mask": mask,
             # Per position, one read per layer: the R half (per-layer readout
             # probability p_l) and the S half (footprint z), each with its
             # depth weight and the lens it read through.
@@ -405,6 +497,7 @@ def run_top(args: argparse.Namespace) -> None:
             },
         })
         return
+    print(f"S mask: {mask['source']} ({mask['detail']})")
     for position, rows in sorted(reads.items()):
         if len(reads) > 1:
             print(f"\nposition {position}:")
@@ -595,6 +688,34 @@ GROUP = Verb(
                 layers_arg("Layer indices or a mode (default: every fitted layer "
                            "the direction covers)"),
                 MODEL_LOAD, JSON,
+            ),
+        ),
+        Verb(
+            "counts", "Count the lens corpus's tokens for the S read's token mask",
+            run=run_counts,
+            description="Stream the S-family lens's recorded corpus (else the "
+                        "default lens corpus) through the model's tokenizer and "
+                        "store each token id's count under the model; S reads then "
+                        "keep the tokens seen at neuron-lens's rate (5 per 88M "
+                        "tokens, at least once). A bound neuron-lens catalog's "
+                        "counts take precedence. No model load.",
+            args=(
+                _MODEL_POS,
+                OneOf((
+                    arg("--corpus", default=None, metavar="FILE",
+                        help="Count a local file (one document per line) instead"),
+                    arg("--hf-corpus", action="append", default=None,
+                        metavar="REPO[:CONFIG][@REV][,KEY=VALUE...]",
+                        help="Count this Hub dataset instead of the S lens's corpus"),
+                )),
+                arg("--documents", type=positive_int, default=DEFAULT_COUNT_DOCUMENTS,
+                    metavar="N",
+                    help=f"Documents to count (default {DEFAULT_COUNT_DOCUMENTS}, "
+                         "about 19M tokens of FineWeb-Edu; at least 1M tokens are needed)"),
+                arg("--remove", action="store_true",
+                    help="Drop the model's corpus counts (S reads mask by the tokenizer)"),
+                FORCE.but(help="Count again over existing counts"),
+                JSON,
             ),
         ),
         Verb(
