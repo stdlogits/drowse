@@ -86,6 +86,8 @@ def web_client():
 @pytest.mark.parametrize("path,content_type", [
     ("/drowse-mark-light.svg", "image/svg+xml"),
     ("/drowse-mark-dark.svg", "image/svg+xml"),
+    # Browsers ask for it whatever the page links.
+    ("/favicon.ico", "icon"),
     ("/theme-preflight.js", "javascript"),
     # Offline feature labels for local SAELens gemma-scope-2 releases.
     ("/assets/gemma-3-1b-it.json", "json"),
