@@ -868,7 +868,8 @@ each owner keeps exactly the state it claims.
 
 The rules are architectural, not micro-optimizations; the root `AGENTS.md`
 lists them and the throughput gates in `tests/gpu/test_smoke.py` protect the
-ordinary steered path (≥ 85% of vanilla tok/s, ablation ≥ 80%).
+ordinary steered path (≥ 85% of vanilla tok/s, ablation ≥ 80%) and the
+served dashboard's instrumented decode (≥ 50%).
 
 Beyond those rules:
 

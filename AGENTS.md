@@ -245,7 +245,17 @@ and is an interface change for drowse.ai. A refactor that would need a golden
 regenerated is not a refactor.
 
 **Performance invariants.** `tests/gpu/test_smoke.py` gates steered ≥ 85% of
-vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%.
+vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%, and the
+served dashboard's decode ≥ 50% of vanilla
+(`test_throughput_with_dashboard_instruments`: the default probe roster scored
+every token with subspace coordinates, the R lens's live readout at every
+fitted layer, eight alternatives, a loom row and a serialized WebSocket frame
+per token; SmolLM2 on MPS measures about 63%).  Where a dashboard token's time
+goes (SmolLM2 on MPS, vanilla 8.1 ms): the live R readout about 3 ms, the 17
+flat probes about 2, the envelope, row and frame about 1.5; a curved probe
+about 6 more.  On Qwen3-8B (vanilla 36 ms) the live R readout is about 11.5 ms
+a token: it reads every layer's fp32 transport (2.4 GB) and the unembedding
+(1.2 GB) per token, so it is bandwidth, not overhead.
 
 - Hooks write in place, never `.item()` or sync the host, allocate nothing per
   call beyond their own tensors; validation and constants belong in
