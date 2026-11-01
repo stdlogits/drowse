@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from anyio import CancelScope
@@ -104,6 +104,23 @@ def refuse_if_busy(session: "DrowseSession") -> None:
     if not session.gen_lock.acquire(blocking=False):
         raise EngineBusyError()
     session.gen_lock.release()
+
+
+@contextmanager
+def exclusive_or_busy(session: "DrowseSession") -> Iterator[None]:
+    """Hold the engine gen-lock for a short model op, or raise
+    :class:`EngineBusyError` (409) when another thread holds it.
+
+    Run it in the worker thread that does the work (the lock is reentrant
+    and per-thread), never on the event loop: a route that waited on the
+    lock there would stall every other request until the holder finished.
+    """
+    if not session.gen_lock.acquire(blocking=False):
+        raise EngineBusyError()
+    try:
+        yield
+    finally:
+        session.gen_lock.release()
 
 
 def attached_probe_names(session: "DrowseSession") -> set[str]:

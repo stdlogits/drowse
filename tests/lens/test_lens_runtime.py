@@ -188,8 +188,11 @@ def test_jlens_property_refreshes_and_evicts_after_external_lifecycle() -> None:
     }
     disk_b = LensHarness().lens.fit(corpus_b, force=True)
 
+    # The compatibility check is metadata only: it never reloads the
+    # resident lens (that is device work, and the check runs lock-free).
     assert session_a.lens.has_compatible()
-    refreshed = session_a.lens.resident_lens
+    assert session_a.lens.resident_lens is resident_a
+    refreshed = session_a.lens.resident()
 
     assert refreshed is not None
     assert any(
@@ -343,9 +346,8 @@ def test_prepare_is_the_refresh_site_and_supplies_the_pin() -> None:
 
 
 def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
-    """sol's round-3 P1: prepare pins lens A; before plan/bind, the
-    un-locked ``has_compatible`` (the session-info route runs it
-    without the generation lock) observes a replacement lens B and adopts
+    """sol's round-3 P1: prepare pins lens A; before plan/bind, a
+    reconciling ``resident()`` observes a replacement lens B and adopts
     it, rewriting the live probe layer lists.  Because plan and bind
     consume the prep's snapshot — never the live registry — the run still
     measures A's layers with A pinned; the old registry reread paired A
@@ -367,7 +369,9 @@ def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
     LensHarness().lens.fit(corpus_b, layers=[1], force=True)
-    assert session_a.lens.has_compatible() is True  # adopts B
+    assert session_a.lens.has_compatible() is True  # a metadata check
+    assert session_a.lens.probes["jlens/example"]["layers"] == [0]
+    assert session_a.lens.resident() is not None  # adopts B
     assert session_a.lens.probes["jlens/example"]["layers"] == [1]
 
     plan = inst.plan(prep)
@@ -777,9 +781,12 @@ def test_jlens_property_rechecks_loaded_pointer_fingerprint(
     assert session.lens.resident() is None
 
 
-def test_has_compatible_jlens_rechecks_loaded_pointer_fingerprint(
+def test_resident_rechecks_loaded_pointer_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The sidecar matches but the payload loaded under it does not: the
+    compatibility check trusts the sidecar (metadata only), and the
+    reconciling load refuses the payload and evicts."""
     import drowse.lens.store as lens_io
 
     session = LensHarness()
@@ -795,7 +802,10 @@ def test_has_compatible_jlens_rechecks_loaded_pointer_fingerprint(
     monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _side="output": compatible)
     monkeypatch.setattr(lens_io, "load_lens", lambda _model, _side="output": (lens, replaced))
 
-    assert not session.lens.has_compatible()
+    assert session.lens.has_compatible()
+    assert session.lens.runtime.lens is lens
+    assert session.lens.resident() is None
+    assert session.lens.runtime.lens is None
 
 
 def test_jlens_readout_shape_and_default_position() -> None:

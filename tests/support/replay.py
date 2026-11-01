@@ -148,7 +148,7 @@ class ReplayRig:
         self.events.append("exclusive-exit")
 
     def _capture(self, ids: torch.Tensor, **kwargs: Any) -> dict[int, torch.Tensor]:
-        from drowse.fit.capture import _capture_all_hidden_states
+        from drowse.loom.replay import capture_pooled
 
         pool = kwargs.get("pool_index")
         self.events.append("capture")
@@ -157,4 +157,4 @@ class ReplayRig:
             int(pool) if pool is not None else None,
             tuple(kwargs.get("layer_indices") or ()),
         ))
-        return _capture_all_hidden_states(self.model, self.layers, ids, **kwargs)
+        return capture_pooled(self.model, self.layers, ids, **kwargs)

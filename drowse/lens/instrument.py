@@ -796,8 +796,10 @@ class LensInstrument:
     def has_compatible(self) -> bool:
         """Whether the active R-family source matches the loaded weights.
 
-        Runs un-locked on the session-info route; a lens that is not
-        resident yet is only checked, never paged in.
+        Runs un-locked on the session-info route: a metadata check that
+        never pages a lens in, evicts or rebuilds a resident one (that
+        reconciliation waits for the next load, inside the exclusive
+        section).
         """
         with self.state_lock:
             run = self.current_run
@@ -808,8 +810,7 @@ class LensInstrument:
     def has_compatible_input(self) -> bool:
         """Whether the active S-family source matches the loaded weights.
 
-        :meth:`has_compatible`'s twin: a lens that is not resident yet is
-        only checked, never paged in.
+        :meth:`has_compatible`'s twin: a metadata check only.
         """
         with self.state_lock:
             run = self.current_run
@@ -823,42 +824,53 @@ class LensInstrument:
     def _refresh(self, *, load: bool, side: str = "output") -> bool:
         """Reconcile one family's resident lens with its active source.
 
-        Returns whether the active source is compatible.  ``load`` pages in
-        a compatible lens that is not resident yet.
+        Returns whether the active source is compatible.  Without ``load`` it
+        is a metadata check only (the sidecar against the live weights): the
+        resident lens is left as it is, so the check is safe on lock-free
+        routes.  With ``load`` it evicts a stale lens and pages in (and
+        adopts) a compatible one that is not resident, which is device work
+        and runs in the exclusive-GPU section.
         """
         from drowse.lens.store import lens_identity, load_lens, load_lens_sidecar
 
         runtime = self._side_runtime(side)
-        evict = self.evict_input if side == "input" else self.evict
         sidecar = load_lens_sidecar(self.model_id, side)
-        if not runtime.matches(sidecar):
-            if runtime.lens is not None:
+        compatible = runtime.matches(sidecar)
+        if not load:
+            return compatible
+        if compatible and runtime.lens is not None and runtime.identity == lens_identity(sidecar):
+            return True
+        if not compatible and runtime.lens is None and sidecar is None:
+            return False
+        evict = self.evict_input if side == "input" else self.evict
+        family = "S" if side == "input" else "R"
+        with self._exclusive(
+            f"the {family}-family lens was reloaded from disk while another "
+            "model use is in flight; retry shortly",
+        ):
+            if not compatible:
+                if runtime.lens is not None:
+                    evict()
+                if sidecar is not None:
+                    _log.warning(
+                        "ignoring stale %s lens for %s: loaded-model "
+                        "identity is missing or changed; fetch or re-fit the lens",
+                        sidecar.get("kind", "?"), self.model_id,
+                    )
+                return False
+            loaded = load_lens(self.model_id, side)
+            if loaded is None:
                 evict()
-            if load and sidecar is not None:
-                _log.warning(
-                    "ignoring stale %s lens for %s: loaded-model "
-                    "identity is missing or changed; fetch or re-fit the lens",
-                    sidecar.get("kind", "?"), self.model_id,
-                )
-            return False
-        if runtime.lens is not None and runtime.identity == lens_identity(sidecar):
-            return True
-        if not load and runtime.lens is None:
-            return True
-        loaded = load_lens(self.model_id, side)
-        if loaded is None:
-            evict()
-            return False
-        if not runtime.matches(loaded[1]):
-            evict()
-            if load:
+                return False
+            if not runtime.matches(loaded[1]):
+                evict()
                 _log.warning(
                     "ignoring concurrently replaced %s lens for %s: "
                     "loaded payload does not match the live model",
                     loaded[0].kind, self.model_id,
                 )
-            return False
-        self.adopt(loaded[0], loaded[1])
+                return False
+            self.adopt(loaded[0], loaded[1])
         return True
 
     def _require(self) -> Any:
@@ -1201,17 +1213,23 @@ class LensInstrument:
             raise RequestError(
                 f"dictionary must be one of {', '.join(DICTIONARIES)}, got {dictionary!r}"
             )
-        if dictionary == "tokens-in":
-            return self._decompose_tokens_in(selector, k=k, layers=layers)
-        if dictionary == "neurons":
-            return self.decompose_neurons(
-                self._resolve_profile(selector), k=k, layers=layers, label=selector,
+        # Resolving the selector loads onto the device (and an atom reads the
+        # model), so it runs in the same section as the decomposition.
+        with self._exclusive(
+            "session.lens.decompose called while another model use is in flight",
+            phase_msg="session.lens.decompose called while a generation is in flight",
+        ):
+            if dictionary == "tokens-in":
+                return self._decompose_tokens_in(selector, k=k, layers=layers)
+            directions = self._resolve_profile(selector)
+            if dictionary == "neurons":
+                return self.decompose_neurons(
+                    directions, k=k, layers=layers, label=selector,
+                )
+            lens = self._require()
+            return self.runtime.decompose(
+                lens, directions, label=selector, whitener=self._whitener(), k=k, layers=layers,
             )
-        lens = self._require()
-        directions = self._resolve_profile(selector)
-        return self.runtime.decompose(
-            lens, directions, label=selector, whitener=self._whitener(), k=k, layers=layers,
-        )
 
     def decompose_neurons(
         self,
@@ -1271,6 +1289,7 @@ class LensInstrument:
         from drowse.lens.runtime import cached_norms, require_decompose_whitener
         from drowse.model.layers import resolve_layer_selector
 
+        # Called inside :meth:`decompose`'s exclusive section.
         lens = self._require_input()
         fitted = lens.layers("out")
         directions = self._resolve_profile(selector)
@@ -1287,10 +1306,7 @@ class LensInstrument:
                 f"out layers"
             )
         metric = require_decompose_whitener(self._whitener(), req)
-        with self._exclusive(
-            "session.lens.decompose called while another model use is in flight",
-            phase_msg="session.lens.decompose called while a generation is in flight",
-        ), torch.inference_mode():
+        with torch.inference_mode():
             embeddings = self._token_embeddings()
             out: dict[int, tuple[float, list[tuple[str, float]]]] = {}
             identity = self.input_runtime.identity
@@ -2300,13 +2316,20 @@ class LensInstrument:
         forward hooks (the reader consumes the capture's existing
         latest-slice buffers post-forward), so steering fast-path /
         compile eligibility is untouched.  Returns the resolved layer list.
+
+        The upload is device work, so it runs in the exclusive-GPU section
+        (entered before the state lock; adoption, which holds the state lock,
+        re-enters the section its own caller holds).
         """
         runtime = self.runtime
 
         # One lens-state transaction: the lens read and the live-state
         # rebuild must be consistent (adoption calls this while holding
         # the same reentrant lock).
-        with self.state_lock:
+        with self._exclusive(
+            "the live lens readout was switched on while another model use is "
+            "in flight; retry shortly",
+        ), self.state_lock:
             lens = self._require()
             uses_all_layers = layers is None
             if layers is None:

@@ -196,11 +196,13 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
 - **Sessions.** `session_info` (`GET /drowse/v1/sessions`, `GET S`) carries
   `instruments`, one `{family, live, source, probes, capabilities}` block per
   family: the read plane's only listing. `jlens_fitted` uses
-  `session.lens.has_compatible()`, which never pages a lens in. `PATCH S`:
+  `session.lens.has_compatible()`, a metadata check that never pages in, evicts or rebuilds a lens. `PATCH S`:
   explicit `null` clears `top_k` or `system_prompt`; `null` elsewhere
   preserves. `POST S/steering/validate` enters and exits
-  `session.steering(parsed)` under the lock, so a green result composes
-  exactly as a generation would; a rejection is in band (`{valid: false,
+  `session.steering(parsed)` under the lock, in a worker thread holding the
+  model lock non-blocking (`runtime.py::exclusive_or_busy`: 409 while a
+  generation, fit or training holds the model, never a wait on the event
+  loop), so a green result composes exactly as a generation would; a rejection is in band (`{valid: false,
   error}`), not a failed request. A valid, non-empty expression also carries
   `n_layers` and `terms` (`SteeringScope.term_layers`: each term's key, fitted
   layers, share and selected layers), which the term editor draws its depth

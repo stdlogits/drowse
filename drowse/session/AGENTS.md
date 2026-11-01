@@ -227,9 +227,14 @@ in two namespaces is `AmbiguousSelectorError`. Admitted manifolds are promoted
 to fp32 on the model device. `concretize_key` pins a bare `:sae` / `:role` /
 `:from` variant to the unique fitted tensor. `ensure_profile_registered(name)`
 tries an in-memory profile, then a reserved-namespace atom resolver (`jlens`,
-`sae` and `neuron` are installed, the last registering a neuron's write at its
-layer; `slens`/`head` raise "reserved and not steerable yet"), then a fitted
-2-node `pca` manifold folded to one direction.
+`sae`, `neuron` and `slens` are installed, `neuron` registering a neuron's
+write at its layer; `head` raises "reserved and not steerable yet"), then a
+fitted 2-node `pca` manifold folded to one direction. Both lazy loads run their
+miss path in the exclusive-GPU section the registry is built with (the load
+uploads to the device and an atom resolver reads the model): a caller holding
+the section re-enters it, and one that does not refuses (409) while another
+thread holds the model. The composer resolves under its blocking model lock,
+as it pushes.
 
 **Neutral baseline** (`neutral.py`). One load of the fp32 neutral cache
 (`fit/neutral.py::load_or_compute_neutral_cache`) yields the means

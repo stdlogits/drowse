@@ -72,7 +72,7 @@ from drowse.units.instrument import UnitsInstrument
 from drowse.units.reads import UnitReader
 from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
 from drowse.units.stats import UnitStats
-from drowse.loom.replay import TokenReplayer
+from drowse.loom.replay import TokenReplayer, capture_pooled
 from drowse.loom.node_replay import NodeReplayer, UnitActivityJSON
 from drowse.store.bundled_probes import bootstrap_probe_roster
 from drowse.geometry.profile import Profile
@@ -352,7 +352,7 @@ class DrowseSession:
         self._registry = ArtifactRegistry(ModelBinding(
             model=self._model, tokenizer=self._tokenizer,
             model_id=self.model_id, device=self._device, dtype=self._dtype,
-        ))
+        ), exclusive=self._model_exclusive)
         self._registry.on_swap(lambda swaps: self._roster.swap(swaps))
         self._registry.set_probe_folder(self._fold_profile_probe)
         self._registry.set_atom_resolver("jlens", lambda atom: self._lens_instrument.register_direction(atom))
@@ -417,7 +417,12 @@ class DrowseSession:
             tokenizer=self._tokenizer,
             open_scope=self._steering_composer.open_scope,
             exclusive=self._model_exclusive,
-            capture=partial(_capture_all_hidden_states, self._model, self._layers),
+            capture=partial(capture_pooled, self._model, self._layers),
+            open_triggers=lambda: [
+                entry_trigger(entry)
+                for entry in self._steering_composer.flatten_stack().values()
+            ],
+            trigger_context=self._steering.ctx,
         )
         self._geometry_instrument = GeometryInstrument(
             monitor=self._monitor,
@@ -498,10 +503,6 @@ class DrowseSession:
             tree=lambda: self.tree,
             traits=self._chat,
             trigger_context=self._steering.ctx,
-            open_triggers=lambda: [
-                entry_trigger(entry)
-                for entry in self._steering_composer.flatten_stack().values()
-            ],
         )
         # The probe roster: attach/detach routing by namespace and the
         # transcript probe-hash caches; a roster change drops the analytics.
@@ -603,7 +604,7 @@ class DrowseSession:
                 on_progress=on_progress,
             )
             for name, manifold in roster.items():
-                self._monitor.add_probe(name, manifold)
+                self._geometry_instrument.attach_loaded(name, manifold)
 
         self._sae_instrument.restore_active()
 

@@ -553,6 +553,11 @@ class SteeringComposer:
         :class:`Steering`.  Every artifact loads here, so an unknown name
         raises before the scope is entered.  Role-policy warnings are issued
         ``stacklevel`` frames above this call.
+
+        Resolution loads artifacts onto the device and may read the model (a
+        ``jlens/`` or ``neuron/`` atom), so it holds the exclusive model lock
+        the way :meth:`push` does: a resolve from another thread waits for an
+        in-flight model op instead of sharing the device with it.
         """
         steering = Steering.from_value(
             value, profile_names=set(self._artifacts.profiles),
@@ -562,7 +567,8 @@ class SteeringComposer:
                 "session.steering() requires a non-None expression string "
                 "or Steering instance"
             )
-        entries = self.resolve(steering)
+        with self._lock:
+            entries = self.resolve(steering)
         role, notes = resolve_scope_role(entries, self._artifacts.manifolds)
         for note in notes:
             warnings.warn(

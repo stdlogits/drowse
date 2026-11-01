@@ -18,7 +18,7 @@ recipes; the verbs, `restore_tree`, the joint-logprob cache),
 | `tree.py` | `LoomNode`, `LoomTree` (mutators, reservation, cast roster, persistence), `TokenRow`, `TREE_FORMAT_VERSION`, `TOKEN_SIDECAR_FORMAT_VERSION` |
 | `recipe.py` | `Recipe`, `CastMember`, `compose_call`, `CALL_ONLY_SAMPLING_FIELDS`, regen modifiers, `derive_seed_schedule` |
 | `ops.py` | `append_turn`, seating/thinking checks, `resolve_token_anchor`, `plan_fork`/`plan_prefill` (→ `ForcedTurn`), `begin_generation_turn` |
-| `replay.py` | `TokenReplayer` (implements `readout/replay.py::TokenReplay`; `forward` hands the producing ids to a caller's own forward), `ReplayForward` |
+| `replay.py` | `TokenReplayer` (implements `readout/replay.py::TokenReplay`; `forward` hands the producing ids to a caller's own forward; `segments`), `ReplayForward`, `replay_segments`/`ReplaySegment`, `drive_segments`, `capture_pooled` |
 | `node_replay.py` | `NodeReplayer` (`session.token_anatomy`, `session.unit_activity`), `tap_token`/`TokenTaps`, the contribution math, the anatomy record builders, `UnitActivityJSON`, the population encoding |
 | `diff.py` | `text_diff`, `readings_diff`, `per_token_diff`, `node_diff`, `steering_delta` |
 | `filter.py` | `parse_filter`, `filter_tree`, `node_token_series`, `FilterParseError` |
@@ -227,16 +227,19 @@ sibling.
 `TokenReplayer` backs every family's `token_readout`. It resolves the anchor,
 rebuilds the node's continue-mode render to its parent (stamped labels, recipe
 thinking and system prompt, node seat), appends `raw_ids[:raw_index]`, runs
-one capture forward, and hands `{layer: (hidden,) fp32}` pooled at the
-producing position to the family's `read`. The steering scope opens
+the capture forward (`capture_pooled` through `drive_segments`, segmented as
+below), and hands `{layer: (hidden,) fp32}` pooled at the producing position
+to the family's `read`. The steering scope opens
 **outside** the exclusive-GPU section (`base/exclusive.py::ExclusiveGuard`):
 composer push/pop take the generation lock blocking, so nesting would
 deadlock. The render (which uploads the ids to the device), `layers` and
 `read` all run inside it: a device upload outside the section once raced a
 lock-free device read for MPS's one command buffer and aborted the server. `apply_steering=False` reads
-the unsteered counterfactual. Always-active affine terms reproduce exactly;
-phase/gated terms fire as the trigger context's rest state decides (the node
-replay below drives the context instead).
+the unsteered counterfactual. The forward fires the open terms as generation
+fired them (`TokenReplayer.segments`, the **Triggers** rule below, shared with
+the node replay), so a family's token readout, the token anatomy and the unit
+activity read one number for one token; a gated or thinking-phase term
+refuses (422) in every replay.
 `raw=True` picks the flat render, which the node does not record.
 
 `TokenReplayer.forward(node_id, raw_index, run=…)` is the same rebuild
@@ -261,8 +264,9 @@ config's `_attn_implementation`, restored after) runs only when a pattern can
 be returned: `patterns > 0` and the R lens holds a `mid` layer to rank heads by.
 
 **Triggers.** Generation prefills the prompt in one forward and decodes one
-token per forward, and a trigger decides per forward. `replay_segments` splits
-the replay the same way: one cacheless forward when every open term is
+token per forward, and a trigger decides per forward. `replay_segments` (in
+`replay.py`, through `TokenReplayer.segments`, so the token replay splits the
+same way) splits the replay the same way: one cacheless forward when every open term is
 `Trigger.BOTH` (exact, the common case); otherwise the prefill, then the
 decode positions in runs where every trigger fires alike (`@first:N`,
 `@after:N` boundaries, judged by `Trigger.active` itself), run on one KV cache

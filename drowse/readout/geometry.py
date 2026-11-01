@@ -156,6 +156,11 @@ class GeometryInstrument:
         # ``detach``'s reject-during-generation contract (the exclusive
         # section), not by this lock.
         self.state_lock = threading.RLock()
+        # Each attached probe's transcript digest, computed where the probe
+        # is attached (inside the exclusive section: the digest reads the
+        # device-resident manifold), so the lock-free transcript export
+        # only looks it up.
+        self._digests: dict[str, str] = {}
         # The current per-generation run (idle passthrough until bind()).
         self.current_run = GeometryRun(
             self, InstrumentBinding(family=self.family),
@@ -259,7 +264,15 @@ class GeometryInstrument:
             # those walks' callers hold).
             with self.state_lock:
                 self._monitor.add_probe(name, manifold, top_n=top_n)
+                self._record_digest(name, manifold)
         return name
+
+    def attach_loaded(self, name: str, manifold: Any) -> None:
+        """Attach an already-loaded manifold (the session's bootstrap roster,
+        built before any other thread can reach the model)."""
+        with self.state_lock:
+            self._monitor.add_probe(name, manifold)
+            self._record_digest(name, manifold)
 
     def detach(self, name: str) -> None:
         """Detach under the exclusive section, like ``attach``.
@@ -280,6 +293,7 @@ class GeometryInstrument:
         ):
             with self.state_lock:
                 self._monitor.remove_probe(name)
+                self._digests.pop(name, None)
 
     def refresh_swapped(self, swaps: Mapping[int, Any]) -> list[str]:
         """Move attached probes off replaced manifold objects.
@@ -300,8 +314,10 @@ class GeometryInstrument:
                 replacement = swaps[id(attached.manifold)]
                 top_n = attached.top_n
                 monitor.remove_probe(name)
+                self._digests.pop(name, None)
                 if replacement is not None:
                     monitor.add_probe(name, replacement, top_n=top_n)
+                    self._record_digest(name, replacement)
                 touched.append(name)
         return touched
 
@@ -317,6 +333,7 @@ class GeometryInstrument:
         with self.state_lock:
             for name in list(self._monitor.probe_names):
                 self._monitor.remove_probe(name)
+            self._digests.clear()
             self._monitor.set_whitener(None)
 
     def try_detach(self, name: str) -> bool:
@@ -569,19 +586,20 @@ class GeometryInstrument:
         return {"measurements": measurements}
 
     def probe_hash(self, name: str) -> str | None:
-        """sha256 of the probe's baked tensor bytes (deterministic across
-        machines/devices; fp32-normalized).  A 2-node concept hashes its
-        folded baked-direction view for continuity with the pre-coords
-        scalar monitor's drift check; a multi-node / curved probe hashes
-        the per-layer subspace geometry directly."""
-        # Fetch under the state lock (the ``manifolds`` comprehension
-        # iterates the roster); hash outside it — the manifold object is
-        # immutable after attach (promotion swaps in a NEW object), so a
-        # reference fetched here stays valid for the tensor walk below.
+        """The transcript digest of probe ``name`` (``None`` when it is not
+        attached), as recorded when it was attached: a lookup, never device
+        work, so the lock-free transcript export cannot race a model op."""
         with self.state_lock:
-            manifold = self._monitor.manifolds.get(name)
-        if manifold is None:
-            return None
+            return self._digests.get(name)
+
+    def _record_digest(self, name: str, manifold: Any) -> None:
+        """Record the digest of probe ``name`` reading ``manifold``: sha256 of the probe's baked tensor bytes
+        (deterministic across machines/devices; fp32-normalized).  A 2-node
+        concept hashes its folded baked-direction view for continuity with
+        the pre-coords scalar monitor's drift check; a multi-node / curved
+        probe hashes the per-layer subspace geometry directly.  Called under
+        the state lock, by the roster writes (which run in the exclusive
+        section, or before the session is shared)."""
         from drowse.geometry.fold import folded_directions
 
         h = hashlib.sha256()
@@ -601,7 +619,7 @@ class GeometryInstrument:
             for tensor in per_layer[layer_idx]:
                 arr = tensor.detach().to("cpu").to(torch.float32).contiguous()
                 h.update(arr.numpy().tobytes())
-        return h.hexdigest()
+        self._digests[name] = h.hexdigest()
 
 
 __all__ = ["GeometryInstrument"]

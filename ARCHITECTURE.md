@@ -572,10 +572,14 @@ instruments. The shape is pinned by
 Each generated token row stores a `raw_index` into its node's raw token ids.
 `loom/replay.py::TokenReplayer` backs every family's `token_readout`: it
 rebuilds the node's render and raw decode prefix to the producing position,
-runs one capture forward under the recorded recipe steering (or the unsteered
-counterfactual), and hands the pooled hidden states to the family. Always-
-active affine steering reproduces exactly; phase and gated terms fire as the
-trigger context's rest state decides, which cannot recreate a gated history.
+runs the capture forward under the recorded recipe steering (or the unsteered
+counterfactual), and hands the pooled hidden states to the family. The forward
+runs as generation ran it (`replay_segments`: one forward when every term
+fires everywhere, else the prefill and the decode runs where the triggers
+fire alike), so one token reads the same number in every family and in the
+node replay. A probe-gated term, or a thinking-phase window on a family that
+thinks, fired on state the node does not record, so a replay under one refuses
+(422).
 
 The node replay (`loom/node_replay.py::NodeReplayer`) is the same rebuild
 (`TokenReplayer.forward`) running a forward of its own, tapped where the

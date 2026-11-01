@@ -579,7 +579,10 @@ class UnitsInstrument:
 
         def read(_hidden: dict[int, torch.Tensor]) -> dict[str, ScalarReading]:
             tap = holder["tap"]
-            out = tap.values_at(0)
+            # The producing position is the last of the replay's last forward
+            # (a segmented replay runs the prefill and decode runs before it).
+            latest = tap.latest()
+            out = None if latest is None else tap.values_at(latest)
             if out is None:
                 return {}
             values, raw_values = out

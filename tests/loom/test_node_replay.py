@@ -438,7 +438,7 @@ def test_anatomy_and_unit_activity_read_back_one_pack(
 
 
 def test_replay_segments_follow_each_trigger_window() -> None:
-    from drowse.loom.node_replay import ReplaySegment, replay_segments
+    from drowse.loom.replay import ReplaySegment, replay_segments
     from drowse.steering.triggers import Trigger
 
     def spans(triggers: Any) -> list[tuple[int, int, bool, int]]:
@@ -469,7 +469,7 @@ def test_replay_refuses_triggers_the_node_does_not_record() -> None:
     from dataclasses import replace
 
     from drowse.errors import SteeringCompositionError
-    from drowse.loom.node_replay import replay_segments
+    from drowse.loom.replay import replay_segments
     from drowse.steering.triggers import Trigger
 
     with pytest.raises(SteeringCompositionError, match="probe-gated") as info:

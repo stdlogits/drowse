@@ -787,14 +787,16 @@ def test_slens_atom_resolution_runs_in_the_exclusive_section(make_tiny_session: 
     lens = _install_s_lens(session)
     harness = _harness(session)
     assert harness.lens.register_input_direction("a") == "slens/a"
-    assert len(harness.exclusive_messages) == 1
+    # The atom's section is the outer one; paging the S lens in (device
+    # work too) re-enters it.
     assert "slens/" in harness.exclusive_messages[0]
+    entered = len(harness.exclusive_messages)
     profile = harness.profiles["slens/a"]
     expected = lens.matrix(1, "out") @ _centred(session, _token(session, "a"))
     assert torch.allclose(profile[1].cpu(), expected, atol=1e-5)
     # Idempotent: a registered atom does no model work.
     harness.lens.register_input_direction("a")
-    assert len(harness.exclusive_messages) == 1
+    assert len(harness.exclusive_messages) == entered
 
 
 def test_slens_refuses_a_token_the_mask_drops(make_tiny_session: Any) -> None:

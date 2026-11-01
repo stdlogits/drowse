@@ -42,7 +42,7 @@ whether it fires.  When every open term fires everywhere (``Trigger.BOTH``,
 the default) one forward over the node is exact.  Otherwise the replay runs
 the prefill and then the decode positions in KV-cached forwards, one per run
 of positions where every trigger fires the same way, with the trigger
-context set as generation set it (:func:`replay_segments`).  A probe gate
+context set as generation set it (:func:`~drowse.loom.replay.replay_segments`).  A probe gate
 (the generation's live probe scores) or, on a family that thinks, a
 thinking-phase window (``@after``, ``@thinking``) depends on state the node
 does not record, so a replay under one refuses
@@ -58,7 +58,7 @@ from __future__ import annotations
 import base64
 import math
 import weakref
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -67,12 +67,18 @@ import torch
 import torch.nn as nn
 from typing_extensions import TypedDict
 
-from drowse.errors import RequestError, SteeringCompositionError
+from drowse.errors import RequestError
 from drowse.lens.read import LensRead, VectorRead
 from drowse.loom.ops import resolve_token_anchor
-from drowse.loom.replay import ReplayForward, TokenReplayer
+from drowse.loom.replay import (
+    ReplayForward,
+    ReplaySegment,
+    _ReplayStop,
+    ReplayWindow,
+    TokenReplayer,
+    drive_segments,
+)
 from drowse.model.blocks import BlockSpec, ModelSpec
-from drowse.model.chat import logits_keep_kwarg
 from drowse.model.layers import LayerSelector, resolve_model_layers
 from drowse.model.units import head_write_matrix
 from drowse.naming import HeadRef, NeuronRef, UnitRef
@@ -85,7 +91,7 @@ from drowse.readout.measurements import (
     TokenAnatomy,
     build_measurements,
 )
-from drowse.steering.triggers import Trigger, TriggerContext
+from drowse.steering.triggers import TriggerContext
 from drowse.units.capture import SCALE_FLOOR
 from drowse.units.runtime import UnitsUnavailableError
 from drowse.units.stats import UNIT_POSITIONS_FROM, UnitStats
@@ -175,10 +181,6 @@ class UnitActivityJSON(TypedDict):
 # The tapped forward
 # --------------------------------------------------------------------------
 
-class _Stop(BaseException):
-    """The last block ran: the replay needs nothing after it."""
-
-
 def _first(output: Any) -> torch.Tensor:
     return output if isinstance(output, torch.Tensor) else output[0]
 
@@ -212,153 +214,6 @@ def _registered(handles: list[Any]) -> Iterator[list[Any]]:
     finally:
         for handle in handles:
             handle.remove()
-
-
-def _forward(model: nn.Module, ids: torch.Tensor) -> None:
-    try:
-        with torch.inference_mode():
-            model(input_ids=ids, use_cache=False)
-    except _Stop:
-        pass
-
-
-@dataclass(frozen=True)
-class ReplaySegment:
-    """One forward of a replay: positions ``[start, stop)`` under one trigger
-    state (the prompt's ``prefill``, or decode step ``gen_step``: the forward
-    producing raw token ``gen_step``)."""
-
-    start: int
-    stop: int
-    prefill: bool
-    gen_step: int
-
-
-def replay_segments(
-    prompt_length: int, length: int, triggers: Iterable[Trigger], *, can_think: bool,
-) -> tuple[ReplaySegment, ...]:
-    """The forwards that replay ``length`` positions the way generation ran
-    them under ``triggers`` (every open steering term's trigger).
-
-    Generation prefills ``[0, prompt_length)`` in one forward, then decode
-    step ``k`` produces raw token ``k`` at position ``prompt_length + k − 1``.
-    With every trigger ``Trigger.BOTH`` each position is steered alike and
-    one forward over ``[0, length)`` is exact.  Otherwise the prefill is one
-    segment and the decode positions split wherever a trigger's activity
-    changes (``@first:N``, ``@after:N``), each segment evaluated by
-    :meth:`Trigger.active` itself.  Raises
-    :class:`~drowse.errors.SteeringCompositionError` (422) for a term whose
-    firing depends on state the node does not record: a probe gate (the
-    generation's live probe scores) or, when the family can think
-    (``can_think``), a thinking-phase window (``@after``, ``@thinking``).
-    """
-    windowed = list(dict.fromkeys(t for t in triggers if t != Trigger.BOTH))
-    if not windowed:
-        return (ReplaySegment(0, int(length), prefill=False, gen_step=0),)
-    gated = any(t.generated and t.gate is not None for t in windowed)
-    phased = can_think and any(t.generated and t.thinking != t.response for t in windowed)
-    if gated or phased:
-        what = " and ".join(
-            label for label, present in (
-                ("probe-gated terms (@when:…), which fire on the generation's live "
-                 "probe scores", gated),
-                ("thinking-phase terms (@after, @thinking), which fire on the decode "
-                 "loop's thinking state", phased),
-            ) if present
-        )
-        raise SteeringCompositionError(
-            f"the replayed steering has {what}; the node records neither, so a "
-            "replay cannot reproduce where they fired. Replay without them "
-            "(apply_steering=false drops the node's own steering)."
-        )
-
-    def fires(step: int) -> tuple[bool, ...]:
-        ctx = TriggerContext(gen_step=step)
-        return tuple(t.active(ctx) for t in windowed)
-
-    prefill_stop = min(int(prompt_length), int(length))
-    segments: list[ReplaySegment] = []
-    if prefill_stop > 0:
-        segments.append(ReplaySegment(0, prefill_stop, prefill=True, gen_step=0))
-    start = prefill_stop
-    while start < length:
-        step = start - int(prompt_length) + 1
-        state = fires(step)
-        stop = start + 1
-        while stop < length and fires(stop - int(prompt_length) + 1) == state:
-            stop += 1
-        segments.append(ReplaySegment(start, stop, prefill=False, gen_step=step))
-        start = stop
-    return tuple(segments)
-
-
-class _Window:
-    """The running forward's span of the replayed positions, read by the taps."""
-
-    __slots__ = ("final", "start", "stop")
-
-    def __init__(self) -> None:
-        self.start = 0
-        self.stop = 0
-        self.final = True
-
-
-def _drive(
-    model: nn.Module,
-    ids: torch.Tensor,
-    segments: Sequence[ReplaySegment],
-    ctx: TriggerContext | None,
-    window: _Window,
-) -> None:
-    """Run ``ids`` through ``segments``, keeping ``window`` on the running one.
-
-    The one rest-state segment (every trigger fires everywhere) is one
-    cacheless forward, the context untouched.  Otherwise each segment, a
-    lone prefill included, runs on one KV cache with the context set as the
-    decode loop sets it (the attention sink in column 0 only from position
-    0), and the context returns to its rest state after.  The taps raise
-    :class:`_Stop` in the last segment only.
-    """
-    if len(segments) == 1 and not segments[0].prefill:
-        segment = segments[0]
-        window.start, window.stop, window.final = segment.start, segment.stop, True
-        _forward(model, ids[:, segment.start:segment.stop])
-        return
-    if ctx is None:
-        raise ValueError("a segmented replay needs the trigger context")
-    keep = logits_keep_kwarg(model)
-    past: Any = None
-    try:
-        with torch.inference_mode():
-            for i, segment in enumerate(segments):
-                window.start, window.stop = segment.start, segment.stop
-                window.final = i == len(segments) - 1
-                ctx.is_prefill = segment.prefill
-                ctx.thinking = False
-                ctx.gen_step = segment.gen_step
-                ctx.sink_column = 0 if segment.start == 0 else None
-                ctx.probe_scores = {}
-                kwargs: dict[str, Any] = {
-                    "input_ids": ids[:, segment.start:segment.stop], "use_cache": True,
-                }
-                if past is not None:
-                    kwargs["past_key_values"] = past
-                if keep is not None:
-                    kwargs[keep] = 1
-                try:
-                    out = model(**kwargs)
-                except _Stop:
-                    if not window.final:
-                        raise RuntimeError("a replay tap stopped before the last forward") from None
-                    return
-                past = getattr(out, "past_key_values", None)
-                if past is None:
-                    raise RuntimeError(
-                        "the model returned no KV cache; a segmented replay runs on one"
-                    )
-                del out
-    finally:
-        ctx.reset()
 
 
 @dataclass
@@ -414,7 +269,7 @@ def tap_token(
     block-output tap sits before the steering hooks (``prepend``) and after
     them, so the two together isolate the injection.  Every projection tap
     is a forward hook, so it sees the input the module used (after a unit
-    ablation's pre-hook).  ``segments`` (:func:`replay_segments`, default
+    ablation's pre-hook).  ``segments`` (:func:`~drowse.loom.replay.replay_segments`, default
     one forward over ``ids``) splits the forward as generation's triggers
     did, driving ``ctx``; ``position`` lies in the last one, the only one
     tapped.
@@ -428,7 +283,7 @@ def tap_token(
     )
     if not plan[-1].start <= p < plan[-1].stop:
         raise ValueError(f"position {p} is outside the replay's last forward")
-    window = _Window()
+    window = ReplayWindow()
 
     def here() -> int | None:
         """``position``'s row in the running forward (only the last is tapped)."""
@@ -458,7 +313,7 @@ def tap_token(
                 return
             store[layer] = _row(_first(output) if out else args[0], row)
             if stop:
-                raise _Stop()
+                raise _ReplayStop()
         return hook
 
     def pair(layer: int, inputs: dict[int, torch.Tensor], outputs: dict[int, torch.Tensor]) -> Any:
@@ -500,7 +355,7 @@ def tap_token(
             handles.append(block.attn.o.register_forward_hook(pair(L, zs, attn_out)))
             if patterns:
                 handles.append(block.attn.module.register_forward_hook(pattern(L)))
-        _drive(model, ids, plan, ctx, window)
+        drive_segments(model, ids, plan, ctx, window)
     if "h" not in first or len(post) != n or len(mid) != n:
         raise RuntimeError("the replay forward did not reach every block")
     out = torch.stack([post[L] for L in range(n)])
@@ -807,7 +662,6 @@ class NodeReplayer:
         tree: Callable[[], "LoomTree"],
         traits: "ChatTraits",
         trigger_context: TriggerContext,
-        open_triggers: Callable[[], Iterable[Trigger]],
     ) -> None:
         self._replayer = replayer
         self._model = getattr(model, "_orig_mod", model)
@@ -817,15 +671,13 @@ class NodeReplayer:
         self._tree = tree
         self._traits = traits
         self._ctx = trigger_context
-        self._open_triggers = open_triggers
 
     def _segments(self, forward: ReplayForward) -> tuple[ReplaySegment, ...]:
         """The forwards replaying ``forward`` as the open steering fired
-        during generation (:func:`replay_segments`)."""
-        return replay_segments(
-            forward.prompt_length, int(forward.ids.shape[1]), self._open_triggers(),
-            can_think=bool(self._traits.supports_thinking),
-        )
+        during generation (the token replay's
+        :meth:`~drowse.loom.replay.TokenReplayer.segments`, which every
+        family's token readout runs through too)."""
+        return self._replayer.segments(forward)
 
     def _patterns_readable(self) -> bool:
         """Whether a head can be ranked, so a pattern returned: the R lens
@@ -866,7 +718,7 @@ class NodeReplayer:
         top ``units`` units, and the attention from the token's producing
         position of the top ``patterns`` heads (0, or an R lens with no
         ``mid`` layer to rank heads by: none, and no eager attention).  The
-        forward runs as generation's triggers ran it (:func:`replay_segments`).
+        forward runs as generation's triggers ran it (:func:`~drowse.loom.replay.replay_segments`).
         Raises ``UnsupportedBlockError`` (422) for a model the block
         description refuses and ``SteeringCompositionError`` (422) for
         steering whose firing the node does not record; without an R lens the
@@ -1120,7 +972,7 @@ class NodeReplayer:
         per-token trace of each unit in ``units``, and, with ``raw_index``,
         that token's whole population at ``layers`` (default every layer),
         packed (:data:`POPULATION_ENCODING`).  The forward runs as generation's triggers ran it
-        (:func:`replay_segments`).  Raises ``UnitsUnavailableError`` (422)
+        (:func:`~drowse.loom.replay.replay_segments`).  Raises ``UnitsUnavailableError`` (422)
         when the model has no unit statistics, ``SteeringCompositionError``
         (422) for steering whose firing the node does not record, and a 400
         for a malformed or out-of-range unit.
@@ -1174,7 +1026,7 @@ class NodeReplayer:
         first = forward.prompt_length - 1
         n_sink = max(0, min(count, UNIT_POSITIONS_FROM - first))
         sink = torch.arange(count, device=device) < n_sink                      # [N]
-        window = _Window()
+        window = ReplayWindow()
         wanted = {int(layer) for layer in pop_layers}
         picks: dict[tuple[str, int], list[int]] = {}
         for ref in refs:
@@ -1230,7 +1082,7 @@ class NodeReplayer:
                     scale = torch.where(act >= 0, plus, minus)
                     reduce(("neuron", block.layer), act / scale.clamp_min(SCALE_FLOOR), r0)
                 if last and window.final:   # the last tap: nothing after it is read
-                    raise _Stop()
+                    raise _ReplayStop()
             return hook
 
         def head_hook(block: BlockSpec) -> Any:
@@ -1260,7 +1112,7 @@ class NodeReplayer:
             for block in blocks:
                 handles.append(block.mlp.down.register_forward_hook(neuron_hook(block)))
                 handles.append(block.attn.o.register_forward_hook(head_hook(block)))
-            _drive(self._model, ids, segments, self._ctx, window)
+            drive_segments(self._model, ids, segments, self._ctx, window)
             if len(seen) != 2 * n or any(rows != count for rows in seen.values()):
                 raise RuntimeError("the replay forward did not reach every unit at every token")
             order = [(kind, L) for L in range(n) for kind in ("neuron", "head")]

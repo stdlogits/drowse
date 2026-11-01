@@ -12,12 +12,13 @@ from drowse.server.response_models import (
     SessionListResponse,
     SteeringValidationResponse,
 )
-from drowse.server.runtime import session_lock, session_router
+from drowse.server.runtime import exclusive_or_busy, run_in_thread, session_lock, session_router
 from drowse.server.session_models import (
     PatchSessionRequest,
     ValidateSteeringRequest,
     session_info,
 )
+from drowse.steering.composer import TermLayers
 from drowse.steering.grammar import format_expr, parse_expr
 
 
@@ -61,11 +62,14 @@ def register_session_routes(app: FastAPI) -> None:
         variants, and atoms and composes the hooks exactly as a generation
         would, then rolls straight back — so a green validation cannot hide a
         rack-time failure.  It touches shared hook state, so it serializes on
-        the session lock.  A rejected expression is an in-band form result
-        (``valid: false``), not a failed request.  A valid one also reports
-        the model's depth and where each term acts (its fitted layers, its
-        share there, the layers its clause selects): the term editor's depth
-        strip.
+        the session lock, and it runs in a worker thread holding the model
+        lock: while a generation, fit or training holds the model it answers
+        409 rather than waiting (on the event loop that wait would stall
+        every other request).  A rejected expression is an in-band form
+        result (``valid: false``), not a failed request.  A valid one also
+        reports the model's depth and where each term acts (its fitted
+        layers, its share there, the layers its clause selects): the term
+        editor's depth strip.
         """
         expression = req.expression.strip()
         if not expression:
@@ -74,12 +78,19 @@ def register_session_routes(app: FastAPI) -> None:
             parsed = parse_expr(expression)
         except DrowseError as exc:
             return {"valid": False, "expression": expression, "error": exc.user_message()[1]}
+
+        def dry_install() -> dict[str, TermLayers]:
+            with exclusive_or_busy(session), session.steering(parsed) as scope:
+                return scope.term_layers()
+
         async with session_lock(app):
             try:
-                with session.steering(parsed) as scope:
-                    terms = scope.term_layers()
+                terms = await run_in_thread(dry_install)
             except DrowseError as exc:
-                return {"valid": False, "expression": expression, "error": exc.user_message()[1]}
+                status, message = exc.user_message()
+                if status == 409:
+                    raise
+                return {"valid": False, "expression": expression, "error": message}
         return {
             "valid": True,
             "expression": format_expr(parsed),
