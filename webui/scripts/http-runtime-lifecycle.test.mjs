@@ -86,6 +86,28 @@ try {
     assert.equal(asked[0].has("top_k"), false, "a geometry replay carries no top_k");
     assert.equal(asked[0].get("steered"), "false");
     assert.equal(asked[1].get("top_k"), "5");
+    // Regression: two checks of one quick term edit raced each other into the route's 409 (it
+    // refuses rather than wait for the session lock). The page sends one at a time.
+    const { apiSessions } = await server.ssrLoadModule("/src/lib/api.ts");
+    let inFlight = 0;
+    let most = 0;
+    const releases = [];
+    globalThis.fetch = async (_path, init) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => releases.push(resolve));
+      inFlight -= 1;
+      return init.body.includes("bad") ? Response.json({ message: "busy" }, { status: 409 }) : Response.json({ valid: true, expression: JSON.parse(init.body).expression });
+    };
+    const checks = [apiSessions.validateSteering("0.3 a"), apiSessions.validateSteering("0.3 bad"), apiSessions.validateSteering("0.3 b")];
+    for (let i = 0; i < 3; i += 1) {
+      while (releases.length === 0) await new Promise((resolve) => setImmediate(resolve));
+      releases.shift()();
+    }
+    const settled = await Promise.allSettled(checks);
+    assert.equal(most, 1, "one validation in flight at a time");
+    assert.deepEqual(settled.map((s) => s.status), ["fulfilled", "rejected", "fulfilled"], "a refused check does not stall the next");
+    assert.equal(settled[2].value.expression, "0.3 b");
   } finally { globalThis.fetch = previousFetch; }
   console.log("HTTP runtime lifecycle: closed and replaced socket events are ignored; active messages and expected shutdown are preserved; SSE operations stream, resolve, and fail through one path");
 } finally {

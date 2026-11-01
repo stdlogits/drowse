@@ -159,12 +159,20 @@ export const apiSessions = {
     id: string = SESSION,
     _options?: import("./runtime/contracts").SteeringValidationOptions,
   ): Promise<SteeringValidationResponse> {
-    return request(
+    // One check in flight from this page: the route answers 409 rather than wait for the session
+    // lock, so two checks of one quick edit (the term's layers, its new clause) would race each
+    // other into a 409. A check waits for the page's previous one instead; a reply still 409s it.
+    const run = () => request<SteeringValidationResponse>(
       `${SESSION_BASE(id)}/steering/validate`,
       jsonBody({ expression }),
     );
+    const next = validationTail.then(run, run);
+    validationTail = next.catch(() => undefined);
+    return next;
   },
 };
+
+let validationTail: Promise<unknown> = Promise.resolve();
 
 // =========================================================== profiles ==
 
