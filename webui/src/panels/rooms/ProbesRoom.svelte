@@ -1,14 +1,13 @@
 <script lang="ts">
   // The Probes room (#/probes): the attached geometry probes read at the token cursor (TokenStrip).
-  // First the linear probes and vectors (flat fits): each one's value at the token and its trace over
-  // the whole conversation, the token marked (a click on the trace moves the cursor there). Then the
-  // manifolds (curved fits): where the token sits (its share of the subspace, its nearest node, one
+  // First the linear probes and vectors (one-axis flat fits): each one's value at the token and its
+  // trace over the whole conversation, the token marked (a click on the trace moves the cursor
+  // there). Then the manifolds (fits of more axes, flat fans or curved): where the token sits (its share of the subspace, its nearest node, one
   // signed meter per coordinate) and the fitted geometry it sits in (ProbeGeometryPlot, the probe
   // inspector's plot, the token placed in it). Then the SAE features the rack pins. Whole, the
   // reply's aggregate and the live trail. A token's row keeps each probe's value; the rest (a
   // manifold's nearest node and whitened place, a probe attached since) replays the token, steered
   // as it was generated.
-  import { Token } from "@stdlogits/ledger";
   import TokenStrip from "./TokenStrip.svelte";
   import ProbeGeometryPlot from "../manifold/ProbeGeometryPlot.svelte";
   import Bar from "../../lib/charts/Bar.svelte";
@@ -34,8 +33,11 @@
   const attached = $derived(probeRack.active
     .map((name) => ({ name, info: probeRack.entries.get(name)?.info ?? null }))
     .filter((row): row is { name: string; info: ProbeInfo } => row.info !== null));
-  const linear = $derived(attached.filter((p) => p.info.family === "geometry" && (p.info as GeometryProbeInfo).is_affine));
-  const manifolds = $derived(attached.filter((p) => p.info.family === "geometry" && !(p.info as GeometryProbeInfo).is_affine));
+  /** A linear probe or vector: a flat fit of one axis (a 2-node concept, a 1-node direction). */
+  const isLinear = (info: ProbeInfo) => info.family === "geometry" && (info as GeometryProbeInfo).is_affine && (info as GeometryProbeInfo).intrinsic_dim <= 1;
+  const linear = $derived(attached.filter((p) => isLinear(p.info)));
+  /** A manifold: a fit of more than one axis, flat (a fan) or curved. */
+  const manifolds = $derived(attached.filter((p) => p.info.family === "geometry" && !isLinear(p.info)));
   const features = $derived(attached.filter((p) => p.info.family === "sae"));
   const saeLayer = $derived.by((): number | null => {
     const live = instrumentFamily("sae")?.live;
@@ -217,7 +219,7 @@
         {@const value = valueOf(probe.name, trace)}
         {@const title = probeTitle(probe.info, probe.name, saeLayer)}
         <div class="row" style:--tint={tintOf(probe.info)}>
-          <span class="pname" data-tip={probe.name}>{#if probe.info.family === "sae"}{title.text}{:else}<Token token={`${title.lead ? " " : ""}${title.text}`} />{/if}</span>
+          <span class="pname" data-tip={probe.name}>{title.text}</span>
           <button type="button" class="trace" tabindex="-1" aria-label={`${title.text} over the conversation; choose a place to move there`} onclick={jump}>
             <Trace values={trace} limit={0} maxBars={240} height={28} cursor={markAt} label={`${title.text} over the conversation`} />
             {#if whole && replySpan && walk.length > 0}<span class="span" style:left="{(replySpan[0] / walk.length) * 100}%" style:width="{((replySpan[1] - replySpan[0] + 1) / walk.length) * 100}%"></span>{/if}
