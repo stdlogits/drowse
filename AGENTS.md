@@ -16,7 +16,7 @@ difference-of-means steering vector is the 2-node flat case and a monopolar
 concept the 1-node case; `personas` is a 107-node flat fan, `emotions` a
 20-node affect manifold, `months` an authored periodic ring. Every steering
 term (vectors, poles, `~`/`|` projections, `!` ablations, `%` manifold
-positions, J-lens, SAE and neuron atoms) lowers at generation time to one
+positions, lens, SAE and neuron atoms) lowers at generation time to one
 per-layer injection whose semantics are `geometry/inject.py::subspace_inject`;
 the one exception is a unit mean-ablation (`!neuron/…`, `!head/…`), which
 rewrites a projection's input (`UnitOp`) instead of the residual.
@@ -207,11 +207,15 @@ other 4xx → 2, 5xx → 1. `tests/invariants/test_user_message.py` enforces the
 family.
 
 **Persisted formats are exact.** Readers accept only the current version and
-never migrate (a derived cache recomputes instead): `manifold.json` v10,
-`template.json` v2, `.drowse` v1, loom `tree_format` 2 with token sidecar 3
-(token rows carry measurement envelope v2), transcripts v3, lens format v7,
-neutral cache v5 (activations plus the unit statistics and mid means, capture
-version 2).
+never migrate (a derived cache recomputes instead). These froze at 6.0.0:
+`manifold.json` v10, `template.json` v2, `.drowse` v1, loom `tree_format` 2
+with token sidecar 3 (token rows carry measurement envelope v2; a node's
+`finish_reason` is one of `stop`, `length`, `stop_sequence`, `cancelled`),
+transcripts v3, the dashboard's conversation snapshot v8, lens format v7 (an
+optional per-site `split_half`; `odd` only inside `checkpoint.json`), the lens
+selection (`active.json`, slots keyed `output`/`input`) and binding v2, the
+neuron-lens catalog binding v2, lens token counts v1, and neutral cache v5
+(activations plus the unit statistics and mid means, capture version 2).
 `MANIFOLD_FIT_POLICY_VERSION` (`geometry/manifold.py`) stamps every fit, and
 bumping it makes every fitted tensor refuse to load. Every `SamplingConfig`
 field is persisted in recipes and required on read, so adding one breaks saved
@@ -302,9 +306,11 @@ with a dist-drift check. Details: `tests/AGENTS.md`.
 All state lives under `$DROWSE_HOME` (default `~/.drowse`): `config.yaml`,
 prompt/neutral overrides, `templates/`, `manifolds/<ns>/<name>/` and
 `models/<safe_model_id>/` (neutral activations, alignments, capture cache,
-`lens/`, `sae/`, `units/`: the contrast cache and the catalog binding). The full tree is in `drowse/store/AGENTS.md`; the lens and
-SAE subtrees in their packages. Conversations are never autosaved; they are
-browser downloads or explicit `LoomTree.save(path)` targets.
+`lens/`, `sae/`, `units/`: the contrast cache and the catalog binding). The
+full tree is in `drowse/store/AGENTS.md`; the lens, SAE and units subtrees in
+their packages. No conversation lives there: the dashboard keeps its library
+in the browser (IndexedDB, autosaved between generations) and as backup
+downloads, and Python saves only to an explicit `LoomTree.save(path)`.
 
 | Variable | Effect |
 |---|---|

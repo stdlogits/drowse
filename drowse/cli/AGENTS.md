@@ -169,9 +169,9 @@ never block startup.
   `slens/<word>` atoms resolve against the selected sources. `preflight_steering` enters and leaves
   `session.steering(expr)` once — resolving and loading every atom as a request
   would, authoring nothing; a missing concept exits 1 with an `extract` hint.
-- Live lens: a selected output-side source (`lens use`) is never rewritten
+- Live lens: a selected R-family source (`lens use`) is never rewritten
   (incompatible → live off with a hint). With none selected, serve tries prepared
-  output-side sources in `lens.sources.lens_source_preference_key` order and the
+  R-family sources in `lens.sources.lens_source_preference_key` order and the
   first compatible one stays selected in `active.json` (the lens runtime has no
   in-memory selection); if none fits, the trial selection is cleared.
 - S lens (`select_s_lens`): the same policy for the S family, with
@@ -256,7 +256,7 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
 
 **lens** — corpus specs, sources and estimators are in `drowse/lens/AGENTS.md`.
 - `fit MODEL`: `--kind r` (default, RelP R-lens), `j` (standard J-lens), `s`
-  or `k` (their input-side S- and K-lenses), each at `local:<kind>`;
+  or `k` (the S family's S- and K-lenses), each at `local:<kind>`;
   `--sites out,mid` (default both); `--corpus FILE` (one document per line,
   JSON lines contribute `text`) or repeatable `--hf-corpus`, else FineWeb-Edu
   `sample-10BT` (needs `drowse.ai[hf]`). `--prompts` defaults to 64 (`lens/key.py::DEFAULT_FIT_DOCUMENTS`). A Hub

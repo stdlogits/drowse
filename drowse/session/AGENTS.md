@@ -149,7 +149,7 @@ user turn, never an empty assistant turn with no finish reason.
 - **Thinking**: explicit `thinking` > the steering's `thinking` >
   `config.thinking` > `chat_traits.supports_thinking`.
 - **Widths**: `return_top_k` is per-call when positive, else the session
-  default; the shared logit/J-lens/SAE readout width is that or
+  default; the shared logit/lens/SAE readout width is that or
   `DEFAULT_READOUT_TOP_K = 8`.
 
 Decode routing:

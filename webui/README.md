@@ -42,52 +42,40 @@ seams it swaps; keep shared code behind `lib/runtime/client.ts` (enforced by
 
 ## Application shape
 
-The desktop shell has three permanent work areas:
+The header holds the rooms as routes: Workbench, Manifolds, Units, Lens and
+Model. The workbench is three regions: the thread (the loom as the path you are
+on, and earlier chats), the page (the conversation or the loom's map) and the
+Inspector, which shows what is selected (a token's drilldown and anatomy, a
+probe, a unit, a steering term) and, with nothing selected, the instruments.
+From 1240 px the regions sit side by side; narrower it is Page | Inspector with
+the thread folded over the page; on a phone it is one column with the
+Inspector as a sheet. A tool a room hosts opens in that room; any other opens
+as a dialog over the page. The command palette is under **Menu → All tools**;
+it has no global keyboard shortcut.
 
-- `LoomSidebar` — conversation tree, filtering, branching, regeneration, and
-  node actions.
-- `Chat` — role-plan composer, authored/generated turns, token highlights, and
-  token-detail entry points.
-- `InspectorPanel` — sampling plus the subspace, manifold, SAE, and J-lens
-  steering/probe instruments.
-
-The token-detail drawer has geometry, logits, SAE, and J-lens tabs over one
-conversation-walking cursor. It uses captured measurement envelopes when they
-exist and asks the replay endpoints for historical or newly attached readouts.
-
-Below 1280 px those same areas become explicit `threads`, `chat`, and
-`instruments` views. Dense tools open in a focus-trapped drawer. The command
-palette is available from **Menu → All tools**; it has no global keyboard shortcut.
+The steering recipe is chips over the composer, with the term editor in place
+under them. The dashboard serializes chips into an expression
+(`lib/expression.ts`) and never parses one: a recipe from elsewhere comes back
+from the server's validate route as structured `parts`, and one the chips
+cannot draw stays a single read-only chip.
 
 ## Source map
 
 ```text
 src/
-  main.ts                    app entry point
-  App.svelte                 shell, compact navigation, drawer host
-  panels/
-    Chat.svelte              turn surface and role-plan composer
-    RawBuffer.svelte         raw transcript surface
-    loom/                    conversation-tree components and controller
-    InspectorPanel.svelte    instrument-tab host
-    SteeringRack.svelte      subspace/manifold steering cards
-    ProbeRack.svelte         attached geometry probes
-    SaePanel.svelte          SAE source, steer, and probe surface
-    JLensPanel.svelte        J-lens source, steer, and probe surface
-    CommandPalette.svelte    global launcher
-  drawers/                   authoring, analysis, admin, and export tools
-    token/                   four token-detail tabs, cursor, and shared readout UI
-  lib/
-    api.ts                   typed HTTP, SSE, and WebSocket clients
-    types.ts                 shared wire and UI types
-    stores.svelte.ts         cross-cutting session/tree/stream state
-    stores/                  focused palette, drawer, toast, and input slices
-    expression.ts            steering-expression parser/serializer
-    manifolds/               diagnostics helpers and renderer
-    charts/                  small quantitative primitives
-    ui/                      shared buttons, tabs, chips, and drawer chrome
-    style/                   tokens, fonts, and global rules
+  main.ts, App.svelte   runtime install and mount; the shell (header, rooms, dialog host)
+  panels/workbench/     the workbench and its thread
+  panels/inspector/     the Inspector, the instruments, the unit view
+  panels/rooms/         the Manifolds, Units, Lens and Model rooms
+  panels/               the page (Chat, RawBuffer), the recipe chips, the probe rack, loom/, rack/
+  drawers/              one component per tool; token/ is the token drilldown
+  lib/runtime/          the RuntimeClient contract and the HTTP runtime
+  lib/stores/           one $state slice per concern
+  lib/steering/         the term editor's logic
+  lib/style/            the shell's Ledger classes
 ```
+
+The full map, with each module's ownership, is in `../drowse/web/AGENTS.md`.
 
 The server-owned wire contract is documented beside the implementation in
 `../drowse/server/AGENTS.md`; dashboard-specific ownership and interaction

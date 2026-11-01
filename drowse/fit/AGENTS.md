@@ -216,8 +216,9 @@ pole's sign is noise. Measured as ν's position along the axis (0 at the − pol
 push targets the pole's neutral-anchored coordinate, so where ν lies past the
 near pole that push points at the far pole: on SmolLM2 the all-fail fallback
 keeps every layer and `0.5 honest` pushes deceptive-ward at all 32. Loosening
-the test would spread that to more layers; the remedy is the axis's shape or
-corpus, which is a9's call (open as of Wave 4).
+the test would spread that to more layers; the remedy is the axis's shape
+(a monopolar re-author) or its corpus (poles written past the default
+answer), and it is open (ARCHITECTURE.md §17).
 
 ## Publish and concurrency
 

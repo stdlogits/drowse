@@ -31,7 +31,7 @@ flowchart LR
     Engine --> Composer["SteeringComposer"]
     Composer --> Hooks["SteeringManager + layer hooks"]
     Engine --> ReadPlane["ReadPlane"]
-    ReadPlane --> Runs["geometry / lens / SAE runs"]
+    ReadPlane --> Runs["geometry / lens / SAE / units runs"]
     Hooks --> Model["Hugging Face causal LM"]
     Model --> Capture["HiddenCapture + token logits"]
     Capture --> Runs
@@ -46,7 +46,7 @@ The engine has two deliberately separate planes:
 - The **steering plane** resolves an expression, composes every compatible
   term into one update per affected layer, and injects it.
 - The **read plane** plans hidden-state retention, binds frozen per-generation
-  instrument state, and produces geometry, J-lens, SAE and unit readings
+  instrument state, and produces geometry, lens, SAE and unit readings
   without touching the steering representation.
 
 They meet at **gates**: a steering trigger may depend on a read-side scalar, so
@@ -66,7 +66,7 @@ next steered forward.
 | Steering math (synthesis, the kernel, fold, projection) | `geometry/inject.py`, `geometry/fold.py` |
 | Read contract, Monitor, capture planning, envelope | `readout/` |
 | Applying the read plan to one generation | `generation/read_plane.py::ReadPlane` |
-| J-lens, SAE and units families | `lens/`, `sae/`, `units/` (block description and unit directions in `model/blocks.py`, `model/units.py`) |
+| Lens, SAE and units families | `lens/`, `sae/`, `units/` (block description and unit directions in `model/blocks.py`, `model/units.py`) |
 | Extraction and fitting | `fit/` (`pipeline.py`, `corpus.py`, `capture.py`, `node_stats.py`, `publish.py`, `preflight.py`) |
 | Artifact formats, selectors, distribution | `store/` |
 | Conversation tree, recipes, replay, transcripts | `loom/` |
@@ -99,7 +99,7 @@ metadata. `SynthesizedSubspace` is not durable: it is the per-dispatch result
 of composing an expression's affine terms.
 
 `Profile` (`geometry/profile.py`) is the in-memory `{layer: direction}` view
-that vector-shaped consumers need: comparison, projection operands, J-lens and
+that vector-shaped consumers need: comparison, projection operands, lens and
 SAE atoms, GGUF export. Extracted concepts are not stored twice. A fitted
 2-node manifold is folded to a `Profile` on demand
 (`geometry/fold.py::folded_directions`), and the folder stays the only stored
@@ -146,15 +146,28 @@ Both use `base/source_registry.py::SourceFamily`: an `active.json` selection,
 Drowse-owned `local/<name>/` artifacts, and commit-pinned provider bindings
 whose payloads stay in the Hugging Face cache.
 
-- A lens is one kind (`LensKey`: J/R output, K/S input) with fp32 per-layer
-  matrices at one or both residual sites (`out`, `mid`): `J_l =
-  E[∂h_final/∂h_l]` for output kinds, `K_l = E[∂h_l/∂e]` for input kinds.
-  Format v7 stores every kind and site (`local:j`, `local:r`, `local:s`,
-  `local:k`), and one estimator fits them all. Providers: `neuronpedia`,
-  `workspace-r`, `workspace-j`. Which kind reads a place is a depth rule
-  (`lens/depth.py`): S early, R late, both weighted in a crossover band.
+- A lens is one kind (`LensKey`) with fp32 per-layer matrices at one or both
+  residual sites (`out`, `mid`). Two families, two rules each: the R family
+  (J standard, R RelP) holds output Jacobians `J_l = E[∂h_final/∂h_l]`, read
+  through `W_U` (what a vector will make the model say); the S family (K, S)
+  holds input Jacobians `K_l = E[∂h_l/∂e]`, read against the input embedding
+  (what it has read). Format v7 stores every kind and site (`local:j`,
+  `local:r`, `local:s`, `local:k`), and one estimator fits them all.
+  Providers: `rs-r` and `rs-s` (stdlogits/rs-lenses, both sites),
+  `workspace-r`, `neuronpedia`, `workspace-j`. One source per family is
+  selected, so an R and an S lens are resident together. Which family reads
+  a place is a depth rule (`lens/depth.py`): S early, R late, both weighted
+  in a crossover band; the site is the place's own (`out` for a residual, a
+  neuron's write or a head's input; `mid` for a neuron's read or a head's
+  write).
+- An S read ranks only tokens the model saw often enough: the token mask
+  takes the bound neuron-lens catalog's counts, else the lens corpus's counts
+  (`lens counts`, `lens/token_counts.py`), else the tokenizer's rules.
 - An SAE is a local ReLU dictionary trained here or a SAELens release (the
   `[sae]` extra), held resident at one hook layer per session.
+- The neuron-lens catalog (`units/catalog.py`, `unit fetch`) is a
+  commit-pinned binding of unit labels, firing tables and token counts for
+  Qwen3-8B and Gemma 4 12B; nothing else needs it.
 
 A source switch becomes visible at the next generation's bind, never halfway
 through a bound run. Details: `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md`.
@@ -178,7 +191,10 @@ request, produce results without touching the tree.
 
 All state resolves through `base.paths.drowse_home()` (`$DROWSE_HOME`, default
 `~/.drowse`). The tree is documented in `drowse/store/AGENTS.md`; lens and SAE
-subtrees in their packages. Conversations are never autosaved.
+subtrees in their packages. The server never saves a conversation: the
+dashboard keeps its own library in the browser (IndexedDB, written between
+generations) and backup downloads, and Python saves only to an explicit
+`LoomTree.save(path)`.
 
 Every model-bound artifact keys on one of two identities from
 `model/fingerprint.py`:
@@ -201,7 +217,7 @@ Writers use stable artifact locks outside removable folders, temporary files,
 fsync, and atomic pointer or manifest swaps. A fit publishes by
 compare-and-swap against an authoring snapshot (`fit/publish.py`), so a paused
 fit can never overwrite a folder that was cleared or replaced meanwhile. Long
-fits (the J-lens) publish immutable shard generations and leave the previous
+fits (lenses) publish immutable shard generations and leave the previous
 complete generation authoritative until the new pointer is durable. Readers
 never treat an incomplete or mismatched artifact as a partial success.
 
@@ -457,7 +473,7 @@ Channel units and semantics: `drowse/readout/AGENTS.md`.
 | Family | Facade | Reading | Unit |
 |---|---|---|---|
 | `geometry` | `session.geometry` (`GeometryInstrument` over `Monitor`) | `ProbeReading` | domain coordinate; Mahalanobis fraction and label distance; curved membership and assignment |
-| `lens` | `session.lens` (`LensInstrument`) | `ScalarReading` | mean fitted-layer probability of one vocabulary token |
+| `lens` | `session.lens` (`LensInstrument`) | `ScalarReading` | `jlens/`: one token's mean fitted-layer probability through the R lens; `slens/`: its footprint z through the S lens, averaged over the layers with the depth rule's `w_S` |
 | `sae` | `session.sae` (`SaeInstrument`) | `ScalarReading` | feature activation over Neuronpedia's `maxActApprox` when known, else raw activation |
 | `units` | `session.units` (`UnitsInstrument`) | `ScalarReading` | a neuron's activation over its pole's reading scale (signed), a head's write norm over its own: the bound neuron-lens catalog's `act_top`, else the neutral statistics', soft-floored (`units/stats.py::UnitScales`); `meta.scale` names the source |
 
@@ -493,13 +509,18 @@ The `ProbeReading` projection of a scalar reading exists only at the vendor
 extension boundary (`TokenEvent.probe_readings` and the OpenAI/Ollama
 `x-drowse-probe-readings` body key).
 
-The J-lens readout is `softmax(W_U · norm(J_l h))` at each fitted layer. One
-unit, the per-layer probability `p_l`, backs every lens surface: strength is
-`mean_l p_l`, depth center and spread are weighted by `p_l`, and probes, gates,
-the live wire and `lens top` all report it. A `jlens/<word>` steering atom is a
-different object: the activation direction `W_U[v] @ J_l`. An `sae/<id>` atom is
-the decoder row as a one-layer profile; nothing clamps and decodes a feature
-inside the forward.
+The R-family readout is `softmax(W_U · norm(J_l h))` at each fitted layer. One
+unit, the per-layer probability `p_l`, backs every R surface: strength is
+`mean_l p_l`, depth center and spread are weighted by `p_l`, and `jlens/`
+probes, gates and the live wire report it. The S family reads a residual's
+pullback `K_lᵀ (h_l − μ_l)` (centred on the neutral mean at that site) against
+the input embedding as a footprint z over the vocabulary, ranking only the
+token mask's kept tokens (`lens/AGENTS.md`). `lens top`, `lens.read` and the
+token anatomy pick the family by depth (`lens/depth.py`) and say which. A
+`jlens/<word>` steering atom is a different object: the activation direction
+`W_U[v] @ J_l`; `slens/<word>` is the token's S footprint at each layer. An
+`sae/<id>` atom is the decoder row as a one-layer profile; nothing clamps and
+decodes a feature inside the forward.
 
 ### 7.2 The per-generation transaction
 
@@ -556,7 +577,7 @@ replay endpoints:
 ```
 
 `readings` are attached probes in each family's native shape; `readout` is the
-family's discovery surface (the J-lens layer-by-vocabulary matrix and aggregate
+family's discovery surface (the R lens's layer-by-vocabulary matrix and aggregate
 chips, the SAE's active features). The flat `scores` are derived joins for
 cross-family consumers such as token tinting, not separate measurements; a
 reading's per-layer trace lives in the reading alone. A loom token row keeps
@@ -737,9 +758,13 @@ change together and CI fails on drift. It is drawn in Ledger (the
 `@stdlogits/ledger` package). Its home is the workbench: the thread (the loom as
 the path you are on, its map and weave one step away), the page (the
 conversation, with the steering recipe as chips over the composer) and the
-inspector (whatever is selected: a token's drilldown, a probe, a steering term;
-with nothing selected, the instruments: probes, live lens readout, SAE features,
-sampling). Manifolds, Units, Lens and Model are rooms beside it, as routes. REST
+inspector (whatever is selected: a token's drilldown and anatomy, a probe, a
+unit, a steering term; with nothing selected, the instruments: probes, live
+lens readout, SAE features, sampling). Manifolds, Units, Lens and Model are
+rooms beside it, as routes. The dashboard writes steering only as chips over
+the structured terms the server returns (`parts`); it never parses or takes
+expression text, while agents (WebMCP), HTTP, the CLI and Python keep the
+grammar (`drowse/web/AGENTS.md`). REST
 response types are generated from the server's TypedDicts
 (`scripts/generate_webui_types.py` → `webui/src/lib/types.gen.ts`); request
 bodies and WS/SSE frames are hand-written in `webui/src/lib/types.ts`.
@@ -759,7 +784,7 @@ references are:
 | expression grammar | `steering/grammar.py` | `tests/fixtures/browser_steering_expression.json` |
 | sampler | `generation/decode.py` | `sampling-parity-v1.json` |
 | affine lowering and the kernel | `steering/hooks.py`, `geometry/inject.py` | `affine-*-lowering-v1.json`, `post-block-rank-one-v2.json` |
-| curved kernel, SAE and J-lens directions, gates | `geometry/inject.py`, `sae/backend.py`, `lens/jlens.py`, `steering/triggers.py` | `structured-program-parity-v1.json` |
+| curved kernel, SAE and lens token directions, gates | `geometry/inject.py`, `sae/backend.py`, `lens/jlens.py`, `steering/triggers.py` | `structured-program-parity-v1.json` |
 | Fisher fit, DLS, topology and RBF | `geometry/subspace.py`, `fit/capture.py::compute_dls_axes`, `geometry/topology.py`, `geometry/rbf.py` | `affine-fisher-fit-v1.json`, `dls-axes-v1.json`, `topology-rbf-parity-v1.json`, `topology-adversarial-v1.csv` |
 | measurement envelope | `readout/measurements.py` | `measurement-envelope-v2.json` |
 | loom ops and events | `loom/tree.py`, `loom/ops.py` | `loom-operation-transcript-v1.json` |
@@ -768,13 +793,15 @@ references are:
 | `.drowse` archive and install | `store/archive.py`, `store/install.py` | `tests/browser_drowse_archive_bridge.py` |
 
 The browser also mirrors `RESERVED_NAMESPACES`, `METHOD_FIT_MODES`, the
-manifold sidecar format and lens format v7, and its hosted J-lens fit calls
-`lens.fit.fit_lens` and `lens.store.save_lens_at`. Goldens are
+manifold sidecar format and lens format v7 (a v7 reader accepts the optional
+`split_half`), and its hosted R-lens fit calls `lens.store.save_lens_at`; its
+estimator call moves from the removed `fit_jacobian_lens` to
+`lens.fit.fit_lens(kind=, sites=("out",))` after 6.0.0 (`drowse/lens/AGENTS.md`). Goldens are
 byte-frozen and recomputed by `tests/browser/test_browser_parity.py`; a
 semantic change regenerates the golden in the same change, and drowse.ai must
 match before its submodule pin moves past it.
 
-## 11. J-lens and SAE lifecycle
+## 11. Lens, SAE and catalog lifecycle
 
 `lens/fit.py::fit_lens` is the one lens estimator, transport
 (`lens/transport.py`, ported from neuron-lens and generalized over
@@ -790,9 +817,10 @@ fit records its split-half difference per site and layer, the check on
 whether more documents would help, unless it is a corpus extension of a
 durable artifact (whose halves are gone) or runs with `split_half=False`
 (`--no-split-half`). The fit verifies the model's description
-first and refuses undescribable blocks (`UnsupportedBlockError`), is
-resumable and checkpointed, adapts to OOM, and on MPS drains the queue and
-guards against zero rows. `lens/lifecycle.py::plan_lens_fit` chooses noop, top-up, resume or
+first and refuses undescribable blocks (`UnsupportedBlockError`), adapts to
+OOM, and on MPS drains the queue and guards against zero rows. It checkpoints
+every `--checkpoint-every` documents and every ten minutes, and SIGINT or
+SIGTERM finishes the document in flight and checkpoints before exiting. `lens/lifecycle.py::plan_lens_fit` chooses noop, top-up, resume or
 fresh from metadata alone, and a no-op is proved without loading the model.
 Corpus resolution and streaming run in an isolated, cancellable worker process.
 
@@ -802,9 +830,16 @@ release at a pinned commit. Both adapt to one resident runtime
 construction. Live discovery, pinned probes and gates share one encode per
 step.
 
-`drowse serve` adopts a compatible prepared lens source in a fixed preference
-order and turns the live lens on; the live SAE is discovered only when the
+`drowse serve` adopts a compatible prepared source for each lens family in a
+fixed preference order (never rewriting a selection the user made) and turns
+the R family's live readout on; the live SAE is discovered only when the
 dashboard is mounted (`drowse/cli/AGENTS.md`).
+
+`unit fetch` binds the neuron-lens catalog at a pinned commit (labels, firing
+tables and token counts; no weights, no model load). A bound catalog sets the
+unit reading scale (its `act_top`) and the S token mask; without one, units
+divide by the neutral statistics' scale and the mask takes `lens counts`, and
+every surface names the source it used.
 
 ## 12. Distribution and transfer
 
@@ -885,7 +920,7 @@ Beyond those rules:
 - The R family's live lens readout and SAE reads reuse the generation's capture and stashes; no
   second forward.
 - The alternative-token width is resolved once per generation and shared by
-  logits, J-lens, SAE, hover and replay.
+  logits, lens, SAE, hover and replay.
 
 Changes to hooks, capture, monitoring or generation must be checked on a real
 model as well as by unit tests.
@@ -929,8 +964,8 @@ executable statement of why a boundary is strict.
 
 ## 16. Known boundaries
 
-- J-lens atoms and probes name one tokenizer token; multi-token words raise
-  `MultiTokenWordError`. An `slens/<word>` atom steers along the word's S-lens
+- Lens atoms and probes (`jlens/`, `slens/`) name one tokenizer token;
+  multi-token words raise `MultiTokenWordError`. An `slens/<word>` atom steers along the word's S-lens
   footprint at the S lens's `out` layers; a token the S read's mask drops is
   refused.
 - Unit ablation rewrites a projection's input through a module pre-hook, so a
@@ -988,6 +1023,14 @@ executable statement of why a boundary is strict.
 - **Blending.** Off-node midpoints between distinct persona nodes produce
   coherent blended content at the sweet-spot α. Whether interpolation between
   basins holds generally, and on curved fits, is open.
-- **Input-side lenses.** K/S lenses fit at both sites and the store persists
-  them, and `slens` is a reserved namespace; their readouts (footprints,
-  `slens/` atoms) are the next step.
+- **Lenses beyond dense blocks.** Transport is written per block from
+  `BlockSpec`; mixture-of-experts and hybrid linear-attention stacks are
+  refused, and extending it to them is open.
+- **The depth band.** The S/R crossover band is a prior (15–35% of depth,
+  from neuron-lens's Qwen3-8B measurements); measuring it per model is open.
+- **Axes whose neutral sits at a pole.** The neutral corpus is the model's
+  default answers, which is one pole of some bundled axes
+  (`honest.deceptive`, `refusing.compliant`, `sincere.manipulative`): DLS
+  keeps few or no layers there, and a `%pole` push can point the wrong way
+  (`drowse/fit/AGENTS.md`). Re-authoring those axes, or a corpus past the
+  default answer, is open.

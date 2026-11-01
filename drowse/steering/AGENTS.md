@@ -224,7 +224,7 @@ interface change.
   case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are the
   exception, canonicalized as above), takes no `:variant` (not even `:raw`),
   and skips every manifold tier. The session wires resolvers for `jlens`,
-  `slens` (the S lens's input-side direction, `register_input_direction`),
+  `slens` (the token's S-lens footprint direction, `register_input_direction`),
   `sae` and `neuron` (`ArtifactRegistry.set_atom_resolver`; `neuron` is
   `units.instrument.UnitsInstrument.register_direction`, which checks the unit
   against the model: a 400 at `open_scope`).

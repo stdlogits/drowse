@@ -46,7 +46,7 @@ I/O, so `LoadPlan` is unit-testable); `_materialize_model` reads weights;
   for a local directory; fails open to an unpinned read) and every config,
   tokenizer and weight read passes it, so a moving branch can't pair config A
   with weights B. Finalize writes it onto `config._commit_hash` (and the
-  `text_config`'s): transformers no longer fills that slot, and J-lens
+  `text_config`'s): transformers no longer fills that slot, and lens
   bindings and capture fingerprints read it.
 - **Remote code** is off. `trust_remote_code=None` reads
   `DROWSE_TRUST_REMOTE_CODE` (`1`/`true`/`yes`/`on`; the CLI has no flag);
@@ -147,7 +147,7 @@ widen or narrow a proof). `workspace_layer_indices` is the canonical workspace
 band, `0.40 ≤ l/(n_layers−1) ≤ 0.90`, falling back to every candidate on
 shallow models.
 
-`LogitReadout` is the logits path the J-lens runs without another forward:
+`LogitReadout` is the logits path the R lens reads through without another forward:
 final norm (found as a sibling of the block list), OPT `project_out`, head,
 Cohere `logit_scale` or Falcon-H1 `lm_head_multiplier`, Granite
 `logits_scaling`, then the `final_logit_softcapping` tanh cap. A family with

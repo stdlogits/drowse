@@ -35,75 +35,62 @@ drowse serve google/gemma-3-4b-it --device cuda
 ## Browser edition
 
 [drowse.ai](https://drowse.ai) runs the same dashboard in the browser, with
-inference, steering, probes, and the J-lens on the device through WebGPU and no
+inference, steering, probes, and the R lens on the device through WebGPU and no
 server. Its source, the in-browser runtime, and its release tooling live in
 [stdlogits/drowse.ai](https://github.com/stdlogits/drowse.ai), which pins this
 repository as a submodule for the shared dashboard and the Python reference
 implementation. The Python server and the bundled dashboard described here are
 independent of it.
 
-## WebUI
+## The dashboard
 
-### Threads
+The header holds five rooms: **Workbench**, **Manifolds**, **Units**, **Lens**
+and **Model**. The workbench is where you talk to the model: the thread (the
+path you are on through the conversation, and your earlier chats), the page
+(the conversation, or the loom: every turn as a node in a branching tree you
+can reroll, compare and fork from) and the Inspector. They sit side by side on
+a wide screen and fold into one column on a phone, with the Inspector as a
+sheet.
 
-Every authored or generated turn becomes a node in a branching tree. You can reroll
-from any point and the tree lets you save and load conversations.
+The Inspector shows what you selected. With nothing selected it holds the
+instruments: the probe rack, the live lens readout, the SAE's features,
+sampling, and one line for each source the lens and SAE read through.
 
-The bottom of the panel has the standard sampling controls: temperature, top-p,
-top-k, repetition and presence penalties, and everything else you'd expect.
+- **A token.** Click any token for its alternatives with logprobs (and a fork
+  from any of them), its probe and feature readings, and its anatomy: what the
+  residual reads as through both lenses layer by layer, what attention and the
+  MLP (and the steering) added, and the neurons and heads that pushed it. The
+  readings can be replayed without the steering for comparison.
+- **A probe** opens its fitted geometry, layer by layer.
+- **A unit** (a neuron or head) opens what it writes and fires on, its label
+  and its activity over the reply.
+- **A steering term** opens its editor in place under the chips.
 
-### Completion modes
+**Steering** is built from chips. A chip's editor sets a signed strength, the
+layers it acts at (a depth strip), when it acts (the prompt, the response, the
+first or all-but-the-first N tokens) and "Only while…", a gate on an attached
+probe's reading; a concept can also be kept along, or removed from, another
+(`~`, `|`), and any direction or unit can be removed (`!`). The dashboard never
+takes typed recipe text: a recipe it cannot draw as chips (from an agent or the
+API) shows as one read-only chip and is sent as written. Agents, the HTTP APIs,
+the CLI and Python keep the full expression language below.
 
-Chat mode renders the model's template as turns with collapsible thinking. 
-Roles are handled dynamically:
+A reply cut short by Stop (or a dropped connection) is kept and marked
+"stopped early". Saved chats live in the browser (saved automatically between
+replies) and as backup files you download; the server keeps no conversations.
 
-- **you write** selects the role the text you write will be appended as;
-- **model writes** selects the role the model continues as (or `none` to just append);
-- the cast button lets you assign steering to specific roles.
+The rooms:
 
-Compatible chat templates support arbitrary role labels beyond `user` and `assistant`.
-
-Raw mode exposes one raw buffer for base models.
-
-### Token-level inspection
-
-Tokens can be highlighted by probe scores or **surprise (logprob)**.
-
-Clicking on a token opens one detail drawer with four views:
-
-- **geometry** — attached probe readings across layers;
-- **logits** — the chosen token and captured alternatives with logprobs, plus
-  token forking;
-- **SAE** — sparse feature activations;
-- **J-lens** — the aggregate workspace and layer-by-vocabulary readout.
-
-The detail cursor can walk tokens, thinking/response segments, and turns without
-closing the drawer. Historical rows use their captured measurements when present
-and can replay the producing prefix for newly attached instrumentation.
-
-Clicking on the info icon by a probe shows a fitted concept's geometry layer by layer.
-
-### Instruments
-
-The right side of the workbench has four tabs.
-
-| Tab | Purpose |
+| Room | Purpose |
 |---|---|
-| **Subspace** | Flat fitted subspaces |
-| **Manifold** | Curved fitted surfaces |
-| **SAE** | SAE features |
-| **Lens** | Jacobian-lens workspace |
+| **Manifolds** | Build, install, combine and inspect manifolds and packs; templates; roles |
+| **Units** | The strongest neurons and heads of a reply, or a whole layer at once |
+| **Lens** | Choose, fetch and fit the R and S lenses at both sites, against the depth band |
+| **Model** | The model's layers, neurons and heads, device and versions, prepared lenses, health and API access |
 
-### Analysis tools
-
-Choose **Menu → All tools** in the workbench for further options:
-
-- build, fit, merge, install, and inspect manifolds;
-- author and score restricted-choice templates;
-- manage the cast and open steering workflows;
-- inspect correlations and pairwise layer geometry;
-- check model, device, source, authentication, and server health;
-- open the built-in help surface.
+Chat mode renders the model's chat template as turns, with collapsible
+thinking, any role label a compatible template supports, and a cast that
+assigns steering to roles; raw mode is one buffer for base models.
 
 ## Concepts, subspaces, and manifolds
 
@@ -155,20 +142,22 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 | leading number | Steering coefficient; omitted terms default to `0.5` |
 | `~` | Keep the component shared with another direction (Mahalanobis) |
 | `\|` | Remove the component shared with another direction (Mahalanobis) |
-| `!` | Mean-ablate a direction; a bare `!x` ablates fully |
+| `!` | Mean-ablate a direction or a unit; a bare `!x` ablates fully |
 | `%label` or `%x,y,…` | Choose a named node or coordinates on a manifold |
 | `{12-20}`, `{4-8,20}`, `{workspace}` | Act only at these layers (after the selector, before `@`) |
 | `@prompt`, `@response`, `@after`, `@thinking`, … | Restrict the token phase where a term applies |
 | `@first:N`, `@after:N` | Restrict a term to a counted decode window |
 | `@when:<probe><op><value>` | Apply a term only while a live probe gate is true |
-| `jlens/<word>`, `jlens/#<id>`, `sae/<id>` | Steer along a J-lens token direction or an SAE decoder row |
+| `jlens/<word>`, `jlens/#<id>`, `sae/<id>` | Steer toward saying a token (its R-lens direction) or along an SAE decoder row |
 | `slens/<word>`, `slens/#<id>` | Steer toward having read a token: its S-lens footprint at each layer |
+| `neuron/L8n344`, `head/L20h17` | A unit: push along a neuron's write, or mean-ablate a neuron or head (`!head/L20h17`) |
 
 A bare pole or node label such as `honest` or `pirate` resolves to its concept
 or manifold; an ambiguous name raises instead of guessing. The operands of `~`,
 `|` and `!` must reduce to one direction: a whole two-pole concept
 (`sycophantic.blunt`, not `sycophantic`), an extracted vector, or a
-`jlens/`/`sae/` atom. `@response` covers every generated token, thinking
+`jlens/`/`slens/`/`sae/` atom (`!` also takes a unit). A head has no push
+direction, so `head/` takes only `!`. `@response` covers every generated token, thinking
 included; `@after` applies only after the thinking block closes. A gate names
 an attached probe, so `confident.uncertain` above reads the bundled probe. The
 larger sets (`personas`, `emotions`, `months`) steer once they are fitted for
@@ -293,7 +282,7 @@ Optional extras add specialized workflows:
 | `flash` | FlashAttention 2 for supported NVIDIA CUDA models; stable and tested |
 | `cuda` | `bitsandbytes` quantization and Hugging Face `kernels` acceleration |
 | `sae` | SAELens 6.x, for published SAE releases (`sae fetch`); local SAEs need no extra |
-| `hf` | `datasets` for streamed J-LENS and SAE corpora |
+| `hf` | `datasets` for streamed lens and SAE corpora |
 | `gguf` | GGUF import/export support |
 | `research` | `datasets`, NumPy, SciPy, scikit-learn, pandas, Matplotlib, and image helpers |
 | `notebook` | Plotly, pandas, and Kaleido notebook helpers |
@@ -400,9 +389,9 @@ drowse pack push local/patient.impatient -a OWNER/REPO -m google/gemma-3-4b-it
 drowse pack export archive local/patient.impatient -o patient.drowse
 drowse pack install patient.drowse
 
-# Fetch a provider J-LENS (Neuronpedia by default), or fit a local one:
+# Fetch a provider lens (Neuronpedia's J-lens by default), or fit a local one:
 # --kind r (the default) is the RelP R-lens at local:r, --kind j the standard
-# J-lens; --kind s and k are their input-side S- and K-lenses. Each fits the
+# J-lens; --kind s and k are the S family's S- and K-lenses. Each fits the
 # block output (out) and the MLP input (mid) unless --sites says otherwise
 drowse lens fetch google/gemma-3-4b-it
 drowse lens fit org/model
@@ -461,7 +450,8 @@ The same `drowse serve` process exposes four surfaces on one port:
 - `/v1/*` — OpenAI-compatible models and chat completions;
 - `/api/*` — Ollama-compatible generation and chat;
 - `/drowse/v1/*` — native sessions, loom trees, probes, manifolds, templates,
-  SAE/J-LENS lifecycle and replay, SSE, and token-plus-measurement WebSockets.
+  lens, SAE and unit lifecycles and reads, replay, SSE, and token-plus-measurement
+  WebSockets.
 
 Interactive OpenAPI documentation is available at
 [http://localhost:8000/docs](http://localhost:8000/docs).
@@ -597,23 +587,25 @@ when an architecture has not been exercised end to end.
 CUDA and Apple Silicon MPS both have real-model smoke coverage. Model-specific
 features still depend on the checkpoint: role-augmented extraction and persona
 regeneration need a chat template with a substitutable assistant label (Mistral's
-does not have one), official SAE and J-LENS sources cover only some models, and
+does not have one), published SAE and lens sources cover only some models, lens
+fits and unit reads refuse mixture-of-experts and hybrid stacks, and
 FlashAttention depends on the model's Transformers attention implementation.
 
 ## State and distribution
 
 Drowse keeps local state under `~/.drowse/`; set `$DROWSE_HOME` to move it. The
 store contains authored manifolds, per-model fits and neutral statistics, local
-SAE/J-LENS artifacts, source bindings, and templates. Conversation saves are
-explicit browser-downloaded JSON files (or caller-selected `LoomTree.save()`
-paths); they are not autosaved under `~/.drowse/`.
+lens and SAE artifacts, source and catalog bindings, and templates. It holds no
+conversations: the dashboard keeps its saved chats in the browser and as
+downloaded backup files, and Python saves a tree only to a `LoomTree.save()`
+path you choose.
 
 Manifold packs are folders with metadata, node corpora, integrity hashes, and
 optional fitted tensors. They can be installed from a local path or distributed as
 Hugging Face model repositories. A `.drowse` is the narrow ZIP transport for
 exactly one manifold closure and its referenced template, when present; export it
 with `drowse pack export archive` and install it with `drowse pack install`.
-It never contains model weights, J-lenses, or SAEs. A fitted two-node PCA manifold
+It never contains model weights, lenses, or SAEs. A fitted two-node PCA manifold
 can instead be exported as a llama.cpp control-vector GGUF with
 `drowse pack export gguf`.
 
@@ -630,9 +622,12 @@ headers, and hashes, but integrity is not publisher identity.
 
 Drowse reads only its current artifact formats and does not migrate older ones.
 Releases through 5.3.0 were published as `saklas`, and drowse does not read a
-`~/.saklas` directory. J-LENS artifacts fitted or fetched before 5.4 must be
+`~/.saklas` directory. Lens artifacts fitted or fetched before 5.4 must be
 converted once from a source checkout with
 `python scripts/migrate_lens_v7.py --home ~/.drowse` (try `--dry-run` first).
+6.0 recomputes its neutral statistics on first load and does not read 5.x
+saved conversations or transcripts; manifolds, templates, packs and lenses
+carry over unchanged.
 
 ## Development
 
@@ -681,13 +676,16 @@ Two-pole extraction uses difference-of-means following
 [Im & Li, 2025](https://arxiv.org/abs/2502.02716). Manifold steering follows
 [Goodfire's manifold work](https://arxiv.org/abs/2605.05115). The `personas`
 source is derived from the framing in Anthropic's
-[Assistant Axis paper](https://arxiv.org/abs/2601.10387). J-LENS support implements
+[Assistant Axis paper](https://arxiv.org/abs/2601.10387). The Jacobian lens implements
 the verbalizable-workspace method of
 [Gurnee et al., 2026](https://transformer-circuits.pub/2026/workspace/index.html).
 Unit reads follow [neuron-lens](https://neuron-lens.com)'s definitions (its
 layer-contrastive reads, Elhage et al.'s copying score, Gurnee et al. 2024's
 prediction neurons, Stolfo et al. 2024's entropy neurons); its catalog's labels
 are by Claude Haiku 5.5.
+
+Drowse is written by a9lim with Claude. The dashboard is drawn in
+[Ledger](https://github.com/stdlogits/ledger), the Standard Logits design system.
 
 If you use Drowse in published research, please cite the relevant upstream methods
 alongside the Drowse version and exact model checkpoint you used.
