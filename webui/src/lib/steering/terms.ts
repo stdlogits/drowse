@@ -158,12 +158,16 @@ export function termKind(entry: SteerEntry, info: ManifoldInfo | null): string {
   return "";
 }
 
-/** The strength a chip shows: ``without`` for a removal, else the coefficient. */
+/** The strength a chip shows: for a removal, how much of the component it takes (``without`` for
+ *  all of it, ``without 50%``, ``without 150%``) or, below zero, adds (``+50%``); else the
+ *  coefficient. */
 export function chipStrength(name: string, entry: SteerEntry, subspaceAlong: number): string {
   if (removes(name, entry)) {
-    // A removal's strength below zero adds to the component: its chip says how much more.
     const value = entry.mode === "subspace" ? subspaceAlong : "alpha" in entry ? entry.alpha : 0;
-    return value < 0 ? "more" : "without";
+    const percent = Math.round(Math.abs(value) * 100);
+    if (percent === 0) return "off";
+    if (value < 0) return `+${percent}%`;
+    return percent === 100 ? "without" : `without ${percent}%`;
   }
   switch (entry.mode) {
     case "subspace": return coefficientText(subspaceAlong);

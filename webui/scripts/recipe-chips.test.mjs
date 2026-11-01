@@ -68,8 +68,11 @@ try {
   const poles = fixture.catalog.find(row => row.name === "calm.anxious");
   const projection = related.get("default/calm.anxious|default/honest.deceptive");
   assert.deepEqual([0.6, -0.6, 0].map(v => strengthSays("x", projection, v, poles)), ["Toward calm", "Toward anxious", "Off"], "a projection pushes toward a pole");
-  assert.equal(chipStrength("slens/tower", away.get("slens/tower"), 0.5), "more");
-  assert.equal(chipStrength("default/calm.anxious", away.get("default/calm.anxious"), -0.5), "more", "a flat removal on a negative shared strength");
+  assert.equal(chipStrength("slens/tower", away.get("slens/tower"), 0.5), "+50%");
+  assert.equal(chipStrength("default/calm.anxious", away.get("default/calm.anxious"), -0.5), "+50%", "a flat removal on a negative shared strength");
+  // Regression: a removal chip dropped its amount (0.5 and 1.5 both read "without").
+  const removal = away.get("default/calm.anxious");
+  assert.deepEqual([1, 0.5, 1.5, 0].map(v => chipStrength("default/calm.anxious", removal, v)), ["without", "without 50%", "without 150%", "off"]);
   // A gate reads the number a probe's card shows: a curved probe's share, any other's value.
   assert.equal(gateProbeKey("default/emotions", { family: "geometry", is_affine: false }), "default/emotions:fraction");
   assert.equal(gateProbeKey("default/honest.deceptive", { family: "geometry", is_affine: true }), "default/honest.deceptive");
