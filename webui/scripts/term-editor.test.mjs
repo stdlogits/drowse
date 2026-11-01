@@ -294,6 +294,7 @@ try {
   assert.equal(terms.termTitle("default/months", free, monthsInfo), "month 6.00");
   assert.equal(terms.termTitle("default/months", free), "point 6.00", "without the manifold's axes it is a point");
   assert.equal(terms.termTitle("default/months", { ...free, label: "july" }, monthsInfo), "july");
+  assert.equal(terms.strengthSays("default/months", free, 0.5, monthsInfo), "Toward month 6.00", "the strength names it the same way");
   assert.equal(terms.termSource("slens/Paris", read), "lens token, as read");
   assert.ok(terms.canRemove("slens/Paris", read, null));
   assert.equal(layersProbe("slens/Paris", read, true), "1 slens/Paris{2-4}@response");

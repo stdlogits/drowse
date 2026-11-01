@@ -111,7 +111,8 @@
     if (checking) return;
     draftError = null;
     if (!text) {
-      applyCustomSteeringExpression("");
+      // Nothing steers already: an empty recipe changes nothing.
+      if (custom || expression) applyCustomSteeringExpression("");
       editing = false;
       return;
     }

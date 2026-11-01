@@ -51,7 +51,7 @@
 
   const uid = $props.id();
   const info = $derived(entry.mode === "subspace" || entry.mode === "manifold" ? manifoldByName(name) : null);
-  const title = $derived(termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null));
+  const title = $derived(termTitle(name, entry, entry.mode === "manifold" ? info : null));
   const removal = $derived(removes(name, entry));
   const place = $derived(placeOf(name, entry, sessionState.info?.model_id));
   const where = $derived(place.where);
@@ -77,7 +77,7 @@
   // ---------- strength
 
   const dial = $derived(strengthDial(name, entry, steerRack.subspaceAlong));
-  const says = $derived(strengthSays(name, entry, dial.value));
+  const says = $derived(strengthSays(name, entry, dial.value, entry.mode === "manifold" ? info : null));
   const label = $derived(dial.shared ? "Shared strength" : removal ? "How much" : "Strength");
 
   function setStrength(raw: number): void {

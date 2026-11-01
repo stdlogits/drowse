@@ -128,8 +128,8 @@ export function strengthDial(name: string, entry: SteerEntry, subspaceAlong: num
 
 /** What the strength does, in a few words. A removal says how much of the component it takes: all
  *  of it at 1 (down to the neutral mean), and on the shared flat dial past 1, more than all of it. */
-export function strengthSays(name: string, entry: SteerEntry, value: number): string {
-  const title = termTitle(name, entry);
+export function strengthSays(name: string, entry: SteerEntry, value: number, info?: ManifoldInfo | null): string {
+  const title = termTitle(name, entry, info);
   if (removes(name, entry)) {
     if (value <= 0) return "Off";
     const percent = Math.round(value * 100);
