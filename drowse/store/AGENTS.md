@@ -243,6 +243,12 @@ manifest, changed manifest (`payload_drift_sha256`, canonical JSON with
 `default/` persist until the bundle changes, then are overwritten with a warning
 (fork under `local/` to keep them). Fitted pairs and proofs carry across
 (hard-linked into staging) and `nodes_sha256` decides whether they stay current.
+A `default/<name>` whose manifest says `source: "bundled"` but which no longer
+ships (no package folder of that name, complete or not) is removed with its fits
+and a warning, so a dropped bundled manifold stops resolving and leaves the
+probe roster (`_retire_unshipped_manifolds`; 6.0 retired `honest.deceptive`,
+`refusing.compliant` and `sincere.manipulative`). Any other folder under
+`default/` is left alone.
 `refresh_bundled_manifold` is the unconditional re-copy behind `pack refresh`.
 Templates re-copy on hash or format drift and keep a `.json.bak`; none ships yet,
 and the path stays because a template-derived manifold is the one artifact that
@@ -250,10 +256,12 @@ authors model-free.
 
 Shipped in `drowse/data/manifolds/`, all `source: "bundled"`, unfitted:
 
-- **17 bipolar concepts** (2-node `pca`, `max_dim 1`, node 0 = positive pole),
-  independent signed axes tagged `epistemic` (confident.uncertain,
-  honest.deceptive, curious.disinterested), `alignment` (refusing.compliant,
-  sycophantic.blunt, sincere.manipulative), `register` (formal.casual,
+- **17 concepts** (`pca`, `max_dim 1`): 14 bipolar axes (2-node, node 0 =
+  positive pole) and 3 one-node concepts (`deceptive`, `refusing`,
+  `manipulative`, fitted against the neutral mean: the default answer is
+  their other end, so a 2-node axis put neutral on its near pole), tagged
+  `epistemic` (confident.uncertain, deceptive, curious.disinterested),
+  `alignment` (refusing, sycophantic.blunt, manipulative), `register` (formal.casual,
   direct.indirect, verbose.concise, creative.conventional, humorous.serious,
   warm.clinical, technical.accessible), `cultural` (masculine.feminine,
   individualist.collectivist, traditional.progressive, religious.secular). Known

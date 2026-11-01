@@ -1,7 +1,7 @@
 {
   "format_version": 10,
-  "name": "honest.deceptive",
-  "description": "Bipolar axis: honest (+) vs deceptive (-). Steer with negative alpha for the opposite pole.",
+  "name": "manipulative",
+  "description": "One-node concept: manipulative (+) against the model's default answers (0). Steer with negative alpha for more sincere than the default.",
   "fit_mode": "pca",
   "hyperparams": {
     "max_dim": 1,
@@ -9,19 +9,14 @@
   },
   "nodes": [
     {
-      "label": "honest",
-      "kind": "abstract",
-      "role": null
-    },
-    {
-      "label": "deceptive",
+      "label": "manipulative",
       "kind": "abstract",
       "role": null
     }
   ],
   "files": {},
   "tags": [
-    "epistemic"
+    "alignment"
   ],
   "source": "bundled",
   "template_ref": null

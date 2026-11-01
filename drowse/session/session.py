@@ -1673,7 +1673,7 @@ class DrowseSession:
 
         Args:
             input: prompt string or list of message dicts.
-            steering: expression string (e.g. ``"0.5 honest + 0.3 warm"``)
+            steering: expression string (e.g. ``"-0.5 deceptive + 0.3 warm"``)
                 or a pre-built :class:`Steering`.  Pole aliases resolve at
                 parse time via ``store.selectors.resolve_bare_atom``.  ``None`` =
                 no steering.
@@ -1873,7 +1873,7 @@ class DrowseSession:
 
         ``sweep`` maps ``concept_name -> [alpha_0, alpha_1, ...]``; one row per
         element of the product, in ``itertools.product`` order over
-        ``sweep.items()`` (``{"honest": [-0.4, 0.0, 0.4], "warm": [0.0, 0.3]}``
+        ``sweep.items()`` (``{"deceptive": [-0.4, 0.0, 0.4], "warm": [0.0, 0.3]}``
         gives six rows).  Each row runs under ``base_steering + " + ".join(
         f"{alpha} {name}")`` with a derived per-row seed.  Stateful sweeps land
         every row as a sibling under one shared user turn.  :meth:`stop` ends

@@ -1,7 +1,7 @@
 {
   "format_version": 10,
-  "name": "refusing.compliant",
-  "description": "Bipolar axis: refusing (+) vs compliant (-). Steer with negative alpha for the opposite pole.",
+  "name": "refusing",
+  "description": "One-node concept: refusing (+) against the model's default answers (0). Steer with negative alpha for more compliant than the default.",
   "fit_mode": "pca",
   "hyperparams": {
     "max_dim": 1,
@@ -10,11 +10,6 @@
   "nodes": [
     {
       "label": "refusing",
-      "kind": "abstract",
-      "role": null
-    },
-    {
-      "label": "compliant",
       "kind": "abstract",
       "role": null
     }

@@ -60,7 +60,7 @@ has no single write direction, so ``α head/…`` is a parse error;
 activation replaced by its neutral mean, not a residual direction ablation).
 Unit atoms do not compose with ``~``, ``|`` or ``%`` and take no layer clause.
 
-A ``{…}`` layer clause scopes the term to exact layers (``0.5 honest{12-20}``,
+A ``{…}`` layer clause scopes the term to exact layers (``0.5 deceptive{12-20}``,
 ``!jlens/Paris{24-30}@response``, ``0.4 personas%hacker{workspace}``).  It
 follows the whole selector, precedes ``@``, and is part of the term's
 identity: the ``Steering.alphas`` key carries the canonical clause, so the
@@ -1083,7 +1083,7 @@ def format_layer_clause(layers: LayerScope) -> str:
 def split_layer_clause(key: str) -> tuple[str, LayerScope]:
     """Split a ``Steering.alphas`` key into its bare key and :data:`LayerScope`.
 
-    ``"honest{12-20}"`` → ``("honest", (12, …, 20))``; a key without a clause
+    ``"deceptive{12-20}"`` → ``("deceptive", (12, …, 20))``; a key without a clause
     returns ``(key, None)``.  A plain vector carries its clause only in its
     key, so the composer reads it back through here.
     """
@@ -1583,7 +1583,7 @@ class TermPart:
       neuron), ``ablate`` (``!x``, units included), ``project`` (``a~b`` /
       ``a|b``) or ``position`` (``m%pos``);
     - ``target``: the selector without coefficient, clause or trigger
-      (``default/honest:sae``, ``jlens/#12``, ``neuron/L8n344``; a
+      (``default/deceptive:sae``, ``jlens/#12``, ``neuron/L8n344``; a
       projection's ``a~b``; a position's manifold);
     - ``coeff`` (a position's ``along``) and ``onto`` (a position's collapse,
       0 otherwise);

@@ -335,7 +335,7 @@ GROUP = Verb(
         arg("-P", "--port", type=bounded_int(1, 65535), default=8000,
             help="Bind port"),
         STEER.but(help="Default steering expression (overrides YAML "
-                       'vectors:), e.g. "0.5 honest + 0.3 warm"'),
+                       'vectors:), e.g. "-0.5 deceptive + 0.3 warm"'),
         arg("-C", "--cors", action="append", default=[], metavar="ORIGIN",
             help="CORS allowed origin (repeatable)"),
         arg("-k", "--api-key", default=None, metavar="KEY",

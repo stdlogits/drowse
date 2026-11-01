@@ -102,14 +102,21 @@ In Drowse, you extract concepts as **manifolds** or **subspaces**.
 
 ### Bundled concepts
 
-Drowse comes with 17 concept pairs that are attached as probes by default:
+Drowse comes with 17 concepts that are attached as probes by default: 14
+two-pole axes and 3 one-pole concepts (`deceptive`, `refusing`,
+`manipulative`):
 
 | Category | Concepts |
 |---|---|
-| **Epistemic** | `confident.uncertain`, `honest.deceptive`, `curious.disinterested` |
-| **Alignment** | `refusing.compliant`, `sycophantic.blunt`, `sincere.manipulative` |
+| **Epistemic** | `confident.uncertain`, `deceptive`, `curious.disinterested` |
+| **Alignment** | `refusing`, `sycophantic.blunt`, `manipulative` |
 | **Register** | `formal.casual`, `direct.indirect`, `verbose.concise`, `creative.conventional`, `humorous.serious`, `warm.clinical`, `technical.accessible` |
 | **Cultural** | `masculine.feminine`, `individualist.collectivist`, `traditional.progressive`, `religious.secular` |
+
+A one-pole concept is measured from the model's own default answers, which
+are already honest, compliant and sincere, so it has no opposite pole to
+write: a positive strength pushes toward it and a negative one past the
+default (`-0.5 deceptive` is more honest than the model's default).
 
 Three larger concept sets ship as well, but aren't fitted by default:
 
@@ -123,16 +130,16 @@ Every surface uses the same expression format. The same recipe can be used
 across Python, YAML, OpenAI, Ollama, or the native API.
 
 ```text
-0.3 honest + 0.4 warm
+-0.3 deceptive + 0.4 warm
 0.5 formal - 0.2 verbose
-0.3 honest.deceptive|sycophantic.blunt
-0.3 honest.deceptive~confident.uncertain
+0.3 deceptive|sycophantic.blunt
+0.3 deceptive~confident.uncertain
 !sycophantic.blunt
 0.5 personas%pirate
 0.7,0.4 months%january@after
 0.4 warm@when:confident.uncertain>0.4
 0.3 jlens/orange + 0.2 sae/9143
-0.5 honest{12-20} + 0.4 personas%hacker{workspace}
+0.5 deceptive{12-20} + 0.4 personas%hacker{workspace}
 !jlens/Paris{24-30}@response
 ```
 
@@ -152,10 +159,11 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 | `slens/<word>`, `slens/#<id>` | Steer toward having read a token: its S-lens footprint at each layer |
 | `neuron/L8n344`, `head/L20h17` | A unit: push along a neuron's write, or mean-ablate a neuron or head (`!head/L20h17`) |
 
-A bare pole or node label such as `honest` or `pirate` resolves to its concept
+A bare pole or node label such as `formal` or `pirate` resolves to its concept
 or manifold; an ambiguous name raises instead of guessing. The operands of `~`,
 `|` and `!` must reduce to one direction: a whole two-pole concept
-(`sycophantic.blunt`, not `sycophantic`), an extracted vector, or a
+(`sycophantic.blunt`, not `sycophantic`), a one-pole concept (`deceptive`), an
+extracted vector, or a
 `jlens/`/`slens/`/`sae/` atom (`!` also takes a unit). A head has no push
 direction, so `head/` takes only `!`. `@response` covers every generated token, thinking
 included; `@after` applies only after the thinking block closes. A gate names
@@ -246,7 +254,7 @@ output direction, read where it lands, at the block output) and *fires on*
 up tokens at the layer below. Hub tokens that top many reads at once from the
 lens's geometry can be hidden (`--hide-hubs`), which ranks each token against
 the rest of the layer. `drowse unit top owl --by writes` finds the neurons that
-write a token most specifically, and `drowse unit find honest` the neurons a
+write a token most specifically, and `drowse unit find deceptive` the neurons a
 steering direction is made of.
 
 For Qwen3-8B and Gemma 4 12B the
@@ -341,7 +349,7 @@ For example:
 
 ```yaml
 model: google/gemma-3-4b-it
-vectors: "0.3 honest + 0.2 warm"
+vectors: "-0.3 deceptive + 0.2 warm"
 temperature: 0.8
 top_p: 0.9
 max_tokens: 512
@@ -414,14 +422,14 @@ drowse lens counts org/model
 # Read a prompt's residuals through both (--site mid: after each attention)
 drowse lens top Qwen/Qwen3-8B "The capital of France is" --site out
 # Which input tokens' footprints a direction resembles
-drowse lens decompose honest.deceptive -m Qwen/Qwen3-8B --dictionary tokens-in
+drowse lens decompose deceptive -m Qwen/Qwen3-8B --dictionary tokens-in
 
 # Neurons and heads: what one is about, who writes a token, what a direction is made of
 drowse unit fetch Qwen/Qwen3-8B                      # the neuron-lens labels (Qwen3-8B, Gemma 4 12B)
 drowse unit read neuron/L8n344 -m Qwen/Qwen3-8B --hide-hubs
 drowse unit read head/L20h17 -m Qwen/Qwen3-8B
 drowse unit top owl -m Qwen/Qwen3-8B --by fires --layers 0-12
-drowse unit find honest.deceptive -m Qwen/Qwen3-8B
+drowse unit find deceptive -m Qwen/Qwen3-8B
 
 # Fetch an SAE (needs the [sae] extra) or train a local source
 drowse sae fetch google/gemma-3-4b-it saelens:gemma-scope-2-4b-it-res

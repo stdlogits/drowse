@@ -102,7 +102,7 @@ that never fires.
 | `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's `+`-pole write at its layer (a one-layer profile, folded and pushed like any vector); a negative α pushes along the `−` pole's |
 | `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | a `UnitOp` pre-hook on the down / output projection: the unit's activation (a neuron's `act`, a head's `z_h`) becomes `(1 − α)·x + α·mean`, its neutral mean; never a residual direction ablation |
 | `along[,onto] m%pos` | `ManifoldTerm` under `m%pos` | affine fit: push fragment; curved fit: own term |
-| any of these but a unit atom `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`honest{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
+| any of these but a unit atom `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`deceptive{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
 
 `LayerScope` is `None` (every fitted layer), `"workspace"`, or a sorted index
 tuple; `{all}` is `None`. The clause is part of the term's identity: the same

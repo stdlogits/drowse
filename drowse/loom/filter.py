@@ -31,8 +31,8 @@ nothing.
 Examples::
 
     agg:confident.uncertain > 0.4
-    any:formal.casual > 0.7, agg:honest.deceptive > 0
-    last:refusing.compliant < 0
+    any:formal.casual > 0.7, agg:deceptive > 0
+    last:refusing > 0.5
     agg:sae/123 > 0.5
 
 Aggregate semantics:

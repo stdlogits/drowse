@@ -126,16 +126,17 @@ class TestMixedSteering:
         from drowse.store.bundled import materialize_bundled_artifacts
 
         materialize_bundled_artifacts()
-        for name in ("months", "honest.deceptive", "formal.casual"):
+        for name in ("months", "deceptive", "formal.casual"):
             session.fit(manifold_dir("default", name))
 
     @pytest.mark.parametrize(
         "affine",
         [
-            "0.5 default/honest.deceptive",
-            "0.5 !default/honest.deceptive",
-            "0.5 default/honest.deceptive%honest",
-            "0.5 default/honest.deceptive~default/formal.casual",
+            "0.5 default/deceptive",
+            "0.5 !default/deceptive",
+            "0.5 default/deceptive%deceptive",
+            "0.5 default/formal.casual%casual",
+            "0.5 default/deceptive~default/formal.casual",
         ],
     )
     def test_affine_beside_a_curved_term(self, session: DrowseSession, affine: str) -> None:

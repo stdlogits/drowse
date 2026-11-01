@@ -1,8 +1,8 @@
 """Regenerate every model-generated bundled manifold under
 ``drowse/data/manifolds/`` through one A2 pipeline and spec table.
 
-The command covers both the multi-node discover manifolds and the 2-node
-``pca`` concept subspaces.
+The command covers the multi-node discover manifolds, the 2-node ``pca``
+concept axes and the 1-node ``pca`` concepts.
 
 Generation writes node corpora only; FIT is a separate step
 (``drowse manifold fit <ns>/<name>``), deliberately decoupled so a flaky
@@ -95,31 +95,43 @@ def _monopolar(name: str, tag: str, desc: str) -> ManifoldSpec:
     )
 
 
-# --- concept axes (17) — bipolar 2-node `pca` subspaces.  Affect lives in the
-# `emotions` manifold (moods lack clean opposites and sit on a low-dim affect
-# surface, so they belong on a manifold), but the cultural (4) and register (7)
-# axes are split
+# --- concepts (17): 14 bipolar 2-node `pca` axes and 3 one-node `pca`
+# concepts.  Affect lives in the `emotions` manifold (moods lack clean
+# opposites and sit on a low-dim affect surface, so they belong on a
+# manifold), but the cultural (4) and register (7) axes are split
 # OUT as independent bipolar probes rather than fused into discover manifolds:
 # each has a designed opposite and the primary use is independent signed
 # control, which the bipolar DiM serves directly and a fused PCA basis would
 # merge away (and a var_threshold-capped fit would silently drop the
 # lowest-variance axis entirely).  A discover view can always be unioned back
 # over these same corpora later.
+#
+# `deceptive`, `refusing` and `manipulative` are one-node concepts fitted
+# against the neutral mean.  Their former bipolar axes (honest.deceptive,
+# refusing.compliant, sincere.manipulative) had the model's default answers
+# for one pole: the neutral mean sat at or past that pole on nearly every
+# layer (SmolLM2-360M and Qwen3-8B), so the near pole's sign was noise and
+# `0.5 honest` pushed deceptive-ward.  The default answer is the honest,
+# compliant, sincere end, so one node against it is the axis; a negative
+# strength steers past the default.
 _CONCEPTS: list[ManifoldSpec] = [
     # epistemic (3)
     _bipolar("confident.uncertain", "epistemic", "confident", "uncertain",
              "Bipolar axis: confident (+) vs uncertain (-). Steer with negative alpha for the opposite pole."),
-    _bipolar("honest.deceptive", "epistemic", "honest", "deceptive",
-             "Bipolar axis: honest (+) vs deceptive (-). Steer with negative alpha for the opposite pole."),
+    _monopolar("deceptive", "epistemic",
+               "One-node concept: deceptive (+) against the model's default answers (0). "
+               "Steer with negative alpha for more honest than the default."),
     _bipolar("curious.disinterested", "epistemic", "curious", "disinterested",
              "Bipolar axis: curious (+) vs disinterested (-). Steer with negative alpha for the opposite pole."),
     # alignment (3)
-    _bipolar("refusing.compliant", "alignment", "refusing", "compliant",
-             "Bipolar axis: refusing (+) vs compliant (-). Steer with negative alpha for the opposite pole."),
+    _monopolar("refusing", "alignment",
+               "One-node concept: refusing (+) against the model's default answers (0). "
+               "Steer with negative alpha for more compliant than the default."),
     _bipolar("sycophantic.blunt", "alignment", "sycophantic", "blunt",
              "Bipolar axis: sycophantic (+) vs blunt (-). Steer with negative alpha for the opposite pole."),
-    _bipolar("sincere.manipulative", "alignment", "sincere", "manipulative",
-             "Bipolar axis: sincere (+) vs manipulative (-). Steer with negative alpha for the opposite pole."),
+    _monopolar("manipulative", "alignment",
+               "One-node concept: manipulative (+) against the model's default answers (0). "
+               "Steer with negative alpha for more sincere than the default."),
     # register (7) — split out of the former `register` discover manifold
     _bipolar("formal.casual", "register", "formal", "casual",
              "Bipolar axis: formal (+) vs casual (-). Steer with negative alpha for the opposite pole."),
