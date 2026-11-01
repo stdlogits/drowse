@@ -213,6 +213,44 @@ try {
   assert.equal(probeEntryForDisplay("calm").current, 0.25, "the value stays the row's");
   tokenHoverState.probes = null;
   tokenHoverState.rowGeometry = null;
+  // A unit probe on a generated row: the row keeps only its score, so the card shows the value in
+  // the units family's own unit at once, and the hover replays the units readout for the reading
+  // the card tints by (its depth) and names the scale of.
+  {
+    const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+    const { beginTokenHover, endTokenHover } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+    probeRack.entries.set("star", { info: { family: "units", name: "star", unit: "neuron/L3n3", kind: "neuron", layer: 3, layers: [3] },
+      current: 0, previous: 0, sparkline: [], reading: null, aggregate: null });
+    probeRack.active = [...probeRack.active, "star"];
+    tokenHoverState.active = true;
+    tokenHoverState.probeReadings = null;
+    tokenHoverState.replayedReadings = null;
+    tokenHoverState.probes = { star: 2.5 };
+    assert.equal(probeEntryForDisplay("star").reading.unit, "activation_over_scale", "a unit reads over its scale");
+    const unitReading = { value: 2.5, unit: "activation_over_scale", per_layer: { 3: 2.5 }, depth: { center: 0.4, spread: 0 }, meta: { scale: { source: "catalog", detail: "c" } } };
+    const asked = [];
+    replay = async (family, nodeId, rawIndex) => {
+      asked.push(family);
+      return { measurements: { version: 2, scope: "replay", provenance: "replayed", instruments: family === "units"
+        ? { units: { binding: { source: "units", steering: null }, readings: { star: unitReading } } }
+        : {} } };
+    };
+    sessionState.info = { ...(sessionState.info ?? {}), model_id: "fixture", instruments: [
+      { family: "units", source: "units", capabilities: { token_readout: true } },
+    ] };
+    beginTokenHover({ text: "x", rawIndex: 2, tokenId: 9, measurements: { version: 2, scope: "token", provenance: "captured", instruments: {}, scores: { star: 2.5 } } }, "node-u");
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    await flush();
+    assert.deepEqual(asked, ["units"], "the hover replays the units readout");
+    assert.equal(probeEntryForDisplay("star").reading.depth.center, 0.4, "the card gets its depth tint back");
+    assert.equal(probeEntryForDisplay("star").reading.meta.scale.source, "catalog");
+    endTokenHover();
+    probeRack.active = probeRack.active.filter((name) => name !== "star");
+    probeRack.entries.delete("star");
+    tokenHoverState.active = true;
+    tokenHoverState.probes = null;
+    replay = async () => envelope;
+  }
   tokenHoverState.replayedReadings = null;
   tokenHoverState.active = false;
   probeRack.active = [];

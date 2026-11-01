@@ -41,7 +41,7 @@ import { pushToast } from "./toasts.svelte";
 import { createPreparationSlice } from "./preparations.svelte";
 import { effectiveRawMode } from "./chat.svelte";
 import { samplingState } from "./sampling.svelte";
-import { MAX_SPARKLINE, refreshProbeList } from "./probes.svelte";
+import { MAX_SPARKLINE, probeRack, refreshProbeList } from "./probes.svelte";
 import {
   instrumentFamily,
   refreshSession,
@@ -367,6 +367,15 @@ function _fetchGeometryHover(
     .then((res) => res.measurements.instruments.geometry?.readings ?? {});
 }
 
+function _fetchUnitsHover(
+  nodeId: string,
+  rawIndex: number,
+  raw: boolean,
+): Promise<Record<string, AnyReadingJSON>> {
+  return cachedTokenReadout("units", nodeId, rawIndex, { steered: true, raw }, undefined, "background")
+    .then((res) => res.measurements.instruments.units?.readings ?? {});
+}
+
 function _fetchSaeHover(
   nodeId: string,
   rawIndex: number,
@@ -448,9 +457,14 @@ export function beginTokenHover(
   const needsGeometry = capturedGeometry !== undefined &&
     !(whole !== null && geometryTracesKept(whole.instruments.geometry?.readings)) &&
     instrumentFamily("geometry")?.capabilities.token_readout === true;
+  // A generated row keeps a unit probe's value (its score) only: its reading (the depth the card
+  // tints by, the scale its tooltip names) replays.
+  const needsUnits = whole?.instruments.units === undefined &&
+    probeRack.active.some((name) => probeRack.entries.get(name)?.info.family === "units") &&
+    instrumentFamily("units")?.capabilities.token_readout === true;
   tokenHoverState.lensLoading = needsLens;
   tokenHoverState.saeLoading = needsSae;
-  if (!needsLens && !needsSae && !needsGeometry) return;
+  if (!needsLens && !needsSae && !needsGeometry && !needsUnits) return;
 
   _hoverFetchTimer = setTimeout(() => {
     _hoverFetchTimer = null;
@@ -458,6 +472,12 @@ export function beginTokenHover(
       void _fetchGeometryHover(nodeId, rawIndex, raw)
         .then((readings) => _addReplayed(key, readings))
         // The strips stay empty; the captured values still show.
+        .catch(() => undefined);
+    }
+    if (needsUnits) {
+      void _fetchUnitsHover(nodeId, rawIndex, raw)
+        .then((readings) => _addReplayed(key, readings))
+        // The row's value still shows, untinted.
         .catch(() => undefined);
     }
     if (needsLens) {

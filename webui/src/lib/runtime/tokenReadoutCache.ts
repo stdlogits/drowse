@@ -152,7 +152,9 @@ async function readoutCall(entry: CacheEntry): Promise<TokenReadoutResponse> {
     (event) => notify(entry, event),
   );
   const block = value.measurements.instruments[entry.family];
-  if (!block || (entry.family !== "geometry" && (!("readout" in block) || !block.readout))) {
+  // Geometry and units answer readings only; the lens and SAE answer a ranked readout too.
+  const readingsOnly = entry.family === "geometry" || entry.family === "units";
+  if (!block || (!readingsOnly && (!("readout" in block) || !block.readout))) {
     throw new Error("No reading was returned for this token. Check the active reading source and try again.");
   }
   return value;

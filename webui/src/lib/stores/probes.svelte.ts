@@ -178,9 +178,11 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
             value,
             unit: scalarUnit ?? (base.info.family === "lens"
               ? (base.info.namespace === "slens" ? "mean_footprint_z" : "mean_token_probability")
-              : ((base.info as SaeProbeInfo).max_act != null
-                ? "activation_over_max"
-                : "raw_activation")),
+              : base.info.family === "units"
+                ? "activation_over_scale"
+                : ((base.info as SaeProbeInfo).max_act != null
+                  ? "activation_over_max"
+                  : "raw_activation")),
             per_layer: perLayer,
             depth: null,
           },
