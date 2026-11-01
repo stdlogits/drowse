@@ -446,8 +446,8 @@ export interface LensReadDict {
 
 /**
  * The native readout: the per-layer top-k matrix and its
- * layer-aggregated chips.  A loom token row keeps ``layers`` only when its
- * generation set ``persist_per_layer_scores``.
+ * layer-aggregated chips.  :func:`summary_measurements` keeps ``layers``
+ * only on request.
  */
 export interface LensReadoutBlockJSON {
   layers?: LensReadoutLayerJSON[];
@@ -479,6 +479,7 @@ export interface LoomNodeDetailJSON {
   role_label: string | null;
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
+  aggregate_measurements: MeasurementsEnvelopeJSON | null;
   applied_steering: string | null;
   finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
@@ -513,6 +514,7 @@ export interface LoomNodeJSON {
   role_label: string | null;
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
+  aggregate_measurements: MeasurementsEnvelopeJSON | null;
   applied_steering: string | null;
   finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
@@ -813,10 +815,10 @@ export interface ProbeOverlay {
  * is what lets the generated dashboard types name the geometry reading
  * instead of falling back to an opaque record.
  *
- * A loom token row keeps the summary (:func:`token_row_measurements`): the
- * three per-layer traces only when its generation set
- * ``persist_per_layer_scores``, and ``subspace_coords_per_layer`` (the
- * probe inspector's live trail) never.
+ * :func:`summary_measurements` keeps the summary, plus the three per-layer
+ * traces on request, and never ``subspace_coords_per_layer`` (the probe
+ * inspector's live trail); a generated token row keeps only
+ * :class:`RowProbeReadingDict`.
  */
 export interface ProbeReadingJSON {
   fraction: number;

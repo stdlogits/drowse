@@ -9,7 +9,7 @@ import type {
 import { FINISH_REASONS } from "./types";
 import { migrateLegacyDatabase } from "./brandMigration";
 import { isRoleSlug } from "./roleSlug";
-import { tokenRowProblem } from "./tokenRows";
+import { aggregateMeasurementsProblem, tokenRowProblem } from "./tokenRows";
 
 const DATABASE_NAME = "drowse-hosted-sessions";
 const DATABASE_VERSION = 2;
@@ -610,6 +610,7 @@ function validateTree(value: unknown): asserts value is LoomTreeJSON {
 function validateNode(value: unknown): asserts value is LoomNodeJSON {
   assertPlainObject(value, "Loom node");
   assertExactKeys(value, [
+    "aggregate_measurements",
     "aggregate_readings",
     "applied_steering",
     "created_at",
@@ -640,6 +641,16 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
   validateNullableRoleSlug(value.role_label, "node role label");
   validateNullableString(value.thinking_text, "node thinking text", 4 * 1024 * 1024);
   validateFiniteMap(value.aggregate_readings, "node aggregate readings", 4_096);
+  const aggregateProblem = aggregateMeasurementsProblem(value.aggregate_measurements);
+  if (aggregateProblem !== null) throw invalid(`Node aggregate measurements: ${aggregateProblem}`);
+  if (value.aggregate_measurements !== null) {
+    assertJsonValue(value.aggregate_measurements, {
+      maxDepth: 24,
+      maxValues: 131_072,
+      maxStringLength: 64 * 1024,
+      maxArrayLength: 4_096,
+    });
+  }
   validateNullableString(value.applied_steering, "node steering expression", 64 * 1024);
   // A closed set, like the loom reader's: ``cancelled`` marks a cut reply.
   if (value.finish_reason !== null && !(FINISH_REASONS as readonly unknown[]).includes(value.finish_reason)) {

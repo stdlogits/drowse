@@ -29,12 +29,14 @@ import type {
   LensReadoutBlockJSON,
   MeasurementsEnvelopeJSON,
   ProbeReadingJSON,
+  RowProbeReadingJSON,
   SaeFeatureJSON,
   SaeReleaseJSON,
+  ScalarReadingJSON,
   TokenScore,
 } from "../types";
 import { resolveReadoutTopK } from "../readouts";
-import { geometryTracesKept } from "../tokenRows";
+import { geometryTracesKept, rowGeometry, wholeEnvelope } from "../tokenRows";
 import { pushToast } from "./toasts.svelte";
 import { createPreparationSlice } from "./preparations.svelte";
 import { effectiveRawMode } from "./chat.svelte";
@@ -240,9 +242,13 @@ export interface TokenHoverState {
   probeReadings: Record<string, AnyReadingJSON> | null;
   probes: Record<string, number> | null;
   coordsByProbe: Record<string, number[]> | null;
-  /** The hovered token's geometry readings replayed for their per-layer traces, which a saved row
-   *  does not keep; the cards draw their layer strips from them, their values from the capture. */
-  replayedLayers: Record<string, ProbeReadingJSON> | null;
+  /** The hovered token's readings replayed (geometry, and the lens and SAE probes'), which a
+   *  generated row does not keep: the cards draw a reading the row lacks, and every layer strip,
+   *  from them; a value the row kept (its score) shows at once. */
+  replayedReadings: Record<string, AnyReadingJSON> | null;
+  /** A generated row's geometry shares and coordinates (null for a whole envelope, whose readings
+   *  are ``probeReadings``): the hovered cards' values while the rest replays. */
+  rowGeometry: Record<string, RowProbeReadingJSON> | null;
   lensReadout: Record<string, LensReadoutPair[]> | null;
   lensAggregate: LensAggregateChip[] | null;
   saeReadout: SaeFeatureJSON[] | null;
@@ -259,7 +265,8 @@ export const tokenHoverState: TokenHoverState = $state({
   probeReadings: null,
   probes: null,
   coordsByProbe: null,
-  replayedLayers: null,
+  replayedReadings: null,
+  rowGeometry: null,
   lensReadout: null,
   lensAggregate: null,
   saeReadout: null,
@@ -272,6 +279,12 @@ export const tokenHoverState: TokenHoverState = $state({
 interface LensHoverSnapshot {
   readout: Record<string, LensReadoutPair[]>;
   aggregate: LensAggregateChip[];
+}
+
+/** What a lens or SAE hover replay brings: its readout and the attached probes' readings. */
+interface HoverReplay<T> {
+  readout: T;
+  readings: Record<string, ScalarReadingJSON>;
 }
 
 const TOKEN_HOVER_DELAY_MS = 140;
@@ -333,15 +346,16 @@ function _fetchLensHover(
   nodeId: string,
   rawIndex: number,
   raw: boolean,
-): Promise<LensHoverSnapshot | null> {
+): Promise<HoverReplay<LensHoverSnapshot | null>> {
   return cachedTokenReadout("lens", nodeId, rawIndex, {
     topK: resolveReadoutTopK(samplingState.return_top_k),
     steered: true,
     raw,
     layers: "all",
-  }, undefined, "background").then((res) => (
-    lensReadoutSnapshot(res.measurements.instruments.lens?.readout)
-  ));
+  }, undefined, "background").then((res) => ({
+    readout: lensReadoutSnapshot(res.measurements.instruments.lens?.readout),
+    readings: res.measurements.instruments.lens?.readings ?? {},
+  }));
 }
 
 function _fetchGeometryHover(
@@ -357,21 +371,28 @@ function _fetchSaeHover(
   nodeId: string,
   rawIndex: number,
   raw: boolean,
-): Promise<SaeFeatureJSON[]> {
+): Promise<HoverReplay<SaeFeatureJSON[]>> {
   return cachedTokenReadout("sae", nodeId, rawIndex, {
     topK: resolveReadoutTopK(samplingState.return_top_k),
     steered: true,
     raw,
-  }, undefined, "background").then(
-    (res) => res.measurements.instruments.sae?.readout?.features ?? [],
-  );
+  }, undefined, "background").then((res) => ({
+    readout: res.measurements.instruments.sae?.readout?.features ?? [],
+    readings: res.measurements.instruments.sae?.readings ?? {},
+  }));
 }
 
-/** Begin showing one transcript token in the inspector. Loom-owned captures
- * land synchronously; a channel absent from the original generation, and the
- * per-layer traces a saved row does not keep (the geometry layers, the lens
- * readout's layer rows), may be replayed after a short dwell, but replay
- * results are not substituted for or retained as original capture data. */
+/** Fold one hover replay's readings into the hovered token's, if it is still the one hovered. */
+function _addReplayed(key: string, readings: Record<string, AnyReadingJSON>): void {
+  if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+  tokenHoverState.replayedReadings = { ...(tokenHoverState.replayedReadings ?? {}), ...readings };
+}
+
+/** Begin showing one transcript token in the inspector. What the token's measurements keep lands
+ * synchronously (a live token's whole envelope; a generated row's scores and geometry shares and
+ * coordinates); the rest (the geometry readings and their layers, the lens chips and layer rows,
+ * the lens and SAE probes' readings, the SAE features) replays after a short dwell and fills only
+ * what the token's measurements did not keep. */
 export function beginTokenHover(
   token: TokenScore,
   nodeId: string | null | undefined,
@@ -388,15 +409,18 @@ export function beginTokenHover(
     ? _hoverTokenKey(nodeId, rawIndex, raw)
     : `live:${modelKey}:${nodeId ?? "none"}:${rawIndex ?? "none"}:${token.tokenId ?? "none"}`;
   const m = token.measurements;
-  const capturedLens = m?.instruments.lens?.readout;
-  const capturedSae = m?.instruments.sae?.readout;
+  // A generated row keeps no channel but its geometry shares and coordinates: no capture to draw.
+  const whole = wholeEnvelope(m);
+  const capturedLens = whole?.instruments.lens?.readout;
+  const capturedSae = whole?.instruments.sae?.readout;
   tokenHoverState.active = true;
   tokenHoverState.key = key;
   tokenHoverState.tokenText = token.text;
-  tokenHoverState.probeReadings = mergedReadings(m) ?? null;
+  tokenHoverState.probeReadings = mergedReadings(whole) ?? null;
   tokenHoverState.probes = m?.scores ?? token.probes ?? null;
   tokenHoverState.coordsByProbe = token.coordsByProbe ?? null;
-  tokenHoverState.replayedLayers = null;
+  tokenHoverState.replayedReadings = null;
+  tokenHoverState.rowGeometry = whole === null ? rowGeometry(m) : null;
   tokenHoverState.lensReadout = null;
   tokenHoverState.lensAggregate = null;
   tokenHoverState.saeReadout = capturedSae?.features ?? null;
@@ -418,9 +442,11 @@ export function beginTokenHover(
     instrumentFamily("lens")?.capabilities.token_readout === true;
   const needsSae = capturedSae === undefined && saeLoaded() &&
     instrumentFamily("sae")?.capabilities.token_readout === true;
-  // A saved row keeps each geometry reading's summary: its layer strips replay.
+  // A generated row keeps each geometry share and coordinates: the readings and their layer strips
+  // replay. A lens or SAE probe's reading replays with its family's readout.
   const capturedGeometry = m?.instruments.geometry?.readings;
-  const needsGeometry = capturedGeometry !== undefined && !geometryTracesKept(capturedGeometry) &&
+  const needsGeometry = capturedGeometry !== undefined &&
+    !(whole !== null && geometryTracesKept(whole.instruments.geometry?.readings)) &&
     instrumentFamily("geometry")?.capabilities.token_readout === true;
   tokenHoverState.lensLoading = needsLens;
   tokenHoverState.saeLoading = needsSae;
@@ -430,17 +456,15 @@ export function beginTokenHover(
     _hoverFetchTimer = null;
     if (needsGeometry) {
       void _fetchGeometryHover(nodeId, rawIndex, raw)
-        .then((readings) => {
-          if (!tokenHoverState.active || tokenHoverState.key !== key) return;
-          tokenHoverState.replayedLayers = readings;
-        })
+        .then((readings) => _addReplayed(key, readings))
         // The strips stay empty; the captured values still show.
         .catch(() => undefined);
     }
     if (needsLens) {
       void _fetchLensHover(nodeId, rawIndex, raw)
-        .then((snapshot) => {
+        .then(({ readout: snapshot, readings }) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+          _addReplayed(key, readings);
           if (!snapshot) return;
           tokenHoverState.lensReadout = snapshot.readout;
           // The captured chips stand; the replay fills only what the row did not keep.
@@ -461,8 +485,9 @@ export function beginTokenHover(
     }
     if (needsSae) {
       void _fetchSaeHover(nodeId, rawIndex, raw)
-        .then((features) => {
+        .then(({ readout: features, readings }) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+          _addReplayed(key, readings);
           tokenHoverState.saeReadout = features;
         })
         .catch((error) => {

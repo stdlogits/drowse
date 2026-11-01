@@ -104,18 +104,27 @@ function _primaryPerLayer(
   return out;
 }
 
-/** Read one probe card through the token-hover overlay. Token rows retain the
- * primary scalar, multi-axis coordinates and each scalar reading's layer strip;
- * a geometry card's strip comes from the token's live trace, else from its
- * replay (``tokenHoverState.replayedLayers``); lens/SAE cards can additionally
- * fill from retained live/on-demand hover snapshots. */
+/** The hovered generated row's own value of a probe (its primary scalar), or null: a curved
+ *  probe's share and a flat one's axis 0 from its geometry reading, else its score. */
+function _rowValue(info: ProbeInfo, name: string): number | null {
+  const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const row = tokenHoverState.rowGeometry?.[name];
+  if (info.family === "geometry" && row) return finite(info.is_affine ? row.coords[0] : row.fraction);
+  return finite(tokenHoverState.probes?.[name]);
+}
+
+/** Read one probe card through the token-hover overlay. A live token carries every reading; a
+ * generated row keeps each probe's value (its score) and a geometry probe's coordinates, so the
+ * card shows those at once and the token's replayed reading (``tokenHoverState.replayedReadings``:
+ * geometry, and the lens and SAE probes') once it lands, which also brings every layer strip;
+ * lens/SAE cards can additionally fill from retained live/on-demand hover snapshots. */
 export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
   const base = probeRack.entries.get(name);
   if (!base || !tokenHoverState.active) return base;
-  const replayed = tokenHoverState.replayedLayers?.[name] ?? null;
+  const replayed = tokenHoverState.replayedReadings?.[name] ?? null;
+  const captured = tokenHoverState.probeReadings?.[name] ?? null;
 
-  let reading: AnyReadingJSON | null =
-    tokenHoverState.probeReadings?.[name] ?? null;
+  let reading: AnyReadingJSON | null = captured ?? replayed;
   if (!reading) {
     let scalar = tokenHoverState.probes?.[name];
     let scalarUnit: string | null = null;
@@ -222,7 +231,8 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
       trajectory: [],
     };
   }
-  const current = _primaryScalar(base.info, reading);
+  // A replay stands in for the reading a generated row did not keep; the value stays the row's.
+  const current = (captured ? null : _rowValue(base.info, name)) ?? _primaryScalar(base.info, reading);
   const ownLayers = _primaryPerLayer(base.info, reading);
   return {
     ...base,
@@ -634,9 +644,9 @@ export function hydrateProbeRackFromActiveNode(): void {
     : undefined;
   const readings = node?.aggregate_readings ?? {};
   for (const [name, prev] of probeRack.entries) {
-    // The node keeps each probe's axis-0 aggregate; its last measured row keeps the rest of the
-    // reading the live aggregate showed (a curved probe's share, nearest, residual, depth, a lens
-    // probe's band), so a reload shows what the live view showed but the trail.
+    // The node keeps each probe's axis-0 aggregate and the aggregate reading itself (a curved
+    // probe's share, nearest, residual, depth, a lens probe's band), so a reload shows what the
+    // live view showed but the trail.
     const saved = savedProbeReading(prev.info, name, node) ?? savedProbeReading(prev.info, prev.info.name, node);
     const { value, coordinates, fraction } = savedProbeSummary(prev.info, readings, saved);
     const geometry = saved && !isScalarReading(saved) ? saved : null;

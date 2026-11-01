@@ -9,7 +9,7 @@
 // without that reading (Live was off) leaves a gap rather than an axis.
 import { chatLog } from "../../lib/stores/chat.svelte";
 import { mergedReadings } from "../../lib/stores/instruments.svelte";
-import { readingLayers } from "../../lib/tokenRows";
+import { readingLayers, wholeEnvelope } from "../../lib/tokenRows";
 import { parseProbeTarget, probeScoreForTarget } from "../../lib/tokens";
 import type { ChatTurn, ProbeInfo, TokenScore } from "../../lib/types";
 
@@ -79,6 +79,6 @@ export function replyLayers(target: string, index: number | null = null, { share
   const picked = replyToken(index);
   if (!picked) return null;
   const { base } = parseProbeTarget(target);
-  const layers = readingLayers(mergedReadings(picked.token.measurements)?.[base], shareBase(target, share) !== null);
+  const layers = readingLayers(mergedReadings(wholeEnvelope(picked.token.measurements))?.[base], shareBase(target, share) !== null);
   return layers !== null && Object.keys(layers).length > 0 ? layers : null;
 }

@@ -140,44 +140,62 @@ try {
   wrongModel.tree.model_id = "different/model";
   assert.equal(isConversationSnapshot(wrongModel, Object.keys(samplingState)), false);
 
-  // Token rows: a 6.0 row keeps each reading's summary once (token_row_measurements). A row saved
-  // before it, with a row-level probe copy, a layer-major per_layer_scores map or the inspector's
-  // subspace coordinates on every reading, is refused with a plain message, as the loom reader
-  // refuses it, rather than restored half.
+  // Token rows: a 6.0 generated row keeps its scores and each geometry share and coordinates
+  // (token_row_measurements); a row kept whole every reading with its traces. A row saved before it,
+  // with a row-level probe copy, a layer-major per_layer_scores map, the inspector's subspace
+  // coordinates on every reading or a reading's summary without its traces, is refused with a plain
+  // message, as the loom reader refuses it, rather than restored half.
   const summary = {
     fraction: 0.4, nearest: [["calm", 1]], coords: [0.2], residual: 0, assignment: [["calm", 0.9]],
     membership: 1, depth_com: [0.5], depth_spread: [0.1],
   };
+  const traces = { fraction_per_layer: { 3: 0.4 }, coords_per_layer: { 3: [0.2] }, residual_per_layer: { 3: 0 } };
   const rowSnapshot = (mutate) => {
     const value = structuredClone(snapshot);
     const row = {
       token_id: 7, text: "x", logprob: -0.1, perplexity: 1.1, raw_index: 0,
       measurements: { version: 2, scope: "token", provenance: "captured", scores: { calm: 0.2 },
-        instruments: { geometry: { readings: { calm: structuredClone(summary) } } } },
+        instruments: { geometry: { readings: { calm: { fraction: 0.4, coords: [0.2] } } } } },
     };
     mutate(row);
     value.tree.nodes = [{ id: "root", parent_id: null, role: "system", text: "", tokens: [row], thinking_tokens: null }];
     return value;
   };
   const keys = Object.keys(samplingState);
-  assert.equal(isConversationSnapshot(rowSnapshot(() => {}), keys), true, "a 6.0 summary row restores");
+  assert.equal(isConversationSnapshot(rowSnapshot(() => {}), keys), true, "a 6.0 generated row restores");
   assert.equal(isConversationSnapshot(rowSnapshot((row) => {
-    Object.assign(row.measurements.instruments.geometry.readings.calm, {
-      fraction_per_layer: { 3: 0.4 }, coords_per_layer: { 3: [0.2] }, residual_per_layer: { 3: 0 },
-    });
-  }), keys), true, "a row that persisted its layer traces restores");
+    row.measurements.instruments.geometry.readings.calm = { ...structuredClone(summary), ...structuredClone(traces) };
+  }), keys), true, "a row kept whole restores");
   for (const [label, mutate] of [
     ["a row-level probe copy", (row) => { row.probes = { calm: 0.2 }; }],
     ["a row-level per-layer map", (row) => { row.per_layer_scores = { 3: { calm: 0.2 } }; }],
     ["an envelope per-layer map", (row) => { row.measurements.per_layer_scores = { 3: { calm: 0.2 } }; }],
     ["inspector subspace coordinates", (row) => { row.measurements.instruments.geometry.readings.calm.subspace_coords_per_layer = { 3: [0.2] }; }],
+    ["a summary without its traces", (row) => { row.measurements.instruments.geometry.readings.calm = structuredClone(summary); }],
   ]) {
     assert.throws(() => validateConversationSnapshot(rowSnapshot(mutate), keys),
       /Unreadable token row: saved by an earlier drowse/, label);
   }
   assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => {
     row.measurements.instruments.geometry.readings.calm.fraction_per_layer = { 3: 0.4 };
-  }), keys), /part of its layer traces/);
+  }), keys), /neither a generated row's nor kept whole/);
+  // A node keeps its reply's settled aggregate (each reading's summary, no scores) or none.
+  const aggregateSnapshot = (aggregate) => {
+    const value = rowSnapshot(() => {});
+    value.tree.nodes[0].aggregate_measurements = aggregate;
+    return value;
+  };
+  const aggregate = { version: 2, scope: "aggregate", provenance: "captured",
+    instruments: { geometry: { readings: { calm: structuredClone(summary) } } } };
+  assert.equal(isConversationSnapshot(aggregateSnapshot(null), keys), true);
+  assert.equal(isConversationSnapshot(aggregateSnapshot(aggregate), keys), true, "a node's aggregate restores");
+  for (const [label, bad] of [
+    ["scores beside it", { ...aggregate, scores: { calm: 0.2 } }],
+    ["a token scope", { ...aggregate, scope: "token" }],
+    ["a generated row's reading", { ...aggregate, instruments: { geometry: { readings: { calm: { fraction: 0.4, coords: [0.2] } } } } }],
+  ]) {
+    assert.throws(() => validateConversationSnapshot(aggregateSnapshot(bad), keys), /Unreadable node aggregate/, label);
+  }
   assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => { row.id = 7; }), keys), /unknown field id/);
 
   // tests/fixtures/token_rows.json, shared with tests/loom/test_loom.py: the browser's row check

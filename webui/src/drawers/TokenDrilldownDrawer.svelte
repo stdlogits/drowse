@@ -73,9 +73,9 @@
   import ProbeReadings from "./token/ProbeReadings.svelte";
   import FeatureReadings from "./token/FeatureReadings.svelte";
   import { formatP, lastLayer } from "./token/layers";
-  import { lensPinOrigin, lensReplay, pinnedReadings } from "./token/readings";
+  import { lensReplay, tokenPins } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
-  import { geometryTracesKept } from "../lib/tokenRows";
+  import { geometryTracesKept, wholeEnvelope } from "../lib/tokenRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
 
@@ -408,8 +408,12 @@
   /** At least one geometry probe on the roster: the geometry replay refuses an empty one. */
   const hasGeometryProbes = $derived(probeRack.active.some((name) => probeRack.entries.get(name)?.info.family === "geometry"));
 
+  /** The token's whole envelope (a live token's, or a row kept whole), or null for a generated
+   *  row, which keeps only its scores and geometry shares and coordinates: the rest replays. */
+  const whole = $derived(wholeEnvelope(token?.measurements));
+
   const capturedLensData = $derived.by<LensTokenReadoutJSON | null>(() => {
-    const lens = token?.measurements?.instruments.lens;
+    const lens = whole?.instruments.lens;
     if (!lens?.readout || !token) return null;
     return {
       node_id: loomNodeId ?? "",
@@ -418,14 +422,13 @@
       token_text: token.text,
       steering: lens.binding.steering,
       aggregate: lens.readout.aggregate,
-      // A saved row keeps the chips only: its layer rows replay.
       layers: lens.readout.layers ?? [],
     };
   });
-  /** The captured lens readout kept its layer rows (a live token; a saved row does not). */
-  const capturedLensLayers = $derived(token?.measurements?.instruments.lens?.readout?.layers !== undefined);
+  /** The captured lens readout kept its layer rows (a live token, a row kept whole). */
+  const capturedLensLayers = $derived(whole?.instruments.lens?.readout?.layers !== undefined);
   const capturedSaeData = $derived.by<SaeTokenReadoutJSON | null>(() => {
-    const sae = token?.measurements?.instruments.sae;
+    const sae = whole?.instruments.sae;
     if (!sae?.readout || !token) return null;
     return {
       node_id: loomNodeId ?? "",
@@ -438,21 +441,23 @@
     };
   });
   const capturedGeometryData = $derived.by<GeometryTokenReadout | null>(() => {
-    const geometry = token?.measurements?.instruments.geometry;
+    const geometry = whole?.instruments.geometry;
     if (!geometry || Object.keys(geometry.readings ?? {}).length === 0) return null;
     return { steering: geometry.binding?.steering ?? null, readings: geometry.readings };
   });
-  /** A saved row keeps each geometry reading's summary, not its layers: those replay. */
+  /** The captured geometry readings kept their layers (a live token, a row kept whole). */
   const capturedGeometryLayers = $derived(geometryTracesKept(capturedGeometryData?.readings));
 
-  /** The lens and SAE probes pinned while the token was generated, beside their capture only (for
-   *  the lens, beside the steered anatomy too: it replays the generation they were captured in). */
-  const pinned = $derived<Record<string, ScalarReadingJSON>>(
-    pinnedReadings(token?.measurements?.instruments, {
-      lens: lensPinOrigin(anatomyShown, lensSteered, lensReadout.origin),
-      sae: saeReadout.origin,
-    }),
-  );
+  /** The lens and SAE probes, as the shown reads pinned them (captured with a live token, or
+   *  replayed with the read: a generated row keeps only their values). */
+  const pinned = $derived<Record<string, ScalarReadingJSON>>(tokenPins({
+    anatomy: anatomyShown,
+    steered: lensSteered,
+    captured: whole?.instruments.lens?.readings,
+    anatomyPins: anatomyReadout.pins,
+    lensPins: lensReadout.pins,
+    saePins: saeReadout.pins,
+  }));
 
   // One effect per family: adopt the capture while steered, else replay. Declared geometry, SAE,
   // lens: the replay queue runs the newest interactive request first, so the lens reads first.
@@ -492,7 +497,7 @@
     const captured = capturedSaeData;
     if (!saeTokenReplayAvailable && !saeSteered) saeSteered = true;
     if ((saeSteered || !saeTokenReplayAvailable) && captured) {
-      saeReadout.adopt(captured, token?.measurements?.instruments.sae?.binding.source ?? null);
+      saeReadout.adopt(captured, whole?.instruments.sae?.binding.source ?? null, whole?.instruments.sae?.readings ?? null);
       return;
     }
     saeReadout.clear();
@@ -510,6 +515,7 @@
       return {
         data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: sae?.binding.steering ?? null, layer: sae?.binding.layer ?? -1, features: sae.readout.features },
         source: sae?.binding.source ?? fallbackSource ?? null,
+        pins: sae.readings ?? null,
       };
     });
   });
@@ -526,7 +532,7 @@
     anatomyReadout.anatomy(nodeId, rawIndex, { k: Math.min(256, Math.max(1, readoutTopK)), units: 8, patterns: 4, steered: lensSteered, raw: effectiveRawMode() }, (m) => {
       const anatomy = m.anatomy;
       if (!anatomy) throw new Error("No anatomy came back for this token. Select it again to retry.");
-      return { data: anatomy, source: anatomy.binding.sources.R ?? null };
+      return { data: anatomy, source: anatomy.binding.sources.R ?? null, pins: m.instruments.lens?.readings ?? null };
     });
   });
 
@@ -544,7 +550,7 @@
     const rawIndex = token?.rawIndex;
     const canReplay = !anatomyAvailable && lensTokenReplayAvailable && jlensFitted && !!nodeId && rawIndex != null;
     if ((lensSteered || !lensReplayAvailable) && captured && (capturedLensLayers || !canReplay)) {
-      lensReadout.adopt(captured, token?.measurements?.instruments.lens?.binding.sources.R ?? null);
+      lensReadout.adopt(captured, whole?.instruments.lens?.binding.sources.R ?? null, whole?.instruments.lens?.readings ?? null);
       return;
     }
     lensReadout.clear();
@@ -555,7 +561,7 @@
     const fallbackSource = lensSourceState.sources.find((source) => source.active && source.family !== "S")?.source ?? null;
     // Steered, the saved chips show while the replay brings the layer rows, and stay if it fails.
     const base = lensSteered && captured
-      ? { data: captured, source: token?.measurements?.instruments.lens?.binding.sources.R ?? null }
+      ? { data: captured, source: whole?.instruments.lens?.binding.sources.R ?? null, pins: whole?.instruments.lens?.readings ?? null }
       : null;
     lensReadout.replay("lens", nodeId, rawIndex, { topK: readoutTopK, steered: lensSteered, raw: effectiveRawMode(), layers: "all" }, (m) => {
       const lens = m.instruments.lens;
@@ -563,6 +569,7 @@
       return {
         data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: lens?.binding.steering ?? null, aggregate: lens.readout.aggregate, layers: lens.readout.layers ?? [] },
         source: lens?.binding.sources.R ?? fallbackSource ?? null,
+        pins: lens.readings ?? null,
       };
     }, base);
   });

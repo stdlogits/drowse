@@ -113,7 +113,7 @@ try {
 function file(text) { return { size: Buffer.byteLength(text), async text() { return text; } }; }
 
 function node(id, parent_id, role, text) {
-  return { id, parent_id, role, text, role_label: null, thinking_text: null, aggregate_readings: {}, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null };
+  return { id, parent_id, role, text, role_label: null, thinking_text: null, aggregate_readings: {}, aggregate_measurements: null, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null };
 }
 
 function snapshot() {
@@ -130,15 +130,21 @@ function snapshot() {
     text: "Marmots", token_id: 5, raw_index: 1, logprob: -0.2, sampler_entropy: 1.1,
     top_alts: [{ id: 5, text: "Marmots", logprob: -0.2 }, { id: 6, text: "They", logprob: -2.4 }],
     measurements: {
-      // A 6.0 row (token_row_measurements): the snapshot validator refuses any other shape.
+      // A 6.0 generated row (token_row_measurements): the snapshot validator refuses any other shape.
       version: 2, scope: "token", provenance: "captured",
-      instruments: {
-        lens: { binding: { sources: { R: "local:r" }, steering: "0.3 jlens/calm" }, readout: { layers: [{ layer: 0, tokens: [{ id: 5, token: "Marmots", logprob: -1.2 }] }], aggregate: [{ token: "Marmots", id: 5, strength: 0.3, com: 0.5, spread: 0.1 }] } },
-        sae: { binding: { source: "saelens:test", steering: "0.3 jlens/calm", layer: 13 }, readout: { features: [{ id: 396, activation: 975.08, label: null, max_act: null }] } },
-        geometry: { readings: { calm: { fraction: 0.4, nearest: [["calm", 1]], coords: [0.2], residual: 0, assignment: [["calm", 0.9]], membership: 1, depth_com: [0.5], depth_spread: [0.1] } } },
-      },
+      instruments: { geometry: { readings: { calm: { fraction: 0.4, coords: [0.2] } } } },
+      scores: { calm: 0.2, "jlens/calm": 3.2e-5 },
     },
   }];
+  // The reply's settled aggregate, as the node keeps it (aggregate_measurements).
+  reply.aggregate_readings = { calm: 0.21, "jlens/calm": 3.1e-5 };
+  reply.aggregate_measurements = {
+    version: 2, scope: "aggregate", provenance: "captured",
+    instruments: {
+      geometry: { readings: { calm: { fraction: 0.4, nearest: [["calm", 1]], coords: [0.21], residual: 0, assignment: [["calm", 0.9]], membership: 1, depth_com: [0.5], depth_spread: [0.1] } } },
+      lens: { binding: { sources: { R: "local:r" }, steering: "0.3 jlens/calm" }, readings: { "jlens/calm": { value: 3.1e-5, unit: "mean_token_probability", per_layer: { 20: 4.1e-5 }, depth: null } } },
+    },
+  };
   reply.recipe = { steering: "0.3 jlens/calm", sampling: null, thinking: true, seed: 42, probes: ["jlens/calm"], probe_hashes: { "jlens/calm": "source-hash" } };
   alternate.edited_at = 110;
   alternate.edit_count = 1;

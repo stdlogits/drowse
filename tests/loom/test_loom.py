@@ -1663,3 +1663,14 @@ def test_node_reader_checks_the_aggregate_measurements(aggregate: Any, message: 
     node["aggregate_measurements"] = aggregate
     with pytest.raises(LoomTreeError, match=message):
         LoomTree.from_dict(raw)
+
+
+def test_the_dashboard_tree_fixture_is_a_current_tree():
+    """``tests/fixtures/loom_tree_v2.json`` is the tree save the dashboard's
+    snapshot tests restore; it stays a tree this reader loads (its nodes
+    carry ``aggregate_measurements``)."""
+    raw = json.loads(
+        (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "loom_tree_v2.json").read_text(),
+    )
+    tree = LoomTree.from_dict(raw)
+    assert all(node.aggregate_measurements is None for node in tree.nodes.values())
