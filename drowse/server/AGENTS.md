@@ -384,9 +384,10 @@ Outbound frames:
   sibling.
 - `token {text, thinking, token_id, node_id, raw_index?, logprob?,
   perplexity?, top_alts?, measurements?}`. `measurements` is the token-scope
-  envelope the tap built and stored on the loom row, forwarded verbatim
-  (`ws_events.build_token_event`), so live and rehydrated tokens share one
-  authority. The consumer opts into every live channel; each family's live
+  envelope the tap built, forwarded verbatim and whole
+  (`ws_events.build_token_event`); the loom row keeps its projection
+  (`readout/measurements.py::token_row_measurements`: summaries, rounded, the
+  per-layer traces only under `persist_per_layer_scores`). The consumer opts into every live channel; each family's live
   toggle decides what appears.
 - `done {result: {text, tokens, finish_reason, applied_steering, usage,
   measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,

@@ -4,14 +4,16 @@
 //
 // A probe reads one primary scalar (the store's sparkline and "reads" value): a flat probe its
 // signed axis-0 coordinate, a lens or SAE probe its one channel, and a curved probe the share of
-// the activation on its surface. The rows' flat ``probes``/``perLayerScores`` views carry axis 0
-// for every probe, so a curved probe's share comes from the token's geometry reading instead
-// (``share``); a row without that reading (Live was off) leaves a gap rather than an axis.
+// the activation on its surface. The rows' flat ``probes`` view carries axis 0 for every probe,
+// so a curved probe's share comes from the token's geometry reading instead (``share``); a row
+// without that reading (Live was off) leaves a gap rather than an axis.
 import { chatLog } from "../../lib/stores/chat.svelte";
+import { mergedReadings } from "../../lib/stores/instruments.svelte";
+import { readingLayers } from "../../lib/tokenRows";
 import { parseProbeTarget, probeScoreForTarget } from "../../lib/tokens";
 import type { ChatTurn, ProbeInfo, TokenScore } from "../../lib/types";
 
-type TokenRow = Pick<TokenScore, "probes" | "coordsByProbe" | "perLayerScores" | "measurements">;
+type TokenRow = Pick<TokenScore, "probes" | "coordsByProbe" | "measurements">;
 
 export interface TraceOptions {
   /** Read the share on the probe's surface (a curved probe's primary reading), not a coordinate. */
@@ -56,27 +58,27 @@ export function replyTrace(target: string, options: TraceOptions = {}): (number 
   return null;
 }
 
-/** ``target``'s reading at each layer for one token of the latest generated reply (the last token
- *  by default), or null when that token kept no per-layer readings of it. */
-export function replyLayers(target: string, index: number | null = null, { share = false }: TraceOptions = {}): Record<string, number> | null {
+/** One token of the latest generated reply (the last by default): the token, and the loom anchor
+ *  (node id and raw index) a replay of it needs, null where the reply has none. */
+export function replyToken(index: number | null = null): { token: TokenScore; nodeId: string | null; rawIndex: number | null } | null {
   for (let i = chatLog.turns.length - 1; i >= 0; i -= 1) {
     const turn = chatLog.turns[i];
     const tokens = turn.tokens ?? [];
     if (!turn.generated || tokens.length === 0) continue;
     const token = tokens[index === null ? tokens.length - 1 : Math.max(0, Math.min(tokens.length - 1, index))];
-    const base = shareBase(target, share);
-    const out: Record<string, number> = {};
-    if (base !== null) {
-      for (const [layer, v] of Object.entries(token?.measurements?.instruments?.geometry?.readings?.[base]?.fraction_per_layer ?? {})) {
-        if (finite(v) !== null) out[layer] = v;
-      }
-    } else {
-      for (const [layer, scores] of Object.entries(token?.perLayerScores ?? {})) {
-        const v = finite(scores?.[target]);
-        if (v !== null) out[layer] = v;
-      }
-    }
-    return Object.keys(out).length > 0 ? out : null;
+    return { token, nodeId: turn.nodeId ?? null, rawIndex: token.rawIndex ?? null };
   }
   return null;
+}
+
+/** ``target``'s reading at each layer for one token of the latest generated reply (the last token
+ *  by default), from the token's own reading, or null when that token kept no per-layer trace of
+ *  it. A saved reply's geometry readings keep their summary only: their layers replay the token
+ *  (``replyToken`` gives its anchor). */
+export function replyLayers(target: string, index: number | null = null, { share = false }: TraceOptions = {}): Record<string, number> | null {
+  const picked = replyToken(index);
+  if (!picked) return null;
+  const { base } = parseProbeTarget(target);
+  const layers = readingLayers(mergedReadings(picked.token.measurements)?.[base], shareBase(target, share) !== null);
+  return layers !== null && Object.keys(layers).length > 0 ? layers : null;
 }

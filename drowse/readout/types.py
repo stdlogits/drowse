@@ -438,7 +438,7 @@ class ScalarReading:
 
 #: What a family's ``score_probes`` returns: the geometry family's full
 #: whitened :class:`ProbeReading`, or the single-axis
-#: families' :class:`ScalarReading`.  The three helpers below are the only
+#: families' :class:`ScalarReading`.  The two helpers below are the only
 #: places a consumer needs to care which.
 Reading = Union[ProbeReading, ScalarReading]
 
@@ -451,19 +451,6 @@ def reading_axis0(reading: "Reading") -> float:
         return float(reading.value)
     coords = reading.coords
     return float(coords[0]) if coords else 0.0
-
-
-def reading_per_layer_axis0(reading: "Reading") -> dict[int, float]:
-    """The per-layer trace of :func:`reading_axis0`."""
-    if isinstance(reading, ScalarReading):
-        return {
-            int(layer): float(value)
-            for layer, value in reading.per_layer.items()
-        }
-    return {
-        int(layer): float(coord[0] if coord else 0.0)
-        for layer, coord in reading.coords_per_layer.items()
-    }
 
 
 def as_probe_reading(reading: "Reading") -> "ProbeReading":
@@ -737,7 +724,6 @@ __all__ = [
     "as_probe_reading",
     "parse_gate_ref",
     "reading_axis0",
-    "reading_per_layer_axis0",
     "scalar_gate_keys",
     "validate_gate_channels",
 ]

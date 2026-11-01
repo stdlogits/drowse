@@ -25,7 +25,7 @@ from drowse.generation.sampling import InheritSystemPrompt, SamplingConfig
 from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
 from drowse.generation.types import GenState
 from drowse.readout.types import ScalarReading
-from drowse.readout.measurements import MEASUREMENTS_VERSION
+from drowse.readout.measurements import MEASUREMENTS_VERSION, token_row_measurements
 from drowse.session.engine import (
     ConsumerPlan,
     GenerationEngine,
@@ -361,10 +361,16 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
 
     ((node_id, row, thinking),) = rows
     assert (node_id, thinking) == ("node-1", False)
-    assert row["measurements"] is event.measurements
+    # The row keeps the envelope's projection; the event carries it whole.
+    assert row["measurements"] == token_row_measurements(
+        cast(Any, event.measurements), per_layer=False,
+    )
     assert row["raw_index"] == 4
     assert row["top_alts"] == [{"id": 7, "text": " a", "logprob": -0.1}]
-    assert row["probes"] == {"jlens/a": 0.25}
+    assert set(row) == {
+        "token_id", "text", "logprob", "perplexity", "raw_index", "top_alts", "measurements",
+    }
+    assert row["measurements"].get("scores") == {"jlens/a": 0.25}
 
 
 def test_tap_skips_the_compat_projection_unless_the_consumer_asks() -> None:

@@ -18,6 +18,7 @@ try {
     buildConversationImportPlan,
     isConversationSnapshot,
     runConversationImportTransaction,
+    validateConversationSnapshot,
   } = await server.ssrLoadModule("/src/lib/conversationSnapshot.ts");
 
   const samplingState = {
@@ -138,6 +139,46 @@ try {
   const wrongModel = structuredClone(pythonSnapshot);
   wrongModel.tree.model_id = "different/model";
   assert.equal(isConversationSnapshot(wrongModel, Object.keys(samplingState)), false);
+
+  // Token rows: a 6.0 row keeps each reading's summary once (token_row_measurements). A row saved
+  // before it, with a row-level probe copy, a layer-major per_layer_scores map or the inspector's
+  // subspace coordinates on every reading, is refused with a plain message, as the loom reader
+  // refuses it, rather than restored half.
+  const summary = {
+    fraction: 0.4, nearest: [["calm", 1]], coords: [0.2], residual: 0, assignment: [["calm", 0.9]],
+    membership: 1, depth_com: [0.5], depth_spread: [0.1],
+  };
+  const rowSnapshot = (mutate) => {
+    const value = structuredClone(snapshot);
+    const row = {
+      token_id: 7, text: "x", logprob: -0.1, perplexity: 1.1, raw_index: 0,
+      measurements: { version: 2, scope: "token", provenance: "captured", scores: { calm: 0.2 },
+        instruments: { geometry: { readings: { calm: structuredClone(summary) } } } },
+    };
+    mutate(row);
+    value.tree.nodes = [{ id: "root", parent_id: null, role: "system", text: "", tokens: [row], thinking_tokens: null }];
+    return value;
+  };
+  const keys = Object.keys(samplingState);
+  assert.equal(isConversationSnapshot(rowSnapshot(() => {}), keys), true, "a 6.0 summary row restores");
+  assert.equal(isConversationSnapshot(rowSnapshot((row) => {
+    Object.assign(row.measurements.instruments.geometry.readings.calm, {
+      fraction_per_layer: { 3: 0.4 }, coords_per_layer: { 3: [0.2] }, residual_per_layer: { 3: 0 },
+    });
+  }), keys), true, "a row that persisted its layer traces restores");
+  for (const [label, mutate] of [
+    ["a row-level probe copy", (row) => { row.probes = { calm: 0.2 }; }],
+    ["a row-level per-layer map", (row) => { row.per_layer_scores = { 3: { calm: 0.2 } }; }],
+    ["an envelope per-layer map", (row) => { row.measurements.per_layer_scores = { 3: { calm: 0.2 } }; }],
+    ["inspector subspace coordinates", (row) => { row.measurements.instruments.geometry.readings.calm.subspace_coords_per_layer = { 3: [0.2] }; }],
+  ]) {
+    assert.throws(() => validateConversationSnapshot(rowSnapshot(mutate), keys),
+      /Unreadable token row: saved by an earlier drowse/, label);
+  }
+  assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => {
+    row.measurements.instruments.geometry.readings.calm.fraction_per_layer = { 3: 0.4 };
+  }), keys), /part of its layer traces/);
+  assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => { row.id = 7; }), keys), /unknown field id/);
   const plan = buildConversationImportPlan(snapshot);
   assert.equal(
     plan.steeringExpression,

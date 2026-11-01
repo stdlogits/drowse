@@ -1,4 +1,5 @@
 import { serializeExpression } from "./expression";
+import { tokenRowProblem } from "./tokenRows";
 import { unitTermProblem } from "./unitTerms";
 import type {
   LoomTreeJSON,
@@ -123,6 +124,19 @@ export function validateConversationSnapshot(
     invalid("tree identity");
   }
   if (!Array.isArray(tree.nodes)) invalid("tree nodes");
+  // The rows inside: a conversation saved before 6.0 kept every probe's layers on every token in a
+  // shape the server refuses, so it is refused here, plainly, before a restore starts.
+  for (const node of tree.nodes as unknown[]) {
+    if (!node || typeof node !== "object") invalid("tree node");
+    for (const field of ["tokens", "thinking_tokens"] as const) {
+      const rows = (node as Record<string, unknown>)[field];
+      if (rows === undefined || rows === null) continue;
+      for (const row of array(rows, "token rows")) {
+        const problem = tokenRowProblem(record(row, "token row"));
+        if (problem !== null) throw new TypeError(`Unreadable token row: ${problem}`);
+      }
+    }
+  }
   record(tree.children_of, "tree children map");
   record(tree.cast, "tree cast");
 

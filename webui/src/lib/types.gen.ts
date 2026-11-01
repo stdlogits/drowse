@@ -428,8 +428,13 @@ export interface LensReadDict {
   s: FamilyReadDict;
 }
 
+/**
+ * The native readout: the per-layer top-k matrix and its
+ * layer-aggregated chips.  A loom token row keeps ``layers`` only when its
+ * generation set ``persist_per_layer_scores``.
+ */
 export interface LensReadoutBlockJSON {
-  layers: LensReadoutLayerJSON[];
+  layers?: LensReadoutLayerJSON[];
   aggregate: LensAggregateTokenJSON[];
 }
 
@@ -629,7 +634,6 @@ export interface MeasurementsEnvelopeJSON {
   provenance: "captured" | "replayed";
   instruments: MeasurementInstrumentsJSON;
   scores?: Record<string, number>;
-  per_layer_scores?: Record<string, Record<string, number>>;
   anatomy?: TokenAnatomy;
 }
 
@@ -778,19 +782,24 @@ export interface ProbeOverlay {
  * here (rather than as an anonymous ``dict[str, Any]`` on the channel)
  * is what lets the generated dashboard types name the geometry reading
  * instead of falling back to an opaque record.
+ *
+ * A loom token row keeps the summary (:func:`token_row_measurements`): the
+ * three per-layer traces only when its generation set
+ * ``persist_per_layer_scores``, and ``subspace_coords_per_layer`` (the
+ * probe inspector's live trail) never.
  */
 export interface ProbeReadingJSON {
   fraction: number;
   nearest: [string, number][];
   coords: number[];
   residual: number;
-  fraction_per_layer: Record<string, number>;
-  coords_per_layer: Record<string, number[]>;
-  residual_per_layer: Record<string, number>;
-  assignment?: [string, number][];
-  membership?: number;
-  depth_com?: number[];
-  depth_spread?: number[];
+  fraction_per_layer?: Record<string, number>;
+  coords_per_layer?: Record<string, number[]>;
+  residual_per_layer?: Record<string, number>;
+  assignment: [string, number][];
+  membership: number;
+  depth_com: number[];
+  depth_spread: number[];
   subspace_coords_per_layer?: Record<string, number[]>;
 }
 

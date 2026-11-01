@@ -1211,7 +1211,6 @@ class TestWSTokenEventLens:
             "scope": "token",
             "provenance": "captured",
             "scores": {"calm": 0.424243},
-            "per_layer_scores": {"5": {"calm": 0.38}},
             "instruments": {
                 "geometry": {"readings": {"calm": {"coords": [0.424243]}}},
                 "lens": {

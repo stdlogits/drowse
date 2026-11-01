@@ -131,7 +131,10 @@ own checkout, so in a worktree run it from the repo root with `PYTHONPATH=.`.
 
 **Measurements.** The read side has one record, the versioned `measurements` envelope from
 `drowse/readout/measurements.py`. Its scope is `"token"` on each measured `token` frame,
-where it is the same object the loom token row stores. It is `"aggregate"` on
+which carries it whole; the loom token row keeps its projection
+(`token_row_measurements`: each reading's summary at 4 places, no per-layer traces unless
+the call set `persist_per_layer_scores`, which the dashboard does not), so a finished
+reply's per-layer views replay the token. It is `"aggregate"` on
 `done.result.measurements`, and `"replay"` (with `provenance: "replayed"`) from
 `.../instruments/{family}/token-readout`.
 

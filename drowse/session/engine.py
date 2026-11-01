@@ -38,7 +38,7 @@ from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
@@ -68,7 +68,11 @@ from drowse.generation.token_callback import (
     consumer_options,
 )
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import envelope_sources
+from drowse.readout.measurements import (
+    Measurements,
+    envelope_sources,
+    token_row_measurements,
+)
 from drowse.generation.types import (
     CallSpec,
     GenerationStream,
@@ -108,7 +112,10 @@ class ConsumerPlan:
     """Which per-token consumers one generation feeds, decided once.
 
     ``live_scores_on`` is the geometry instrument's live toggle (off masks
-    every per-token monitor consumer at the source).  ``lens`` / ``sae`` mean
+    every per-token monitor consumer at the source).  ``persists_layer_scores``
+    is the call's ``persist_per_layer_scores``: the loom rows keep their
+    readings' per-layer traces and the lens readout's layers
+    (:func:`~drowse.readout.measurements.token_row_measurements`).  ``lens`` / ``sae`` mean
     the family's live readout is on and the callback asked for it; ``units``
     that attached unit probes tick per token (loom row or live scores).
     ``need_tap`` is false when nothing would consume a per-token callback, so
@@ -240,9 +247,7 @@ class TokenTap:
         if self._needs_scores:
             readings = self._geometry_readings(step_id)
             if readings:
-                payload = TokenProbePayload.from_geometry(
-                    readings, per_layer=self._per_layer,
-                )
+                payload = TokenProbePayload.from_geometry(readings)
         lens_step = (
             self._lens_step(top_k=self._readout_top_k, step_id=step_id)
             if self._lens_step is not None else None
@@ -257,25 +262,17 @@ class TokenTap:
         if lens_step is not None and self._lens.last_step_readings:
             if payload is None:
                 payload = TokenProbePayload()
-            payload.merge_readings(
-                self._lens.last_step_readings, family="lens",
-                per_layer=self._per_layer,
-            )
+            payload.merge_readings(self._lens.last_step_readings, family="lens")
         if sae_step is not None and self._sae.last_step_readings:
             if payload is None:
                 payload = TokenProbePayload()
-            payload.merge_readings(
-                self._sae.last_step_readings, family="sae",
-                per_layer=self._per_layer,
-            )
+            payload.merge_readings(self._sae.last_step_readings, family="sae")
         if self._units_step is not None:
             units_readings = self._units_step(step_id)
             if units_readings:
                 if payload is None:
                     payload = TokenProbePayload()
-                payload.merge_readings(
-                    units_readings, family="units", per_layer=self._per_layer,
-                )
+                payload.merge_readings(units_readings, family="units")
 
         lens_payload = lens_step[0] if lens_step is not None else None
         lens_aggregate = lens_step[1] if lens_step is not None else None
@@ -286,7 +283,7 @@ class TokenTap:
             or sae_step
             or (
                 payload is not None
-                and (payload.scores or payload.per_layer_scores or payload.has_readings)
+                and (payload.scores or payload.has_readings)
             )
         ):
             if payload is None:
@@ -323,15 +320,12 @@ class TokenTap:
                     {"id": int(a.id), "text": a.text, "logprob": float(a.logprob)}
                     for a in top_alts
                 ]
-            if payload is not None and payload.scores:
-                row["probes"] = {
-                    name: round(float(value), 6)
-                    for name, value in payload.scores.items()
-                }
-            if payload is not None and payload.per_layer_scores:
-                row["per_layer_scores"] = payload.per_layer_scores
             if measurements:
-                row["measurements"] = measurements
+                # The row keeps the envelope's projection (summaries, rounded;
+                # the per-layer traces only when the call asked to persist them).
+                row["measurements"] = token_row_measurements(
+                    cast(Measurements, measurements), per_layer=self._per_layer,
+                )
             self._append_token(row, thinking=bool(is_thinking))
 
         if self._on_event is not None:
@@ -786,12 +780,7 @@ class GenerationEngine:
             wants_live_token_scores=bool(
                 live and on_token is not None and options.live_scores
             ),
-            persists_layer_scores=bool(
-                live and (
-                    spec.persist_per_layer_scores
-                    or (on_token is not None and options.per_layer_scores)
-                )
-            ),
+            persists_layer_scores=bool(spec.persist_per_layer_scores),
             persists_subspace_coords=bool(live and spec.persist_subspace_coords),
             persists_probe_row=persists_probe_row,
             lens=bool(
@@ -994,7 +983,9 @@ class GenerationEngine:
             has_monitor_probes=plan.has_monitor_probes,
             loom_attached=assistant_node_id is not None,
             wants_live_token_scores=plan.wants_live_token_scores,
-            persists_layer_scores=plan.persists_layer_scores,
+            persists_layer_scores=bool(
+                plan.live_scores_on and plan.persists_layer_scores
+            ),
             persists_probe_row=plan.persists_probe_row,
             persists_subspace_coords=plan.persists_subspace_coords,
             live_lens_active=plan.lens,

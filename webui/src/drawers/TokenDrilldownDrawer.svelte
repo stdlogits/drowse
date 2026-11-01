@@ -65,6 +65,7 @@
   import { formatP, lastLayer } from "./token/layers";
   import { lensPinOrigin, lensReplay, pinnedReadings } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
+  import { geometryTracesKept } from "../lib/tokenRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
   import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
 
@@ -407,9 +408,12 @@
       token_text: token.text,
       steering: lens.binding.steering,
       aggregate: lens.readout.aggregate,
-      layers: lens.readout.layers,
+      // A saved row keeps the chips only: its layer rows replay.
+      layers: lens.readout.layers ?? [],
     };
   });
+  /** The captured lens readout kept its layer rows (a live token; a saved row does not). */
+  const capturedLensLayers = $derived(token?.measurements?.instruments.lens?.readout?.layers !== undefined);
   const capturedSaeData = $derived.by<SaeTokenReadoutJSON | null>(() => {
     const sae = token?.measurements?.instruments.sae;
     if (!sae?.readout || !token) return null;
@@ -428,6 +432,8 @@
     if (!geometry || Object.keys(geometry.readings ?? {}).length === 0) return null;
     return { steering: geometry.binding?.steering ?? null, readings: geometry.readings };
   });
+  /** A saved row keeps each geometry reading's summary, not its layers: those replay. */
+  const capturedGeometryLayers = $derived(geometryTracesKept(capturedGeometryData?.readings));
 
   /** The lens and SAE probes pinned while the token was generated, beside their capture only (for
    *  the lens, beside the steered anatomy too: it replays the generation they were captured in). */
@@ -447,20 +453,22 @@
     void loomNodeId;
     const captured = capturedGeometryData;
     if (!geometryTokenReplayAvailable && !geometrySteered) geometrySteered = true;
-    if ((geometrySteered || !geometryTokenReplayAvailable) && captured) {
+    const nodeId = loomNodeId;
+    const rawIndex = token?.rawIndex;
+    const canReplay = geometryTokenReplayAvailable && hasGeometryProbes && !!nodeId && rawIndex != null;
+    if ((geometrySteered || !geometryTokenReplayAvailable) && captured && (capturedGeometryLayers || !canReplay)) {
       geometryReadout.adopt(captured, null);
       return;
     }
     geometryReadout.clear();
-    if (!geometryTokenReplayAvailable) return;
-    if (!hasGeometryProbes) return;
-    const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
-    if (!nodeId || rawIndex == null) return;
-    geometryReadout.replay("geometry", nodeId, rawIndex, { steered: geometrySteered, raw: effectiveRawMode() }, (m) => {
+    if (!canReplay || !nodeId || rawIndex == null) return;
+    const steered = geometrySteered;
+    geometryReadout.replay("geometry", nodeId, rawIndex, { steered, raw: effectiveRawMode() }, (m) => {
       const geometry = m.instruments.geometry;
       if (!geometry) throw new Error("No probe readings came back. Check that the probes are attached.");
-      return { data: { steering: geometry?.binding?.steering ?? null, readings: geometry?.readings ?? {} }, source: null };
+      // Steered, the replay reads the generation again: a probe detached since keeps its capture.
+      const kept = steered && captured ? captured.readings : {};
+      return { data: { steering: geometry?.binding?.steering ?? null, readings: { ...kept, ...(geometry?.readings ?? {}) } }, source: null };
     });
   });
 
@@ -520,16 +528,15 @@
     void loomNodeId;
     const captured = capturedLensData;
     if (!lensReplayAvailable && !lensSteered) lensSteered = true;
-    if ((lensSteered || !lensReplayAvailable) && captured) {
+    const nodeId = loomNodeId;
+    const rawIndex = token?.rawIndex;
+    const canReplay = !anatomyAvailable && lensTokenReplayAvailable && jlensFitted && !!nodeId && rawIndex != null;
+    if ((lensSteered || !lensReplayAvailable) && captured && (capturedLensLayers || !canReplay)) {
       lensReadout.adopt(captured, token?.measurements?.instruments.lens?.binding.sources.R ?? null);
       return;
     }
     lensReadout.clear();
-    if (anatomyAvailable || !lensTokenReplayAvailable) return;
-    if (!jlensFitted) return;
-    const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
-    if (!nodeId || rawIndex == null) return;
+    if (!canReplay || !nodeId || rawIndex == null) return;
     const replayTokenId = token?.tokenId ?? -1;
     const replayTokenText = token?.text ?? "";
     // The readout is the R family's: its source, never an active S lens.
@@ -538,7 +545,7 @@
       const lens = m.instruments.lens;
       if (!lens?.readout) throw new Error("No lens reading came back. Check the active lens source.");
       return {
-        data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: lens?.binding.steering ?? null, aggregate: lens.readout.aggregate, layers: lens.readout.layers },
+        data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: lens?.binding.steering ?? null, aggregate: lens.readout.aggregate, layers: lens.readout.layers ?? [] },
         source: lens?.binding.sources.R ?? fallbackSource ?? null,
       };
     });

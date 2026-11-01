@@ -104,11 +104,14 @@ function _primaryPerLayer(
 }
 
 /** Read one probe card through the token-hover overlay. Token rows retain the
- * primary scalar, multi-axis coordinates, and layer strip; lens/SAE cards can
- * additionally fill from retained live/on-demand hover snapshots. */
+ * primary scalar, multi-axis coordinates and each scalar reading's layer strip;
+ * a geometry card's strip comes from the token's live trace, else from its
+ * replay (``tokenHoverState.replayedLayers``); lens/SAE cards can additionally
+ * fill from retained live/on-demand hover snapshots. */
 export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
   const base = probeRack.entries.get(name);
   if (!base || !tokenHoverState.active) return base;
+  const replayed = tokenHoverState.replayedLayers?.[name] ?? null;
 
   let reading: AnyReadingJSON | null =
     tokenHoverState.probeReadings?.[name] ?? null;
@@ -119,11 +122,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
     if (scalar === undefined && tokenCoords?.[0] !== undefined) {
       scalar = tokenCoords[0];
     }
-    const perLayer: Record<string, number> = {};
-    for (const [layer, scores] of Object.entries(tokenHoverState.perLayerScores ?? {})) {
-      const value = scores[name];
-      if (typeof value === "number" && Number.isFinite(value)) perLayer[layer] = value;
-    }
+    const perLayer: Record<string, number> = replayed ? _primaryPerLayer(base.info, replayed) : {};
 
     if (scalar === undefined && base.info.family === "lens") {
       const word = base.info.word;
@@ -194,6 +193,10 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
         fraction_per_layer: usesCoords ? {} : perLayer,
         coords_per_layer: usesCoords ? coordsPerLayer : {},
         residual_per_layer: {},
+        assignment: [],
+        membership: 1,
+        depth_com: [],
+        depth_spread: [],
       };
     }
   }
@@ -215,12 +218,15 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
     };
   }
   const current = _primaryScalar(base.info, reading);
+  const ownLayers = _primaryPerLayer(base.info, reading);
   return {
     ...base,
     current,
     previous: current,
     sparkline: [current],
-    perLayer: _primaryPerLayer(base.info, reading),
+    perLayer: Object.keys(ownLayers).length === 0 && replayed
+      ? _primaryPerLayer(base.info, replayed)
+      : ownLayers,
     reading,
     // ProbeCard's settled-only fields (residual and mini-map dot) should also
     // describe the hovered token, so the ephemeral view fills both slots.

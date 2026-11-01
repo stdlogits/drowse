@@ -45,7 +45,7 @@ from drowse.lens.depth import LensBand, s_weights
 from drowse.lens.footprint import footprint_probe_rows
 from drowse.loom.recipe import CastMember, Recipe
 from drowse.loom.tree import LoomTree
-from drowse.readout.measurements import build_measurements
+from drowse.readout.measurements import build_measurements, token_row_measurements
 from drowse.readout.monitor import _depth_stats
 from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.sae.backend import LocalSaeBackend
@@ -765,28 +765,11 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         sae_activations,
     )[sae["name"]]
     assert sae_reading.value == sae["value"]
-    per_layer_scores = {
-        str(layer): {
-            geometry["name"]: row["coords"][0],
-            lens["name"]: probability,
-            **(
-                {sae["name"]: sae["value"]}
-                if layer == sae["layer"]
-                else {}
-            ),
-        }
-        for layer, row, probability in zip(layers, rows, lens["probabilities"])
-    }
-    for layer, z in slens_reading.per_layer.items():
-        per_layer_scores.setdefault(str(layer), {})[slens["name"]] = z
-    for layer, value in units_reading.per_layer.items():
-        per_layer_scores.setdefault(str(layer), {})[units["name"]] = value
     envelope = build_measurements(
         scope="token",
         geometry_readings={geometry["name"]: geometry_reading},
         lens_readings={lens["name"]: lens_reading, slens["name"]: slens_reading},
         sae_readings={sae["name"]: sae_reading},
-        per_layer_scores=per_layer_scores,
         lens_readout={
             layer: [(lens["token"], probability)]
             for layer, probability in zip(layers, lens["probabilities"])
@@ -813,6 +796,11 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
     )
 
     assert envelope == fixture["expected"]
+    # The loom token row the browser writes for the same token: the one row
+    # projection (summaries, ROW_DECIMALS places, no traces, never the
+    # inspector's subspace coordinates).
+    assert envelope is not None
+    assert token_row_measurements(envelope, per_layer=False) == fixture["expectedRow"]
 
 
 def anatomy_envelope(fixture: dict[str, Any]) -> Any:

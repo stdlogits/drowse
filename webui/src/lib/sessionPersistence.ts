@@ -8,6 +8,7 @@ import type {
 } from "./types";
 import { migrateLegacyDatabase } from "./brandMigration";
 import { isRoleSlug } from "./roleSlug";
+import { tokenRowProblem } from "./tokenRows";
 
 const DATABASE_NAME = "drowse-hosted-sessions";
 const DATABASE_VERSION = 2;
@@ -786,16 +787,8 @@ function validateTokenRows(value: unknown, label: string): void {
     if (row.raw_index !== undefined && row.raw_index !== null) {
       validateNonNegativeInteger(row.raw_index, "raw token index");
     }
-    if (row.probes !== undefined) validateFiniteMap(row.probes, "token probes", 4_096);
-    if (row.per_layer_scores !== undefined) {
-      assertPlainObject(row.per_layer_scores, "token per-layer scores");
-      if (Object.keys(row.per_layer_scores).length > 1_024) {
-        throw invalid("Token per-layer score map is too large");
-      }
-      for (const scores of Object.values(row.per_layer_scores)) {
-        validateFiniteMap(scores, "token layer scores", 4_096);
-      }
-    }
+    const problem = tokenRowProblem(row);
+    if (problem !== null) throw invalid(`Loom token row: ${problem}`);
     if (row.top_alts !== undefined) {
       if (!Array.isArray(row.top_alts) || row.top_alts.length > MAX_TOKEN_ROWS) {
         throw invalid("Token alternatives are invalid");

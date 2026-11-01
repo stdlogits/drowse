@@ -15,6 +15,7 @@ and NOT eight constant geometry fields.
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -120,7 +121,6 @@ class TestTokenFrame:
             geometry_readings={"formal.casual": _geometry_reading()},
             lens_readings={"jlens/fake": _lens_reading()},
             sae_readings={"sae/548": _sae_reading()},
-            per_layer_scores={"12": {"formal.casual": 0.5}},
             lens_readout={12: [(" a", 0.78)], 18: [(" b", 0.6)]},
             lens_aggregate=[(" a", 0.41, 0.31, 0.05, 7)],
             lens_token_ids={12: [5], 18: [7]},
@@ -135,10 +135,7 @@ class TestTokenFrame:
 
     def test_top_level_keys(self) -> None:
         env = self._envelope()
-        assert set(env) == {
-            "version", "scope", "provenance", "instruments",
-            "scores", "per_layer_scores",
-        }
+        assert set(env) == {"version", "scope", "provenance", "instruments", "scores"}
         assert env["version"] == MEASUREMENTS_VERSION
         assert env["scope"] == "token"
         assert env["provenance"] == "captured"
@@ -517,6 +514,116 @@ class TestUnitsChannel:
     def test_no_units_readings_no_channel(self) -> None:
         env = build_measurements(scope="token", units_readings={})
         assert env is None
+
+
+# ---------------------------------------------------------------------------
+# The loom token row's projection
+# ---------------------------------------------------------------------------
+
+class TestTokenRow:
+    """``token_row_measurements``: what a loom token row persists of a token
+    envelope (summaries once, rounded; traces only on request; the inspector's
+    subspace coordinates never)."""
+
+    @staticmethod
+    def _envelope() -> Any:
+        geometry = _geometry_reading()
+        geometry.fraction_per_layer = {12: 0.123456789, 18: 0.5}
+        geometry.residual_per_layer = {12: 0.0, 18: 0.0}
+        geometry.subspace_coords_per_layer = {12: (0.1, 0.2), 18: (0.3, 0.4)}
+        geometry.assignment = [("formal", 0.987654321)]
+        env = build_measurements(
+            scope="token",
+            geometry_readings={"formal.casual": geometry},
+            lens_readings={"jlens/fake": _lens_reading()},
+            sae_readings={"sae/548": _sae_reading()},
+            lens_readout={12: [(" a", 0.78)], 18: [(" b", 0.6)]},
+            lens_aggregate=[(" a", 0.41234567, 0.31, 0.05, 7)],
+            lens_token_ids={12: [5], 18: [7]},
+            lens_sources={"R": "local:default"},
+            sae_features=[(42, 3.5123456, "fruit", 121.1)],
+            sae_source="saelens:scope",
+            sae_layer=14,
+            units_readings={"neuron/L8n344": TestUnitsChannel._reading()},
+            steering="0.3 formal.casual",
+        )
+        assert env is not None
+        return env
+
+    def test_summary_row_keys(self) -> None:
+        from drowse.readout.measurements import (
+            GEOMETRY_SUMMARY_KEYS,
+            token_row_measurements,
+        )
+
+        row: Any = token_row_measurements(self._envelope(), per_layer=False)
+        assert set(row) == {"version", "scope", "provenance", "instruments", "scores"}
+        inst = row["instruments"]
+        assert set(inst) == {"geometry", "lens", "sae", "units"}
+        assert set(inst["geometry"]["readings"]["formal.casual"]) == set(GEOMETRY_SUMMARY_KEYS)
+        # A scalar reading's trace is a few values; it stays whole.
+        assert set(inst["lens"]["readings"]["jlens/fake"]) == {
+            "value", "unit", "per_layer", "depth",
+        }
+        assert inst["lens"]["readings"]["jlens/fake"]["per_layer"] == {
+            "12": 0.01, "18": 0.015,
+        }
+        assert set(inst["lens"]["readout"]) == {"aggregate"}
+        assert set(inst["sae"]["readings"]["sae/548"]) == {
+            "value", "unit", "per_layer", "depth",
+        }
+        assert set(inst["units"]["readings"]["neuron/L8n344"]) == {
+            "value", "unit", "per_layer", "depth", "meta",
+        }
+        assert inst["lens"]["binding"] == {
+            "sources": {"R": "local:default"}, "steering": "0.3 formal.casual",
+        }
+        assert inst["sae"]["binding"]["layer"] == 14
+
+    def test_traces_on_request_and_never_the_subspace_coordinates(self) -> None:
+        from drowse.readout.measurements import (
+            GEOMETRY_SUMMARY_KEYS,
+            GEOMETRY_TRACE_KEYS,
+            token_row_measurements,
+        )
+
+        row: Any = token_row_measurements(self._envelope(), per_layer=True)
+        inst = row["instruments"]
+        reading = inst["geometry"]["readings"]["formal.casual"]
+        assert set(reading) == set(GEOMETRY_SUMMARY_KEYS) | set(GEOMETRY_TRACE_KEYS)
+        assert reading.get("fraction_per_layer") == {"12": 0.1235, "18": 0.5}
+        assert reading.get("coords_per_layer") == {"12": [0.5, -0.1], "18": [0.7, -0.3]}
+        readout = inst["lens"]["readout"]
+        assert [layer["layer"] for layer in readout.get("layers", [])] == [12, 18]
+        assert readout.get("layers", [])[0]["tokens"][0]["logprob"] == round(
+            math.log(0.78), 4,
+        )
+
+    def test_floats_round_to_row_decimals(self) -> None:
+        from drowse.readout.measurements import ROW_DECIMALS, token_row_measurements
+
+        assert ROW_DECIMALS == 4
+        row: Any = token_row_measurements(self._envelope(), per_layer=False)
+        inst = row["instruments"]
+        reading = inst["geometry"]["readings"]["formal.casual"]
+        assert reading["assignment"] == [["formal", 0.9877]]
+        assert reading["nearest"] == [["formal", 1.25]]
+        assert inst["lens"]["readout"]["aggregate"][0]["strength"] == 0.4123
+        assert inst["sae"]["readout"]["features"][0]["activation"] == 3.5123
+        assert inst["units"]["readings"]["neuron/L8n344"].get("meta") == {
+            "unit": "neuron/L8n344", "activation": -0.75,
+        }
+
+    def test_the_live_frame_keeps_the_whole_envelope(self) -> None:
+        """The projection copies: the token frame's envelope is untouched."""
+        from drowse.readout.measurements import token_row_measurements
+
+        env = self._envelope()
+        before = repr(env)
+        token_row_measurements(env, per_layer=False)
+        assert repr(env) == before
+        reading = env["instruments"]["geometry"]["readings"]["formal.casual"]
+        assert reading.get("subspace_coords_per_layer") == {"12": [0.1, 0.2], "18": [0.3, 0.4]}
 
 
 # ---------------------------------------------------------------------------

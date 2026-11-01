@@ -13,14 +13,16 @@ session; the rest pin the replayer's rebuild on a toy model.
 from __future__ import annotations
 
 import math
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT, SamplingConfig
+from drowse.generation.results import TokenEvent
 from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
 from drowse.loom.errors import InvalidNodeOperationError, UnknownNodeError
 from drowse.loom.recipe import Recipe
+from drowse.readout.measurements import token_row_measurements
 from tests.support.replay import ReplayRig
 from tests.support.sessions import TinySessionFactory, register_vectors
 
@@ -30,13 +32,13 @@ _LENS_CORPUS = [
     "Every row of the batch reads its own tail.",
 ]
 
-_LIVE = TokenConsumer(
-    on_event=lambda _event: None,
-    options=TokenConsumerOptions(
-        live_scores=True, per_layer_scores=True,
-        lens_readout=True, sae_readout=True,
-    ),
-)
+def _live_consumer(events: list[TokenEvent]) -> TokenConsumer:
+    return TokenConsumer(
+        on_event=events.append,
+        options=TokenConsumerOptions(
+            live_scores=True, lens_readout=True, sae_readout=True,
+        ),
+    )
 
 _STEERING = "0.4 mood"
 
@@ -70,14 +72,23 @@ def _all_families_session(
 
 
 def _live_rows(session: Any) -> tuple[Any, dict[int, dict[str, Any]]]:
+    """Each token's live envelope (the token frame's, every per-layer trace
+    included), keyed by raw index; its loom row keeps the projection."""
+    events: list[TokenEvent] = []
     session.generate(
         "Say hi.", steering=_STEERING,
-        sampling=SamplingConfig(max_tokens=5), on_token=_LIVE,
+        sampling=SamplingConfig(max_tokens=5), on_token=_live_consumer(events),
     )
     node = session.tree.get(session.tree.active_node_id)
-    rows = {int(row["raw_index"]): row["measurements"] for row in node.tokens}
-    assert len(rows) == len(node.raw_token_ids) == 5
-    return node, rows
+    live: dict[int, Any] = {
+        int(cast(int, event.raw_index)): event.measurements for event in events
+    }
+    assert len(live) == len(node.raw_token_ids) == 5
+    for row in node.tokens:
+        assert row["measurements"] == token_row_measurements(
+            live[int(row["raw_index"])], per_layer=False,
+        )
+    return node, live
 
 
 def _replay(session: Any, family: str, node_id: str, k: int, **kw: Any) -> Any:

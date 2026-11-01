@@ -28,11 +28,13 @@ import type {
   LensProviderJSON,
   LensReadoutBlockJSON,
   MeasurementsEnvelopeJSON,
+  ProbeReadingJSON,
   SaeFeatureJSON,
   SaeReleaseJSON,
   TokenScore,
 } from "../types";
 import { resolveReadoutTopK } from "../readouts";
+import { geometryTracesKept } from "../tokenRows";
 import { pushToast } from "./toasts.svelte";
 import { createPreparationSlice } from "./preparations.svelte";
 import { effectiveRawMode } from "./chat.svelte";
@@ -203,7 +205,9 @@ export interface TokenHoverState {
   probeReadings: Record<string, AnyReadingJSON> | null;
   probes: Record<string, number> | null;
   coordsByProbe: Record<string, number[]> | null;
-  perLayerScores: Record<string, Record<string, number>> | null;
+  /** The hovered token's geometry readings replayed for their per-layer traces, which a saved row
+   *  does not keep; the cards draw their layer strips from them, their values from the capture. */
+  replayedLayers: Record<string, ProbeReadingJSON> | null;
   lensReadout: Record<string, LensReadoutPair[]> | null;
   lensAggregate: LensAggregateChip[] | null;
   saeReadout: SaeFeatureJSON[] | null;
@@ -220,7 +224,7 @@ export const tokenHoverState: TokenHoverState = $state({
   probeReadings: null,
   probes: null,
   coordsByProbe: null,
-  perLayerScores: null,
+  replayedLayers: null,
   lensReadout: null,
   lensAggregate: null,
   saeReadout: null,
@@ -254,13 +258,14 @@ export type LensReadoutPair = [string, number, number];
 /** The lens native readout block → the display shape the workspace cards and
  *  hover consume: per-layer ``[token, probability]`` (the wire carries
  *  logprob — ``exp()`` restores the displayed per-layer softmax probability)
- *  plus the ``[token, strength, com, spread, id]`` aggregate chips. */
+ *  plus the ``[token, strength, com, spread, id]`` aggregate chips.  A saved
+ *  row's block has the chips only (no ``layers``): its readout is empty. */
 export function lensReadoutSnapshot(
   block: LensReadoutBlockJSON | undefined,
 ): LensHoverSnapshot | null {
   if (!block) return null;
   return {
-    readout: Object.fromEntries(block.layers.map((row) => [
+    readout: Object.fromEntries((block.layers ?? []).map((row) => [
       String(row.layer),
       row.tokens.map((token): LensReadoutPair => [token.token, Math.exp(token.logprob), token.id]),
     ])),
@@ -304,6 +309,15 @@ function _fetchLensHover(
   ));
 }
 
+function _fetchGeometryHover(
+  nodeId: string,
+  rawIndex: number,
+  raw: boolean,
+): Promise<Record<string, ProbeReadingJSON>> {
+  return cachedTokenReadout("geometry", nodeId, rawIndex, { steered: true, raw }, undefined, "background")
+    .then((res) => res.measurements.instruments.geometry?.readings ?? {});
+}
+
 function _fetchSaeHover(
   nodeId: string,
   rawIndex: number,
@@ -319,9 +333,10 @@ function _fetchSaeHover(
 }
 
 /** Begin showing one transcript token in the inspector. Loom-owned captures
- * land synchronously; a channel absent from the original generation may be
- * replayed after a short dwell, but replay results are not substituted for or
- * retained as original capture data. */
+ * land synchronously; a channel absent from the original generation, and the
+ * per-layer traces a saved row does not keep (the geometry layers, the lens
+ * readout's layer rows), may be replayed after a short dwell, but replay
+ * results are not substituted for or retained as original capture data. */
 export function beginTokenHover(
   token: TokenScore,
   nodeId: string | null | undefined,
@@ -346,8 +361,7 @@ export function beginTokenHover(
   tokenHoverState.probeReadings = mergedReadings(m) ?? null;
   tokenHoverState.probes = m?.scores ?? token.probes ?? null;
   tokenHoverState.coordsByProbe = token.coordsByProbe ?? null;
-  tokenHoverState.perLayerScores =
-    m?.per_layer_scores ?? token.perLayerScores ?? null;
+  tokenHoverState.replayedLayers = null;
   tokenHoverState.lensReadout = null;
   tokenHoverState.lensAggregate = null;
   tokenHoverState.saeReadout = capturedSae?.features ?? null;
@@ -363,24 +377,39 @@ export function beginTokenHover(
   }
 
   if (!nodeId || rawIndex === null) return;
-  const needsLens = capturedLens === undefined &&
+  // A saved row keeps the lens chips without their layer rows: those replay.
+  const needsLens = capturedLens?.layers === undefined &&
     sessionState.info?.jlens_fitted === true &&
     instrumentFamily("lens")?.capabilities.token_readout === true;
   const needsSae = capturedSae === undefined && saeLoaded() &&
     instrumentFamily("sae")?.capabilities.token_readout === true;
+  // A saved row keeps each geometry reading's summary: its layer strips replay.
+  const capturedGeometry = m?.instruments.geometry?.readings;
+  const needsGeometry = capturedGeometry !== undefined && !geometryTracesKept(capturedGeometry) &&
+    instrumentFamily("geometry")?.capabilities.token_readout === true;
   tokenHoverState.lensLoading = needsLens;
   tokenHoverState.saeLoading = needsSae;
-  if (!needsLens && !needsSae) return;
+  if (!needsLens && !needsSae && !needsGeometry) return;
 
   _hoverFetchTimer = setTimeout(() => {
     _hoverFetchTimer = null;
+    if (needsGeometry) {
+      void _fetchGeometryHover(nodeId, rawIndex, raw)
+        .then((readings) => {
+          if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+          tokenHoverState.replayedLayers = readings;
+        })
+        // The strips stay empty; the captured values still show.
+        .catch(() => undefined);
+    }
     if (needsLens) {
       void _fetchLensHover(nodeId, rawIndex, raw)
         .then((snapshot) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;
           if (!snapshot) return;
           tokenHoverState.lensReadout = snapshot.readout;
-          tokenHoverState.lensAggregate = snapshot.aggregate;
+          // The captured chips stand; the replay fills only what the row did not keep.
+          if (tokenHoverState.lensAggregate === null) tokenHoverState.lensAggregate = snapshot.aggregate;
         })
         .catch((error) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;

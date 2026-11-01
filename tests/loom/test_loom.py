@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import json
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -1294,6 +1295,89 @@ def test_node_reader_refuses_lens_readout_rows_without_ids(where: str):
     del entry["id"]
     with pytest.raises(LoomTreeError, match="no vocabulary id"):
         LoomTree.from_dict(raw)
+
+
+def _geometry_row_reading() -> dict[str, Any]:
+    return {
+        "fraction": 0.5, "nearest": [["calm", 1.0]], "coords": [0.25],
+        "residual": 0.0, "assignment": [["calm", 0.9]], "membership": 1.0,
+        "depth_com": [0.5], "depth_spread": [0.1],
+    }
+
+
+def _row_tree(row: dict[str, Any]) -> tuple[LoomTree, dict[str, Any]]:
+    tree = _seed_tree()
+    raw = tree.to_dict(include_tokens=True)
+    node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)
+    node["tokens"] = [row]
+    node["raw_token_ids"] = [7]
+    return tree, raw
+
+
+def test_node_reader_reads_the_6_0_row_shape():
+    """A summary row and a row that kept its per-layer traces both load."""
+    reading = _geometry_row_reading()
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+        "scores": {"calm": 0.25},
+        "instruments": {"geometry": {"readings": {"calm": reading}}},
+    }
+    row = {"token_id": 7, "text": "x", "logprob": -0.1, "perplexity": 1.1,
+           "raw_index": 0, "measurements": envelope}
+    _tree, raw = _row_tree(row)
+    assert LoomTree.from_dict(raw)
+    reading.update({
+        "fraction_per_layer": {"0": 0.5}, "coords_per_layer": {"0": [0.25]},
+        "residual_per_layer": {"0": 0.0},
+    })
+    assert LoomTree.from_dict(raw)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda row: row.update(probes={"calm": 0.25}), "pre-6.0 shape.*'probes'"),
+        (
+            lambda row: row.update(per_layer_scores={"0": {"calm": 0.25}}),
+            "pre-6.0 shape.*'per_layer_scores'",
+        ),
+        (
+            lambda row: row["measurements"].update(per_layer_scores={"0": {"calm": 0.25}}),
+            "pre-6.0 shape.*envelope per_layer_scores",
+        ),
+        (
+            lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
+            .update(subspace_coords_per_layer={"0": [0.1]}),
+            "pre-6.0 shape.*subspace coordinates on reading 'calm'",
+        ),
+        (
+            lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
+            .update(fraction_per_layer={"0": 0.5}),
+            "plus all of",
+        ),
+        (lambda row: row.update(hidden={"0": [1.0]}), "unknown loom token row field 'hidden'"),
+    ],
+)
+def test_node_reader_refuses_pre_6_0_token_rows(
+    mutate: Callable[[dict[str, Any]], None], message: str,
+):
+    """Regression: a 6.0 row keeps each reading's summary once
+    (``token_row_measurements``).  The unreleased earlier shapes of token
+    sidecar 3 / envelope 2 (a row-level score copy, the layer-major
+    ``per_layer_scores`` map, the inspector's subspace coordinates on every
+    token) are refused with a plain error rather than handed to readers that
+    no longer expect them."""
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+        "scores": {"calm": 0.25},
+        "instruments": {"geometry": {"readings": {"calm": _geometry_row_reading()}}},
+    }
+    row: dict[str, Any] = {"token_id": 7, "text": "x", "measurements": envelope}
+    mutate(row)
+    _tree, raw = _row_tree(row)
+    with pytest.raises(LoomTreeError, match=message):
+        LoomTree.from_dict(raw)
+
 
 def test_sidecar_token_rows_are_type_checked_by_the_node_reader(tmp_path: Path):
     tree = _seed_tree()

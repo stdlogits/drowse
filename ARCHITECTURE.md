@@ -535,7 +535,7 @@ queue before the remaining layers and the LM head are enqueued.
 
 ### 7.4 One measurement envelope
 
-`readout/measurements.py` builds the one versioned record (`version: 1`) used
+`readout/measurements.py` builds the one versioned record (`version: 2`) used
 by native WebSocket token frames, final aggregates, persisted loom rows and
 replay endpoints:
 
@@ -544,7 +544,7 @@ replay endpoints:
   version,
   scope: token | aggregate | replay,
   provenance: captured | replayed,
-  scores, per_layer_scores,
+  scores,
   instruments: {
     geometry: {binding?, readings},
     lens:     {binding, readings?, readout?},
@@ -558,7 +558,16 @@ replay endpoints:
 `readings` are attached probes in each family's native shape; `readout` is the
 family's discovery surface (the J-lens layer-by-vocabulary matrix and aggregate
 chips, the SAE's active features). The flat `scores` are derived joins for
-cross-family consumers such as token tinting, not separate measurements.
+cross-family consumers such as token tinting, not separate measurements; a
+reading's per-layer trace lives in the reading alone. A loom token row keeps
+`token_row_measurements(envelope)`: each geometry reading's summary and each
+scalar reading once, floats at `ROW_DECIMALS` (4) places, the lens readout's
+aggregate chips without its per-layer matrix, and never the probe inspector's
+subspace coordinates; a call
+with `persist_per_layer_scores` keeps the per-layer traces too. Otherwise the
+per-layer views replay the token (section 7.5) while a model is loaded. A
+SmolLM2 row with the 17 default probes, a curved probe and the lens readout
+is about 7 kB, where the whole envelope is about 118 kB.
 Bindings record source and steering context, so a historical row stays
 interpretable after the active lens or SAE changes; the lens binding names a
 source per lens family (`sources.R`, `sources.S`) that produced the row. A

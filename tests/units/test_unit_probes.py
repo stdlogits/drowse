@@ -141,7 +141,8 @@ def test_probes_and_gates_read_heads_of_both_gemma4_sizes(tmp_path: Path) -> Non
         replayed = replay["measurements"]["instruments"]["units"]["readings"]
         row = node.tokens[0]["measurements"]["instruments"]["units"]["readings"]
         for name in readings:
-            assert replayed[name]["value"] == pytest.approx(row[name]["value"], abs=1e-5)
+            # The row keeps ROW_DECIMALS places.
+            assert replayed[name]["value"] == pytest.approx(row[name]["value"], abs=6e-5)
         # A gate on a 16-wide head while 8-wide heads are probed.
         register_vectors(session, "v")
 
@@ -187,14 +188,16 @@ def test_unit_probes_ride_the_generation(tiny_session: Any) -> None:
     assert set(head["meta"]) == {"unit", "write_norm"}
     assert head["value"] >= 0
     assert result.measurements["scores"]["h"] == head["value"]
-    # Every loom token row carries the live readings, and the aggregate is
+    # Every loom token row carries the live readings (at the row's
+    # ROW_DECIMALS places, without the one-layer trace), and the aggregate is
     # one of them (the last content token's).
     node = session.tree.nodes[session.tree.active_node_id]
     rows = [row["measurements"]["instruments"]["units"]["readings"] for row in node.tokens]
     assert len(rows) == len(node.tokens) > 0
+    assert all(set(row["h"]) == {"value", "unit", "per_layer", "depth", "meta"} for row in rows)
     assert any(
-        abs(row["h"]["value"] - head["value"]) < 1e-6
-        and abs(row["neuron/L1n3"]["value"] - neuron["value"]) < 1e-6
+        abs(row["h"]["value"] - head["value"]) < 6e-5
+        and abs(row["neuron/L1n3"]["value"] - neuron["value"]) < 6e-5
         for row in rows
     )
     # The token replay rebuilds the same forward and reads the same value.
@@ -203,7 +206,7 @@ def test_unit_probes_ride_the_generation(tiny_session: Any) -> None:
     assert envelope["scope"] == "replay" and envelope["provenance"] == "replayed"
     replayed = envelope["instruments"]["units"]["readings"]
     for name in ("neuron/L1n3", "h"):
-        assert replayed[name]["value"] == pytest.approx(rows[0][name]["value"], abs=1e-5)
+        assert replayed[name]["value"] == pytest.approx(rows[0][name]["value"], abs=6e-5)
     # Hooks existed only while the generation read them.
     assert not session.units.hooks_attached
     for block in session.units.runtime.spec().blocks:

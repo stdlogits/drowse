@@ -70,17 +70,18 @@ class SamplingConfig:
     # prompt so steer baseline matches extract baseline.
     user_role: str | None = None
     assistant_role: str | None = None
-    # Persist per-layer probe heatmaps on loom token rows.  Aggregate probe
-    # scores are cheap enough to keep by default for reloadable highlights;
-    # this heavier layer×probe payload is opt-in for surfaces such as the
-    # native dashboard token drilldown.
+    # Keep each token reading's per-layer traces (and the lens readout's
+    # per-layer rows) on the loom token rows.  A row always keeps each
+    # reading's summary (``token_row_measurements``); the traces are the heavy
+    # part (a probe × layer grid per token), so they are opt-in: without them
+    # the per-layer views replay the token while a model is loaded.
     persist_per_layer_scores: bool = False
-    # Persist per-layer whitened subspace coords on each token's probe reading
-    # (``ProbeReading.subspace_coords_per_layer``) — the live point + fading
-    # trail for the dashboard probe-inspector geometry plot.  Heavier than the
-    # default per-token reading and only consumed by that one surface, so opt-in;
-    # set true by the native dashboard only while the inspector is open.  Forces
-    # per-token incremental scoring (else no per-token reading is produced).
+    # Compute per-layer whitened subspace coords on each token's live probe
+    # reading (``ProbeReading.subspace_coords_per_layer``): the live point and
+    # fading trail of the dashboard probe-inspector geometry plot.  They ride
+    # the live token stream only; a loom row never keeps them (the field name
+    # predates that and is a persisted recipe key).  Forces per-token
+    # incremental scoring (else no per-token reading is produced).
     persist_subspace_coords: bool = False
     # Return final aggregate probe readings on the result.  True preserves the
     # existing API contract.  False is a real control-path optimization for

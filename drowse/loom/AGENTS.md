@@ -111,6 +111,14 @@ restore), and a 5.x row's lens binding has another shape. It also refuses a
 row whose lens readout entry (aggregate or per-layer) lacks its vocabulary
 `id`: version 2 was never released without one, readers key the readout by
 id, and an unreleased pre-6.0 row or an outdated producer would collide.
+A row's keys are exactly `token_id`, `text`, `logprob`, `sampler_entropy`
+(the browser runtime's), `perplexity`, `raw_index`, `top_alts` and
+`measurements` (each optional); its envelope is
+`readout/measurements.py::token_row_measurements` of the token's envelope.
+The reader refuses the earlier unreleased sidecar-3 shapes by what they
+carry: a row-level `probes` or `per_layer_scores` copy, an envelope
+`per_layer_scores` map, a geometry reading with `subspace_coords_per_layer`
+or with some but not all of its three per-layer traces.
 
 `to_dict()` omits token payloads; `GET /tree` sends `include_tokens=True` and
 `PUT /tree` reads it back. `save` writes the JSON atomically after a gzip
@@ -339,7 +347,7 @@ probe  := [ns "/"] NAME ["." NAME] | "sae/" INT
 Deliberately separate from `@when:`, which gates live per-step readings; this
 filters what the loom persisted. `agg:` reads `aggregate_readings`. `any:`
 (max for `>`/`>=`, min for `<`/`<=`) and `last:` read the node's own rows,
-thinking first, from `measurements.scores` (never the flat `probes` map),
+thinking first, from `measurements.scores` (rounded to the row's 4 places),
 skipping rows without the probe. A missing probe makes the clause false. No
 OR, negation or grouping; compose with `LoomTree.filter(pred)`. Keys go
 through `readout/types.py::parse_gate_ref`: `name[0]` normalizes to `name`,

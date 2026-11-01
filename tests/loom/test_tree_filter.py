@@ -233,16 +233,6 @@ def test_token_series_reads_thinking_then_response_rows():
     assert parse_filter("any:angry > 0.8").evaluate(node) is True
 
 
-def test_token_series_reads_the_measurements_envelope_only():
-    """The row-level ``probes`` alias is not a second score source."""
-    node = _SyntheticNode(
-        {"angry": 0.0},
-        tokens=[{"text": "a", "probes": {"angry": 0.7}}],
-    )
-    assert node_token_series(node, frozenset({"angry"})) == {}
-    assert parse_filter("any:angry > 0.5").evaluate(node) is False
-
-
 def test_sae_feature_keys_filter():
     """Regression: ``sae/<id>`` aggregates are persisted but used to be
     unparseable."""

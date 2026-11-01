@@ -114,12 +114,11 @@ export interface SaeTokenReadoutJSON {
 
 // --------------------------------- 5.x measurement envelope (token wire) --
 //
-// The single JSON-safe read-side record — the same object on the WS ``token``
-// frame, the loom token row (``measurements`` key), and the token-readout
-// replay endpoint (wrapped in ``{measurements}``).  It replaces the former
-// ``captured`` record and the six top-level per-token aliases (``scores`` /
-// ``per_layer_scores`` / ``probe_readings`` / ``lens_readout`` /
-// ``lens_aggregate`` / ``sae_readout``); see drowse.readout.measurements.
+// The single JSON-safe read-side record on the WS ``token`` frame (whole),
+// the loom token row (``measurements`` key: its ``token_row_measurements``
+// projection, each reading's summary at 4 places and no per-layer traces
+// unless the call persisted them), and the token-readout replay endpoint
+// (wrapped in ``{measurements}``); see drowse.readout.measurements.
 
 /** Either family's reading shape, as it arrives inside the envelope. */
 export type AnyReadingJSON = ProbeReadingJSON | ScalarReadingJSON;
@@ -604,10 +603,10 @@ export interface WSTokenEvent {
    * sibling render during n-way regen.  Optional. */
   node_id: string | null;
   /** The 5.x measurement envelope — the single read-side record carrying the
-   *  per-family ``instruments`` (geometry / lens / sae ``readings`` +
-   *  ``readout``) plus the flat ``scores`` / ``per_layer_scores`` views.  The
-   *  identical object is persisted on the loom token row.  Omitted when
-   *  nothing was measured, so clients read it defensively. */
+   *  per-family ``instruments`` (``readings`` + ``readout``) plus the flat
+   *  ``scores`` view, whole: every per-layer trace.  The loom token row keeps
+   *  its projection.  Omitted when nothing was measured, so clients read it
+   *  defensively. */
   measurements?: MeasurementsEnvelopeJSON;
 }
 
@@ -659,14 +658,11 @@ export interface WSErrorEvent {
 
 /** Wire-shape mirror of drowse.loom.tree.LoomNode.  Optional fields are
  * absent on the wire when null/empty server-side to keep payloads slim. */
-/** One token-row inside a node's ``tokens`` / ``thinking_tokens`` array.
- *  Server-side token rows have required identity/score fields plus
- *  feature-dependent optional capture channels; the
- *  fields below are the ones the engine's ``TokenTap`` stamps and the
- *  ones the webui knows how to consume.  All optional because the engine
- *  legitimately omits some on certain paths (e.g. ``top_alts`` only when
- *  ``return_top_k > 0``; ``probes`` / ``per_layer_scores`` only when the
- *  monitor has probes loaded; ``raw_index`` is stamped at finalize and
+/** One token-row inside a node's ``tokens`` / ``thinking_tokens`` array:
+ *  exactly these keys (the loom reader refuses any other, and the earlier
+ *  row-level ``probes`` / ``per_layer_scores`` copies; ``lib/tokenRows.ts``
+ *  is the client's check).  All optional because the engine legitimately
+ *  omits some (``top_alts`` only when ``return_top_k > 0``; ``raw_index`` is
  *  absent for transcript-imported nodes). */
 export interface LoomTokenRowJSON {
   token_id?: number | null;
@@ -676,18 +672,12 @@ export interface LoomTokenRowJSON {
   perplexity: number | null;
   top_alts?: { id: number; text: string; logprob: number }[];
   raw_index?: number | null;
-  /** Per-token magnitude-weighted aggregate probe score
-   *  (``score_single_token``), persisted at append time.  Drives the
-   *  highlight tint when the user rehydrates a tree across page refresh. */
-  probes?: Record<string, number>;
-  /** Per-layer × per-probe heatmap — each reading's ``coords_per_layer``
-   *  axis 0, flattened server-side by ``token_payloads._per_layer_axis0``
-   *  and keyed by stringified layer index.  Drives the token-drilldown
-   *  drawer's heatmap on rehydrated turns. */
-  per_layer_scores?: Record<string, Record<string, number>>;
-  /** The 5.x measurement envelope captured by the original generation. This
-   * survives tree rehydration and explicit loom save/load without replaying
-   * the model. Replaces the pre-5.x ``captured`` record. */
+  /** The row projection of the token's measurement envelope
+   *  (``token_row_measurements``): the flat ``scores`` (the highlight tint),
+   *  each geometry reading's summary, each scalar reading whole, the lens
+   *  aggregate chips, at 4 places. The per-layer views replay the token while
+   *  the model is loaded; a row keeps the geometry traces and the lens
+   *  readout's ``layers`` only when its call set ``persist_per_layer_scores``. */
   measurements?: MeasurementsEnvelopeJSON;
 }
 
@@ -766,9 +756,6 @@ export interface TokenScore {
   coordsByProbe?: Record<string, number[]>;
   /** Token-id from the WS event when available — useful for debugging. */
   tokenId?: number | null;
-  /** Per-layer × per-probe heatmap data captured during streaming.
-   * Drives the click-token drilldown drawer. */
-  perLayerScores?: Record<string, Record<string, number>>;
   /** Logit-pass: chosen-token post-sampler logprob. Absent on imported
    *  turns and when no consumer requested log-softmax capture. Drives the inline ``surprise`` highlight
    *  mode and the token drilldown's logits tab. */

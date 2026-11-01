@@ -284,7 +284,7 @@ class TokenEvent:
     perplexity: float | None = None
     # The 5.x measurement envelope for this step (scope ``"token"``) — the one
     # wire record carrying every read-side channel: geometry / lens / SAE
-    # ``instruments`` plus the flat ``scores`` / ``per_layer_scores`` views
+    # ``instruments`` plus the flat ``scores`` view
     # (:func:`drowse.readout.measurements.build_measurements`).  It replaces the
     # former ``lens_readout`` / ``lens_aggregate`` / ``sae_readout`` fields and
     # the loom-owned ``captured`` record.  ``None`` when nothing was measured
