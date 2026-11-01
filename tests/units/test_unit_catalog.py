@@ -525,3 +525,31 @@ def test_a_bound_catalog_sets_the_reading_scale_and_the_token_mask(
     assert session.units.reads.catalog.remove()
     assert session.units.runtime.scales().source == "neutral"
     assert session.lens.token_embeddings().mask_source == "tokenizer"
+
+
+def test_a_unit_probe_digest_follows_a_catalog_bound_after_attach(
+    hub: dict[str, Any], monkeypatch: pytest.MonkeyPatch, make_tiny_session: Any,
+) -> None:
+    """Regression: the digest kept the reading scale from attach while every
+    run's tap read the scales current at bind, so after a catalog was bound
+    the readings divided by the catalog's act_top under a digest that still
+    named the neutral scale (and the roster cached it)."""
+    from drowse.generation.sampling import SamplingConfig
+
+    session = make_tiny_session()
+    monkeypatch.setattr(cat, "CATALOG_MODELS", {
+        **cat.CATALOG_MODELS, session.model_id.lower(): cat.CatalogModel(session.model_id, SLUG),
+    })
+    session.add_probe("neuron/L1n3")
+    neutral = session.probe_hashes()["neuron/L1n3"]
+    session.generate("hello", sampling=SamplingConfig(max_tokens=2, seed=0))
+    assert session.probe_hashes()["neuron/L1n3"] == neutral, "same scales: same digest"
+    session.units.fetch_catalog()
+    result = session.generate("hello", sampling=SamplingConfig(max_tokens=2, seed=0)).first
+    assert result.measurements is not None
+    bound = session.probe_hashes()["neuron/L1n3"]
+    assert bound != neutral
+    # The digest is what a fresh attach under the catalog would name.
+    session.remove_probe("neuron/L1n3")
+    session.add_probe("neuron/L1n3")
+    assert session.probe_hashes()["neuron/L1n3"] == bound

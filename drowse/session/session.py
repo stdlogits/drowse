@@ -501,6 +501,7 @@ class DrowseSession:
             put_direction=self._registry.put_profile,
             has_direction=lambda name: name in self._registry.profiles,
             reader=self._unit_reader,
+            on_change=lambda names: self._roster.changed(names),
         )
         # The node replay: one tapped forward over a node's tokens (split
         # where the open steering's triggers fired differently), read as

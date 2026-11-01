@@ -167,7 +167,9 @@ units plan declares no residual layers: the family is invisible to
 
 **Other surfaces.** `attach(selector, as_name=)` (the roster routes `neuron/`
 and `head/`), `try_detach`, `specs` (`{unit, kind, layer, index}`), `names`,
-`probe_hash` (the unit plus its reading scale and source), `live_state`/`set_live`
+`probe_hash` (the unit plus its reading scale and source, snapshotted at
+attach and re-taken when a run's tap binds to other scales, which drops the
+roster's cached digest), `live_state`/`set_live`
 (all-or-nothing, no extras), `active_source` (`None`: no source lifecycle),
 `token_readout` (replays the producing forward with a depth-1 tap attached
 inside the replay's exclusive section; `top_k` and `layers` are 400).

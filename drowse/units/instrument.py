@@ -183,6 +183,12 @@ class UnitsRun:
         self._stash = None
 
 
+def _scale_identity(scales: UnitScales, scale: torch.Tensor) -> tuple[str, tuple[float, ...]]:
+    """A probe's scale snapshot for its digest: the scales' detail (which
+    names the source) and the unit's values (one small host read)."""
+    return scales.detail, tuple(round(float(v), 9) for v in scale.reshape(-1).tolist())
+
+
 class UnitsInstrument:
     """Session-lifetime handle for the units read family."""
 
@@ -203,6 +209,7 @@ class UnitsInstrument:
         put_direction: Callable[[str, dict[int, torch.Tensor]], None],
         has_direction: Callable[[str], bool],
         reader: "UnitReader | None" = None,
+        on_change: Callable[[list[str]], None] | None = None,
     ) -> None:
         #: The model's units: discovery, validation, sites, write directions.
         self.runtime = runtime
@@ -217,9 +224,14 @@ class UnitsInstrument:
         self._has_direction = has_direction
         #: Attached unit probes: name -> {unit, kind, layer, index}.
         self.probes: dict[str, dict[str, Any]] = {}
-        # Each probe's reading scale at attach, with its source (its digest's
-        # unit identity).
+        # Each probe's reading scale with its source (its digest's unit
+        # identity): taken at attach and again whenever a run's tap binds to
+        # other scales (a catalog bound since), so the digest names the
+        # scale the latest readings divide by.
         self._scales: dict[str, tuple[str, tuple[float, ...]]] = {}
+        self._scales_basis: UnitScales | None = None
+        #: Called with the probe names whose digests changed.
+        self._on_change = on_change if on_change is not None else (lambda _names: None)
         self._live = True
         self.state_lock = threading.RLock()
         self.current_run = UnitsRun(self, InstrumentBinding(family=self.family))
@@ -247,10 +259,7 @@ class UnitsInstrument:
             name = as_name if as_name is not None else ref.qualified
             with self.state_lock:
                 self.probes[name] = _spec(ref)
-                self._scales[name] = (
-                    scales.detail,
-                    tuple(round(float(v), 9) for v in scale.reshape(-1).tolist()),
-                )
+                self._scales[name] = _scale_identity(scales, scale)
         return name
 
     def try_detach(self, name: str) -> bool:
@@ -272,8 +281,8 @@ class UnitsInstrument:
 
     def probe_hash(self, name: str) -> str | None:
         """The unit plus the reading scale (and its source) that sets its
-        reading's unit (taken at attach, so a digest never needs the
-        exclusive section)."""
+        reading's unit: the latest bound run's, else attach's (snapshots, so
+        a digest never needs the exclusive section)."""
         with self.state_lock:
             spec = self.probes.get(name)
             if spec is None:
@@ -442,10 +451,31 @@ class UnitsInstrument:
                 name=name, site=site, block=runtime.block(ref.layer),
                 scale=self._scale(scales, ref),
             ))
+        self._resnapshot_scales(scales)
         return UnitTap(
             entries, device=runtime.device, dtype=self._dtype, depth=depth,
             scale_source=scales.source,
         )
+
+    def _resnapshot_scales(self, scales: UnitScales) -> None:
+        """Re-take every attached probe's scale snapshot when the tap binds to
+        another :class:`UnitScales` than the last (a catalog bound or released
+        since), and tell the roster which digests changed."""
+        if scales is self._scales_basis:
+            return
+        with self.state_lock:
+            refs = {name: _ref(spec) for name, spec in self.probes.items()}
+        fresh = {name: _scale_identity(scales, self._scale(scales, ref)) for name, ref in refs.items()}
+        with self.state_lock:
+            changed = [
+                name for name, identity in fresh.items()
+                if name in self.probes and self._scales.get(name) != identity
+            ]
+            for name in changed:
+                self._scales[name] = fresh[name]
+            self._scales_basis = scales
+        if changed:
+            self._on_change(changed)
 
     @staticmethod
     def _scale(scales: UnitScales, ref: UnitRef) -> torch.Tensor:
