@@ -494,35 +494,37 @@ def test_sse_send_failure_keeps_lock_until_real_worker_exits() -> None:
 
 
 
-def test_outbound_queue_bounds_pending_thread_callbacks() -> None:
-    from drowse.server.ws_stream import _OutboundQueue, MAX_WS_OUTBOUND_EVENTS
-
-    async def scenario() -> None:
-        overflows: list[bool] = []
-        queue = _OutboundQueue[int](lambda: overflows.append(True))
-        for i in range(10_000):
-            queue.put(i)
-        await asyncio.sleep(0)
-        assert overflows == [True]
-        assert [await queue.get() for _ in range(MAX_WS_OUTBOUND_EVENTS)] == list(range(MAX_WS_OUTBOUND_EVENTS))
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(queue.get(), 0.01)
-        queue.close()
-    asyncio.run(scenario())
-
-
-def test_slow_tree_subscriber_is_disconnected() -> None:
+def test_slow_tree_subscriber_lags_and_resyncs() -> None:
+    """Regression: a reader behind on tree deltas was closed with 1013."""
     from drowse.events import LoomMutated
     from drowse.server.ws_stream import MAX_WS_OUTBOUND_EVENTS
 
     async def scenario() -> None:
         session = StubSession()
-        async with _socket(session, asyncio.Event()) as (_, outgoing, task):
-            for rev in range(MAX_WS_OUTBOUND_EVENTS + 10):
+        gate = asyncio.Event()
+        async with _socket(session, gate) as (_, outgoing, task):
+            total = MAX_WS_OUTBOUND_EVENTS + 10
+            for rev in range(total):
                 session.events.emit(LoomMutated(op="cast", rev=rev))
-            frame = await asyncio.wait_for(outgoing.get(), 2)
-            assert frame["type"] == "websocket.close" and frame["code"] == 1013
-            await asyncio.wait_for(task, 2)
+            await asyncio.sleep(0.05)
+            assert outgoing.empty() and not task.done()
+            gate.set()
+            revs: list[int] = []
+            async with asyncio.timeout(2):
+                while True:
+                    message = await outgoing.get()
+                    assert message["type"] == "websocket.send", message
+                    frame = json.loads(message["text"])
+                    if frame["type"] == "resync":
+                        break
+                    revs.append(frame["rev"])
+            assert revs == list(range(len(revs))) and len(revs) <= MAX_WS_OUTBOUND_EVENTS + 1
+            assert frame["dropped"] == total - len(revs)
+            # Live again: the next delta arrives as itself.
+            session.events.emit(LoomMutated(op="cast", rev=total))
+            frame = json.loads((await asyncio.wait_for(outgoing.get(), 2))["text"])
+            assert frame["type"] == "tree_mutated" and frame["rev"] == total
+            assert not task.done()
         assert not session.generation_state.is_stop_requested()
     asyncio.run(scenario())
 
