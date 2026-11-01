@@ -57,6 +57,14 @@ try {
   assert.equal(fanoutRecipe(catalog[0], "deceptive", -0.5), "steering=-0.5 default/honest.deceptive%deceptive");
   assert.equal(fanoutRecipe(catalog[0], "honest", 0.1 + 0.2), "steering=0.3 default/honest.deceptive%honest", "the strength as %g");
   assert.equal(fanoutRecipe(catalog[0], "0.3 jlens/x + honest", 0.3), null, "only one of its nodes");
+  // Regression: a variation anchors on a committed turn, whose anchor recipe (the nearest generated
+  // ancestor's) outranked the call's sampling, so the siblings ran at an earlier reply's max_tokens
+  // whatever the composer said. The composer's sampling rides the partial recipe, which outranks it.
+  assert.equal(
+    fanoutRecipe(catalog[0], "honest", 0.6, { temperature: 0.7, top_p: 0.9, top_k: 40, max_tokens: 40, seed: 3 }),
+    "steering=0.6 default/honest.deceptive%honest, temperature=0.7, top_p=0.9, top_k=40, max_tokens=40",
+  );
+  assert.equal(fanoutRecipe(catalog[0], "honest", 0.6, { max_tokens: 40, top_k: null }), "steering=0.6 default/honest.deceptive%honest, max_tokens=40");
   assert.deepEqual(parseStrengthList("0, 0.3, -1"), [0, 0.3, -1]);
   assert.deepEqual(parseStrengthList("linspace(-1, 1, 5)"), [-1, -0.5, 0, 0.5, 1]);
   assert.deepEqual(parseStrengthList("0:1:0.25"), [0, 0.25, 0.5, 0.75, 1]);

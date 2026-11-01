@@ -11,18 +11,37 @@ export function fanoutConcepts(catalog: readonly ManifoldInfo[]): ManifoldInfo[]
   return catalog.filter((row) => row.fitted_for_session && fitGeometry(row) === "flat" && row.node_labels.length > 0);
 }
 
+/** The composer's sampling a fan-out carries into each variation's partial recipe. */
+export interface FanoutSampling {
+  temperature?: number | null;
+  top_p?: number | null;
+  top_k?: number | null;
+  max_tokens?: number | null;
+}
+
+const FANOUT_SAMPLING_FIELDS = ["temperature", "top_p", "top_k", "max_tokens"] as const;
+
 /** One variation's partial recipe: steered by ``info`` toward its node ``toward`` alone, at
- *  ``alpha``, written as the chips write it (``steering=-0.5 default/honest.deceptive%honest``);
- *  ``null`` when ``toward`` is not one of its nodes. Picked, never typed: the dashboard takes no
- *  recipe text. */
-export function fanoutRecipe(info: ManifoldInfo, toward: string, alpha: number): string | null {
+ *  ``alpha``, written as the chips write it (``steering=-0.5 default/honest.deceptive%honest``),
+ *  then the composer's ``sampling`` (``temperature``, ``top_p``, ``top_k``, ``max_tokens``). A
+ *  variation anchors on a committed turn, whose regen anchor is the nearest generated ancestor's
+ *  recipe, and that anchor outranks the call's own sampling; the partial recipe outranks the
+ *  anchor, so the variations run at what the composer shows. ``null`` when ``toward`` is not one
+ *  of its nodes. Picked, never typed: the dashboard takes no recipe text. */
+export function fanoutRecipe(
+  info: ManifoldInfo, toward: string, alpha: number, sampling: FanoutSampling | null = null,
+): string | null {
   const index = info.node_labels.indexOf(toward);
   if (index < 0) return null;
   const term = formatTerm(`${info.namespace}/${info.name}`, {
     mode: "subspace", ablate: false, coords: [...(info.node_coords[index] ?? [])], label: toward,
     variant: "raw", trigger: "BOTH", enabled: true,
   }, alpha);
-  return `steering=${term}`;
+  const fields = FANOUT_SAMPLING_FIELDS.flatMap((key) => {
+    const value = sampling?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? [`${key}=${value}`] : [];
+  });
+  return [`steering=${term}`, ...fields].join(", ");
 }
 
 /** Parse a fan-out alpha string (comma list / ``linspace(a, b, n)`` /
