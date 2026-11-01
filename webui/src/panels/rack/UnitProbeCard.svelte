@@ -5,7 +5,7 @@
   // as strong as its neutral top; below zero, a neuron's − pole). Choosing the row tints the reply
   // by it and shows the unit in the Inspector, whose Probing button detaches it (as a geometry
   // probe's row leads to its inspector), so the row lines up with every other probe's.
-  import { MorphText } from "@stdlogits/ledger";
+  import LiveText from "../../lib/ui/LiveText.svelte";
   import type { ProbeRackEntry, ScalarReadingJSON, UnitsProbeInfo } from "../../lib/types";
   import Bar from "../../lib/charts/Bar.svelte";
   import Trace from "../../lib/charts/Trace.svelte";
@@ -47,7 +47,7 @@
     {/if}
   {/snippet}
   {#snippet value()}
-    {#if reading !== null}<MorphText text={readingText(reading, { signed: info.kind === "neuron" })} />{:else}–{/if}
+    {#if reading !== null}<LiveText text={readingText(reading, { signed: info.kind === "neuron" })} />{:else}–{/if}
   {/snippet}
 </InstrumentRow>
 

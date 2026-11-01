@@ -5,7 +5,8 @@
   // on the panel's shared scale, so meters and numbers rank alike. Pinned (a persistent ``sae/<id>``
   // probe), the row can be chosen: the reply is tinted by it and the Inspector shows its trace.
   // Unpinned (a feature the live readout found), its marker pins it.
-  import { Meter, MorphText } from "@stdlogits/ledger";
+  import { Meter } from "@stdlogits/ledger";
+  import LiveText from "../../lib/ui/LiveText.svelte";
   import { readingText } from "../../lib/charts/depth";
   import { detachProbe, highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
@@ -91,7 +92,7 @@
   {/snippet}
   {#snippet value()}
     {#if !measured}<span aria-hidden="true">–</span><span class="sr-only">Not measured</span>
-    {:else}<MorphText text={readingText(strength ?? rawValue)} />{/if}
+    {:else}<LiveText text={readingText(strength ?? rawValue)} />{/if}
   {/snippet}
   {#snippet action()}
     <ProbePinButton
