@@ -111,7 +111,7 @@ export function validateConversationSnapshot(
   nonempty(snapshot.model_id, "model id");
   nonempty(snapshot.session_id, "session id");
   const tree = record(snapshot.tree, "conversation tree");
-  finiteInteger(tree.tree_format, "tree format");
+  if (tree.tree_format !== 2) invalid("tree format");
   nonempty(tree.drowse_version, "tree Drowse version");
   nonempty(tree.root_id, "tree root id");
   nonempty(tree.active_node_id, "tree active node id");

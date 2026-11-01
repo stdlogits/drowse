@@ -179,6 +179,20 @@ try {
     row.measurements.instruments.geometry.readings.calm.fraction_per_layer = { 3: 0.4 };
   }), keys), /part of its layer traces/);
   assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => { row.id = 7; }), keys), /unknown field id/);
+
+  // tests/fixtures/token_rows.json, shared with tests/loom/test_loom.py: the browser's row check
+  // refuses exactly what the loom reader refuses (an envelope of another version, a geometry reading
+  // that is not the summary, a lens readout entry without its id), so a snapshot the server's
+  // PUT /tree would refuse is never stored or listed as valid.
+  const { tokenRowProblem } = await server.ssrLoadModule("/src/lib/tokenRows.ts");
+  const tokenRows = JSON.parse(readFileSync(new URL("../../tests/fixtures/token_rows.json", import.meta.url), "utf8"));
+  for (const c of tokenRows.accepted) assert.equal(tokenRowProblem(structuredClone(c.row)), null, c.name);
+  for (const c of tokenRows.refused) assert.notEqual(tokenRowProblem(structuredClone(c.row)), null, c.name);
+  assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => { row.measurements.version = 1; }), keys),
+    /Unreadable token row: its measurements are version 1/);
+  const futureTree = structuredClone(snapshot);
+  futureTree.tree.tree_format = 999;
+  assert.throws(() => validateConversationSnapshot(futureTree, keys), /tree format/);
   const plan = buildConversationImportPlan(snapshot);
   assert.equal(
     plan.steeringExpression,

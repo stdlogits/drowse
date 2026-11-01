@@ -1379,6 +1379,30 @@ def test_node_reader_refuses_pre_6_0_token_rows(
         LoomTree.from_dict(raw)
 
 
+_TOKEN_ROWS = json.loads(
+    (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "token_rows.json").read_text(),
+)
+
+
+@pytest.mark.parametrize("case", _TOKEN_ROWS["accepted"], ids=lambda case: case["name"])
+def test_shared_token_row_fixture_loads(case: dict[str, Any]):
+    """``tests/fixtures/token_rows.json`` is shared with the dashboard's
+    ``tokenRowProblem`` (conversation-snapshot.test.mjs): a row the reader
+    loads is one the browser's snapshot validator keeps."""
+    _tree, raw = _row_tree(json.loads(json.dumps(case["row"])))
+    assert LoomTree.from_dict(raw)
+
+
+@pytest.mark.parametrize("case", _TOKEN_ROWS["refused"], ids=lambda case: case["name"])
+def test_shared_token_row_fixture_refuses(case: dict[str, Any]):
+    """Regression: the browser's row check was looser than this reader (no
+    envelope version, summary key set or lens ids), so a snapshot the server
+    refuses was stored and listed as valid. Both sides run this table."""
+    _tree, raw = _row_tree(json.loads(json.dumps(case["row"])))
+    with pytest.raises(LoomTreeError):
+        LoomTree.from_dict(raw)
+
+
 def test_sidecar_token_rows_are_type_checked_by_the_node_reader(tmp_path: Path):
     tree = _seed_tree()
     node = tree.nodes[tree.active_node_id]
