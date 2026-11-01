@@ -23,7 +23,7 @@ import type {
 import { chatLog, genStatus } from "./chat.svelte";
 import { sessionState } from "./session.svelte";
 import { attachProbe, detachProbe, probeRack } from "./probes.svelte";
-import { patchSteerEntry, setUnitTerm, steerRack } from "./steering.svelte";
+import { patchSteerEntry, steerRack } from "./steering.svelte";
 import { pushToast } from "./toasts.svelte";
 import { labelText } from "../units";
 import { type UnitTerm, UNIT_ABLATE_ALPHA, UNIT_PUSH_ALPHA } from "../unitTerms";
@@ -251,18 +251,6 @@ export function unitTerm(id: string): UnitTerm | null {
   if (entry?.mode !== "unit" || steerRack.readOnlyRecipe !== null) return null;
   if (entry.ablate) return "silence";
   return entry.alpha < 0 ? "minus" : "plus";
-}
-
-/** Put ``term`` into the recipe for the unit, or take the unit's term out when it is the one there.
- *  A push keeps the strength the unit was pushed at. */
-export function toggleUnitTerm(id: string, term: UnitTerm): void {
-  if (unitTerm(id) === term) {
-    setUnitTerm(id, null);
-    return;
-  }
-  const held = steerRack.entries.get(id);
-  const strength = held?.mode === "unit" && !held.ablate ? Math.abs(held.alpha) : UNIT_PUSH_ALPHA;
-  setUnitTerm(id, term === "silence" ? { ablate: true, alpha: UNIT_ABLATE_ALPHA } : { ablate: false, alpha: term === "minus" ? -strength : strength });
 }
 
 /** Switch a racked unit term between push and ablation (the term card's two buttons). Each takes

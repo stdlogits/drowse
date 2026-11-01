@@ -34,6 +34,7 @@
   import { fitGeometry } from "../../lib/manifolds/fitKind";
   import { select } from "../../lib/stores/selection.svelte";
   import { setUnitOperation, unitTermLabel, unitsAvailable } from "../../lib/stores/units.svelte";
+  import { UnitLabels } from "../../drawers/token/labels.svelte";
   import { formatTerm } from "../../lib/expression";
   import { layerClause, layerRunsText, layerTint, peakLayer } from "../../lib/steering/layers";
   import { placeOf } from "../../lib/steering/termLayers.svelte";
@@ -75,7 +76,16 @@
   const unitAt = $derived(entry.mode === "unit" ? unitLayer(name) : null);
 
   // A unit's catalog label, for the pole its term pushes (a head's under +), once one is known.
-  const unitLabel = $derived(entry.mode === "unit" ? unitTermLabel(name, entry) : null);
+  const catalogLabels = new UnitLabels();
+  $effect(() => {
+    if (entry.mode === "unit") catalogLabels.want([{ unit: name }]);
+  });
+  const unitLabel = $derived.by(() => {
+    if (entry.mode !== "unit") return null;
+    const head = name.startsWith("head/");
+    const pole = head || entry.ablate || entry.alpha >= 0 ? "+" : "-";
+    return catalogLabels.label(name, head ? "head" : "neuron", pole)?.text ?? unitTermLabel(name, entry);
+  });
 
   const facts = $derived.by(() => {
     const at = unitAt !== null

@@ -4,7 +4,8 @@
   // ``@when:sae/<id>`` gate read); a feature without Neuronpedia metadata reads its raw activation
   // on the panel's shared scale, so meters and numbers rank alike. Pinned (a persistent ``sae/<id>``
   // probe), the row can be chosen: the reply is tinted by it and the Inspector shows its trace.
-  // Unpinned (a feature the live readout found), its marker pins it.
+  // Unpinned (a feature the live readout found), its marker pins it. Push (``onpush``) adds a push
+  // along the feature to the recipe's strip.
   import { Meter, MorphText } from "@stdlogits/ledger";
   import { readingText } from "../../lib/charts/depth";
   import { detachProbe, highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
@@ -12,6 +13,7 @@
   import { userFacingError } from "../../lib/runtime/userFacingError";
   import InstrumentRow from "./InstrumentRow.svelte";
   import ProbePinButton from "./ProbePinButton.svelte";
+  import SteerButton from "./SteerButton.svelte";
   import { probeTitle } from "./probeRows";
 
   interface Props {
@@ -36,11 +38,13 @@
     busy?: boolean;
     /** Unpinned rows only: the panel owns validation and attach. */
     onpin?: (id: number) => void;
+    /** Push along the feature: its chip lands in the recipe's strip (lib/steerActions.ts). */
+    onpush?: () => void;
   }
 
   let {
     id, probeName, measured = true, label = null, layer, value, maxAct = null,
-    valueIsStrength = false, fallbackScale = 1, pinned, busy = false, onpin,
+    valueIsStrength = false, fallbackScale = 1, pinned, busy = false, onpin, onpush,
   }: Props = $props();
 
   const name = $derived(probeName ?? `sae/${id}`);
@@ -94,6 +98,7 @@
     {:else}<MorphText text={readingText(strength ?? rawValue)} />{/if}
   {/snippet}
   {#snippet action()}
+    {#if onpush}<SteerButton label="Push" aria={`Push along feature ${id}`} onclick={onpush} />{/if}
     <ProbePinButton
       shape="triangle"
       {pinned}

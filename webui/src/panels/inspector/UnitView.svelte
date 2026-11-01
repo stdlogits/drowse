@@ -6,9 +6,10 @@
   // read direction after attention), each through the lens its depth calls for, the other lens's
   // read faded beneath. A head shows what it copies and suppresses (its OV map) and what its query,
   // key and value read. "Hide hub tokens" ranks every read by the layer-contrastive z, so the
-  // tokens every unit of the layer reads drop out. Then its activation on each token of the latest
-  // reply, and what it can do in the recipe: be probed, pushed (a neuron, either pole) or silenced
-  // (exact mean-ablation).
+  // tokens every unit of the layer reads drop out. What it can do comes first, under its name: be
+  // pushed (a neuron, either pole) or silenced (exact mean-ablation), each a chip in the recipe's
+  // strip that opens for its strength (lib/steerActions.ts), or probed. Then its activation on each
+  // token of the latest reply.
   import { Icon, MorphText, Segmented, Switch, Swap, Token, formatValue } from "@stdlogits/ledger";
   import UnitTrace from "./UnitTrace.svelte";
   import { depthTint } from "../../lib/charts/depth";
@@ -22,7 +23,6 @@
     requestUnitRead,
     retryUnits,
     toggleUnitProbe,
-    toggleUnitTerm,
     unitActivityAvailable,
     unitProbeBusy,
     unitProbed,
@@ -32,6 +32,7 @@
     type UnitRead,
   } from "../../lib/stores/units.svelte";
   import { steerRack } from "../../lib/stores/steering.svelte";
+  import { pushUnit, silenceUnit } from "../../lib/steerActions";
   import { formatUnitTerm } from "../../lib/expression";
   import {
     firesOn,
@@ -123,6 +124,11 @@
   const actions = $derived<{ term: UnitTerm; label: string }[]>(isHead
     ? [{ term: "silence", label: "Silence" }]
     : [{ term: "plus", label: "Push +" }, { term: "minus", label: "Push −" }, { term: "silence", label: "Silence" }]);
+  /** Into the recipe's strip, its chip opened (taken out only there). */
+  function act(term: UnitTerm): void {
+    if (term === "silence") silenceUnit(id);
+    else pushUnit(id, term === "minus" ? "-" : "+");
+  }
 
   function factText(v: number): string {
     return v < 0 ? `−${formatValue(-v)}` : formatValue(v);
@@ -167,6 +173,22 @@
     {:else}
       <div class="ghost-line" aria-hidden="true"></div>
     {/if}
+  </div>
+
+  <!-- What it can do, first: be probed, pushed (a neuron, either pole) or silenced. A push or a
+       silence lands in the recipe's strip, its chip opened for the strength. -->
+  <div class="dw-sec acts">
+    <div class="dw-row">
+      {#each actions as a (a.term)}
+        <button type="button" class="dw-quiet act" aria-pressed={term === a.term} onclick={() => act(a.term)}>
+          {#if term === a.term}<Icon name="check" />{/if}{a.label}
+        </button>
+      {/each}
+      <button type="button" class="dw-quiet act" aria-pressed={probed} disabled={unitProbeBusy(id)} onclick={() => void toggleUnitProbe(id)}>
+        {#if probed}<Icon name="check" />{/if}{probed ? "Probing" : "Probe it"}
+      </button>
+    </div>
+    {#if expression}<span class="meta expr">{expression}</span>{/if}
   </div>
 
   <div class="dw-sec reads">
@@ -228,19 +250,6 @@
     </section>
   {/if}
 
-  <div class="dw-sec acts">
-    <div class="dw-row">
-      <button type="button" class="dw-quiet act" aria-pressed={probed} disabled={unitProbeBusy(id)} onclick={() => void toggleUnitProbe(id)}>
-        {#if probed}<Icon name="check" />{/if}{probed ? "Probing" : "Probe it"}
-      </button>
-      {#each actions as a (a.term)}
-        <button type="button" class="dw-quiet act" aria-pressed={term === a.term} onclick={() => toggleUnitTerm(id, a.term)}>
-          {#if term === a.term}<Icon name="check" />{/if}{a.label}
-        </button>
-      {/each}
-    </div>
-    {#if expression}<span class="meta expr">{expression}</span>{/if}
-  </div>
 </div>
 
 <style>

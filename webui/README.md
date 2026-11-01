@@ -54,7 +54,9 @@ as a dialog over the page. The command palette is under **Menu → All tools**;
 it has no global keyboard shortcut.
 
 The steering recipe is chips over the composer, with the term editor in place
-under them. The dashboard serializes chips into an expression
+under them, and it is the one place steering lives: "+ Steer" picks every kind
+and the instruments' Push and Silence add a chip through `lib/steerActions.ts`.
+The dashboard serializes chips into an expression
 (`lib/expression.ts`) and never parses one: a recipe from elsewhere comes back
 from the server's validate route as structured `parts`, and one the chips
 cannot draw stays a single read-only chip.

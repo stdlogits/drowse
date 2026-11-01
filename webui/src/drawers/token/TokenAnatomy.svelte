@@ -1,14 +1,18 @@
 <script lang="ts">
-  // The token, layer by layer (the node replay's anatomy, one request): the chosen token's
-  // probability by depth, then per layer what the residual reads as and what attention and the MLP
-  // added (and steering, where it injected), each cell the depth-picked read: S early, R late, both
-  // in the crossover band. Then the units that pushed the token, signed, and where the top heads
-  // read from. A unit selects into the Inspector. (The Main and Phone canvases, token selected.)
+  // The token, layer by layer (the node replay's anatomy, one request). The units first, as every
+  // order puts them: the units that pushed the token, signed, and where the top heads read from,
+  // each with Push (a neuron, on the side that fired here) and Silence into the recipe's strip
+  // (lib/steerActions.ts). Then the chosen token's probability by depth, and per layer what the
+  // residual reads as and what attention and the MLP added (and steering, where it injected), each
+  // cell the depth-picked read: S early, R late, both in the crossover band. A unit's ID selects it
+  // into the Inspector. (The Main and Phone canvases, token selected.)
   import { Token, tokenParts } from "@stdlogits/ledger";
   import type { AnatomyLayer, AnatomyUnit, TokenAnatomy } from "../../lib/types";
   import { select } from "../../lib/stores/selection.svelte";
   import type { ReplayReadout } from "./readout.svelte";
   import ReadingWait from "./ReadingWait.svelte";
+  import SteerButton from "../../panels/rack/SteerButton.svelte";
+  import { pushUnit, silenceUnit } from "../../lib/steerActions";
   import { depthTint, foldedLayers, formatP } from "./layers";
   import {
     absentTip,
@@ -135,15 +139,28 @@
   <button type="button" class="dw-text" onclick={() => (all = !all)}>{all ? "Every third layer" : `All ${layers.length} layers`}</button>
 {/snippet}
 
+{#snippet unitActs(unit: string, kind: "neuron" | "head", pole: "+" | "-" | null)}
+  <span class="uacts">
+    {#if kind === "neuron"}
+      <SteerButton label="Push" aria={`Push ${unitShort(unit)}${pole === "-" ? " on its − pole" : ""}`}
+        tip={pole === "-" ? "Push on its − pole, the side that fired here" : "Push along its write"} onclick={() => pushUnit(unit, pole ?? "+")} />
+    {/if}
+    <SteerButton label="Silence" aria={`Silence ${unitShort(unit)}`} tip="Hold it at its neutral mean" onclick={() => silenceUnit(unit)} />
+  </span>
+{/snippet}
+
 {#snippet unitRow(unit: string, kind: "neuron" | "head", layer: number, contribution: number, share: number, pole: "+" | "-" | null, activation: number | null, overScale: number | null)}
   {@const label = labels?.label(unit, kind, pole) ?? null}
-  <button type="button" class="unit" class:bare={label === null} style:--tint={depthTint(layer, last)}
-    data-tip={unitTip(unit, contribution, kind, pole, activation, overScale, label?.tip)} onclick={() => select({ kind: "unit", id: unit })}>
-    <span class="uid">{unitShort(unit)}</span>
-    {#if label}<span class="ulabel">{label.text}</span>{/if}
-    <span class="umeter" class:neg={contribution < 0}><i style:width="{Math.max(2, share * 100)}%"></i></span>
-    <span class="uval">{formatContribution(contribution)}</span>
-  </button>
+  <div class="unit" class:bare={label === null} style:--tint={depthTint(layer, last)}>
+    <button type="button" class="umain" data-tip={unitTip(unit, contribution, kind, pole, activation, overScale, label?.tip)}
+      onclick={() => select({ kind: "unit", id: unit })}>
+      <span class="uid">{unitShort(unit)}</span>
+      {#if label}<span class="ulabel">{label.text}</span>{/if}
+      <span class="umeter" class:neg={contribution < 0}><i style:width="{Math.max(2, share * 100)}%"></i></span>
+      <span class="uval">{formatContribution(contribution)}</span>
+    </button>
+    {@render unitActs(unit, kind, pole)}
+  </div>
 {/snippet}
 
 {#if readout.loading}
@@ -153,6 +170,41 @@
 {:else if readout.error}
   <section class="dw-sec" aria-label="Anatomy"><p class="meta" role="alert">{readout.error}</p></section>
 {:else if data}
+  <!-- The units first (neurons and heads lead every order), then the lens's reads by depth. -->
+  {#if pushes.length > 0}
+    <section class="dw-sec" aria-label="Units that pushed the token">
+      <div class="dw-sec-head">
+        <span class="head">Pushed toward <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</span>
+        {#if credit}<span class="meta">{credit}</span>{/if}
+      </div>
+      <div class="units">
+        {#each pushes as row (row.unit)}{@render unitRow(row.unit, row.kind, row.layer, row.contribution, row.share, row.pole, row.activation, row.overScale)}{/each}
+      </div>
+    </section>
+  {:else if data.units_absent}
+    <section class="dw-sec" aria-label="Units that pushed the token">
+      <div class="dw-sec-head"><span class="head">Pushed toward <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</span></div>
+      <p class="meta">{data.units_absent}</p>
+    </section>
+  {/if}
+
+  {#if heads.length > 0}
+    <section class="dw-sec" aria-label="Where the top heads read from">
+      <div class="dw-sec-head"><span class="head">Heads read from</span></div>
+      <div class="heat">
+        {#each heads as row (row.unit)}
+          {@const label = labels?.label(row.unit, "head", null) ?? null}
+          <div class="hrow" style:--tint={depthTint(row.layer, last)}>
+            <button type="button" class="uid hid" data-tip={[`${row.unit} · ${formatContribution(row.contribution)} to the logit`, `${formatP(row.sink)} on the first token`, label?.text ?? ""].filter(Boolean).join(" · ")}
+              onclick={() => select({ kind: "unit", id: row.unit })}>{row.short}</button>
+            <p class="hline">{#each row.pieces as piece, i (i)}{#if piece.pos < 0}<span class="gap">{" … "}</span>{:else}<span class="ht" class:here={piece.here} style:--a="{piece.tint}%" data-tip={`${formatP(piece.weight)}`}>{piece.text.replace(/\n/g, "⏎")}</span>{/if}{/each}</p>
+            {@render unitActs(row.unit, "head", null)}
+          </div>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
   <section class="dw-sec" aria-label="By depth">
     <div class="dw-sec-head">
       <span class="head"><span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text} by depth</span>
@@ -230,38 +282,6 @@
     </div>
   </section>
 
-  {#if pushes.length > 0}
-    <section class="dw-sec" aria-label="Units that pushed the token">
-      <div class="dw-sec-head">
-        <span class="head">Pushed toward <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</span>
-        {#if credit}<span class="meta">{credit}</span>{/if}
-      </div>
-      <div class="units">
-        {#each pushes as row (row.unit)}{@render unitRow(row.unit, row.kind, row.layer, row.contribution, row.share, row.pole, row.activation, row.overScale)}{/each}
-      </div>
-    </section>
-  {:else if data.units_absent}
-    <section class="dw-sec" aria-label="Units that pushed the token">
-      <div class="dw-sec-head"><span class="head">Pushed toward <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</span></div>
-      <p class="meta">{data.units_absent}</p>
-    </section>
-  {/if}
-
-  {#if heads.length > 0}
-    <section class="dw-sec" aria-label="Where the top heads read from">
-      <div class="dw-sec-head"><span class="head">Heads read from</span></div>
-      <div class="heat">
-        {#each heads as row (row.unit)}
-          {@const label = labels?.label(row.unit, "head", null) ?? null}
-          <div class="hrow" style:--tint={depthTint(row.layer, last)}>
-            <button type="button" class="uid hid" data-tip={[`${row.unit} · ${formatContribution(row.contribution)} to the logit`, `${formatP(row.sink)} on the first token`, label?.text ?? ""].filter(Boolean).join(" · ")}
-              onclick={() => select({ kind: "unit", id: row.unit })}>{row.short}</button>
-            <p class="hline">{#each row.pieces as piece, i (i)}{#if piece.pos < 0}<span class="gap">{" … "}</span>{:else}<span class="ht" class:here={piece.here} style:--a="{piece.tint}%" data-tip={`${formatP(piece.weight)}`}>{piece.text.replace(/\n/g, "⏎")}</span>{/if}{/each}</p>
-          </div>
-        {/each}
-      </div>
-    </section>
-  {/if}
 {/if}
 
 <style>
@@ -343,29 +363,41 @@
   .it-wrap.it > :global(.tok) { background: color-mix(in oklch, var(--tint) 22%, var(--paper)); }
   .detail .units { margin: 0 calc(-1 * var(--s3)); }
 
-  /* A unit that pushed: its ID, its label, a signed meter and the value. A click opens the unit. */
+  /* A unit that pushed: its ID, its label, a signed meter and the value (a click opens the unit),
+   * then Push (a neuron) and Silence, into the recipe's strip. */
   .units { display: grid; gap: 2px; }
   .unit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    min-width: 0;
+    border-radius: var(--r-box);
+    transition: background-color var(--fast) var(--ease);
+  }
+  .umain {
     display: grid;
     grid-template-columns: 88px minmax(0, 1fr) 56px 48px;
     gap: var(--s3);
     align-items: center;
     width: 100%;
+    min-width: 0;
     min-height: 36px;
     padding: var(--s2) var(--s3);
     border: 0;
-    border-radius: var(--r-box);
+    border-radius: inherit;
     background: transparent;
     color: inherit;
     font: inherit;
     text-align: left;
     cursor: pointer;
-    transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease);
+    transition: scale var(--fast) var(--ease);
   }
   /* No label: the meter takes its place. */
-  .unit.bare { grid-template-columns: 88px minmax(0, 1fr) 48px; }
+  .unit.bare .umain { grid-template-columns: 88px minmax(0, 1fr) 48px; }
   @media (hover: hover) { .unit:hover { background: var(--token-fill); } }
-  .unit:active { scale: 0.99; }
+  .umain:active { scale: 0.99; }
+  /* One width for every row's actions (a head has no Push), so the meters and values line up. */
+  .uacts { display: flex; align-items: center; justify-content: flex-end; width: 112px; padding-right: var(--s1); }
   .uid { color: var(--ink); font: 600 14px/20px var(--display); letter-spacing: -0.01em; white-space: nowrap; }
   .ulabel { overflow: hidden; color: var(--ink2); font: var(--type-small); white-space: nowrap; text-overflow: ellipsis; }
   .umeter { position: relative; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
@@ -377,7 +409,8 @@
   /* Where a head reads from: its ID, then its strongest places in the context, the heat as a tint
    * up to Ledger's 9% for a token a head attended to, the query position in ink, the rest elided. */
   .heat { display: grid; gap: var(--s2); }
-  .hrow { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: var(--s3); align-items: baseline; padding: 0 var(--s3); }
+  .hrow { display: grid; grid-template-columns: 88px minmax(0, 1fr) auto; gap: var(--s3); align-items: baseline; padding: 0 var(--s1) 0 var(--s3); }
+  .hrow .uacts { align-self: center; padding-right: 0; }
   .hid { padding: 0; border: 0; background: transparent; text-align: left; cursor: pointer; transition: color var(--fast) var(--ease); }
   @media (hover: hover) { .hid:hover { color: var(--ink2); } }
   .hline { margin: 0; min-width: 0; color: var(--ink2); font: var(--type-small); line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -389,7 +422,7 @@
   /* A narrow view (the phone, a 300 px Inspector): a unit's label takes a line of its own under the
    * ID, the meter and the value (the Phone canvas's unit row), and the rows sit closer to the edge. */
   @container token (max-width: 380px) {
-    .unit, .unit.bare {
+    .unit .umain, .unit.bare .umain {
       grid-template-columns: minmax(0, 1fr) 48px 40px;
       grid-template-areas: "id meter val" "label label label";
       gap: 0 var(--s3);
@@ -401,15 +434,16 @@
     .unit .ulabel { grid-area: label; }
     .unit.bare .umeter { max-width: none; }
     .detail .units { margin: 0 calc(-1 * var(--s2)); }
-    .hrow { padding: 0 var(--s2); }
+    .hrow { grid-template-columns: minmax(0, 1fr) auto; padding: 0 var(--s1) 0 var(--s2); }
+    .hrow .hline { grid-column: 1 / -1; grid-row: 2; }
   }
 
   /* Full width against the Inspector's scroll edge: the ring sits inside. */
-  .lrow:focus-visible, .unit:focus-visible { outline-offset: -2px; }
+  .lrow:focus-visible, .umain:focus-visible { outline-offset: -2px; }
   @media (max-width: 720px) {
     /* Phone sizes (the Phone canvas): every target 44 px. */
     .lrow { min-height: 44px; }
-    .unit { min-height: 48px; }
+    .umain { min-height: 48px; }
     .ctl .dw-text { position: relative; }
     .ctl .dw-text::after { content: ""; position: absolute; inset: -14px -8px; }
     .tctl .dw-text { min-height: 44px; }

@@ -137,6 +137,13 @@ export function cancelPendingAction(id: string): void {
  *  after a queued send form distinct groups so FIFO ordering relative
  *  to the send is preserved. */
 const RACK_COALESCE_KEY = "rack";
+
+/** Whether a rack edit waits in the queue behind a running reply (a chip added now lands when it
+ *  drains, so a selection of it holds until then). */
+export function rackEditQueued(): boolean {
+  return pendingActions.queue.some((item) => item.coalesceKey === RACK_COALESCE_KEY);
+}
+
 export function enqueueOrApply(label: string, apply: () => void): void {
   if (!isPendingBusy()) {
     apply();
