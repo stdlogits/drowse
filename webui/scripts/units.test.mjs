@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { createServer } from "vite";
 
 // Units: the arithmetic of the unit view and the Units room (lib/units.ts), the units store over a
@@ -434,6 +435,26 @@ try {
   assert.doesNotMatch(html, /Push/, "a head has no push");
   assert.doesNotMatch(html, /\+ side/);
 
+  // W6 review (live, a bare home): a missing lens printed the server's sentence, with CLI commands
+  // on HTTP, and no way out. It reads "No R lens" with the sentence in the tip and leads to the
+  // Artifacts room's lenses; a lens that holds no matrix there reads "No S read".
+  {
+    const { default: LensAbsent } = await server.ssrLoadModule("/src/panels/inspector/LensAbsent.svelte");
+    const why = "no R-family lens is selected for m (`drowse lens fetch m` or `drowse lens fit`)";
+    const absent = render(LensAbsent, { props: { family: "R", reason: why } }).body;
+    assert.match(absent, />No R lens</);
+    assert.match(absent, /data-tip="no R-family lens is selected/);
+    assert.match(absent, />Lenses</);
+    assert.match(render(LensAbsent, { props: { family: "S", reason: "a head's input side reads through the S lens at L18 out, and it holds no such matrix" } }).body, />No S read</);
+    const source = readFileSync(new URL("../src/panels/inspector/LensAbsent.svelte", import.meta.url), "utf8");
+    assert.match(source, /goto\("artifacts", "lenses"\)/);
+    for (const file of ["panels/rooms/UnitsRoom.svelte", "panels/inspector/UnitView.svelte"]) {
+      const text = readFileSync(new URL(`../src/${file}`, import.meta.url), "utf8");
+      assert.doesNotMatch(text, />\{(?:writes|g\.primary)\.absent\}</, `${file} prints no server sentence`);
+      assert.match(text, /<LensAbsent family=/);
+    }
+  }
+
   // The room reads at the token cursor (lib/stores/tokenCursor): with no token selected, the whole
   // reply, each unit at its peak over it; at a token, the strongest units there (its population).
   const selectionStore = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
@@ -574,7 +595,6 @@ try {
   // Wave 3 (Qwen, 375): the boot skeleton is fixed over the room, and the Units room drawn under it
   // showed its Neurons/Heads and Strongest/All pills through the blocks. The room hides (still laid
   // out, so a gliding thumb measures) and is inert until boot ends.
-  const { readFileSync } = await import("node:fs");
   const app = readFileSync(new URL("../src/App.svelte", import.meta.url), "utf8");
   assert.match(app, /class="rooms-host" class:waiting=\{bootStatus !== "ready"\} inert=\{[^}]*bootStatus !== "ready"\}/);
   assert.match(app, /\.rooms-host\.waiting > \.room \{ visibility: hidden; opacity: 0; \}/);

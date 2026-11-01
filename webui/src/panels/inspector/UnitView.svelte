@@ -12,6 +12,7 @@
   // token of the latest reply.
   import { Icon, MorphText, Segmented, Switch, Swap, Token, formatValue } from "@stdlogits/ledger";
   import UnitTrace from "./UnitTrace.svelte";
+  import LensAbsent from "./LensAbsent.svelte";
   import { depthTint } from "../../lib/charts/depth";
   import { genStatus } from "../../lib/stores/chat.svelte";
   import {
@@ -209,7 +210,7 @@
                 <div class="group">
                   <div class="gh"><h3 class="head">{g.title}</h3><span class="meta">{lensText(g.primary)}</span></div>
                   {#if g.primary.absent}
-                    <span class="meta">{g.primary.absent}</span>
+                    <LensAbsent family={g.primary.family} reason={g.primary.absent} />
                   {:else}
                     {@render toks(g.primaryTokens)}
                   {/if}

@@ -15,6 +15,7 @@
   import { Icon, MorphText, Segmented, Swap, Token, formatValue, tokenParts } from "@stdlogits/ledger";
   import UnitAtlas, { type AtlasField } from "./UnitAtlas.svelte";
   import TokenStrip from "./TokenStrip.svelte";
+  import LensAbsent from "../inspector/LensAbsent.svelte";
   import { depthTint } from "../../lib/charts/depth";
   import { genStatus } from "../../lib/stores/chat.svelte";
   import { goto } from "../../lib/stores/rooms.svelte";
@@ -345,7 +346,7 @@
     const place = selRead.kind === "neuron" ? selSide?.writes : selRead.copies;
     if (!place) return null;
     const { primary } = orderedHalves(place);
-    return { lens: lensText(primary), absent: primary.absent, tokens: primary.tokens };
+    return { lens: lensText(primary), family: primary.family, absent: primary.absent, tokens: primary.tokens };
   });
   const isHit = (t: string) => word !== null && t.trim().toLowerCase() === word.shown.trim().toLowerCase();
   const selFact = $derived.by((): { b: string; pre: string; post: string } | null => {
@@ -515,7 +516,7 @@
               <div class="group">
                 <div class="dw-row"><h3 class="head">{selRef?.kind === "head" ? "Copies" : "Writes"}</h3><span class="meta">{writes.lens}</span></div>
                 {#if writes.absent}
-                  <span class="meta">{writes.absent}</span>
+                  <LensAbsent family={writes.family} reason={writes.absent} />
                 {:else}
                   <div class="toks">{#each writes.tokens.slice(0, 8) as t, i (`${i}:${t.token}`)}<Token token={t.token} flags={isHit(t.token) ? 1 : 0} {i} />{/each}</div>
                 {/if}
