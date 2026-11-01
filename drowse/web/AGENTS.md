@@ -226,7 +226,8 @@ lib/types.ts          the import surface (re-exports types.gen.ts)
 lib/stores.svelte.ts  barrel over lib/stores/ slices
 lib/expression.ts     rack → steering expression (serialize only)
 lib/steering/         the term editor's logic: layers.ts (the clause, the strip's arithmetic),
-                      terms.ts (what a term reads as), termLayers.svelte.ts (where it acts)
+                      terms.ts (what a term reads as), termLayers.svelte.ts (where it acts),
+                      recipe.ts (a recipe from elsewhere as chips, from validate parts)
 lib/highlight.ts      the one per-token highlight; tokens.ts is its store-free ramp math
 lib/templates.ts      client mirror of the template validator
 lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
@@ -321,20 +322,35 @@ drowse.ai too.
   `{4-8,20}`, `{workspace}`, none for every fitted layer); a unit carries its layer and never
   writes one, and a term scoped to no layer sits out of the expression. Keep `Variant`
   in step with the grammar (`raw`, `sae`, `sae-*`, `role`, `role-*`, `from`, `from-*`).
-  `applyCustomSteeringExpression` clears the visual rack, because the rack cannot show
-  every projection or gate form and must not misstate what generation uses.
+  The chips write the server's canonical form: an ablation is `!x` at full strength, `-!x`
+  at −1 and `0.5 !x` otherwise, for every kind (`formatBang`), and numbers are Python's `%g`
+  (`formatCoeff`). `tests/fixtures/recipe_chips.json` pins it from both sides
+  (`tests/web/test_recipe_chips.py`: `format_expr(parse_expr(e)) == e`;
+  `scripts/recipe-chips.test.mjs`: the racks write `e`).
+- **No typed recipes.** People write recipes with the chips, never as text (a9's rule): there
+  is no text editor or text chip. A recipe from elsewhere (WebMCP `drowse_set_steering`, a
+  saved conversation's read-only recipe, the command line's `-S` default) goes through
+  `applyRecipe`: `POST .../steering/validate` answers each term's fields in order (`parts`,
+  `grammar.term_parts`), and `lib/steering/recipe.ts::recipeAsChips` makes chips when every
+  term fits one exactly (each chip writes its term's own `text` back and sits inside its
+  dial). Otherwise the recipe stays one read-only chip (`steerRack.readOnlyRecipe`, sent as
+  written) whose panel says why (`recipeNote`), copies it and clears it; a chip added
+  afterwards replaces it, and `recipeTicket` keeps a late check from overwriting a newer rack.
+  A cast member's steering is set from the chips ("Use the recipe") and shown as written. The
+  agent and API inputs that take a full expression stay: they are the grammar's other
+  frontends.
 - **Rack families.** `fitKind.ts::fitGeometry` (`resolved_fit_mode ?? fit_mode`) maps
   `pca`/`baked` to subspace, `spectral`/`authored` to manifold, and an unfitted `auto` to
   unresolved. Subspace terms share one `subspaceAlong` because the composer merges them
   into one affine subspace that slides once. Lens token atoms (`jlens/<word>`, toward saying
-  it; `slens/<word>`, toward having read it, from the Lens panel's Steer and As read) and SAE
-  atoms carry their own α
+  it; `slens/<word>`, toward having read it; the Lens panel and the token view offer both,
+  through the one "As said | As read" pair) and SAE atoms carry their own α
   (`ATOM_DEFAULT_ALPHA = 0.3`): a single token or feature direction runs hotter than a
   concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
   keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed
   (signed α, `UNIT_PUSH_ALPHA` 0.2; below zero its − pole) or a neuron or head ablated
-  (`1 !…`, `UNIT_ABLATE_ALPHA`, the unit held at its neutral mean, written with its
-  coefficient like every ablation). A head has no push. Switching a term between push and
+  (`!…`, `UNIT_ABLATE_ALPHA` 1, the unit held at its neutral mean, written bare like every
+  full ablation; `0.5 !…` blends halfway). A head has no push. Switching a term between push and
   ablation takes that operation's own α (`setUnitOperation`), since a push's α kept as an
   ablation's would blend away from the mean and a negative one amplify. One rule,
   `unitTerms.ts::unitTermProblem`, refuses a negative ablation α and a head push wherever a
@@ -364,7 +380,9 @@ drowse.ai too.
   (`resolveDivergence`).
 - **Persistence.** The server loom tree is authoritative and is never first-painted from a
   browser cache, because node ids go stale when the server restarts.
-  `ConversationSnapshotV7` is validated exactly and backs both the IndexedDB library
+  `ConversationSnapshotV8` is validated exactly (v8: `readOnlyRecipe` with no chips beside it
+  replaced v7's typed `customSteeringExpression`; every ablatable row carries `ablate`;
+  triggers are the five chip presets) and backs both the IndexedDB library
   (written by `ConversationAutosave` while no generation runs) and the backup files
   (`lib/chatBackup.ts`). localStorage holds presentation preferences only, via
   `safeLocalStorage*`.

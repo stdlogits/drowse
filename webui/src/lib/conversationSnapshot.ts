@@ -10,7 +10,7 @@ import type {
 } from "./types";
 import type { SamplingState } from "./stores/sampling.svelte";
 
-export const CONVERSATION_SNAPSHOT_VERSION = 7 as const;
+export const CONVERSATION_SNAPSHOT_VERSION = 8 as const;
 export const CONVERSATION_SAMPLING_KEYS = [
   "temperature",
   "top_p",
@@ -38,7 +38,7 @@ export interface ConversationProbeRow {
   previous: number;
 }
 
-export interface ConversationSnapshotV7 {
+export interface ConversationSnapshotV8 {
   version: typeof CONVERSATION_SNAPSHOT_VERSION;
   savedAt: string;
   model_id: string;
@@ -46,7 +46,10 @@ export interface ConversationSnapshotV7 {
   tree: LoomTreeJSON;
   steerRack: ConversationSteerRow[];
   subspaceAlong: number;
-  customSteeringExpression: string | null;
+  /** A recipe from elsewhere the chips could not hold (``steerRack.readOnlyRecipe``), with no
+   *  chips beside it; ``null`` when the chips are the recipe. v8: people no longer type recipes,
+   *  so there is no text recipe (v7's ``customSteeringExpression``, refused). */
+  readOnlyRecipe: string | null;
   probeRack: {
     sortMode: ProbeSortMode;
     active: string[];
@@ -62,7 +65,7 @@ export interface ConversationSnapshotV7 {
 }
 
 export interface ConversationImportPlan {
-  snapshot: ConversationSnapshotV7;
+  snapshot: ConversationSnapshotV8;
   steerEntries: Map<string, SteerEntry>;
   steeringExpression: string;
   probeRequests: ProbeRequest[];
@@ -70,16 +73,12 @@ export interface ConversationImportPlan {
 }
 
 const TRIGGERS = new Set<Trigger>(["BOTH", "BEFORE", "AFTER", "THINKING", "RESPONSE"]);
-// Racks saved while the pill still cycled through the grammar aliases may
-// carry these; they mean exactly the canonical preset and are rewritten on
-// import.
-const STORED_TRIGGER_ALIASES: Partial<Record<string, Trigger>> = { PROMPT: "BEFORE", GENERATED: "RESPONSE" };
 const VARIANT = /^(?:raw|sae(?:-.+)?|role(?:-.+)?|from(?:-.+)?)$/u;
 
 export function isConversationSnapshot(
   value: unknown,
   samplingKeys: readonly string[],
-): value is ConversationSnapshotV7 {
+): value is ConversationSnapshotV8 {
   try {
     validateConversationSnapshot(value, samplingKeys);
     return true;
@@ -91,13 +90,13 @@ export function isConversationSnapshot(
 export function validateConversationSnapshot(
   value: unknown,
   samplingKeys: readonly string[],
-): asserts value is ConversationSnapshotV7 {
+): asserts value is ConversationSnapshotV8 {
   const snapshot = record(value, "conversation snapshot");
   exactKeys(snapshot, [
-    "customSteeringExpression",
     "highlightState",
     "model_id",
     "probeRack",
+    "readOnlyRecipe",
     "samplingState",
     "savedAt",
     "session_id",
@@ -127,20 +126,17 @@ export function validateConversationSnapshot(
   record(tree.cast, "tree cast");
 
   finite(snapshot.subspaceAlong, "subspace strength");
-  if (
-    typeof snapshot.customSteeringExpression !== "string" &&
-    snapshot.customSteeringExpression !== null
-  ) invalid("custom steering expression");
+  if (snapshot.readOnlyRecipe !== null) nonempty(snapshot.readOnlyRecipe, "read-only recipe");
 
   const steerRows = array(snapshot.steerRack, "steering rack");
+  if (snapshot.readOnlyRecipe !== null && steerRows.length > 0) invalid("chips beside a read-only recipe");
   const steerNames = new Set<string>();
   for (const raw of steerRows) {
     const row = record(raw, "steering row");
     const name = nonempty(row.name, "steering row name");
     if (steerNames.has(name)) invalid(`duplicate steering row ${name}`);
     steerNames.add(name);
-    const trigger = String(row.trigger);
-    if ((!TRIGGERS.has(trigger as Trigger) && !STORED_TRIGGER_ALIASES[trigger]) || typeof row.enabled !== "boolean") {
+    if (!TRIGGERS.has(row.trigger as Trigger) || typeof row.enabled !== "boolean") {
       invalid(`steering row ${name}`);
     }
     if (row.mode === "unit") {
@@ -156,18 +152,14 @@ export function validateConversationSnapshot(
     layerScope(row.layers, `steering row ${name} layers`);
     if (row.mode === "jlens" || row.mode === "slens" || row.mode === "sae") {
       finite(row.alpha, `steering row ${name} alpha`);
-      if (row.ablate !== undefined && typeof row.ablate !== "boolean") {
-        invalid(`steering row ${name} ablation`);
-      }
+      if (typeof row.ablate !== "boolean") invalid(`steering row ${name} ablation`);
       if (row.mode === "jlens" && !name.startsWith("jlens/")) invalid(`J-lens row ${name}`);
       if (row.mode === "slens" && !name.startsWith("slens/")) invalid(`S-lens row ${name}`);
       if (row.mode === "sae" && !/^sae\/(?:0|[1-9]\d*)$/u.test(name)) invalid(`SAE row ${name}`);
       continue;
     }
     if (row.mode !== "subspace" && row.mode !== "manifold") invalid(`steering row ${name} mode`);
-    if (row.mode === "subspace" && row.ablate !== undefined && typeof row.ablate !== "boolean") {
-      invalid(`steering row ${name} ablation`);
-    }
+    if (row.mode === "subspace" && typeof row.ablate !== "boolean") invalid(`steering row ${name} ablation`);
     finiteArray(row.coords, `steering row ${name} coordinates`);
     nullableString(row.label, `steering row ${name} label`);
     if (typeof row.variant !== "string" || !VARIANT.test(row.variant)) {
@@ -234,16 +226,11 @@ export function validateConversationSnapshot(
 }
 
 export function buildConversationImportPlan(
-  snapshot: ConversationSnapshotV7,
+  snapshot: ConversationSnapshotV8,
 ): ConversationImportPlan {
   const steerEntries = new Map<string, SteerEntry>();
   for (const { name, ...entry } of snapshot.steerRack) {
-    const cloned = structuredClone(entry) as SteerEntry;
-    cloned.trigger = STORED_TRIGGER_ALIASES[cloned.trigger] ?? cloned.trigger;
-    if (cloned.mode === "subspace" || cloned.mode === "jlens" || cloned.mode === "slens" || cloned.mode === "sae" || cloned.mode === "unit") {
-      cloned.ablate = cloned.ablate === true;
-    }
-    steerEntries.set(name, cloned);
+    steerEntries.set(name, structuredClone(entry) as SteerEntry);
   }
   const probeRows = new Map(
     snapshot.probeRack.entries.map((row) => [row.name, structuredClone(row)]),
@@ -251,7 +238,7 @@ export function buildConversationImportPlan(
   return {
     snapshot,
     steerEntries,
-    steeringExpression: snapshot.customSteeringExpression
+    steeringExpression: snapshot.readOnlyRecipe
       ?? serializeExpression(steerEntries, snapshot.subspaceAlong),
     probeRequests: snapshot.probeRack.active.map((name) =>
       structuredClone(probeRows.get(name)!.request)

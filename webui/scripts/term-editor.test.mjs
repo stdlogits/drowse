@@ -249,9 +249,9 @@ try {
   // ---- snapshot rows keep a clause and a unit
   const { validateConversationSnapshot } = await server.ssrLoadModule("/src/lib/conversationSnapshot.ts");
   const snapshot = steerRows => ({
-    version: 7, savedAt: "2026-10-31T00:00:00Z", model_id: "m", session_id: "s",
+    version: 8, savedAt: "2026-10-31T00:00:00Z", model_id: "m", session_id: "s",
     tree: { tree_format: 2, drowse_version: "6", root_id: "r", active_node_id: "r", rev: 0, model_id: "m", session_id: "s", nodes: [], children_of: {}, cast: {} },
-    steerRack: steerRows, subspaceAlong: 0.5, customSteeringExpression: null,
+    steerRack: steerRows, subspaceAlong: 0.5, readOnlyRecipe: null,
     probeRack: { sortMode: "name", active: [], entries: [] },
     highlightState: { target: null, compareTarget: null, compareTwo: false, smoothBlend: false },
     samplingState: {

@@ -4,7 +4,7 @@ import { clampTokenAlternativeCount } from "../runtime/samplingCapabilities";
 import { genStatus, setGenUiMode } from "./chat.svelte";
 import { modelDefaultsState, patchSessionDefaults, samplingState } from "./sampling.svelte";
 import { refreshSession, sessionState } from "./session.svelte";
-import { steerRack } from "./steering.svelte";
+import { restoreRack } from "./steering.svelte";
 import { detachProbe, probeRack } from "./probes.svelte";
 import { autoRegenState } from "./ab.svelte";
 
@@ -36,9 +36,7 @@ export async function resetSettings(full = false): Promise<void> {
       return_top_k: clampTokenAlternativeCount(8, getRuntimeClient().mode),
     });
     if (!full) return;
-    steerRack.entries.clear();
-    steerRack.customExpression = original.default_steering;
-    steerRack.subspaceAlong = 0.5;
+    restoreRack([], 0.5, original.default_steering);
     samplingState.user_role = original.default_user_role ?? "user";
     samplingState.assistant_role = original.default_assistant_role ?? "assistant";
     Object.assign(autoRegenState, { enabled: false, mode: "unsteered", custom: "" });

@@ -37,7 +37,7 @@ try {
     assistant_role: "assistant",
   };
   const snapshot = {
-    version: 7,
+    version: 8,
     savedAt: "2026-08-29T12:00:00.000Z",
     model_id: "fixture/model",
     session_id: "default",
@@ -89,7 +89,7 @@ try {
       enabled: true,
     }],
     subspaceAlong: 0.5,
-    customSteeringExpression: null,
+    readOnlyRecipe: null,
     probeRack: {
       sortMode: "change",
       active: ["mood alias", "latent alias"],
@@ -154,22 +154,37 @@ try {
   assert.equal(plan.steerEntries.get("local/emotions").variant, "sae-release-a");
   assert.equal(plan.steerEntries.get("jlens/fixture").ablate, true);
 
-  const legacyAblationRows = structuredClone(snapshot);
-  delete legacyAblationRows.steerRack[0].ablate;
-  delete legacyAblationRows.steerRack[1].ablate;
-  delete legacyAblationRows.steerRack[2].ablate;
-  const legacyPlan = buildConversationImportPlan(legacyAblationRows);
-  assert.equal(legacyPlan.steerEntries.get("local/calm").ablate, false);
-  assert.equal(legacyPlan.steerEntries.get("jlens/fixture").ablate, false);
-  assert.equal(legacyPlan.steerEntries.get("sae/17").ablate, false);
-
-  const aliasTriggers = structuredClone(snapshot);
-  aliasTriggers.steerRack[0].trigger = "PROMPT";
-  aliasTriggers.steerRack[3].trigger = "GENERATED";
-  assert.equal(isConversationSnapshot(aliasTriggers, Object.keys(samplingState)), true);
-  const aliasPlan = buildConversationImportPlan(aliasTriggers);
-  assert.equal(aliasPlan.steerEntries.get("local/calm").trigger, "BEFORE");
-  assert.equal(aliasPlan.steerEntries.get("local/emotions").trigger, "RESPONSE");
+  // v8 is exact: every ablatable row carries its ablation flag, triggers are the five the chips
+  // offer (no grammar aliases), and there is no typed text recipe.
+  for (const index of [0, 1, 2]) {
+    const noAblation = structuredClone(snapshot);
+    delete noAblation.steerRack[index].ablate;
+    assert.equal(isConversationSnapshot(noAblation, Object.keys(samplingState)), false, `row ${index} without ablate`);
+  }
+  for (const alias of ["PROMPT", "GENERATED"]) {
+    const aliasTrigger = structuredClone(snapshot);
+    aliasTrigger.steerRack[0].trigger = alias;
+    assert.equal(isConversationSnapshot(aliasTrigger, Object.keys(samplingState)), false, alias);
+  }
+  const v7 = structuredClone(snapshot);
+  v7.version = 7;
+  delete v7.readOnlyRecipe;
+  v7.customSteeringExpression = "0.3 jlens/orange";
+  assert.equal(isConversationSnapshot(v7, Object.keys(samplingState)), false, "a v7 text recipe is refused");
+  const textRecipe = structuredClone(snapshot);
+  textRecipe.customSteeringExpression = null;
+  assert.equal(isConversationSnapshot(textRecipe, Object.keys(samplingState)), false, "the v7 field is refused in v8");
+  const held = structuredClone(snapshot);
+  held.steerRack = [];
+  held.readOnlyRecipe = "0.4 local/a~local/b";
+  assert.equal(isConversationSnapshot(held, Object.keys(samplingState)), true);
+  assert.equal(buildConversationImportPlan(held).steeringExpression, "0.4 local/a~local/b");
+  const heldBesideChips = structuredClone(held);
+  heldBesideChips.steerRack = structuredClone(snapshot.steerRack);
+  assert.equal(isConversationSnapshot(heldBesideChips, Object.keys(samplingState)), false, "chips beside a read-only recipe");
+  const emptyHeld = structuredClone(held);
+  emptyHeld.readOnlyRecipe = "";
+  assert.equal(isConversationSnapshot(emptyHeld, Object.keys(samplingState)), false, "an empty recipe is no recipe (null)");
   const unknownTrigger = structuredClone(snapshot);
   unknownTrigger.steerRack[0].trigger = "SOMETIMES";
   assert.equal(isConversationSnapshot(unknownTrigger, Object.keys(samplingState)), false);

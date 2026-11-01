@@ -30,8 +30,12 @@
   import NumberInput from "../lib/NumberInput.svelte";
   import Select from "../lib/Select.svelte";
   import type { CastMemberJSON } from "../lib/types";
+  import { currentSteeringExpression } from "../lib/stores/steering.svelte";
+  import { wrapPieces } from "../lib/steering/terms";
 
   let steering = $state("");
+  /** The recipe the chips write now (or the read-only one): what "Use the recipe" gives a speaker. */
+  const rackRecipe = $derived(currentSteeringExpression());
   let notes = $state("");
   let thinking = $state("inherit");
   let seed = $state<number | null>(null);
@@ -285,17 +289,18 @@
           <h3 id="selected-role-title" class="role-title">{editingLabel}</h3>
           <p class="meta" role="status" aria-live="polite">{saveStatus}</p>
         </div>
-        <label class="field">
+        <!-- A speaker's recipe comes from the chips (recipes are never typed); one from a tree or an
+             agent shows as written and can be replaced or cleared. -->
+        <div class="field">
           <span class="meta" data-tip={IDENTITY_HELP.cast}>Steering</span>
-          <input
-            bind:value={steering}
-            placeholder="None"
-            spellcheck="false"
-            autocomplete="off"
-            aria-label={`Steering expression for ${editingLabel}`}
-            oninput={scheduleSave}
-          />
-        </label>
+          <p class="cast-recipe" class:none={!steering} aria-label={`Steering for ${editingLabel}`}>{#if steering}{#each wrapPieces(steering) as piece, i}{#if i}<wbr>{/if}{piece}{/each}{:else}None{/if}</p>
+          <div class="dw-row">
+            <button type="button" class="dw-text" disabled={!rackRecipe || rackRecipe === steering}
+              data-tip={rackRecipe ? `Steer ${editingLabel}'s turns with the recipe's chips: ${rackRecipe}` : "The recipe has no terms; add some with + Steer"}
+              onclick={() => { steering = rackRecipe; scheduleSave(); }}>Use the recipe</button>
+            {#if steering}<button type="button" class="dw-text" onclick={() => { steering = ""; scheduleSave(); }}>Clear</button>{/if}
+          </div>
+        </div>
         <div class="pair">
           <div class="field">
             <span class="meta" data-tip={SAMPLING_HELP.thinking}>Thinking</span>
@@ -348,6 +353,8 @@
   .role-title { margin: 0; color: var(--ink); font: var(--type-lead); }
   .form { gap: var(--s4); }
   .field { display: grid; gap: var(--s1); min-width: 0; }
+  .cast-recipe { margin: 0; min-height: 40px; padding: var(--s2) var(--s3); border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-small); font-variant-numeric: tabular-nums; overflow-wrap: break-word; }
+  .cast-recipe.none { color: var(--ink3); }
   .field input { width: 100%; height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-small); }
   .pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s4); }
   .error { color: var(--ink); font: var(--type-small); }

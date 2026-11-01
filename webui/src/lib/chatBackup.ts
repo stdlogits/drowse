@@ -1,5 +1,5 @@
 import { strFromU8, strToU8, unzipSync, zipSync } from "fflate";
-import { CONVERSATION_SAMPLING_KEYS, validateConversationSnapshot, type ConversationSnapshotV7 } from "./conversationSnapshot";
+import { CONVERSATION_SAMPLING_KEYS, validateConversationSnapshot, type ConversationSnapshotV8 } from "./conversationSnapshot";
 import { defaultConversationName, validateSavedConversationRecord, type ConversationLibrary, type SavedConversationRecord, type SavedConversationSummary } from "./conversationLibrary";
 import { validateHostedLoomTree } from "./sessionPersistence";
 import { migrateLegacyRecord } from "./brandMigration";
@@ -29,7 +29,7 @@ export interface ChatImportCandidate {
   modelType?: SavedConversationRecord["modelType"];
   createdAt?: number;
   updatedAt?: number;
-  snapshot: ConversationSnapshotV7;
+  snapshot: ConversationSnapshotV8;
 }
 
 type BackupFile = Pick<File, "size" | "text"> & Partial<Pick<File, "name" | "arrayBuffer">>;
