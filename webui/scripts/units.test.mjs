@@ -491,6 +491,22 @@ try {
   assert.match(summary, />at [^]*?<b[^>]*>−0\.30<\/b>/, "its value at the cursor's token");
   assert.match(summary, /night-sky and starlight words/);
   assert.match(summary, /moonlight/, "the + side's writes");
+  // W6 integration: the room's chosen unit is pushed or silenced right there, through
+  // lib/steerActions (its chip lands in the recipe's strip), and the summary shows the term held.
+  {
+    const bare = (h) => h.replace(/<!--[^]*?-->/g, "");
+    const button = (pressed, label) => new RegExp(`aria-pressed="${pressed}">(?:<svg[^]*?</svg>)?${label.replace("+", "\\+")}</button>`);
+    const acts = bare(summary.slice(0, summary.indexOf("peak here")));
+    for (const label of ["Push +", "Push −", "Silence"]) assert.match(acts, button(false, label), `the summary offers ${label}`);
+    actions.pushUnit("neuron/L3n3", "-");
+    const held = render(UnitsRoom, {}).body;
+    const heldSummary = bare(held.slice(held.indexOf('aria-label="Selected unit"')));
+    assert.match(heldSummary, button(true, "Push −"), "the held pole is pressed");
+    assert.match(heldSummary, button(false, "Push +"));
+    assert.match(heldSummary, /-0\.2 neuron\/L3n3/, "the summary shows the term");
+    steering.removeSteerEntry("neuron/L3n3");
+    selectionStore.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 4 } });
+  }
   assert.equal(store.unitLabelFor("neuron/L3n3", "-"), "daylight words", "labels are kept per pole");
 
   // A neuron that fired on its − pole: the summary reads that side (its writes, label, link and

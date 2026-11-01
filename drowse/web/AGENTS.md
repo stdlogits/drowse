@@ -473,7 +473,9 @@ drowse.ai too.
   `request*` from an `$effect`, nothing asked while a generation runs. Both hide where
   `unitReadsAvailable(runtimeClient)` is false (`shownRooms()` drops the room). A neuron
   reads one side at a time, and both views read the side that fired here (`peakPole`, the
-  sign of its trace's peak): the view's writes, label and link, the room's summary. In the room's
+  sign of its trace's peak): the view's writes, label and link, the room's summary. Both offer
+  the unit's Push +, Push − and Silence (a head: Silence) through `lib/steerActions.ts`, each
+  pressed while the recipe holds it. In the room's
   atlas a bar is its unit's button (All: the cell under the pointer, through
   `units.ts::fieldCellAt`), choosing the unit and its layer; the rest of a column chooses the layer,
   and the atlas is one keyboard stop the arrows move (`atlasStep`). Heads

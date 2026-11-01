@@ -7,8 +7,9 @@
   // a cell) chooses its unit. The search names a word (the units that write it) or a unit's ID.
   // Below, the units as rows (ID, label, a meter, the value) and the chosen one in brief: its value
   // here and its peak, its activation token by token (a bar moves the cursor there), what it writes,
-  // and the way to the workbench (which selects it) or to its Neuron Lens page. Without a bound
-  // catalog, one link leads to the Artifacts room's unit catalog.
+  // its Push and Silence (lib/steerActions.ts: the term lands in the recipe's strip, its chip opened
+  // for the strength), and the way to the workbench (which selects it) or to its Neuron Lens page.
+  // Without a bound catalog, one link leads to the Artifacts room's unit catalog.
   import { tick, untrack } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { Icon, MorphText, Segmented, Swap, Token, formatValue, tokenParts } from "@stdlogits/ledger";
@@ -32,7 +33,12 @@
     unitsAvailable,
     unitsForWord,
     unitsState,
+    unitTerm,
   } from "../../lib/stores/units.svelte";
+  import { steerRack } from "../../lib/stores/steering.svelte";
+  import { pushUnit, silenceUnit } from "../../lib/steerActions";
+  import { formatUnitTerm } from "../../lib/expression";
+  import type { UnitTerm } from "../../lib/unitTerms";
   import {
     decileCuts,
     decodeFloat16,
@@ -355,6 +361,19 @@
   });
   const tint = $derived(selRef && nLayers > 1 ? depthTint(selRef.layer / (nLayers - 1)) : null);
 
+  // ---------- the recipe: the chosen unit pushed (a neuron, either pole) or silenced, as the unit view
+  const selTerm = $derived(selected ? unitTerm(selected) : null);
+  const selEntry = $derived(selected ? steerRack.entries.get(selected) : undefined);
+  const selExpression = $derived(selected && selTerm && selEntry?.mode === "unit" ? formatUnitTerm(selected, selEntry) : null);
+  const selActions = $derived<{ term: UnitTerm; label: string }[]>(selRef?.kind === "head"
+    ? [{ term: "silence", label: "Silence" }]
+    : [{ term: "plus", label: "Push +" }, { term: "minus", label: "Push −" }, { term: "silence", label: "Silence" }]);
+  function act(term: UnitTerm): void {
+    if (!selected) return;
+    if (term === "silence") silenceUnit(selected);
+    else pushUnit(selected, term === "minus" ? "-" : "+");
+  }
+
   function open(): void {
     if (!selected) return;
     select({ kind: "unit", id: selected });
@@ -466,6 +485,16 @@
               <h2 class="dw-title">{unitTitle(selected)}</h2>
               {#if selLabel}<p class="label">{selLabel}</p>{/if}
             </div>
+            <div class="acts">
+              <div class="dw-row">
+                {#each selActions as a (a.term)}
+                  <button type="button" class="dw-quiet act" aria-pressed={selTerm === a.term} onclick={() => act(a.term)}>
+                    {#if selTerm === a.term}<Icon name="check" />{/if}{a.label}
+                  </button>
+                {/each}
+              </div>
+              {#if selExpression}<span class="meta expr">{selExpression}</span>{/if}
+            </div>
             <div class="dw-facts">
               {#if trace && hereAt >= 0}<span>at <Token token={tokens[hereAt]?.token ?? ""} /> <b>{signed(trace[hereAt] ?? 0)}</b></span>{/if}
               {#if trace && peakAt >= 0}<span>peak here <b>{signed(trace[peakAt] ?? 0)}</b> on <Token token={tokens[peakAt]?.token ?? ""} /></span>{/if}
@@ -549,6 +578,9 @@
 
   .sum { flex: 1 1 360px; max-width: 520px; min-width: 0; display: grid; gap: var(--s4); align-content: start; }
   .name { display: grid; gap: var(--s1); }
+  .acts { display: grid; gap: var(--s2); }
+  .act[aria-pressed="true"] { background: var(--wash2); }
+  .expr { overflow-wrap: anywhere; }
   .label { margin: 0; color: var(--ink); font: var(--type-label); }
   .strip { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); align-items: end; height: 40px; }
   .s { display: flex; align-items: flex-end; justify-content: center; height: 100%; min-width: 0; padding: 0 0 4px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; transition: background-color var(--fast) var(--ease); }
