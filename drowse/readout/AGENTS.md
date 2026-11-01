@@ -25,7 +25,7 @@ other three families (`drowse/units/AGENTS.md`);
 | `planner.py` | `GateDemand`, `ReadDemand`, `resolve_read_demand`, `CapturePlan`, `plan_capture`, `CaptureMode`, `CaptureState` — pure, no side effects |
 | `capture_buffer.py` | `HiddenCapture`, `install_persistent_capture_hooks` |
 | `monitor.py` | `Monitor`: every geometry read and gate scalar |
-| `monitor_attach.py` | attach-time algebra: `AttachedManifoldProbe`, `_LayerWhiten`, `_FactorStack`, bandwidths, `NEUTRAL_LABEL`; plus the per-token `_layer_geometry` |
+| `monitor_attach.py` | attach-time algebra: `AttachedManifoldProbe`, `_LayerWhiten`, `_FactorStack`, `_CurvedStack`, bandwidths, `NEUTRAL_LABEL`; plus the per-token `_curved_geometry` |
 | `monitor_flat.py` | `_FlatEngine`: the batched read over every flat probe |
 | `geometry.py` | `GeometryInstrument`, `GeometryRun` |
 | `roster.py` | `ProbeRoster` and its `GeometryFamily`/`ReadoutFamily` protocols |
@@ -264,11 +264,22 @@ attaches on the host too and uploads packed (`geometry/packing.py`), so the
 roster stays a few device buffers instead of thousands of small tensors. A
 read is one stacked `Σ⁻¹h` apply over every layer; the flat roster is then one
 `_FlatEngine` pass (segments bucketed by rank, dim and candidate count; rank-1
-is elementwise) and one host transfer; each curved probe adds its foot solve
-and one transfer. Curved feet warm-start per `(probe, layer)` only while
-`enable_curved_warm(True)` (sequential per-token scoring). Aggregates, replays
-and `FULL` stacks read cold so one-shot reads stay reproducible. Curved
-probes are the expensive reads: a foot solve per layer per token.
+is elementwise) and one host transfer; each curved probe adds one stacked
+read and one transfer. A curved probe's per-layer factors and surfaces are
+stacked at attach (`monitor_attach.py::_CurvedStack`, `StackedRbf`, packed
+with the probe), and a read runs every layer at once: elementwise work over the
+stack, the reductions (the basis projections, the norms) on each layer's own
+rows at its own rank, one batched foot solve (`invert_stacked`), and the
+share-weighted means as a left fold in layer order. Every kernel computes a
+layer as the per-layer read did, so a reading does not depend on how many
+layers ran together (bit-identical to the per-layer read on MPS, pinned to it
+by `tests/readout/test_monitor_curved_stack.py`). A read that saw only some of
+a probe's layers uses a cached `_CurvedStack.subset`. Curved feet warm-start
+per `(probe, layers)` only while `enable_curved_warm(True)` (sequential
+per-token scoring). Aggregates, replays and `FULL` stacks read cold so one-shot
+reads stay reproducible. Curved probes are still the expensive reads: a
+SmolLM2 `months` probe costs about 6 ms a token (the per-layer reductions are
+a few hundred small kernels), where the layer-by-layer read cost about 49.
 
 **Gates.** `plan_gate_scalars` parses keys once per generation;
 `score_planned_gate_scalars` computes only the requested channels (curved

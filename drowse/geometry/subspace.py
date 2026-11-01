@@ -21,7 +21,7 @@ into the per-layer Mahalanobis budget weight.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING, Sequence, cast
 
 import torch
 
@@ -371,6 +371,80 @@ class LayerSubspace:
         return torch.exp(log_sigma).squeeze(-1)  # (..,)
 
 
+@dataclass(eq=False)
+class StackedRbf:
+    """Several curved layers' surfaces as one stack (leading dim ``L``).
+
+    Built once from a probe's per-layer :class:`LayerSubspace` objects on the
+    read device (fp32) so the monitor's curved read runs every layer's foot
+    solve and σ lookup as one batched kernel sequence
+    (:func:`~drowse.geometry.invert.invert_stacked`) instead of a sequence per
+    layer.  Ranks may differ by layer: the value columns are zero-padded to the
+    widest rank ``R``, which the solve's residuals and Jacobians carry as exact
+    zeros.
+    """
+
+    node_params: torch.Tensor        # (L, K, m)
+    rbf_weights: torch.Tensor        # (L, K, R)
+    poly_coeffs: torch.Tensor        # (L, m+1, R)
+    coord_offset: torch.Tensor       # (L, m)
+    coord_scale: torch.Tensor        # (L, m)
+    ranks: tuple[int, ...]
+    # The σ-field stack (a raw curved fit carries one at every layer, an
+    # SAE-curved fit at none).
+    sigma_rbf_weights: torch.Tensor | None = None   # (L, K, 1)
+    sigma_poly_coeffs: torch.Tensor | None = None   # (L, m+1, 1)
+
+    @classmethod
+    def build(
+        cls, subspaces: Sequence[LayerSubspace], device: torch.device,
+    ) -> "StackedRbf":
+        f32 = torch.float32
+        subs = [s.to(device=device, dtype=f32) for s in subspaces]
+        R = max(s.rank for s in subs)
+
+        def pad(t: torch.Tensor) -> torch.Tensor:
+            return torch.nn.functional.pad(t, (0, R - int(t.shape[-1])))
+
+        params = [s.rbf_params() for s in subs]
+        has_sigma = {s.has_sigma for s in subs}
+        if len(has_sigma) != 1:
+            raise ValueError("StackedRbf: layers disagree on carrying a σ-field")
+        sigma_w = sigma_p = None
+        if has_sigma.pop():
+            sigma_w = torch.stack([cast(torch.Tensor, s.sigma_rbf_weights) for s in subs])
+            sigma_p = torch.stack([cast(torch.Tensor, s.sigma_poly_coeffs) for s in subs])
+        return cls(
+            node_params=torch.stack([np_ for np_, _rw, _pc in params]),
+            rbf_weights=torch.stack([pad(rw) for _np, rw, _pc in params]),
+            poly_coeffs=torch.stack([pad(pc) for _np, _rw, pc in params]),
+            coord_offset=torch.stack([s.coord_offset for s in subs]),
+            coord_scale=torch.stack([s.coord_scale for s in subs]),
+            ranks=tuple(s.rank for s in subs),
+            sigma_rbf_weights=sigma_w,
+            sigma_poly_coeffs=sigma_p,
+        )
+
+    def sigma_at(self, embedded: torch.Tensor) -> torch.Tensor:
+        """Each layer's σ at its own embedded coords ``(L, m)`` → ``(L,)``.
+
+        :meth:`LayerSubspace.sigma_at` per stack entry: the elementwise work
+        runs over the stack, the two small products per layer run on that
+        layer's own rows, so each σ is the one-layer value.
+        """
+        sw, sp = self.sigma_rbf_weights, self.sigma_poly_coeffs
+        assert sw is not None and sp is not None
+        norm = (embedded - self.coord_offset) / self.coord_scale          # (L, m)
+        r = torch.linalg.vector_norm(
+            norm.unsqueeze(-2) - self.node_params, dim=-1,
+        )                                                                 # (L, K)
+        phi = r.pow(3)
+        aug = torch.cat([torch.ones_like(norm[..., :1]), norm], dim=-1)   # (L, m+1)
+        rbf_part = torch.stack([phi[i:i + 1] @ sw[i] for i in range(int(phi.shape[0]))])
+        poly_part = torch.stack([aug[i:i + 1] @ sp[i] for i in range(int(aug.shape[0]))])
+        return torch.exp(rbf_part + poly_part).reshape(-1)
+
+
 def pca_basis(
     X: torch.Tensor,
     *,
@@ -638,6 +712,7 @@ __all__ = [
     "DEFAULT_N_COMPONENTS",
     "LayerFit",
     "LayerSubspace",
+    "StackedRbf",
     "fit_affine_subspace",
     "fit_curved_subspace",
     "pca_basis",

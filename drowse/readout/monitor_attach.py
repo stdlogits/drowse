@@ -4,9 +4,10 @@ Everything here runs once per ``add_probe`` (or once per roster change), off
 the per-token hot path: the :class:`AttachedManifoldProbe` / :class:`_LayerWhiten`
 caches, the Mahalanobis factor build, the soft-assignment bandwidths, and the
 :class:`_FactorStack` — the Monitor's single device copy of the whitener's
-Woodbury factors.  The one per-token primitive kept here is
-:func:`_layer_geometry` (the curved per-probe read).  This module must not
-import :mod:`drowse.readout.monitor`.
+Woodbury factors — and a curved probe's :class:`_CurvedStack`.  The one
+per-token primitive kept here is :func:`_curved_geometry` (the curved probe's
+per-layer projections, every layer at once).  This module must not import
+:mod:`drowse.readout.monitor`.
 """
 
 from __future__ import annotations
@@ -21,6 +22,7 @@ import torch
 from drowse.errors import WhitenerError
 from drowse.geometry.domains import BoxDomain
 from drowse.geometry.packing import pack_to_device
+from drowse.geometry.subspace import StackedRbf
 
 if TYPE_CHECKING:
     from drowse.geometry.manifold import Manifold
@@ -283,6 +285,10 @@ class AttachedManifoldProbe:
     # forms (M-orthogonal subspace projection + Mahalanobis distance).  Empty
     # only for an empty manifold (no layers to read).
     whitened: dict[int, "_LayerWhiten"] = field(default_factory=dict)
+    # A curved probe's read state, every layer stacked (``None`` for a flat
+    # probe, which the Monitor's ``_FlatEngine`` reads instead).  Built on the
+    # host with ``whitened`` and uploaded packed with the rest of the probe.
+    curved: "_CurvedStack | None" = None
 
 
 @dataclass
@@ -464,7 +470,7 @@ def _build_whitened_factors(
             neutral_white = (v_red @ chol_dev).reshape(-1)
         mean_dev = sub.mean.to(device=dev, dtype=torch.float32)
         # Precompute ``Σ⁻¹ mean`` once (constant in mean + whitener), so the
-        # per-token ``_layer_geometry`` centers via ``sih − s_mean`` against the
+        # per-token curved read centers via ``sih − s_mean`` against the
         # shared ``Σ⁻¹h`` rather than a full per-probe Woodbury apply.
         s_mean = stack.apply(layer_idx, mean_dev)
         node_white = v_reduced.to(torch.float32) @ chol_dev   # (K, R)
@@ -722,6 +728,8 @@ def _attach_on_host(
         ],
     )
     probe.whitened = _build_whitened_factors(whitener, probe, stack_for)
+    if not probe.is_affine and probe.whitened:
+        probe.curved = _CurvedStack.build(probe)
     probe.geometry = probe_geometry_payload(probe)
     bw, lvb = _compute_assign_bandwidth(probe, embedded)
     # Park the soft-assignment factors on the scoring device once, so
@@ -854,41 +862,184 @@ def _compute_assign_bandwidth(
     return tau, logvol_bias
 
 
-def _layer_geometry(
-    probe: "AttachedManifoldProbe",
-    layer_idx: int,
-    h: torch.Tensor,
-    sih: torch.Tensor,
-) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
-    """Per-layer readout pieces for one probe at one state.
+@dataclass(eq=False)
+class _CurvedStack:
+    """A curved probe's per-layer read factors, stacked over its layers.
 
-    ``sih`` is ``Σ⁻¹h`` for this layer — probe-independent, so the Monitor
-    computes it once per layer per read (:meth:`_FactorStack.apply_stack`) and
-    every probe centers it with one subtract (``Σ⁻¹(h − mean) = sih − s_mean``).
-    Returns ``(frac, cdist_query, invert_query)``:
-
-    * ``frac`` — scalar in ``[0, 1]``, the whitened **M-orthogonal**
-      in-subspace energy share ``sqrt(gᵀ M_R⁻¹ g) / ‖x‖_M`` with ``g = B Σ⁻¹ x``;
-    * ``cdist_query`` — ``(1, R)`` whitened query ``Lᵀc``, so a plain distance
-      against ``node_white`` is the Mahalanobis distance;
-    * ``invert_query`` — ``(R,)`` M-orthogonal projection coords ``c = M_R⁻¹ g``
-      for :func:`~drowse.geometry.invert.invert_parameterization`.
+    The curved read's per-layer algebra (the M-projection, the whitened node
+    distances, the foot solve, the σ-field) is a few small kernels per layer;
+    run layer by layer it is thousands of kernel launches per token.  Stacked
+    over the probe's layers (``L``, manifold order) it is one fixed sequence
+    whatever ``L`` is.  Ranks may differ by layer: every ``R`` axis is
+    zero-padded to the widest rank, which the projections, distances and the
+    solve carry as exact zeros.  Built on the host at attach from the probe's
+    :class:`_LayerWhiten` factors and uploaded packed with the probe;
+    :meth:`subset` serves a read that saw only some of the layers.
     """
-    wh = probe.whitened.get(layer_idx)
-    if wh is None:
-        raise WhitenerError(
-            f"subspace probe read missing whitened factors for layer "
-            f"{layer_idx}; rebuild the probe (the Euclidean path is gone)"
+
+    layers: tuple[int, ...]
+    ranks: tuple[int, ...]
+    # Share weights renormalized over ``layers`` (host floats and ``(L,)``).
+    w_shared: dict[int, float]
+    weights: torch.Tensor          # (L,)
+    # Row of the heaviest layer: the circular-mean reference coordinate.
+    reference: int
+    mean: torch.Tensor             # (L, D)
+    s_mean: torch.Tensor           # (L, D)   Σ⁻¹ mean
+    basis: torch.Tensor            # (L, R, D)
+    m_r_inv: torch.Tensor          # (L, R, R)
+    chol: torch.Tensor             # (L, R, R)
+    node_white_aug: torch.Tensor   # (L, Kc, R)
+    node_coords: torch.Tensor      # (K, n) authoring node coords (solve seeds)
+    surfaces: StackedRbf
+
+    @staticmethod
+    def build(probe: "AttachedManifoldProbe") -> "_CurvedStack":
+        manifold = probe.manifold
+        layers = tuple(L for L in manifold.layers if L in probe.whitened)
+        whs = [probe.whitened[L] for L in layers]
+        ranks = tuple(int(wh.basis.shape[0]) for wh in whs)
+        R = max(ranks)
+
+        def pad_rows(t: torch.Tensor, r: int) -> torch.Tensor:   # (r, X) -> (R, X)
+            return torch.nn.functional.pad(t, (0, 0, 0, R - r))
+
+        def pad_cols(t: torch.Tensor, r: int) -> torch.Tensor:   # (X, r) -> (X, R)
+            return torch.nn.functional.pad(t, (0, R - r))
+
+        stacked = _CurvedStack(
+            layers=layers,
+            ranks=ranks,
+            w_shared={},
+            weights=torch.zeros(0),
+            reference=0,
+            mean=torch.stack([wh.mean for wh in whs]),
+            s_mean=torch.stack([wh.s_mean for wh in whs]),
+            basis=torch.stack([pad_rows(wh.basis, r) for wh, r in zip(whs, ranks)]),
+            m_r_inv=torch.stack([
+                pad_cols(pad_rows(wh.m_r_inv, r), r) for wh, r in zip(whs, ranks)
+            ]),
+            chol=torch.stack([
+                pad_cols(pad_rows(wh.chol, r), r) for wh, r in zip(whs, ranks)
+            ]),
+            node_white_aug=torch.stack([
+                pad_cols(wh.node_white_aug, r) for wh, r in zip(whs, ranks)
+            ]),
+            node_coords=manifold.node_coords.to(torch.float32).clone(),
+            surfaces=StackedRbf.build(
+                [manifold.layers[L] for L in layers], whs[0].mean.device,
+            ),
         )
-    device = h.device
-    x = h - wh.mean.to(device)
-    sx = sih - wh.s_mean.to(device)      # Σ⁻¹ x  (D,)
+        stacked._reweigh(probe.share_weights)
+        return stacked
+
+    def _reweigh(self, share_weights: dict[int, float]) -> None:
+        total = sum(share_weights[L] for L in self.layers)
+        self.w_shared = {L: share_weights[L] / total for L in self.layers}
+        self.weights = torch.tensor(
+            [self.w_shared[L] for L in self.layers],
+            device=self.mean.device, dtype=torch.float32,
+        )
+        heaviest = max(self.layers, key=lambda layer: self.w_shared[layer])
+        self.reference = self.layers.index(heaviest)
+
+    def subset(
+        self, layers: tuple[int, ...], share_weights: dict[int, float],
+    ) -> "_CurvedStack":
+        """The stack restricted to ``layers`` (a read that saw only some)."""
+        rows = [self.layers.index(L) for L in layers]
+        idx = torch.tensor(rows, device=self.mean.device, dtype=torch.long)
+
+        def pick(t: torch.Tensor) -> torch.Tensor:
+            return t.index_select(0, idx)
+
+        s = self.surfaces
+        out = _CurvedStack(
+            layers=layers,
+            ranks=tuple(self.ranks[i] for i in rows),
+            w_shared={},
+            weights=self.weights,
+            reference=0,
+            mean=pick(self.mean),
+            s_mean=pick(self.s_mean),
+            basis=pick(self.basis),
+            m_r_inv=pick(self.m_r_inv),
+            chol=pick(self.chol),
+            node_white_aug=pick(self.node_white_aug),
+            node_coords=self.node_coords,
+            surfaces=StackedRbf(
+                node_params=pick(s.node_params),
+                rbf_weights=pick(s.rbf_weights),
+                poly_coeffs=pick(s.poly_coeffs),
+                coord_offset=pick(s.coord_offset),
+                coord_scale=pick(s.coord_scale),
+                ranks=tuple(s.ranks[i] for i in rows),
+                sigma_rbf_weights=(
+                    pick(s.sigma_rbf_weights) if s.sigma_rbf_weights is not None else None
+                ),
+                sigma_poly_coeffs=(
+                    pick(s.sigma_poly_coeffs) if s.sigma_poly_coeffs is not None else None
+                ),
+            ),
+        )
+        out._reweigh(share_weights)
+        return out
+
+
+def _curved_geometry(
+    cs: _CurvedStack, h: torch.Tensor, sih: torch.Tensor,
+) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]":
+    """A curved probe's per-layer readout pieces at one state, every layer at once.
+
+    ``h`` and ``sih`` are ``(L, D)``: the state and ``Σ⁻¹h`` at each of the
+    stack's layers.  ``Σ⁻¹h`` is probe-independent, so the Monitor computes it
+    once per layer per read (:meth:`_FactorStack.apply_stack`) and every probe
+    centers it with one subtract (``Σ⁻¹(h − mean) = sih − s_mean``).  Returns
+    ``(frac (L,), cdist_query (L, R), invert_query (L, R), node_dist (L, Kc))``:
+
+    * ``frac`` — in ``[0, 1]``, the whitened **M-orthogonal** in-subspace
+      energy share ``sqrt(gᵀ M_R⁻¹ g) / ‖x‖_M`` with ``g = B Σ⁻¹ x``;
+    * ``cdist_query`` — the whitened query ``Lᵀc``, so a plain distance
+      against ``node_white`` is the Mahalanobis distance;
+    * ``invert_query`` — the M-orthogonal projection coords ``c = M_R⁻¹ g``
+      for :func:`~drowse.geometry.invert.invert_stacked`;
+    * ``node_dist`` — the whitened distance to each candidate (the nodes,
+      then neutral when injected).
+
+    Elementwise work runs over the whole stack; each reduction (the norms,
+    the projections onto a layer's basis) runs on its own layer's rows, at
+    the layer's own rank, so a read is the same number whether its layers
+    were read together or one at a time.  Padded rank columns read zero.
+    """
+    x = h - cs.mean
+    sx = sih - cs.s_mean                                   # Σ⁻¹ x  (L, D)
+    xsx = x * sx
+    ranks = cs.ranks
+    R = int(cs.basis.shape[1])
+
+    def stack_rows(rows: list[torch.Tensor]) -> torch.Tensor:
+        return torch.stack([
+            row if int(row.shape[0]) == R
+            else torch.nn.functional.pad(row, (0, R - int(row.shape[0])))
+            for row in rows
+        ])
+
     x_mnorm = torch.sqrt(
-        (x * sx).sum().clamp(min=0.0)
+        torch.stack([xsx[i].sum() for i in range(len(ranks))]).clamp(min=0.0)
     ).clamp(min=_FRACTION_EPSILON)
-    g = wh.basis.to(device) @ sx         # (R,) = B Σ⁻¹ x
-    c = wh.m_r_inv @ g                   # (R,) = M_R⁻¹ g  (M-proj coords)
-    par_mnorm = torch.sqrt((g * c).sum().clamp(min=0.0))  # ‖P_M x‖_M
+    g = stack_rows([cs.basis[i, :r] @ sx[i] for i, r in enumerate(ranks)])      # B Σ⁻¹ x
+    c = stack_rows([cs.m_r_inv[i, :r, :r] @ g[i, :r] for i, r in enumerate(ranks)])  # M_R⁻¹ g
+    gc = g * c
+    par_mnorm = torch.sqrt(                                # ‖P_M x‖_M
+        torch.stack([gc[i, :r].sum() for i, r in enumerate(ranks)]).clamp(min=0.0)
+    )
     frac = (par_mnorm / x_mnorm).clamp(min=0.0, max=1.0)
-    cdist_query = (c.reshape(1, -1) @ wh.chol)  # (1, R) — Lᵀc as row
-    return frac, cdist_query, c
+    cq = stack_rows([                                      # Lᵀc as a row
+        (c[i, :r].reshape(1, -1) @ cs.chol[i, :r, :r]).reshape(-1)
+        for i, r in enumerate(ranks)
+    ])
+    off = cs.node_white_aug - cq.unsqueeze(-2)             # (L, Kc, R)
+    dist = torch.stack([
+        torch.linalg.vector_norm(off[i, :, :r], dim=-1) for i, r in enumerate(ranks)
+    ])                                                     # (L, Kc)
+    return frac, cq, c, dist
