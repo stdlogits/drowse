@@ -67,7 +67,7 @@
 <div class="menu-host">
   <button bind:this={button} type="button" class="menu-button" aria-label={label} data-tip={label}
     aria-haspopup="menu" aria-expanded={open} aria-controls={id} onclick={() => void toggle()}>
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+    <Icon name="menu" />
   </button>
   {#if open}
     <button type="button" class="scrim" tabindex="-1" aria-label="Close the menu" onclick={() => close()}></button>
@@ -106,7 +106,7 @@
     cursor: pointer;
     transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), scale var(--fast) var(--ease);
   }
-  .menu-button:active { scale: 0.97; }
+  .menu-button:active { scale: 0.94; }
   .menu-button[aria-expanded="true"] { background: var(--wash2); color: var(--ink); }
   @media (hover: hover) { .menu-button:hover { background: var(--wash2); color: var(--ink); } }
   .scrim { position: fixed; inset: 0; z-index: 40; padding: 0; border: 0; background: transparent; cursor: default; }
