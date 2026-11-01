@@ -300,6 +300,24 @@ function roleOverride(
   return { [key]: value };
 }
 
+/** The observation knobs of ``buildSamplingPayload`` (``loom/recipe.py::CALL_ONLY_SAMPLING_FIELDS``):
+ *  what a call captures, never how it samples. */
+const OBSERVATION_FIELDS = [
+  "logprobs", "return_top_k", "persist_per_layer_scores", "persist_subspace_coords", "return_probe_readings",
+] as const;
+
+/** The sampling a comparison sends: the composer's observation knobs only. A comparison is the
+ *  compared turn as it was, with one modifier; a sampling field the call set would outrank the
+ *  turn's own (``compose_call``), so the composer's generation fields stay off the wire. */
+export function buildObservationSampling(): WSSampling {
+  const full = buildSamplingPayload() ?? {};
+  const out: WSSampling = {};
+  for (const key of OBSERVATION_FIELDS) {
+    if (key in full) Object.assign(out, { [key]: full[key as keyof WSSampling] });
+  }
+  return out;
+}
+
 export function buildSamplingPayload(): WSSampling | null {
   // The strip PATCHes these numeric controls so they become defaults for
   // future calls, but that persistence request is deliberately asynchronous.

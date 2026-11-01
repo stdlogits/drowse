@@ -122,7 +122,15 @@ own checkout, so in a worktree run it from the repo root with `PYTHONPATH=.`.
   without generating, and `text: null` continues from the selected leaf. `generate`
   covers continuation, explicit message replay (the A/B shadow), the token fork and
   `generate_seat`. The third client frame is `stop`. Server frames are `started`,
-  `token`, `done`, `error`, `request_complete` and `tree_mutated`. The shared types also
+  `token`, `done`, `error`, `request_complete`, `tree_mutated` and `resync`. A `resync`
+  means the server dropped frames this client read too slowly for (generation went on into
+  the tree): `stores/ws.svelte.ts` holds later frames, reads the tree through the same
+  recovery barrier a revision gap uses, and `loom.svelte.ts::catchUpStreamingRows` appends
+  the streaming node's rows past the live arrays' last `raw_index`, so the drawn rows stay
+  and the frames that follow dedupe; a stateless reply takes its text from `done`. The A/B
+  comparison sends only the composer's observation knobs
+  (`sampling.svelte.ts::buildObservationSampling`): it is the compared turn as it was, and
+  a generation field the call set would outrank the turn's own. The shared types also
   carry browser-runtime extensions: the `generation_progress` frame, which Python never
   emits, and `position_spans`/`position_indices`, which Python's `extra="forbid"` rejects.
 - An error frame's `code` (SSE, polled or WS) is the exception class name (`RequestError`,
@@ -455,7 +463,8 @@ drowse.ai too.
   its count only while it counts, a gate); `patchSteerEntry` takes no timing field. The
   loom's guided variations pick a fitted flat concept and its node
   (`loomCommands.ts::fanoutConcepts`, `fanoutRecipe`: each variation's `steering=` is the
-  chips' own term at that strength), never typed text.
+  chips' own term at that strength; its sampling is the call's, which outranks the anchor),
+  never typed text.
 
 ## Testing
 

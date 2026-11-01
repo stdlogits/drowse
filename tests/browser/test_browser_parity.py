@@ -43,7 +43,8 @@ from drowse.geometry.whitener import LayerWhitener
 from drowse.lens.jlens import JacobianLens, aggregate_readout_from_probabilities, token_readout_stats_from_probabilities
 from drowse.lens.depth import LensBand, s_weights
 from drowse.lens.footprint import footprint_probe_rows
-from drowse.loom.recipe import CastMember, Recipe
+from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT, InheritSystemPrompt, SamplingConfig
+from drowse.loom.recipe import CastMember, Recipe, compose_call
 from drowse.loom.tree import LoomTree
 from drowse.readout.measurements import build_measurements, token_row_measurements
 from drowse.readout.monitor import _depth_stats
@@ -589,6 +590,71 @@ def test_shared_loom_operation_transcript_matches_python_source_of_truth(
         "preservedMeasurementsBeforeReset"
     ]
     assert _canonical_tree(tree) == fixture["expected"]["final"]
+
+
+# ---------------------------------------------------------------------------
+# Recipe composition
+# ---------------------------------------------------------------------------
+
+
+RECIPE_COMPOSE = GOLDENS / "recipe-compose-v1.json"
+
+
+def _golden_sampling(block: dict[str, Any] | None) -> SamplingConfig | None:
+    if block is None:
+        return None
+    values = dict(block)
+    if "stop" in values:
+        values["stop"] = tuple(values["stop"])
+    return SamplingConfig(**values)
+
+
+def _golden_recipe(block: dict[str, Any] | None) -> Recipe | None:
+    if block is None:
+        return None
+    return Recipe(
+        steering=block.get("steering"), thinking=block.get("thinking"),
+        sampling=_golden_sampling(block.get("sampling")),
+        system_prompt=block.get("system_prompt", INHERIT_SYSTEM_PROMPT),
+    )
+
+
+def _set_sampling(sampling: SamplingConfig | None) -> dict[str, Any] | None:
+    """The fields of ``sampling`` that are set (not at their unset default)."""
+    if sampling is None:
+        return None
+    unset = SamplingConfig()
+    out: dict[str, Any] = {}
+    for name in SamplingConfig.__dataclass_fields__:
+        value = getattr(sampling, name)
+        if value != getattr(unset, name):
+            out[name] = list(value) if name == "stop" else value
+    return out
+
+
+def _compose_case(case: dict[str, Any]) -> dict[str, Any]:
+    call = case["call"]
+    anchor = _golden_recipe(case.get("anchor"))
+    modifier = case.get("modifier")
+    out = compose_call(
+        steering=call["steering"], thinking=call["thinking"],
+        sampling=_golden_sampling(call["sampling"]),
+        cast=_golden_recipe(case.get("cast")), anchor=anchor,
+        modifier=(anchor or Recipe()).compose_modifier(modifier) if modifier is not None else None,
+    )
+    expected: dict[str, Any] = {
+        "steering": out.steering, "thinking": out.thinking, "sampling": _set_sampling(out.sampling),
+    }
+    if not isinstance(out.system_prompt, InheritSystemPrompt):
+        expected["system_prompt"] = out.system_prompt
+    return expected
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(RECIPE_COMPOSE.read_text())["cases"], ids=lambda case: case["name"],
+)
+def test_browser_recipe_composition_matches_python(case: dict[str, Any]) -> None:
+    assert _compose_case(case) == case["expected"]
 
 
 # ---------------------------------------------------------------------------

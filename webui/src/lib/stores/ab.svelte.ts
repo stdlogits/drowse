@@ -13,7 +13,7 @@
 
 import type { WSClientMessage } from "../types";
 import { chatLog, genStatus } from "./chat.svelte";
-import { buildSamplingPayload, samplingState } from "./sampling.svelte";
+import { buildObservationSampling, samplingState } from "./sampling.svelte";
 import { userFacingError } from "../runtime/userFacingError";
 import { ensureRuntimeChannel } from "./ws.svelte";
 
@@ -106,11 +106,11 @@ export async function sendShadowGenerate(
   genStatus.active = true;
   try {
     const channel = await ensureRuntimeChannel();
-    // Shadow path mirrors ``sendGenerate``'s sampling-payload build so the
-    // ``return_top_k`` opt-in rides shadow / auto-regen runs too (matches
-    // the steered turn's wire-shape, keeps logit captures comparable across
-    // siblings).
-    const sampling = buildSamplingPayload() ?? {};
+    // The comparison is the compared turn as it was, with one modifier: it
+    // sends the composer's observation knobs (``return_top_k`` keeps logit
+    // captures comparable) and none of its generation sampling, which would
+    // outrank the turn's own (``compose_call``).
+    const sampling = buildObservationSampling();
     if (target.roleLabel) {
       if (target.role === "user") sampling.user_role = target.roleLabel;
       else sampling.assistant_role = target.roleLabel;

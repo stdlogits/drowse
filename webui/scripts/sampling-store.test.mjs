@@ -57,6 +57,7 @@ async function samplingFor(
       "/src/lib/stores/session.svelte.ts",
     );
     const {
+      buildObservationSampling,
       buildSamplingPayload,
       hydrateSamplingFromInfo,
       samplingState,
@@ -91,6 +92,7 @@ async function samplingFor(
       assistantRole: samplingState.assistant_role,
       maxTokens: samplingState.max_tokens,
       payload: buildSamplingPayload(),
+      observation: buildObservationSampling(),
     };
   } finally {
     await server.close();
@@ -187,6 +189,9 @@ assert.equal(hostedProbeWithExactTrails.payload.persist_subspace_coords, true);
 
 const httpProbe = await samplingFor("http", 8, { activeProbe: true });
 assert.equal(httpProbe.payload.persist_subspace_coords, true);
+// A comparison sends the observation knobs only: a generation field it set would outrank the
+// compared turn's own (compose_call ranks the call's sampling above the anchor's).
+assert.deepEqual(httpProbe.observation, { persist_subspace_coords: true, return_top_k: 8 });
 
 const gemma = await samplingFor("browser", 8, {
   defaultAssistantRole: "model",

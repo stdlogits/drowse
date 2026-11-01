@@ -134,9 +134,10 @@ and release the lock unconditionally. An engine error therefore leaves the
 user turn, never an empty assistant turn with no finish reason.
 
 - **Composition** is `loom/recipe.py::compose_call` (rules documented there):
-  cast member < call kwargs < regen anchor < regen modifier, with the call
-  owning the observation knobs and the seed resolving modifier > call > anchor
-  > cast. The engine supplies the tiers: the cast member under
+  cast member < call kwargs < regen anchor < regen modifier, except that
+  sampling ranks cast < anchor < call < modifier (a field the call sets beats
+  the turn it anchors on), with the call owning the observation knobs and the
+  seed resolving modifier > call > anchor > cast. The engine supplies the tiers: the cast member under
   `sampling.user_role` (user seat) or `sampling.assistant_role`, falling back
   to the seat name (raw mode applies no cast), and for `recipe_override` the
   `tree.anchor_recipe(parent_node_id)` plus the modifier derived from it.

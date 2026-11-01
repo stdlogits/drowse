@@ -33,7 +33,6 @@
     refreshLoomTree,
   } from "../../lib/stores.svelte";
   import { fanoutConcepts as flatConcepts, fanoutRecipe, parseStrengthList, resolveNodeIdPrefix } from "./loomCommands";
-  import { buildSamplingPayload } from "../../lib/stores/sampling.svelte";
   import { steerRack } from "../../lib/stores/steering.svelte";
 
   let {
@@ -336,7 +335,7 @@
         for (const alpha of alphas) {
           await loomContinueFromCommitted(userId, {
             n: 1,
-            recipe_override: fanoutRecipe(info, m.toward ?? "", alpha, buildSamplingPayload()),
+            recipe_override: fanoutRecipe(info, m.toward ?? "", alpha),
           });
         }
         break;

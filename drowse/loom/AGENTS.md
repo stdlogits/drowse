@@ -153,11 +153,17 @@ and the browser seam. An absent `system_prompt` means inherit at use; `None`
 and `""` are captured values.
 
 `compose_call` is the single composition rule (the browser edition mirrors
-it). Tiers, weakest first: `cast`, the call's kwargs, `anchor`, `modifier`. A
-stronger tier sets `steering`/`thinking` when not `None` (`""` is explicit
-unsteered and blocks weaker tiers) and `system_prompt` when not inherited, and
-merges `sampling` field-wise via `SamplingConfig.merged_with` (a default field
-is unset, so no tier can reset a field to its default). Two exceptions:
+it; golden `tests/fixtures/browser/recipe-compose-v1.json`). Tiers, weakest
+first: `cast`, the call's kwargs, `anchor`, `modifier`. A stronger tier sets
+`steering`/`thinking` when not `None` (`""` is explicit unsteered and blocks
+weaker tiers) and `system_prompt` when not inherited, and merges `sampling`
+field-wise via `SamplingConfig.merged_with` (a default field is unset, so no
+tier can reset a field to its default). Sampling ranks the call above the
+anchor (cast < anchor < call < modifier): a field the call sets wins over the
+turn it anchors on, so a regenerate that sends no sampling reproduces the
+anchor exactly and a variation runs at the call's `max_tokens`; the
+dashboard's comparisons send no generation sampling for that reason. Two
+exceptions:
 `CALL_ONLY_SAMPLING_FIELDS` (`logprobs`, `return_hidden`, `return_top_k`, both
 `persist_*` flags, `return_probe_readings`) always come from the call, so a
 recipe never decides what a consumer captures; and the seed resolves in the
