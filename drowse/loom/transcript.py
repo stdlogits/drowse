@@ -228,7 +228,7 @@ class Turn:
             readings[name] = float(value)
         finish_reason = data.get("finish_reason")
         if finish_reason is not None:
-            if finish_reason not in FINISH_REASONS:
+            if not isinstance(finish_reason, str) or finish_reason not in FINISH_REASONS:
                 raise TranscriptFormatError(
                     f"{label}.finish_reason must be one of {', '.join(sorted(FINISH_REASONS))}"
                 )

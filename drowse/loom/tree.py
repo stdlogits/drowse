@@ -347,7 +347,8 @@ class LoomNode:
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a string or null"
                 )
-        if data["finish_reason"] is not None and data["finish_reason"] not in FINISH_REASONS:
+        reason = data["finish_reason"]
+        if reason is not None and (not isinstance(reason, str) or reason not in FINISH_REASONS):
             raise LoomTreeError(
                 "loom node field 'finish_reason' must be null or one of "
                 + ", ".join(sorted(FINISH_REASONS))

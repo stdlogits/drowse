@@ -1173,9 +1173,12 @@ def test_loom_node_reads_every_finish_reason(reason: str | None):
     assert LoomNode.from_dict(data).finish_reason == reason
 
 
-@pytest.mark.parametrize("reason", ["eos", "abort", "", 3])
+@pytest.mark.parametrize("reason", ["eos", "abort", "", 3, [], {}, ["stop"]])
 def test_loom_node_refuses_an_unknown_finish_reason(reason: object):
-    """The finish reason is a closed set; ``cancelled`` marks a cut reply."""
+    """The finish reason is a closed set; ``cancelled`` marks a cut reply.
+
+    Regression: an unhashable value (a list, an object) raised TypeError from
+    the set membership test, a 500 on PUT /tree instead of the reader's 400."""
     n = LoomNode(id="n1", parent_id="p1", role="assistant")
     with pytest.raises(LoomTreeError, match="finish_reason"):
         LoomNode.from_dict({**n.to_dict(), "finish_reason": reason})

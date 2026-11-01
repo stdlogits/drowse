@@ -504,6 +504,11 @@ def test_import_merges_cast_and_flags_conflicts():
     ({"role": "assistant", "text": "x", "finish_reason": "stop"}, "needs a recipe"),
     ({"role": "assistant", "text": "x", "recipe": Recipe().to_dict(), "finish_reason": "eos"},
      "finish_reason must be one of"),
+    # Regression: unhashable values raised TypeError, not the format error.
+    ({"role": "assistant", "text": "x", "recipe": Recipe().to_dict(), "finish_reason": []},
+     "finish_reason must be one of"),
+    ({"role": "assistant", "text": "x", "recipe": Recipe().to_dict(), "finish_reason": {}},
+     "finish_reason must be one of"),
 ])
 def test_turn_reader_is_strict(turn: dict[str, Any], match: str):
     """Regression: missing roles defaulted to "user" and bad readings were
