@@ -130,6 +130,13 @@ try {
     assert.doesNotMatch(source, /addJLensToRack|addSLensToRack|addSaeToRack/, `${file} adds terms only through lib/steerActions.ts`);
     assert.match(source, /onpush=\{/, `${file}'s rows push`);
   }
+  // W6 review: the concept and manifold dialogs ("+ Steer" → All concepts / All manifolds, the
+  // Probes room's A concept / A manifold) added terms with the rack's own mutators and their chips
+  // never opened. They steer through lib/steerActions.ts like every other surface.
+  const rackDrawer = readFileSync(new URL("../src/drawers/RackDrawer.svelte", import.meta.url), "utf8");
+  assert.doesNotMatch(rackDrawer, /addSubspaceToRack|addManifoldToRack|setSteerLabel/, "RackDrawer adds terms only through lib/steerActions.ts");
+  assert.match(rackDrawer, /pushConcept\(rowKey\(m\), choice\.variant, label\)/);
+  assert.match(rackDrawer, /pushPosition\(rowKey\(m\), choice\.variant\)/);
   // The token view: the units that pushed the token and the heads it read from come first, each
   // with Push (a neuron) and Silence.
   const anatomy = readFileSync(new URL("../src/drawers/token/TokenAnatomy.svelte", import.meta.url), "utf8");

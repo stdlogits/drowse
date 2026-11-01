@@ -34,8 +34,6 @@
   import { apiManifolds, apiManifoldFitStream, describeError } from "../lib/runtime/services";
   import { isFittingCancellation } from "../lib/runtime/fittingCancellation";
   import {
-    addManifoldToRack,
-    addSubspaceToRack,
     attachProbe,
     closeDrawer,
     drawerState,
@@ -45,8 +43,8 @@
     refreshManifoldList,
     refreshProbeList,
     refreshVectorList,
-    setSteerLabel,
   } from "../lib/stores.svelte";
+  import { pushConcept, pushPosition } from "../lib/steerActions";
   import {
     pushToast,
   } from "../lib/stores/toasts.svelte";
@@ -344,10 +342,9 @@
       });
       return;
     }
-    const key = rowKey(m);
-    if (family === "subspace") addSubspaceToRack(key, choice.variant);
-    else addManifoldToRack(key, choice.variant);
-    setSteerLabel(key, label);
+    // Through lib/steerActions.ts, the one way into the recipe: the chip lands open.
+    if (family === "subspace") pushConcept(rowKey(m), choice.variant, label);
+    else pushPosition(rowKey(m), choice.variant, label);
     closeDrawer();
   }
 
@@ -365,8 +362,8 @@
       });
       return;
     }
-    if (family === "subspace") addSubspaceToRack(rowKey(m), choice.variant);
-    else addManifoldToRack(rowKey(m), choice.variant);
+    if (family === "subspace") pushConcept(rowKey(m), choice.variant);
+    else pushPosition(rowKey(m), choice.variant);
     closeDrawer();
   }
 
