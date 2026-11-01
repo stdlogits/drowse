@@ -13,6 +13,7 @@
     layerAt,
     originText,
     rangeText,
+    SITE_TIPS,
     siteSeries,
     spanText,
     unloaded,
@@ -73,7 +74,7 @@
 <div class="card">
   <div class="card-top">
     <div class="id"><span class="name" class:none={!row}>{row?.source ?? "None"}</span>{#if meta}<span class="meta">{meta}</span>{/if}</div>
-    <span class="meta">{where}</span>
+    <span class="meta" data-tip={SITE_TIPS[site]}>{where}</span>
   </div>
   <div class="chart">
     <div class="bars" role="img" aria-label={label} onpointerover={(e) => (hover = layerAt(e))} onpointerleave={() => (hover = -1)}>

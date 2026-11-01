@@ -110,6 +110,9 @@ try {
   assert.match(source, /observer\.observe\(canvas\)/);
   assert.match(source, /observer\.disconnect\(\)/);
   assert.match(source, /aria-pressed=\{l.layer === selectedLayer\}/);
+  // Regression (a9, unnecessary text): the plot's foot told how to turn it ("drag · scroll or
+  // pinch"); the plot answers the gestures, and its buttons say what they do.
+  assert.doesNotMatch(source, /drag · scroll or pinch/);
   const barSource = await readFile(new URL("../src/lib/charts/Bar.svelte", import.meta.url), "utf8");
   assert.doesNotMatch(barSource, /preserveAspectRatio/);
 

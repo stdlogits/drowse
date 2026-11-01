@@ -124,6 +124,23 @@ try {
   assert.equal(lens.layerAt({ target: { closest: () => column } }), 7);
   assert.equal(lens.layerAt({ target: { closest: () => null } }), -1);
   assert.equal(lens.layerAt({ target: null }), -1);
+
+  // Regression (a9, unnecessary text): the depth axis carried an Out/Mid legend ("neuron outputs,
+  // attention inputs"). It is gone; what a site reads is the tip on each card's site.
+  {
+    const { render } = await server.ssrLoadModule("svelte/server");
+    const { default: LensDepth } = await server.ssrLoadModule("/src/panels/rooms/lens/LensDepth.svelte");
+    const { default: LensCard } = await server.ssrLoadModule("/src/panels/rooms/lens/LensCard.svelte");
+    const depth = render(LensDepth, { props: { band, model: "fixture" } }).body;
+    assert.match(depth, /Which lens, by depth/);
+    assert.doesNotMatch(depth, /neuron outputs|attention inputs|class="sites/);
+    for (const site of ["out", "mid"]) {
+      const card = render(LensCard, { props: { family: "R", site, row: local, provider: null, n: 4, weights: null, span: null, scale: 0.25 } }).body;
+      assert.match(card, new RegExp(`<span class="meta[^"]*" data-tip="${lens.SITE_TIPS[site].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}">${site}</span>`));
+    }
+    assert.match(lens.SITE_TIPS.out, /neuron outputs and attention inputs/);
+    assert.match(lens.SITE_TIPS.mid, /neuron inputs and attention outputs/);
+  }
   console.log("Lens room: band spans, site series, family sources, the fit ladder and the fit's status passed");
 } finally {
   await server.close();

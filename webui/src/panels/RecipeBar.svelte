@@ -164,7 +164,6 @@
     <div class="dw-row more" transition:expand>
       <button type="button" class="dw-quiet" onclick={() => add("subspace")}>A concept</button>
       <button type="button" class="dw-quiet" onclick={() => add("manifolds")}>A manifold position</button>
-      <span class="meta">lens tokens and SAE features steer from the instruments</span>
     </div>
   {/if}
 </div>

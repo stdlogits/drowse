@@ -636,7 +636,6 @@
               <span class="meta">the trail draws while a reply streams</span>
             {/if}
             {#if canOrbit}
-              <span class="meta">drag · scroll or pinch</span>
               <span class="plot-controls" role="group" aria-label="Geometry view controls">
                 <button type="button" class="dw-text" aria-label="Rotate geometry left" onclick={() => rotateBy(-18, 0)}>left</button>
                 <button type="button" class="dw-text" aria-label="Rotate geometry right" onclick={() => rotateBy(18, 0)}>right</button>
