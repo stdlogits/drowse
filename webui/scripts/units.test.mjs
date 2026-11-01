@@ -401,6 +401,11 @@ try {
     assert.match(atlas, /<button[^>]*class="lay[^"]*"[^>]*aria-label="Layer 3"[^>]*aria-pressed="true"/, "the layer the unit is on");
     assert.equal((atlas.match(/tabindex="0"/g) ?? []).length, 1, "one keyboard stop");
     assert.match(atlas, /class="u\b[^"]*\bsel\b[^"]*"[^>]*tabindex="0"/, "on the selected unit's bar");
+    // Live, All's hover named L13 n675 and the click chose n674: a click reports whole pixels, a
+    // pointer event fractions, and a cell is narrower than a pixel. The click takes the press's point.
+    const source = (await import("node:fs")).readFileSync(new URL("../src/panels/rooms/UnitAtlas.svelte", import.meta.url), "utf8");
+    assert.match(source, /onpointerdown=\{\(e\) => \(pressAt = \{ x: e\.clientX, y: e\.clientY \}\)\}/);
+    assert.match(source, /const at = pressAt \?\? \{ x: event\.clientX, y: event\.clientY \};[^]*?cellAt\(at\.x, at\.y\)/);
   }
   assert.match(html, />L3 n3</);
   assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");

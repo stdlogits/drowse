@@ -235,14 +235,18 @@
     showTip(new DOMRect(box.left + cell.x, box.top + cell.y, Math.max(1, cell.w), Math.max(1, cell.h)), { body: unitTitle(b.id), sub: signedValue(b.value) });
   }
 
-  /** All: the neuron under the pointer, from where it is in the plot. */
-  function cellAt(event: MouseEvent): { layer: number; index: number } | null {
+  /** All: the neuron under a point of the page, from where it is in the plot. */
+  function cellAt(x: number, y: number): { layer: number; index: number } | null {
     if (!all || !plot) return null;
     const box = plot.getBoundingClientRect();
-    return fieldCellAt(layout, event.clientX - box.left, event.clientY - box.top, totals);
+    return fieldCellAt(layout, x - box.left, y - box.top, totals);
   }
+  /** Where the pointer went down. A click reports whole pixels and a pointer event fractions of
+   *  one, and a cell can be narrower than a pixel: the click takes the press's point, so it chooses
+   *  the cell the hover named. */
+  let pressAt: { x: number; y: number } | null = null;
   function pointField(event: PointerEvent): void {
-    const hit = cellAt(event);
+    const hit = cellAt(event.clientX, event.clientY);
     if (!hit || !field || !plot) { hideTip(); return; }
     const cell = fieldCell(layout, hit.layer, hit.index, totals[hit.layer]);
     const box = plot.getBoundingClientRect();
@@ -251,7 +255,9 @@
   }
   /** A column's own button: its layer, or (All, by pointer) the neuron in the cell under it. */
   function chooseColumn(event: MouseEvent, L: number): void {
-    const hit = event.detail > 0 ? cellAt(event) : null;
+    const at = pressAt ?? { x: event.clientX, y: event.clientY };
+    pressAt = null;
+    const hit = event.detail > 0 ? cellAt(at.x, at.y) : null;
     if (hit) onunit(unitRef("neuron", hit.layer, hit.index), hit.layer);
     else onlayer(L);
   }
@@ -269,6 +275,7 @@
       <div class="col" style:--c={depth(L)} style:--L={L}>
         <button type="button" class="lay" aria-label={`Layer ${L}`} aria-pressed={L === layer} data-at="{L}:-1" tabindex={isStop(L, -1) ? 0 : -1}
           onclick={(e) => chooseColumn(e, L)} onkeydown={(e) => onKey(e, L, -1)} onfocus={() => { cursor = { layer: L, row: -1 }; focused = null; }}
+          onpointerdown={(e) => (pressAt = { x: e.clientX, y: e.clientY })}
           onpointermove={all ? pointField : undefined} onpointerleave={all ? hideTip : undefined}></button>
         {#each col as b, row (b.id)}
           <button type="button" class="u" class:sel={b.id === selected} style:--o={opacity(b.shade, b.id)}
