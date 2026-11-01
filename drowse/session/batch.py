@@ -33,7 +33,7 @@ from drowse.generation.decode import (
 )
 from drowse.generation.finalize import MIN_ELAPSED_FOR_RATE, FinalReads
 from drowse.generation.prefix_cache import PREFIX_CACHE_MIN_TOKENS
-from drowse.generation.results import GenerationResult, RunSet
+from drowse.generation.results import FinishReason, GenerationResult, RunSet
 from drowse.generation.sampling import (
     INHERIT_SYSTEM_PROMPT,
     InheritSystemPrompt,
@@ -84,6 +84,9 @@ class BatchStopCriteria(StoppingCriteria):
 
     def __init__(self, state: GenerationState) -> None:
         self._state = state
+        #: Whether this criterion ended the call: the rows it cut finish
+        #: ``"cancelled"`` rather than ``"stop"``.
+        self.fired = False
 
     def __call__(
         self,
@@ -93,6 +96,7 @@ class BatchStopCriteria(StoppingCriteria):
     ) -> Any:
         del scores, kwargs
         stop = 1 if self._state.is_stop_requested() else 0
+        self.fired = self.fired or bool(stop)
         return input_ids.new_full((int(input_ids.shape[0]),), stop).bool()
 
 
@@ -194,16 +198,18 @@ def trim_generated(
     eos_ids: set[int],
     pad_id: int,
     max_new_tokens: int,
-) -> tuple[list[int], str]:
+    cancelled: bool = False,
+) -> tuple[list[int], FinishReason]:
     """One HF output row as ``(generated_ids, finish_reason)``.
 
     Cuts at the first EOS (``"stop"``).  A row with no EOS ends in ``"length"``
-    unless it stopped early, which shows as trailing pad or a short row
-    (``"stop"``).
+    unless it stopped early, which shows as trailing pad or a short row:
+    ``"cancelled"`` when an external stop ended the call (``cancelled``),
+    else ``"stop"``.
     """
     raw_ids = [int(tok) for tok in row.detach().to("cpu").tolist()]
     tokens: list[int] = []
-    finish_reason = "length"
+    finish_reason: FinishReason = "length"
     for token_id in raw_ids:
         if token_id in eos_ids:
             finish_reason = "stop"
@@ -215,7 +221,7 @@ def trim_generated(
             tokens.pop()
             stripped_pad = True
         if stripped_pad or len(tokens) < max_new_tokens:
-            finish_reason = "stop"
+            finish_reason = "cancelled" if cancelled else "stop"
     return tokens, finish_reason
 
 
@@ -431,15 +437,14 @@ class FastBatchPath:
                     or self._steering.uses_compiled_offsets
                 ),
             )
+            user_stop = BatchStopCriteria(self._gen_state)
             start = time.monotonic()
             with torch.inference_mode():
                 generated = model.generate(
                     input_ids=input_ids,
                     attention_mask=attention_mask,
                     generation_config=hf_config,
-                    stopping_criteria=StoppingCriteriaList([
-                        BatchStopCriteria(self._gen_state),
-                    ]),
+                    stopping_criteria=StoppingCriteriaList([user_stop]),
                 )
             elapsed = time.monotonic() - start
             if captures:
@@ -462,6 +467,7 @@ class FastBatchPath:
                     eos_ids=eos_ids,
                     pad_id=pad_id,
                     max_new_tokens=int(gen_config.max_new_tokens),
+                    cancelled=user_stop.fired,
                 )
                 # Finalize reads the per-row generation state.
                 state = self._gen_state

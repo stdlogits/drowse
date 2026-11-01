@@ -27,7 +27,7 @@ from drowse.generation.sampling import (
 )
 from drowse.loom.errors import LoomTreeError, RecipeOverrideError, require_fields
 
-# The persisted recipe shape (tree_format 2 / transcript v2).  ``seed`` is a
+# The persisted recipe shape (tree_format 2 / transcript v3).  ``seed`` is a
 # top-level key on disk and on the wire; in memory it is ``sampling.seed``.
 _RECIPE_FIELDS = frozenset({
     "steering", "sampling", "thinking", "seed", "probes", "probe_hashes",
@@ -133,7 +133,7 @@ class Recipe:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """The persisted shape (tree_format 2, transcript v2, the wire).
+        """The persisted shape (tree_format 2, transcript v3, the wire).
 
         Any sampling block serializes in full, and the top-level ``seed``
         mirrors ``sampling.seed``.  Only a :attr:`seed_only` recipe writes

@@ -6,6 +6,7 @@ import type {
   RecipeJSON,
   RecipeSamplingJSON,
 } from "./types";
+import { FINISH_REASONS } from "./types";
 import { migrateLegacyDatabase } from "./brandMigration";
 import { isRoleSlug } from "./roleSlug";
 import { tokenRowProblem } from "./tokenRows";
@@ -640,7 +641,10 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
   validateNullableString(value.thinking_text, "node thinking text", 4 * 1024 * 1024);
   validateFiniteMap(value.aggregate_readings, "node aggregate readings", 4_096);
   validateNullableString(value.applied_steering, "node steering expression", 64 * 1024);
-  validateNullableString(value.finish_reason, "node finish reason", 1_024);
+  // A closed set, like the loom reader's: ``cancelled`` marks a cut reply.
+  if (value.finish_reason !== null && !(FINISH_REASONS as readonly unknown[]).includes(value.finish_reason)) {
+    throw invalid("Node finish reason is invalid");
+  }
   if (typeof value.starred !== "boolean") throw invalid("Node starred flag is invalid");
   validateString(value.notes, "node notes", 256 * 1024, true);
   validateTimestamp(value.created_at, "node creation timestamp");

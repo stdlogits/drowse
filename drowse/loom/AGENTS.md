@@ -120,6 +120,12 @@ carry: a row-level `probes` or `per_layer_scores` copy, an envelope
 `per_layer_scores` map, a geometry reading with `subspace_coords_per_layer`
 or with some but not all of its three per-layer traces.
 
+A node's `finish_reason` is `null` (authored, imported without one, or still
+streaming) or one of `generation.results.FINISH_REASONS`; the reader refuses
+any other string. `"cancelled"` is a reply a client Stop or a disconnect cut
+short: the engine reports it and `finalize_assistant` records it, and the
+dashboard marks the reply.
+
 `to_dict()` omits token payloads; `GET /tree` sends `include_tokens=True` and
 `PUT /tree` reads it back. `save` writes the JSON atomically after a gzip
 `<stem>.tokens.json.gz` sidecar when any node has rows or `raw_token_ids`
@@ -358,11 +364,13 @@ name can't be filtered. The browser ports this grammar; change both together.
 
 ## Transcripts (`transcript.py`)
 
-YAML, `drowse_transcript: 2` exactly. Header: `model_id`, `system_prompt`
+YAML, `drowse_transcript: 3` exactly. Header: `model_id`, `system_prompt`
 (the session default; per-turn prompts ride the recipes), optional `cast`,
 `probes` (`name` + `sha256`). Turns: `role` (seat), `text`, optional
-`speaker` (`role_label`), `thinking`, `recipe`, `readings`. The reader is
-strict (`TranscriptFormatError`).
+`speaker` (`role_label`), `thinking`, `recipe`, `readings`, `finish_reason`
+(generated turns only; one of `FINISH_REASONS`, so `cancelled` marks a reply
+a Stop or disconnect cut short). The reader is strict
+(`TranscriptFormatError`).
 
 `import_into` is one `graft`, so everything lands or nothing does. Turns with
 a recipe re-attach as generated nodes in their seat; system turns are

@@ -469,7 +469,7 @@ export interface LoomNodeDetailJSON {
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
   applied_steering: string | null;
-  finish_reason: string | null;
+  finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
   notes: string;
   created_at: number;
@@ -503,7 +503,7 @@ export interface LoomNodeJSON {
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
   applied_steering: string | null;
-  finish_reason: string | null;
+  finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
   notes: string;
   created_at: number;

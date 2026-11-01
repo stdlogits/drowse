@@ -190,6 +190,16 @@ try {
   for (const c of tokenRows.refused) assert.notEqual(tokenRowProblem(structuredClone(c.row)), null, c.name);
   assert.throws(() => validateConversationSnapshot(rowSnapshot((row) => { row.measurements.version = 1; }), keys),
     /Unreadable token row: its measurements are version 1/);
+  // A node's finish reason is the loom reader's closed set; ``cancelled`` marks a cut reply.
+  const nodeSnapshot = (reason) => {
+    const value = rowSnapshot(() => {});
+    value.tree.nodes[0].finish_reason = reason;
+    return value;
+  };
+  for (const reason of [null, "stop", "length", "stop_sequence", "cancelled"]) {
+    assert.equal(isConversationSnapshot(nodeSnapshot(reason), keys), true, `finish reason ${reason}`);
+  }
+  assert.throws(() => validateConversationSnapshot(nodeSnapshot("abort"), keys), /node finish reason/);
   const futureTree = structuredClone(snapshot);
   futureTree.tree.tree_format = 999;
   assert.throws(() => validateConversationSnapshot(futureTree, keys), /tree format/);

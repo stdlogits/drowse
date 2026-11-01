@@ -22,7 +22,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock, create_autospec
 
 from drowse.events import EventBus
-from drowse.generation.results import GenerationResult, RunSet
+from drowse.generation.results import FinishReason, GenerationResult, RunSet
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomTree
 from drowse.readout.types import (
@@ -338,19 +338,23 @@ class StubSession:
                 self.tree.append_token(
                     assistant_id, {"token_id": 1000 + sibling_idx, "text": token_text},
                 )
+                # Like the engine's decode loop: an external stop that ends
+                # the reply finishes it ``cancelled``.
+                finish_reason: FinishReason = "stop"
                 if self._block_until_stop:
                     import time
                     deadline = time.monotonic() + 5
                     while not self.generation_state.is_stop_requested():
                         assert time.monotonic() < deadline
                         self._stop_event.wait(timeout=0.01)
+                    finish_reason = "cancelled"
                 full_text = prefix + token_text
                 from drowse.readout.measurements import build_measurements
 
                 result = GenerationResult(
                     text=full_text, tokens=[1000 + sibling_idx],
                     token_count=1, tok_per_sec=10.0, elapsed=0.1,
-                    finish_reason="stop",
+                    finish_reason=finish_reason,
                     probe_readings=dict(self.stub_probe_readings),
                     # The engine builds this once at finalize; the ``done``
                     # frame just forwards it.
@@ -371,7 +375,7 @@ class StubSession:
                     text=full_text,
                     aggregate_readings={},
                     applied_steering=None,
-                    finish_reason="stop",
+                    finish_reason=finish_reason,
                 )
                 results.append(result)
                 self._last_result = result

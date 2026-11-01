@@ -9,6 +9,7 @@ import type {
   Trigger,
   Variant,
 } from "./types";
+import { FINISH_REASONS } from "./types";
 import type { SamplingState } from "./stores/sampling.svelte";
 
 export const CONVERSATION_SNAPSHOT_VERSION = 8 as const;
@@ -127,6 +128,12 @@ export function validateConversationSnapshot(
   // shape the server refuses, so it is refused here, plainly, before a restore starts.
   for (const node of tree.nodes as unknown[]) {
     if (!node || typeof node !== "object") invalid("tree node");
+    // The loom reader's closed set: ``cancelled`` is a reply a Stop cut short.
+    const finishReason = (node as Record<string, unknown>).finish_reason;
+    if (finishReason !== undefined && finishReason !== null
+      && !(FINISH_REASONS as readonly unknown[]).includes(finishReason)) {
+      invalid("node finish reason");
+    }
     for (const field of ["tokens", "thinking_tokens"] as const) {
       const rows = (node as Record<string, unknown>)[field];
       if (rows === undefined || rows === null) continue;

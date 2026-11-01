@@ -691,9 +691,13 @@ async def _ws_handle_generate(
         ledger.observe(request_id, {**frame, "request_id": request_id})
 
     try:
-        await _ws_dispatch_generate(
+        stopped = await _ws_dispatch_generate(
             app, msg, incoming, correlated_send, wait_for_tree_finalization, record_only,
         )
+        # A stop that raced a reply's natural end leaves that reply's reason,
+        # but the request it cut short is still cancelled.
+        if stopped and state == "completed":
+            state = "cancelled"
     except (WebSocketDisconnect, asyncio.CancelledError):
         ledger.settle_disconnected(request_id, msg.n)
         raise
@@ -719,7 +723,7 @@ async def _ws_dispatch_generate(
     send_json: Callable[[JSONObject], Awaitable[None]],
     wait_for_tree_finalization: Callable[[str], Awaitable[None]],
     record_event: Callable[[JSONObject], None] | None = None,
-) -> None:
+) -> bool:
     """Validate one inbound turn and dispatch it to its mode handler.
 
     ``generate``'s own field-consistency rules already ran in the schema
@@ -731,7 +735,7 @@ async def _ws_dispatch_generate(
     :func:`_ws_handle_commit` (no decode) or :func:`_ws_stream_generation`
     (the token fan-out).  Every rejection here is an error frame on a
     connection that stays open — a 400-grade user mistake must not close the
-    socket.
+    socket.  Returns whether a client stop ended the run.
     """
     authored: _AuthoredTurn | None = None
     commit_only = False
@@ -740,12 +744,12 @@ async def _ws_dispatch_generate(
             msg, authored, commit_only = _normalize_submit(msg)
         except _WSRequestError as e:
             await send_json(e.frame)
-            return
+            return False
 
     if commit_only:
         assert authored is not None  # set together by ``_normalize_submit``
         await _ws_handle_commit(app, msg, authored, send_json)
-        return
+        return False
 
     # FastAPI's exception handlers do not apply to WebSocket routes: a
     # malformed or unresolvable expression is an error frame on a connection
@@ -758,9 +762,9 @@ async def _ws_dispatch_generate(
     except Exception as e:  # noqa: BLE001 - reported as an error frame
         info = describe_error(e, failure="Steering failed")
         await send_json(_error_frame(info.message, code=info.code, status=info.status))
-        return
+        return False
 
-    await _ws_stream_generation(
+    return await _ws_stream_generation(
         app, msg, steering, sampling, authored,
         incoming, send_json, wait_for_tree_finalization,
         record_event,
@@ -777,7 +781,7 @@ async def _ws_stream_generation(
     send_json: Callable[[JSONObject], Awaitable[None]],
     wait_for_tree_finalization: Callable[[str], Awaitable[None]],
     record_event: Callable[[JSONObject], None] | None = None,
-) -> None:
+) -> bool:
     """Run one generate turn and stream token/done/error events.
 
     Concurrency design: synchronous generation runs in a worker thread
@@ -830,7 +834,7 @@ async def _ws_stream_generation(
         except SessionLockTimeout as e:
             info = describe_error(e)
             await send_json(_error_frame(info.message, code=info.code, status=info.status))
-            return
+            return False
         for sibling_idx, seed_i in enumerate(seeds):
             generation_id = uuid.uuid4().hex[:12]
             tree_rev_before_generation = int(session.tree.rev)
@@ -985,7 +989,6 @@ async def _ws_stream_generation(
                             await send_json(item.payload)
                             token_get = asyncio.create_task(token_queue.get())
             finally:
-                worker_was_complete = worker_task.done()
                 cancelled.set()
                 token_queue.close()
                 with CancelScope(shield=True):
@@ -1004,10 +1007,7 @@ async def _ws_stream_generation(
                         await finish_worker(worker_task)
                         if not done and record_event is not None:
                             if result_holder:
-                                recovered = result_to_json(result_holder[0])
-                                if not worker_was_complete and recovered.get("finish_reason") == "stop":
-                                    recovered["finish_reason"] = "cancelled"
-                                record_event({"type": "done", "result": recovered,
+                                record_event({"type": "done", "result": result_to_json(result_holder[0]),
                                               "node_id": current_node_holder[0], "sibling_index": sibling_idx,
                                               "sibling_count": n})
                             elif error_holder:
@@ -1024,18 +1024,15 @@ async def _ws_stream_generation(
                     sibling_index=sibling_idx,
                 ))
                 # An error inside one sibling aborts the rest of the fan.
-                return
+                return False
 
             if not result_holder:
                 raise RuntimeError("generation completed without a result")
             result = result_holder[0]
+            # The engine reports ``cancelled`` when the stop cut the reply, and
+            # the loom node records the same reason; a stop that raced the
+            # reply's own end leaves its natural reason.
             result_json = result_to_json(result)
-            # The engine reports ``stop`` for EOS, stop sequences, and an
-            # external stop alike; this socket knows a client stop happened, so
-            # the wire (only) says ``cancelled``.  The loom recipe keeps the
-            # engine's canonical reason.
-            if stop_signaled and result_json.get("finish_reason") == "stop":
-                result_json["finish_reason"] = "cancelled"
             # The aggregate-scope measurements envelope the engine built at
             # finalize, per sibling.
             if result.measurements:
@@ -1067,4 +1064,5 @@ async def _ws_stream_generation(
             # Mid-batch stop honors the batch plan: cancel the currently
             # streaming sibling and skip every remaining queued sibling.
             if stop_signaled:
-                break
+                return True
+    return False

@@ -36,6 +36,8 @@ from typing import Any, Literal
 from pydantic import ConfigDict
 from typing_extensions import NotRequired, TypedDict
 
+from drowse.generation.results import FinishReason
+
 #: Response-model config for shapes whose payload is produced outside this
 #: module.  Extra keys are preserved rather than silently dropped by the
 #: response validator; the generator turns it into a TS index signature.
@@ -265,7 +267,7 @@ class LoomNodeJSON(TypedDict):
     thinking_text: str | None
     aggregate_readings: dict[str, float]
     applied_steering: str | None
-    finish_reason: str | None
+    finish_reason: FinishReason | None
     starred: bool
     notes: str
     created_at: float

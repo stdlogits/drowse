@@ -478,6 +478,20 @@ class TestBatchHelpers:
         )
         assert (tokens, finish) == ([15], "stop")
 
+    def test_trim_marks_a_row_the_user_stop_cut_cancelled(self) -> None:
+        """Regression (decision 5): a stop that cut a row read as ``stop``."""
+        tokens, finish = trim_generated(
+            torch.tensor([15, 0, 0]), eos_ids={99}, pad_id=0, max_new_tokens=3,
+            cancelled=True,
+        )
+        assert (tokens, finish) == ([15], "cancelled")
+        # A row that already ended on EOS finished on its own.
+        tokens, finish = trim_generated(
+            torch.tensor([15, 99, 0]), eos_ids={99}, pad_id=0, max_new_tokens=3,
+            cancelled=True,
+        )
+        assert (tokens, finish) == ([15], "stop")
+
     def test_left_pad(self) -> None:
         ids, attention, lengths = left_pad(
             [torch.tensor([1, 2]), torch.tensor([3, 4, 5]), torch.tensor([6])], 0,

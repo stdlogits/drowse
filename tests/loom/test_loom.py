@@ -1166,6 +1166,21 @@ def test_loom_node_to_from_dict_round_trip():
     assert n2.edit_count == n.edit_count
 
 
+@pytest.mark.parametrize("reason", ["stop", "length", "stop_sequence", "cancelled", None])
+def test_loom_node_reads_every_finish_reason(reason: str | None):
+    n = LoomNode(id="n1", parent_id="p1", role="assistant")
+    data = {**n.to_dict(), "finish_reason": reason}
+    assert LoomNode.from_dict(data).finish_reason == reason
+
+
+@pytest.mark.parametrize("reason", ["eos", "abort", "", 3])
+def test_loom_node_refuses_an_unknown_finish_reason(reason: object):
+    """The finish reason is a closed set; ``cancelled`` marks a cut reply."""
+    n = LoomNode(id="n1", parent_id="p1", role="assistant")
+    with pytest.raises(LoomTreeError, match="finish_reason"):
+        LoomNode.from_dict({**n.to_dict(), "finish_reason": reason})
+
+
 def test_loom_node_tokens_omitted_by_default():
     n = LoomNode(id="n1", parent_id="p1", role="assistant",
                  tokens=[{"id": 5, "text": "hi"}])

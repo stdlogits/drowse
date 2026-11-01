@@ -106,7 +106,11 @@ the serial loop. `loom/joint_logprobs.py` calls `_sampler_candidates`,
 - A token whose lone decode contains U+FFFD is buffered and flushed as a group
   (`token_id = -1`, no logprob). Text comes from the lazy `ChatTraits.token_text`
   cache, never a full-vocab table.
-- `finish_reason`: `"stop"` (EOS or external stop), `"length"`, `"stop_sequence"`.
+- `finish_reason` (`results.FinishReason`, closed): `"stop"` (EOS), `"length"`,
+  `"stop_sequence"`, `"cancelled"` (an external stop cut the reply: a client
+  Stop, a closed stream, a disconnect; the batch fast path marks the rows its
+  stop criterion cut). The loom node and transcripts carry it and their readers
+  refuse any other value.
 
 ### KV paths
 

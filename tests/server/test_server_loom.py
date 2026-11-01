@@ -471,7 +471,7 @@ class TestTranscript:
         # to_yaml uses pyyaml's safe_dump; safe-scalar strings like
         # ``test/model`` and ``hello`` come back unquoted (valid YAML).  We
         # check substrings rather than exact quoting form.
-        assert "drowse_transcript: 2" in text
+        assert "drowse_transcript: 3" in text
         assert "model_id:" in text and "test/model" in text
         # Probes block exists (empty in this stub)
         assert "probes:" in text
@@ -483,7 +483,7 @@ class TestTranscript:
         # Round-trip via the YAML loader to confirm structural shape.
         import yaml
         parsed = yaml.safe_load(text)
-        assert parsed["drowse_transcript"] == 2
+        assert parsed["drowse_transcript"] == 3
         assert parsed["model_id"] == "test/model"
         assert len(parsed["turns"]) == 2
         assert parsed["turns"][0]["role"] == "user"
@@ -533,11 +533,11 @@ class TestWebSocketLoom:
             assert session.tree.get(source_id).text == original["text"] + "tok0"
 
     def test_user_stop_is_distinct_from_natural_completion(self, session_and_client: Any):
-        """The native stream labels an explicit user cancellation distinctly.
+        """A client stop that cuts the reply finishes it ``cancelled``.
 
-        The engine and stored loom node retain the protocol-compatible
-        ``stop`` reason; only the dashboard-facing done frame says
-        ``cancelled``.
+        Regression (decision 5): the loom node kept ``stop``, so a cut reply
+        read as a natural end after a reload.  The done frame, the node and
+        the tree payload now all say ``cancelled``.
         """
         session, client = session_and_client
         session._block_until_stop = True
@@ -556,7 +556,10 @@ class TestWebSocketLoom:
                     break
 
         assert done["result"]["finish_reason"] == "cancelled"
-        assert session.tree.get(done["node_id"]).finish_reason == "stop"
+        assert session.tree.get(done["node_id"]).finish_reason == "cancelled"
+        tree = client.get("/drowse/v1/sessions/default/tree").json()
+        node = next(n for n in tree["nodes"] if n["id"] == done["node_id"])
+        assert node["finish_reason"] == "cancelled"
 
     def test_generate_with_parent_node_id(self, session_and_client: Any):
         """Result attaches under the supplied parent_node_id."""

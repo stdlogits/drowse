@@ -11,7 +11,7 @@ from typing import Any, Callable, cast
 import torch
 from transformers import PreTrainedModel, PreTrainedTokenizerBase
 
-from drowse.generation.results import TokenAlt
+from drowse.generation.results import FinishReason, TokenAlt
 from drowse.generation.token_callback import StepTokenCallback
 from drowse.model.chat import ChatTraits, takes_enable_thinking
 from drowse.model.scene import (
@@ -236,7 +236,7 @@ class GenerationState:
         self.stop_requested = threading.Event()
         self._cancellation = threading.local()
         self.thinking_end_idx: int = 0
-        self.finish_reason: str = "stop"
+        self.finish_reason: FinishReason = "stop"
         # For each on_token emission, the index in generated_ids of the
         # token that triggered it (last buffered ID for multi-byte emits),
         # plus whether the emit was thinking. Used to map per-token probe
@@ -587,8 +587,9 @@ def generate_steered(
     terminate generation when any appears in the completion text.
     ``seed`` seeds the RNG for deterministic sampling.
 
-    Sets ``state.finish_reason`` on exit: "stop" (EOS/external), "length"
-    (max tokens), "stop_sequence" (stop string matched).
+    Sets ``state.finish_reason`` on exit: "stop" (EOS), "length" (max
+    tokens), "stop_sequence" (stop string matched), "cancelled" (an external
+    stop cut the reply).
 
     ``score_callback`` enables probe-gated triggers: when set,
     it's invoked after every forward pass and the returned
@@ -855,7 +856,7 @@ def generate_steered(
         with torch.inference_mode():
             for _ in range(config.max_new_tokens):
                 if state.is_stop_requested():
-                    state.finish_reason = "stop"
+                    state.finish_reason = "cancelled"
                     break
 
                 # The loop-owned forward index: the raw token position the

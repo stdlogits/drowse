@@ -97,7 +97,7 @@ def test_schema_round_trip():
     assert t2.turns[1].readings["angry.calm"] == pytest.approx(-0.12)
 
 
-@pytest.mark.parametrize("version", [1, 99])
+@pytest.mark.parametrize("version", [1, 2, 99])
 def test_from_yaml_rejects_unsupported_version(version: int):
     with pytest.raises(TranscriptFormatError, match="version"):
         Transcript.from_yaml(f"drowse_transcript: {version}\nturns: []\n")
@@ -144,6 +144,36 @@ def test_from_path_walks_active_path():
     assert t.turns[1].readings == {"angry.calm": 0.1}
     assert len(t.probes) == 2
     assert t.probes[0].sha256 == "hash_of_angry.calm"
+
+
+def test_a_cut_reply_keeps_its_cancelled_reason_through_export_and_import():
+    """Regression (decision 5): a reply a Stop cut short was exported and
+    re-imported with no trace of the cut."""
+    sess = StubSession()
+    u = sess.tree.add_user_turn("hi there")
+    a = sess.tree.begin_assistant(u, recipe=Recipe())
+    sess.tree.finalize_assistant(a, text="hello ba", finish_reason="cancelled")
+    t = Transcript.from_path(None, sess)
+    assert [turn.finish_reason for turn in t.turns] == [None, "cancelled"]
+    y = t.to_yaml()
+    assert "finish_reason: cancelled" in y
+    t2 = Transcript.from_yaml(y)
+    leaf = t2.import_into(sess, mode="default")
+    assert sess.tree.get(leaf).finish_reason == "cancelled"
+
+
+def test_an_authored_turn_exports_no_finish_reason():
+    """An authored tail clears the recipe (and keeps ``stop`` on the node), so
+    the turn is authored and carries no finish reason."""
+    sess = StubSession()
+    u = sess.tree.add_user_turn("hi there")
+    a = sess.tree.begin_assistant(u, recipe=Recipe())
+    sess.tree.finalize_assistant(a, text="hello", finish_reason="cancelled")
+    sess.tree.append_authored(a, " and more")
+    assert sess.tree.get(a).recipe is None
+    t = Transcript.from_path(None, sess)
+    assert [turn.finish_reason for turn in t.turns] == [None, None]
+    assert "finish_reason" not in t.to_yaml()
 
 
 # ---------------------------------------------------------------------------
@@ -471,12 +501,15 @@ def test_import_merges_cast_and_flags_conflicts():
     ({"role": "assistant", "text": "x", "readings": {"a": float("nan")}}, "finite numbers"),
     ({"role": "assistant", "text": "x", "readings": {"a": True}}, "finite numbers"),
     ({"role": "assistant", "text": "x", "recipe": {"steering": None}}, "recipe"),
+    ({"role": "assistant", "text": "x", "finish_reason": "stop"}, "needs a recipe"),
+    ({"role": "assistant", "text": "x", "recipe": Recipe().to_dict(), "finish_reason": "eos"},
+     "finish_reason must be one of"),
 ])
 def test_turn_reader_is_strict(turn: dict[str, Any], match: str):
     """Regression: missing roles defaulted to "user" and bad readings were
     silently dropped."""
     with pytest.raises(TranscriptFormatError, match=match):
-        Transcript.from_dict({"drowse_transcript": 2, "turns": [turn]})
+        Transcript.from_dict({"drowse_transcript": 3, "turns": [turn]})
 
 
 @pytest.mark.parametrize("extra, match", [
@@ -489,12 +522,12 @@ def test_turn_reader_is_strict(turn: dict[str, Any], match: str):
 ])
 def test_root_reader_is_strict(extra: dict[str, Any], match: str):
     with pytest.raises(TranscriptFormatError, match=match):
-        Transcript.from_dict({"drowse_transcript": 2, "turns": [], **extra})
+        Transcript.from_dict({"drowse_transcript": 3, "turns": [], **extra})
 
 
 def test_minimal_transcript_reads_with_optional_header_fields_absent():
     t = Transcript.from_dict({
-        "drowse_transcript": 2,
+        "drowse_transcript": 3,
         "turns": [{"role": "user", "text": "hi"}],
     })
     assert t.model_id is None and t.probes == [] and t.cast == {}

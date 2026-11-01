@@ -35,6 +35,12 @@ import type {
   UnitsProbeInfo,
 } from "./types.gen";
 
+/** Why a generation ended, the server's ``generation.results.FinishReason``.
+ *  ``cancelled`` is a reply a Stop or a disconnect cut short; the loom node
+ *  records it and the chat marks the reply. */
+export type FinishReason = NonNullable<LoomNodeJSON["finish_reason"]>;
+export const FINISH_REASONS: readonly FinishReason[] = ["stop", "length", "stop_sequence", "cancelled"];
+
 // ---------------------------------------------------------- triggers --
 
 /** Per-term trigger keyword from the steering-expression grammar.
@@ -613,7 +619,7 @@ export interface WSTokenEvent {
 export interface WSDoneResult {
   text: string;
   tokens: number;
-  finish_reason: string;
+  finish_reason: FinishReason;
   applied_steering?: string | null;
   terminal_reason?: "eos" | "stop_sequence" | "external_stop" | "length";
   usage: {
@@ -801,8 +807,8 @@ export interface ChatTurn {
   appliedSteering?: string | null;
   /** Aggregate probe readings for the turn (mean per probe). */
   aggregateReadings?: Record<string, number>;
-  /** Generation timing summary, populated at done. */
-  finishReason?: string;
+  /** Why the reply ended, set at done and from the loom node. */
+  finishReason?: FinishReason;
   tokensSoFar?: number;
   perplexity?: number;
   /** Logit-pass: per-turn mean chosen-token logprob (response span only,
@@ -1048,7 +1054,7 @@ export interface GenStatus {
   finishedAt: number | null;
   tokPerSec: number;
   ppl: PerplexityAccumulator;
-  finishReason: string | null;
+  finishReason: FinishReason | null;
 }
 
 // ----------------------------------------------------- pending actions --
