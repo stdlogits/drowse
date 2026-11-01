@@ -47,10 +47,6 @@
     {#if cross}<span class="end-band" style:grid-column={`${cross.first + 2} / span ${cross.last - cross.first + 1}`}>{spanText(cross)} both, weighted</span>{/if}
     <span class="end-last">L{n - 1}</span>
   </div>
-  <div class="sites">
-    <div class="site" data-tip="A layer's output. A head's input is read one layer down, at L−1."><span class="sk">Out</span><span class="sv">neuron outputs, attention inputs</span></div>
-    <div class="site" data-tip="After attention, where the MLP reads."><span class="sk">Mid</span><span class="sv">neuron inputs, attention outputs</span></div>
-  </div>
 </section>
 
 <style>
@@ -70,14 +66,8 @@
   .end-band { grid-row: 1; text-align: center; white-space: nowrap; }
   .end-last { grid-column: -6 / -1; grid-row: 1; text-align: right; }
 
-  .sites { display: grid; gap: 2px; }
-  .site { display: grid; grid-template-columns: 64px minmax(0, 1fr); align-items: baseline; }
-  .sk { color: var(--ink); font: var(--type-control); }
-  .sv { color: var(--ink2); font: var(--type-small); }
-
   @media (max-width: 720px) {
     .axis { grid-template-columns: 48px repeat(var(--n), minmax(0, 1fr)); }
-    .site { grid-template-columns: 48px minmax(0, 1fr); }
     /* Too narrow to sit the band's label under the band: the three ends spread along the row. */
     .ends { display: flex; justify-content: space-between; gap: var(--s2); padding-left: 48px; }
   }

@@ -1,11 +1,15 @@
 <script lang="ts">
   // The thread: the loom as the path you are on. One row per turn on the active path (a pip, the
-  // turn's first lines, and which of its siblings it is), the chat's other saved threads under
-  // Earlier, and the loom's map and weave one step away in the Page region.
+  // turn's first lines, and which of its siblings it is), then, dimmed, the turns below the chosen
+  // one the way you last came down (lib/threadPath.ts), so choosing an earlier turn keeps the rest
+  // in reach; the chat's other saved threads under Earlier, and the loom's map and weave one step
+  // away in the Page region.
   import { onMount } from "svelte";
   import { loomNavigate, loomTree } from "../../lib/stores/loom.svelte";
   import { loomUiState } from "../../lib/stores/loomUi.svelte";
   import { loomNodeSnippet } from "../../lib/loomSearch";
+  import { rememberWay, wayDown } from "../../lib/threadPath";
+  import ConversationFormat from "./ConversationFormat.svelte";
   import { genStatus } from "../../lib/stores/chat.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
@@ -17,16 +21,29 @@
   import type { SavedConversationSummary } from "../../lib/conversationLibrary";
   import type { LoomNodeJSON } from "../../lib/types";
 
+  /** Whether the conversation's format sits under the header (the workbench's widest layout; the
+   *  others carry it in the row the thread folds into). */
+  let { format = false }: { format?: boolean } = $props();
+
   interface Row {
     node: LoomNodeJSON;
     model: boolean;
     snippet: string;
     meta: string;
+    /** Below the chosen turn: kept in reach, dimmed. */
+    after: boolean;
   }
+
+  /** Each node's child on the last active path through it: the way back down (not reactive; each
+   *  path is remembered as the rows are drawn from it). */
+  const way = new Map<string, string>();
 
   const rows = $derived.by<Row[]>(() => {
     const out: Row[] = [];
-    for (const id of loomTree.activePath) {
+    const active = loomTree.activePath.at(-1);
+    rememberWay(way, loomTree.activePath);
+    const below = active === undefined ? [] : wayDown(active, loomTree.children_of, way);
+    for (const id of [...loomTree.activePath, ...below]) {
       const node = loomTree.nodes.get(id);
       if (!node) continue;
       if (node.parent_id === null && node.role === "system" && !node.text) continue;
@@ -40,6 +57,7 @@
         model: node.role === "assistant",
         snippet: loomNodeSnippet(node, node.id === loomTree.pendingNodeId ? "Writing…" : "Empty"),
         meta: parts.join(" · "),
+        after: below.includes(id),
       });
     }
     return out;
@@ -109,11 +127,12 @@
   <span class="dw-thread-name">{name}</span>
   <span class="meta">{branches} {branches === 1 ? "branch" : "branches"}</span>
 </div>
+{#if format}<ConversationFormat />{/if}
 
 {#if rows.length}
   <div class="dw-nodes" aria-label="The path you are on">
     {#each rows as row (row.node.id)}
-      <button type="button" class="dw-nodeRow" class:dw-indent={row.model}
+      <button type="button" class="dw-nodeRow" class:dw-indent={row.model} class:after={row.after}
         aria-current={row.node.id === loomTree.active_node_id ? "true" : undefined} onclick={() => void go(row)}>
         <span class="dw-pip" class:is-model={row.model}></span>
         <span><span class="dw-snip">{row.snippet}</span>{#if row.meta}<span class="meta">{row.meta}</span>{/if}</span>
@@ -148,4 +167,9 @@
   .empty { padding: 0 var(--s3); }
   .all { justify-self: start; }
   .dw-nodeRow:disabled { opacity: 0.4; cursor: default; }
+  /* The turns below the chosen one: ink at low alpha, until the pointer is on one. */
+  .after { color: color-mix(in oklab, var(--ink) 40%, transparent); transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .after .meta { color: inherit; }
+  .after .dw-pip { background: color-mix(in oklab, var(--ink) 28%, transparent); }
+  @media (hover: hover) { .after:hover { color: var(--ink2); } }
 </style>

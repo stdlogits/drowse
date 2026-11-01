@@ -7,6 +7,11 @@ import type { InstrumentSourceJSON, LensBandJSON, LensProviderJSON, PreparationS
 export type LensFamily = "R" | "S";
 export type LensSite = "out" | "mid";
 export const LENS_SITES: readonly LensSite[] = ["out", "mid"];
+/** What a site reads, as the tip on a lens card's site. */
+export const SITE_TIPS: Record<LensSite, string> = {
+  out: "A layer's output: neuron outputs and attention inputs. A head's input is read one layer down, at L−1.",
+  mid: "After attention, where the MLP reads: neuron inputs and attention outputs.",
+};
 
 /** The kind a family fits by default (RelP), and its standard-rules alternative. */
 export const FAMILY_KINDS: Record<LensFamily, readonly ["r" | "s", "j" | "k"]> = {

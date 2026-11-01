@@ -100,6 +100,7 @@
   import {
     ENTROPY_TARGET,
     SURPRISE_TARGET,
+    tokenLead,
   } from "../lib/tokens";
   import {
     highlightStyleString,
@@ -1433,7 +1434,8 @@
             {#each turn.thinkingTokens ?? [] as tok, tokenIdx (tokenIdx)}
               {@const tint = highlightStyleString(tok)}
               {@const chosen = isSelectedToken(turnIdx, tokenIdx, true)}
-              <span
+              {@const parts = tokenLead(tok.text)}
+              {parts.lead}<span
                 class="tok"
                 class:sel={chosen}
                 use:arrivals.reveal={genStatus.active ? tok : null}
@@ -1450,7 +1452,7 @@
                 tabindex={tokenIdx === (tokenFocusIndices.get(`${turn.nodeId ?? turnIdx}:thinking`) ?? 0) ? 0 : -1}
                 aria-pressed={chosen}
                 aria-label={`Inspect token ${tok.text.trim() || "whitespace"}`}
-              >{tok.text}</span>
+              >{parts.body}</span>
             {/each}
           </div>
         {/if}
@@ -1462,7 +1464,8 @@
         {#each visibleResponseTokens(turn.tokens ?? []) as { tok, originalIdx }, visibleIdx (originalIdx)}
           {@const tint = highlightStyleString(tok)}
           {@const chosen = isSelectedToken(turnIdx, originalIdx, false)}
-          <span
+          {@const parts = tokenLead(tok.text)}
+          {parts.lead}<span
             class="tok"
             class:sel={chosen}
             use:arrivals.reveal={genStatus.active ? tok : null}
@@ -1479,7 +1482,7 @@
             tabindex={(tokenFocusIndices.has(`${turn.nodeId ?? turnIdx}:response`) ? tokenFocusIndices.get(`${turn.nodeId ?? turnIdx}:response`) === originalIdx : visibleIdx === 0) ? 0 : -1}
             aria-pressed={chosen}
             aria-label={`Inspect token ${tok.text.trim() || "whitespace"}`}
-          >{tok.text}</span>
+          >{parts.body}</span>
         {/each}
       {:else}
         <span class="plain">{plainResponseText(turn)}</span>
@@ -1553,8 +1556,10 @@
   .plain { white-space: pre-wrap; }
 
   /* One token: joined to its word, a wash on hover, ink when it is the one selected. The
-   * highlight's own fill rides its inline style. The wash and the ink grow only up and down (inline
-   * padding never moves the line), so a chip never paints over the glyph beside it. */
+   * highlight's own fill rides its inline style. The space before a word sits outside the box
+   * (lib/tokens.ts::tokenLead), so a token that wraps starts its box on its own line. The wash and
+   * the ink grow only up and down (inline padding never moves the line), so a chip never paints
+   * over the glyph beside it. */
   .tok { border-radius: 4px; cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
   .tok:not(.tinted):hover { background: var(--wash2); padding-block: 2px; }
   .tok.sel, .tok.sel:hover { background: var(--ink); color: var(--paper); padding-block: 2px; }

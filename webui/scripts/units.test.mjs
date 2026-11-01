@@ -218,6 +218,33 @@ try {
   const g = fieldGeometry(20, 100, 2560);
   assert.ok(g.g * g.rows >= 2560 && g.cw * g.g <= 20.0001 && g.ch * g.rows <= 100.0001);
 
+  // Regression (a9, the Units atlas): a click on a row or a pixel chose only the whole layer. A
+  // point of All's field names the neuron drawn there (the layout the atlas paints with), a bar is
+  // its unit's button, and the atlas is one keyboard stop moved by the arrows.
+  {
+    const { fieldLayout, fieldCell, fieldCellAt, unitRef, signedValue, atlasStep } = units;
+    const layout = fieldLayout(320, 214, 4, false);
+    const totals = [2560, 2560, 0, 2560];
+    for (const [layer, index] of [[0, 0], [1, 17], [3, 2559], [1, 1300]]) {
+      const cell = fieldCell(layout, layer, index, totals[layer]);
+      assert.deepEqual(fieldCellAt(layout, cell.x + cell.w / 2, cell.y + cell.h / 2, totals), { layer, index }, `cell ${layer}:${index}`);
+    }
+    assert.equal(fieldCellAt(layout, 2, 100, totals), null, "the column's margin beside the cells chooses no neuron");
+    assert.equal(fieldCellAt(layout, 200, 100, totals), null, "a layer with no population has no cells");
+    assert.equal(fieldCellAt(layout, 40, 3, totals), null, "above the cells");
+    assert.equal(unitRef("neuron", 12, 344), "neuron/L12n344");
+    assert.equal(unitRef("head", 20, 7), "head/L20h7");
+    assert.equal(signedValue(-15.2), "−15");
+    const lengths = [3, 0, 2];
+    assert.deepEqual(atlasStep(lengths, { layer: 0, row: -1 }, "ArrowDown"), { layer: 0, row: 0 }, "from the layer into its bars");
+    assert.deepEqual(atlasStep(lengths, { layer: 0, row: 0 }, "ArrowUp"), { layer: 0, row: -1 }, "back up to the layer");
+    assert.deepEqual(atlasStep(lengths, { layer: 0, row: 2 }, "ArrowDown"), { layer: 0, row: 2 }, "the last bar holds");
+    assert.deepEqual(atlasStep(lengths, { layer: 0, row: 2 }, "ArrowRight"), { layer: 1, row: -1 }, "an empty column: its layer");
+    assert.deepEqual(atlasStep(lengths, { layer: 0, row: 2 }, "End"), { layer: 2, row: 1 }, "a shorter column: its last bar");
+    assert.deepEqual(atlasStep(lengths, { layer: 2, row: 1 }, "Home"), { layer: 0, row: 1 }, "the same rank");
+    assert.equal(atlasStep(lengths, { layer: 0, row: 0 }, "Enter"), null, "Enter is the button's own");
+  }
+
   // The search: nothing, an ID (or a malformed one), a word (a · or a space asks for the word start).
   assert.deepEqual(parseQuery("  "), { mode: "active" });
   assert.equal(parseQuery("L31 n4410").ref.id, "neuron/L31n4410");
@@ -365,6 +392,21 @@ try {
   html = render(UnitsRoom, {}).body;
   assert.match(html, /Most active here/);
   assert.match(html, /32 neurons/);
+  // Regression (a9): each of the atlas's bars is its unit's button, labelled and tipped with its ID
+  // and value, pressed when it is the unit shown; one place in the atlas takes the Tab key.
+  {
+    const atlas = html.slice(html.indexOf('aria-label="Layers"'), html.indexOf('aria-label="Results"'));
+    assert.match(atlas, /<button[^>]*class="u\b[^"]*\bsel\b[^"]*"[^>]*aria-label="L3 n3, 3\.9"[^>]*aria-pressed="true"[^>]*data-tip="L3 n3"[^>]*data-tip-sub="3\.9"/, "the selected unit's bar");
+    assert.ok((atlas.match(/<button[^>]*class="u\b/g) ?? []).length >= 2, "every bar a button");
+    assert.match(atlas, /<button[^>]*class="lay[^"]*"[^>]*aria-label="Layer 3"[^>]*aria-pressed="true"/, "the layer the unit is on");
+    assert.equal((atlas.match(/tabindex="0"/g) ?? []).length, 1, "one keyboard stop");
+    assert.match(atlas, /class="u\b[^"]*\bsel\b[^"]*"[^>]*tabindex="0"/, "on the selected unit's bar");
+    // Live, All's hover named L13 n675 and the click chose n674: a click reports whole pixels, a
+    // pointer event fractions, and a cell is narrower than a pixel. The click takes the press's point.
+    const source = (await import("node:fs")).readFileSync(new URL("../src/panels/rooms/UnitAtlas.svelte", import.meta.url), "utf8");
+    assert.match(source, /onpointerdown=\{\(e\) => \(pressAt = \{ x: e\.clientX, y: e\.clientY \}\)\}/);
+    assert.match(source, /const at = pressAt \?\? \{ x: event\.clientX, y: event\.clientY \};[^]*?cellAt\(at\.x, at\.y\)/);
+  }
   assert.match(html, />L3 n3</);
   assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");
   assert.match(html, /−2\.2/);

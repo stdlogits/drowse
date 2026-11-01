@@ -52,6 +52,7 @@
     ENTROPY_TARGET,
     PROBABILITY_TARGET,
     SURPRISE_TARGET,
+    tokenLead,
   } from "../lib/tokens";
   import {
     highlightScoreFor,
@@ -617,7 +618,8 @@
             <span class="seg plain" class:origin-user={v.source === "user"} class:origin-draft={v.source === "draft"}
               {...{ "aria-description": (v.source === "draft" ? "Unsaved user edit · no recorded probabilities" : v.source === "model" ? "Model text · no recorded probabilities" : "User text · no recorded probabilities") }}>{v.text}</span>
           {:else}
-            <span
+            {@const parts = tokenLead(v.text)}
+            {parts.lead}<span
               class="seg tok clickable"
               class:origin-user={v.source === "user"}
               class:origin-model={v.source === "model"}
@@ -642,14 +644,14 @@
                 openToken(v, event.currentTarget);
               }}
               onkeydown={(ev) => onInspectableTokenKeydown(ev, i, v)}
-            >{v.text}</span>
+            >{parts.body}</span>
           {/if}
         {/each}
       </div>
     {:else}
       {#if showColorMirror}
         <div class="color-mirror" bind:this={colorMirrorRef} dir="auto" aria-hidden="true">
-          {#each currentTokenViews as token, i (i)}<span use:arrivals.reveal={!genStatus.active || dirty || document.activeElement === textareaRef ? null : token.tok} class:origin-draft={token.source === "draft"} style={token.tok ? highlightStyleString(token.tok) : ""}>{token.text}</span>{/each}<span>{"\u200b"}</span>
+          {#each currentTokenViews as token, i (i)}{@const parts = tokenLead(token.text)}{parts.lead}<span use:arrivals.reveal={!genStatus.active || dirty || document.activeElement === textareaRef ? null : token.tok} class:origin-draft={token.source === "draft"} style={token.tok ? highlightStyleString(token.tok) : ""}>{parts.body}</span>{/each}<span>{"\u200b"}</span>
         </div>
       {/if}
       <textarea

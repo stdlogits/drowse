@@ -327,7 +327,7 @@ export function createWorkspaceTools(): AppTool[] {
       if (input.format !== undefined) setGenUiMode(input.format as "chat" | "raw");
       await tick();
       return result({ sampling: copy(samplingState), format: genUiMode.mode, affects: "future generations" });
-    }, { surfaces: ["advanced_sampling", "SamplingStrip"], services: ["sessions.patch"] }),
+    }, { surfaces: ["advanced_sampling", "SamplingStrip", "Thread"], services: ["sessions.patch"] }),
     tool("drowse_set_system_prompt", "Set system instructions", IDENTITY_HELP.systemPrompt + " Use this for explicit behavior such as speaking like a pirate; steering provides an additional measurable control.", objectSchema({ text: string("Complete system prompt. Read current instructions before replacing; empty clears.", 1000000) }, ["text"]), async (input, context) => {
       assertWorkspaceIdle(context);
       const form = getSystemPromptController();

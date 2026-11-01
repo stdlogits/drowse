@@ -221,6 +221,36 @@ try {
   assert.equal(chatLog.turns.some(turn => turn.role !== "system"), false);
   assert.equal(loomTree.nodes.size, snapshot.nodes.length, "clearing preserves existing branches");
   assert.equal(pendingActions.queue.length, 0);
+
+  // Regression (a9, the thread column): choosing prompt A after reply B dropped B from the column,
+  // and the map or the weave was the only way back. The turns below the chosen one stay, dimmed and
+  // clickable, the way you last came down (else each node's newest child).
+  {
+    const { rememberWay, wayDown } = await server.ssrLoadModule("/src/lib/threadPath.ts");
+    const kids = new Map([["root", ["a", "c"]], ["a", ["b", "b2"]], ["b", ["d"]], ["b2", []], ["c", []], ["d", []]]);
+    const way = new Map();
+    assert.deepEqual(wayDown("a", kids, way), ["b2"], "nothing remembered: the newest child");
+    rememberWay(way, ["root", "a", "b", "d"]);
+    assert.deepEqual(wayDown("root", kids, way), ["a", "b", "d"], "the way you came, to the leaf");
+    assert.deepEqual(wayDown("a", kids, way), ["b", "d"]);
+    assert.deepEqual(wayDown("d", kids, way), [], "a leaf has nothing below");
+    rememberWay(way, ["root", "a", "b2"]);
+    assert.deepEqual(wayDown("a", kids, way), ["b2"], "a later path replaces the way");
+    kids.set("a", ["b"]);
+    assert.deepEqual(wayDown("a", kids, way), ["b", "d"], "a remembered child that is gone falls back");
+
+    const { render } = await server.ssrLoadModule("svelte/server");
+    const { default: Thread } = await server.ssrLoadModule("/src/panels/workbench/Thread.svelte");
+    applyTreeSnapshot({ ...snapshot, rev: 30, active_node_id: "a" });
+    const html = render(Thread).body;
+    const row = (id) => new RegExp(`<button[^>]*class="dw-nodeRow[^"]*"[^>]*>(?:(?!</button>).)*<span class="dw-snip[^"]*">${id}</span>`, "s").exec(html)?.[0] ?? "";
+    assert.match(row("a"), /aria-current="true"/, "the chosen turn");
+    assert.ok(row("b"), "the reply below it stays listed");
+    assert.match(row("b"), /class="dw-nodeRow[^"]*\bafter\b/, "dimmed");
+    assert.doesNotMatch(row("b"), /aria-current|disabled/, "and still clickable");
+    assert.doesNotMatch(row("a"), /\bafter\b/);
+    assert.equal(row("c"), "", "a sibling branch stays a branch");
+  }
   console.log("Loom store invalidation, streaming, and search checks passed");
 } finally {
   await server.close();

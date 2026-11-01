@@ -100,6 +100,36 @@ try {
     assert.doesNotMatch(sampling, new RegExp(`<span class="head[^"]*"[^>]*>${field}</span>`));
   }
 
+  // Regression (a9): the conversation's format sat in Sampling settings, folded under More. It is
+  // the conversation's (how the Page draws it and how a turn is sent), so it is one Segmented by
+  // the thread's header: under it in the thread column, in the folded row at the other layouts.
+  {
+    assert.doesNotMatch(sampling, /Format|Raw completion|Chat template/, "not in Sampling settings");
+    const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+    const { genUiMode } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
+    const { default: Format } = await server.ssrLoadModule("/src/panels/workbench/ConversationFormat.svelte");
+    const { default: Thread } = await server.ssrLoadModule("/src/panels/workbench/Thread.svelte");
+    const { default: Workbench } = await server.ssrLoadModule("/src/panels/workbench/Workbench.svelte");
+    const group = /<div class="seg[^"]*" role="group" aria-label="Format"/;
+    sessionState.info = { model_id: "fixture", is_base_model: false };
+    genUiMode.mode = "raw";
+    const format = render(Format).body;
+    assert.match(format, group);
+    assert.match(format, /aria-pressed="false"[^>]*>Chat</);
+    assert.match(format, /aria-pressed="true"[^>]*>Raw</);
+    assert.match(render(Thread, { props: { format: true } }).body, group, "under the header in the thread column");
+    assert.doesNotMatch(render(Thread).body, group);
+    // Rendered on the server the workbench is narrower than its three columns: the format rides the
+    // folded row, once.
+    const bench = render(Workbench).body;
+    assert.equal((bench.match(new RegExp(group.source, "g")) ?? []).length, 1);
+    assert.match(bench.slice(bench.indexOf('class="thread-fold'), bench.indexOf('class="dw-thread')), group, "in the folded row");
+    sessionState.info = { model_id: "fixture", is_base_model: true };
+    assert.doesNotMatch(render(Format).body, group, "a base model has no template to choose");
+    sessionState.info = null;
+    genUiMode.mode = "chat";
+  }
+
   // The contact form: the email field's "optional" says it all, so the line under it appears only
   // with an error, and only then does the field point at it.
   const { default: ContactForm } = await server.ssrLoadModule("/src/lib/ui/ContactForm.svelte");

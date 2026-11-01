@@ -250,7 +250,8 @@ opportunistically and never blocks the current store. `lib/theme.ts` (the stored
 
 ```
 main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
-panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread
+panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread,
+                      ConversationFormat (Chat | Raw)
 panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace)
 panels/rooms/         RoomSections (Manifolds, Model), ModelFacts (the Model room's depth ramp
                       and lenses), LensRoom (lens/: the depth axis, a family column, a card),
@@ -307,6 +308,14 @@ scrolls on its own. From the phone up to 1240 px it is Page | Inspector, with th
 folded into a row over the page, so a selection always shows beside the conversation. On a
 phone (720 px and under) it is one column: the Inspector is a sheet between the log and the
 composer, and the loom page takes the column (no sheet while it shows).
+
+The thread lists the active path and then, dimmed, the turns below the active node the way you
+last came down (`lib/threadPath.ts`: each node's child on the last active path through it, else its
+newest), so choosing an earlier turn keeps the rest one click away. The conversation's format
+(`ConversationFormat`, `genUiMode`: how the Page draws the conversation and how a turn is sent,
+kept per model, not a sampling field) sits by the thread's header, rendered once: under it in the
+thread column, in the row the thread folds into at the other two layouts. A base model has no
+template, so it shows none.
 
 The Lens room (`#/lens`) is where lens and SAE sources are chosen, fetched and fitted. Its
 depth axis draws the server's crossover band (shown only when the runtime sends one); its 2x2
@@ -431,7 +440,10 @@ drowse.ai too.
   `request*` from an `$effect`, nothing asked while a generation runs. Both hide where
   `unitReadsAvailable(runtimeClient)` is false (`shownRooms()` drops the room). A neuron
   reads one side at a time, and both views read the side that fired here (`peakPole`, the
-  sign of its trace's peak): the view's writes, label and link, the room's summary. Heads
+  sign of its trace's peak): the view's writes, label and link, the room's summary. In the room's
+  atlas a bar is its unit's button (All: the cell under the pointer, through
+  `units.ts::fieldCellAt`), choosing the unit and its layer; the rest of a column chooses the layer,
+  and the atlas is one keyboard stop the arrows move (`atlasStep`). Heads
   rank by their own write at the atlas's token (`rankHeads` over the population), never
   against the neurons' peaks, which on SmolLM2 hold no head. Unit probes are the `units`
   family: they list in the probe rack (`UnitProbeCard`, a row like a geometry probe's, detached
