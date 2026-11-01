@@ -10,6 +10,7 @@ from drowse.errors import DrowseError
 from drowse.server.response_models import (
     SessionInfo,
     SessionListResponse,
+    SteeringPartJSON,
     SteeringValidationResponse,
 )
 from drowse.server.runtime import exclusive_or_busy, run_in_thread, session_lock, session_router
@@ -19,7 +20,7 @@ from drowse.server.session_models import (
     session_info,
 )
 from drowse.steering.composer import TermLayers
-from drowse.steering.grammar import format_expr, parse_expr
+from drowse.steering.grammar import TermPart, format_expr, parse_expr, term_parts
 
 
 def register_session_routes(app: FastAPI) -> None:
@@ -69,7 +70,9 @@ def register_session_routes(app: FastAPI) -> None:
         result (``valid: false``), not a failed request.  A valid one also
         reports the model's depth and where each term acts (its fitted
         layers, its share there, the layers its clause selects): the term
-        editor's depth strip.
+        editor's depth strip, and each term in order with its fields
+        (``parts``: what the recipe row needs to show a recipe that came from
+        elsewhere as chips; the server's parser is the only parser).
         """
         expression = req.expression.strip()
         if not expression:
@@ -105,6 +108,23 @@ def register_session_routes(app: FastAPI) -> None:
                 }
                 for key, where in terms.items()
             ],
+            "parts": [_part_json(part) for part in term_parts(parsed)],
         }
 
     app.include_router(router)
+
+
+def _part_json(part: TermPart) -> SteeringPartJSON:
+    """One :class:`~drowse.steering.grammar.TermPart` on the wire."""
+    position = part.position
+    layers = part.layers
+    return {
+        "text": part.text,
+        "op": part.op,
+        "target": part.target,
+        "coeff": part.coeff,
+        "onto": part.onto,
+        "position": list(position) if isinstance(position, tuple) else position,
+        "layers": list(layers) if isinstance(layers, tuple) else layers,
+        "trigger": part.trigger,
+    }

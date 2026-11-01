@@ -145,9 +145,57 @@ class TestSessions:
                 "share": [0.5, 1.0, 1.5],
                 "layers": [2, 3],
             }],
+            "parts": [{
+                "text": "0.2 default/honest.deceptive%honest@response",
+                "op": "position",
+                "target": "default/honest.deceptive",
+                "coeff": 0.2,
+                "onto": 0.0,
+                "position": "honest",
+                "layers": None,
+                "trigger": "response",
+            }],
         }
         session.steering.assert_called_once()
         scope.term_layers.assert_called_once_with()
+
+    def test_validate_steering_reports_each_term_in_order(
+        self, session_and_client: Any,
+    ) -> None:
+        # The recipe row shows a recipe from elsewhere (an agent's, a tree's,
+        # the CLI's) as chips from these fields: one per term, in the order
+        # written, each with its own text, so the client needs no parser.
+        session, client = session_and_client
+        session.layers = [object()] * 8
+        scope = session.steering.return_value.__enter__.return_value
+        scope.term_layers.return_value = {}
+        expression = (
+            "0.3 jlens/storm{2-4} - !slens/#12@response + 0.5 !head/L3h1"
+            " + 0.5,0.2 emotions%0.3,-0.8{workspace} + 0.4 a~b@when:jlens/x>0.1"
+            " + 0.2 neuron/L5n7"
+        )
+        resp = client.post(
+            "/drowse/v1/sessions/default/steering/validate",
+            json={"expression": expression},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        parts = body["parts"]
+        assert " + ".join(part["text"] for part in parts).replace("+ -", "- ") == body["expression"]
+        assert parts == [
+            {"text": "0.3 jlens/storm{2-4}", "op": "push", "target": "jlens/storm",
+             "coeff": 0.3, "onto": 0.0, "position": None, "layers": [2, 3, 4], "trigger": None},
+            {"text": "-!slens/#12@response", "op": "ablate", "target": "slens/#12",
+             "coeff": -1.0, "onto": 0.0, "position": None, "layers": None, "trigger": "response"},
+            {"text": "0.5 !head/L3h1", "op": "ablate", "target": "head/L3h1",
+             "coeff": 0.5, "onto": 0.0, "position": None, "layers": None, "trigger": None},
+            {"text": "0.5,0.2 emotions%0.3,-0.8{workspace}", "op": "position", "target": "emotions",
+             "coeff": 0.5, "onto": 0.2, "position": [0.3, -0.8], "layers": "workspace", "trigger": None},
+            {"text": "0.4 a~b@when:jlens/x>0.1", "op": "project", "target": "a~b",
+             "coeff": 0.4, "onto": 0.0, "position": None, "layers": None, "trigger": "when:jlens/x>0.1"},
+            {"text": "0.2 neuron/L5n7", "op": "push", "target": "neuron/L5n7",
+             "coeff": 0.2, "onto": 0.0, "position": None, "layers": None, "trigger": None},
+        ]
 
     def test_validate_steering_returns_expected_errors_in_band(
         self, session_and_client: Any,

@@ -1525,26 +1525,7 @@ def format_expr(steering: "Steering") -> str:
     canonical form (:func:`format_layer_clause`); a plain term's rides in its
     key.
     """
-    default_trig = steering.trigger
-    parts: list[str] = []
-    for name, val in steering.alphas.items():
-        if isinstance(val, AblationTerm):
-            parts.append(_fmt_ablation(val))
-            continue
-        if isinstance(val, UnitAblationTerm):
-            parts.append(_fmt_bang(val.unit.qualified, val.coeff, val.trigger))
-            continue
-        if isinstance(val, ProjectedTerm):
-            parts.append(_fmt_projected(val))
-            continue
-        if isinstance(val, ManifoldTerm):
-            parts.append(_fmt_manifold(val))
-            continue
-        if isinstance(val, tuple):
-            coeff, trig = float(val[0]), val[1]
-        else:
-            coeff, trig = float(val), default_trig
-        parts.append(_fmt_plain(name, coeff, trig))
+    parts = [part.text for part in term_parts(steering)]
     if not parts:
         return ""
     out = parts[0]
@@ -1554,6 +1535,88 @@ def format_expr(steering: "Steering") -> str:
         else:
             out += " + " + p
     return out
+
+
+TermOp = Literal["push", "ablate", "project", "position"]
+
+
+@dataclass(frozen=True)
+class TermPart:
+    """One term of a :class:`Steering`, in order: its text and its fields.
+
+    ``text`` is the term alone as :func:`format_expr` writes it (its leading
+    sign included: ``-!jlens/storm``); :func:`format_expr` is these texts
+    joined.  The fields are what a client needs to show the term as a chip
+    without a parser of its own (the dashboard's recipe row,
+    ``POST .../steering/validate``):
+
+    - ``op``: ``push`` (a plain term: a vector, a pole, an instrument atom, a
+      neuron), ``ablate`` (``!x``, units included), ``project`` (``a~b`` /
+      ``a|b``) or ``position`` (``m%pos``);
+    - ``target``: the selector without coefficient, clause or trigger
+      (``default/honest:sae``, ``jlens/#12``, ``neuron/L8n344``; a
+      projection's ``a~b``; a position's manifold);
+    - ``coeff`` (a position's ``along``) and ``onto`` (a position's collapse,
+      0 otherwise);
+    - ``position``: a position's node label or coordinates, else ``None``;
+    - ``layers``: the ``{…}`` clause as a :data:`LayerScope`;
+    - ``trigger``: the ``@`` clause without the ``@`` (``response``,
+      ``when:slens/owl>3``), ``None`` for :data:`Trigger.BOTH`.
+    """
+
+    text: str
+    op: TermOp
+    target: str
+    coeff: float
+    onto: float
+    position: str | tuple[float, ...] | None
+    layers: LayerScope
+    trigger: str | None
+
+
+def term_parts(steering: "Steering") -> list[TermPart]:
+    """Every term of ``steering`` in order, each as :class:`TermPart`."""
+    default_trig = steering.trigger
+    out: list[TermPart] = []
+    for name, val in steering.alphas.items():
+        if isinstance(val, AblationTerm):
+            out.append(TermPart(
+                _fmt_ablation(val), "ablate", val.target, val.coeff, 0.0, None,
+                val.layers, _trigger_text(val.trigger),
+            ))
+        elif isinstance(val, UnitAblationTerm):
+            out.append(TermPart(
+                _fmt_bang(val.unit.qualified, val.coeff, val.trigger), "ablate",
+                val.unit.qualified, val.coeff, 0.0, None, None,
+                _trigger_text(val.trigger),
+            ))
+        elif isinstance(val, ProjectedTerm):
+            out.append(TermPart(
+                _fmt_projected(val), "project",
+                f"{val.base}{val.operator}{val.onto}", val.coeff, 0.0, None,
+                val.layers, _trigger_text(val.trigger),
+            ))
+        elif isinstance(val, ManifoldTerm):
+            out.append(TermPart(
+                _fmt_manifold(val), "position", val.manifold, val.along,
+                val.onto, val.position, val.layers, _trigger_text(val.trigger),
+            ))
+        else:
+            if isinstance(val, tuple):
+                coeff, trig = float(val[0]), val[1]
+            else:
+                coeff, trig = float(val), default_trig
+            target, layers = split_layer_clause(name)
+            out.append(TermPart(
+                _fmt_plain(name, coeff, trig), "push", target, coeff, 0.0,
+                None, layers, _trigger_text(trig),
+            ))
+    return out
+
+
+def _trigger_text(trig: Trigger) -> str | None:
+    """A term's ``@`` clause without the ``@``; ``None`` for both phases."""
+    return None if trig == Trigger.BOTH else _trigger_name(trig)
 
 
 def _fmt_plain(name: str, coeff: float, trig: Trigger) -> str:
@@ -1715,10 +1778,13 @@ __all__ = [
     "ManifoldTerm",
     "ProjectedTerm",
     "SteeringExprError",
+    "TermOp",
+    "TermPart",
     "UnitAblationTerm",
     "format_layer_clause",
     "parse_expr",
     "format_expr",
+    "term_parts",
     "referenced_selectors",
     "split_layer_clause",
 ]

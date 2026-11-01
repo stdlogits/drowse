@@ -395,9 +395,14 @@ export interface LensLiveState {
   layers: number[] | null;
 }
 
-/** One pinned J-lens token probe (the readout channel). */
+/**
+ * One pinned lens token probe (the readout channel). ``namespace`` says
+ * which: ``jlens`` (toward saying the word; it reads the mean fitted-layer
+ * probability) or ``slens`` (toward having read it; the mean footprint z).
+ */
 export interface LensProbeInfo {
   family: "lens";
+  namespace: "jlens" | "slens";
   name: string;
   layers: number[];
   intrinsic_dim: number;
@@ -1032,6 +1037,29 @@ export interface SourcesResponse {
 }
 
 /**
+ * One term of a validated expression, in order (``grammar.TermPart``).
+ *
+ * ``text`` is the term alone as ``format_expr`` writes it (``expression``
+ * is these joined); ``op`` is ``push``, ``ablate``, ``project`` or
+ * ``position``; ``target`` the selector without coefficient, clause or
+ * trigger (a projection's ``a~b``, a position's manifold); ``coeff`` the
+ * coefficient (a position's along) and ``onto`` a position's collapse (0
+ * otherwise); ``position`` a position's node label or coordinates;
+ * ``layers`` the ``{…}`` clause (``null`` for none); ``trigger`` the ``@``
+ * clause without the ``@`` (``null`` for both phases).
+ */
+export interface SteeringPartJSON {
+  text: string;
+  op: "push" | "ablate" | "project" | "position";
+  target: string;
+  coeff: number;
+  onto: number;
+  position: string | number[] | null;
+  layers: "workspace" | number[] | null;
+  trigger: string | null;
+}
+
+/**
  * Where one validated term acts (``SteeringComposer.term_layers``).
  *
  * ``fitted`` are the layers the term can act on, ``share`` its weight at
@@ -1049,8 +1077,10 @@ export interface SteeringTermLayersJSON {
 /**
  * ``POST .../steering/validate`` — a form result, not a failed request.
  *
- * A valid, non-empty expression also carries the model's depth and where
- * each of its terms acts (the term editor's depth strip).
+ * A valid, non-empty expression also carries the model's depth, where each
+ * of its terms acts (the term editor's depth strip) and each term in order
+ * with its fields (``parts``: the recipe row shows a recipe from elsewhere
+ * as chips from them).
  */
 export interface SteeringValidationResponse {
   valid: boolean;
@@ -1058,6 +1088,7 @@ export interface SteeringValidationResponse {
   error: string | null;
   n_layers?: number;
   terms?: SteeringTermLayersJSON[];
+  parts?: SteeringPartJSON[];
 }
 
 export interface TemplateContextJSON {
