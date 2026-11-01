@@ -3,9 +3,10 @@
   // layer through both lenses (LensLayers: the S lens's read, input, and the R lens's say, output,
   // each by its weight in the depth rule, the crossover band on a wash) and the lens probes' values
   // there, from one replay of the token (the token anatomy, as the workbench's token view replays
-  // it, steered as the token was or, asked, without the steering). Whole, the reply's aggregate:
-  // the words its tokens' lenses said, by strength and depth, and the lens probes over the reply.
-  // Fitting and fetching lenses live in the Artifacts room; without a lens the room links there.
+  // it, steered as the token was or, asked, without the steering). Whole, the lens probes over the
+  // reply (its node's aggregate envelope; the live readout's words are per token and the node keeps
+  // no reply-level words), or, with none, the way to watch a word. Fitting and fetching lenses live
+  // in the Artifacts room; without a lens the room links there.
   import { onMount } from "svelte";
   import { Icon, MorphText, Segmented, Token } from "@stdlogits/ledger";
   import TokenStrip from "./TokenStrip.svelte";
@@ -17,6 +18,7 @@
   import { genStatus, effectiveRawMode } from "../../lib/stores/chat.svelte";
   import { loomTree } from "../../lib/stores/loom.svelte";
   import { goto } from "../../lib/stores/rooms.svelte";
+  import { showInstrument } from "../../lib/commands";
   import { lensSourceState, refreshLensSources } from "../../lib/stores/instruments.svelte";
   import { probeRack } from "../../lib/stores/probes.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
@@ -65,12 +67,9 @@
   const stale = $derived(read.status === "loading" || (anatomy !== null && token !== null && anatomy.token.raw_index !== token.index));
   const tokenPins = $derived(read.value?.instruments.lens?.readings ?? {});
 
-  // ---------- the whole reply: its aggregate
+  // ---------- the whole reply: its lens probes
   const reply = $derived(tokenCursor.reply);
   const aggregate = $derived(reply?.nodeId ? (loomTree.nodes.get(reply.nodeId)?.aggregate_measurements?.instruments.lens ?? null) : null);
-  const chips = $derived([...(aggregate?.readout?.aggregate ?? [])].sort((a, b) => b.strength - a.strength).slice(0, 24));
-  const strongest = $derived(Math.max(1e-9, ...chips.map((c) => c.strength)));
-  const deepest = $derived(Math.max(1, (lensSourceState.band?.weights.length ?? 1) - 1, ...chips.map((c) => c.com)));
 
   /** The lens probes a view lists: what it read, by the rack's names. */
   const pins = $derived(Object.entries(whole ? (aggregate?.readings ?? {}) : tokenPins) as [string, ScalarReadingJSON][]);
@@ -90,23 +89,14 @@
       <button type="button" class="dw-quiet" onclick={() => goto("artifacts", "lenses")}>Lenses<Icon name="right" /></button>
     </div>
   {:else if whole}
-    <section class="dw-sec" aria-labelledby="lens-reply-head">
-      <div class="dw-sec-head"><span class="head" id="lens-reply-head">This reply</span><span class="meta">{chips.length > 0 ? `${chips.length} words` : ""}</span></div>
-      {#if chips.length > 0}
-        <div class="chips">
-          {#each chips as chip, i (chip.id)}
-            <span class="chip" style:--tint={depthTint(chip.com / deepest)} data-tip={`L${chip.com.toFixed(1)} ± ${chip.spread.toFixed(1)}`}>
-              <Token token={chip.token} {i} />
-              <span class="meter"><i style:width="{Math.round((chip.strength / strongest) * 100)}%"></i></span>
-            </span>
-          {/each}
-        </div>
-      {:else if reply}
-        <p class="meta none">No lens read this reply.</p>
-      {:else}
-        <p class="meta none">The lenses read here once the model has written a reply.</p>
-      {/if}
-    </section>
+    {#if !reply}
+      <p class="meta none">The lenses read here once the model has written a reply.</p>
+    {:else if pins.length === 0}
+      <div class="dw-empty">
+        <span class="head">No lens probes</span>
+        <button type="button" class="dw-quiet" onclick={() => showInstrument("lens")}>Watch a word<Icon name="right" /></button>
+      </div>
+    {/if}
   {:else if !anatomyAvailable}
     <div class="dw-empty"><span class="head">Lens</span><p>This runtime does not replay tokens.</p></div>
   {:else if token && (token.nodeId === null || token.index === null)}
@@ -158,8 +148,6 @@
   .ghost > i { display: block; height: 36px; border-radius: var(--r-box); background: var(--wash); }
   .none { margin: 0; }
 
-  .chips { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s3); }
-  .chip { display: inline-grid; gap: 4px; justify-items: start; }
   .meter { position: relative; display: block; width: 56px; height: 4px; border-radius: 2px; background: var(--wash2); }
   .meter > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--tint, var(--deep)); transition: width var(--glide) var(--ease); }
 

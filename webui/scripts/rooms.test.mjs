@@ -116,6 +116,14 @@ try {
   assert.match(empty, /openDrawer\("manifolds"\)\}>A manifold</);
   assert.match(empty, /goto\("artifacts", "build"\)\}>Build one</);
   assert.match(read("panels/rooms/LensRoom.svelte"), /goto\("artifacts", "lenses"\)\}>Lenses</);
+  // W6 integration (live, SmolLM2 with the lens readout on): the Lens room's whole reply read
+  // "No lens read this reply." for every reply. It read the node's aggregate lens readout, which no
+  // generation writes (the aggregate envelope carries the lens probes; the readout's words are per
+  // token). Whole, the room lists the lens probes over the reply, or leads to watching a word.
+  const lensRoom = read("panels/rooms/LensRoom.svelte");
+  assert.doesNotMatch(lensRoom, /readout\?\.aggregate/, "no reply-level words: the node keeps none");
+  assert.doesNotMatch(lensRoom, /No lens read this reply/);
+  assert.match(lensRoom, /\{:else if pins\.length === 0\}[^]*?>No lens probes<[^]*?showInstrument\("lens"\)\}>Watch a word</);
   const model = read("panels/rooms/ModelFacts.svelte");
   assert.ok(model.includes(`goto("artifacts", "lenses")}>{canFit ? "Fit a lens here"`));
   assert.ok(model.includes(`goto("artifacts", "saes")}>{sae ? "SAEs" : "Choose an SAE"}`));
