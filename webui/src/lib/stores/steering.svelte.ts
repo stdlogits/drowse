@@ -499,14 +499,17 @@ export function manifoldCentroid(m: ManifoldInfo): number[] {
 export function addManifoldToRack(name: string, variant: Variant = "raw"): void {
   if (steerRack.entries.has(name)) return;
   dropRecipe();
+  // A curved term starts at its first node (titled by it, as the canvas titles one), else at
+  // the middle of its nodes when the catalog names none.
   const info = manifoldByName(name);
-  const coords = info ? manifoldCentroid(info) : [];
+  const label = info?.node_labels[0] ?? null;
+  const coords = info && label !== null && info.node_coords[0] ? [...info.node_coords[0]] : info ? manifoldCentroid(info) : [];
   steerRack.entries.set(name, {
     mode: "manifold",
     blend: 0.5,
     onto: 0,
     coords,
-    label: null,
+    label,
     variant,
     trigger: "BOTH",
     enabled: true,

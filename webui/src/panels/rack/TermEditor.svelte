@@ -363,7 +363,7 @@
   {#if entry.gate}
     {@const gate = entry.gate}
     <div class="gate">
-      <div class="dw-sec-head"><span class="head" id="{uid}-gate">Only while</span>{#if gateNow !== null}<span class="meta">last read {coefficientText(gateNow, { fixed: true })}</span>{/if}</div>
+      <div class="dw-sec-head"><span class="head" id="{uid}-gate">Only while</span><span class="gate-end">{#if gateNow !== null}<span class="meta">last read {coefficientText(gateNow, { fixed: true })}</span>{/if}<button type="button" class="dw-text" onclick={() => setSteerTiming(name, { ...timingOf(entry), gate: null })}>Clear</button></span></div>
       <div class="gate-row">
         <span class="probe"><Select value={gate.probe} options={gateProbes.map(({ value, label }) => ({ value, label }))} ariaLabel="The probe whose reading gates {title}"
           onchange={(probe) => setGate({ probe })} /></span>
@@ -371,7 +371,6 @@
           onchange={(op: GateOp) => setGate({ op })} />
         <span class="count"><NumberInput value={gate.threshold} step={0.05} ariaLabel="Threshold"
           onchange={(value) => { if (value !== null && Number.isFinite(value)) setGate({ threshold: value || 0 }); }} /></span>
-        <button type="button" class="dw-text" onclick={() => setSteerTiming(name, { ...timingOf(entry), gate: null })}>Clear</button>
       </div>
     </div>
   {/if}
@@ -397,16 +396,20 @@
         <Select value={nodeLabel ?? ""} options={nodeOptions} ariaLabel="Node of {info.name}"
           onchange={(value) => setSteerLabel(name, value === "" ? null : value)} /></span>{/if}</div>
       {#if orderedNodes.length > 2}
-        <Slider value={nodeIndex} min={0} max={orderedNodes.length - 1} step={1}
-          displayValue={nodeLabel ?? `Free, near ${orderedNodes[nodeIndex]?.node ?? "a node"}`} ariaLabel="Nodes of {info.name} in order"
-          oninput={(index) => setSteerLabel(name, orderedNodes[index].node)} />
+        <label class="dial">
+          <span class="head">Node</span>
+          <Slider value={nodeIndex} min={0} max={orderedNodes.length - 1} step={1}
+            displayValue={nodeLabel ?? `Free, near ${orderedNodes[nodeIndex]?.node ?? "a node"}`} ariaLabel="Nodes of {info.name} in order"
+            oninput={(index) => setSteerLabel(name, orderedNodes[index].node)} />
+          <span class="meta">{nodeLabel ?? `near ${orderedNodes[nodeIndex]?.node ?? "a node"}`}</span>
+        </label>
       {/if}
       {#if nodeLabel === null || info.node_count > 2}
         <!-- A concept's pole needs no coordinates; a free point or a larger fit shows where it sits. -->
         <XYPad manifold={info} {coords} locked={nodeLabel !== null} onchange={(next) => setSteerCoords(name, next)} />
       {/if}
       {#if entry.mode === "manifold"}
-        <label class="onto">
+        <label class="dial">
           <span class="head">Onto</span>
           <Slider value={entry.onto} min={0} max={1} step={0.05} ariaLabel="Onto, for {title}"
             oninput={(value) => { if (Number.isFinite(value)) patchSteerEntry(name, { onto: value }, ["manifold"]); }} />
@@ -496,6 +499,7 @@
   .count { display: inline-flex; width: 88px; }
   .gate, .part { display: grid; gap: var(--s2); min-width: 0; }
   .gate .dw-sec-head, .part .dw-sec-head { align-items: center; }
+  .gate-end { display: inline-flex; align-items: center; gap: var(--s3); margin-left: auto; }
   .gate-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s3); min-width: 0; }
   .gate-row .probe { display: inline-flex; flex: 1 1 200px; min-width: 0; max-width: 360px; }
   .gate-row :global(.seg), .part :global(.seg) { background: var(--wash2); max-width: 100%; }
@@ -504,8 +508,8 @@
   .position { display: grid; gap: var(--s3); min-width: 0; }
   .position .dw-sec-head { align-items: center; }
   .pick { display: inline-flex; min-width: 0; max-width: 60%; }
-  .onto { display: grid; grid-template-columns: auto minmax(0, 1fr) 40px; align-items: center; gap: var(--s3); }
-  .onto .meta { text-align: right; }
+  .dial { display: grid; grid-template-columns: 44px minmax(0, 1fr) minmax(40px, max-content); align-items: center; gap: var(--s3); }
+  .dial .meta { text-align: right; white-space: nowrap; }
 
   .waiting { height: 156px; border-radius: var(--r-box); background: var(--wash2); }
   .error { margin: 0; color: var(--ink2); font: var(--type-small); overflow-wrap: anywhere; }

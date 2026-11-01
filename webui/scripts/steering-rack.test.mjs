@@ -33,6 +33,10 @@ try {
   }];
   addSubspaceToRack("default/formal.casual");
   addManifoldToRack("default/emotions");
+  // Regression: a curved term started at a free point in the middle of its nodes; it starts at its
+  // first node, titled by it.
+  assert.deepEqual([steerRack.entries.get("default/emotions").label, steerRack.entries.get("default/emotions").coords], ["calm", [0, 0]]);
+  assert.match(currentSteeringExpression(), /default\/emotions%calm/);
   addSaeToRack(17);
 
   // Label binding mirrors node coords; coords drop the label; both only touch geometric terms.
