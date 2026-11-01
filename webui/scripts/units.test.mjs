@@ -314,6 +314,15 @@ try {
   // Rooms: Units shows only where the runtime reads units.
   const rooms = await server.ssrLoadModule("/src/lib/stores/rooms.svelte.ts");
   assert.ok(rooms.shownRooms().some(room => room.value === "units"));
+  // The rooms in order; the Manifolds room's tools are the Artifacts room's sections (one spelling,
+  // no alias), beside its panels (the unit catalog, lenses, SAEs). A section's value names its room.
+  assert.deepEqual(rooms.ROOMS.map(room => room.value), ["workbench", "units", "lens", "probes", "artifacts", "model"]);
+  assert.deepEqual(rooms.ROOM_SECTIONS.artifacts.map(row => row.value), ["units", "lenses", "build", "packs", "combine", "templates", "roles", "saes"]);
+  assert.deepEqual(rooms.ROOM_SECTIONS.artifacts.filter(row => row.drawer === null).map(row => row.value), ["units", "lenses", "saes"]);
+  assert.equal(rooms.ROOM_SECTIONS.manifolds, undefined);
+  assert.deepEqual(rooms.roomFor("manifold_pack"), { room: "artifacts", section: "packs" });
+  const sectionValues = Object.values(rooms.ROOM_SECTIONS).flatMap(rows => rows.map(row => row.value));
+  assert.equal(new Set(sectionValues).size, sectionValues.length);
 
   // The views on the server: a catalogued model's state, then an uncatalogued one's.
   const { render } = await server.ssrLoadModule("svelte/server");
@@ -321,6 +330,13 @@ try {
   const { default: UnitView } = await server.ssrLoadModule("/src/panels/inspector/UnitView.svelte");
   const { default: UnitsRoom } = await server.ssrLoadModule("/src/panels/rooms/UnitsRoom.svelte");
   const settle = () => new Promise(resolve => setTimeout(resolve, 0));
+  // The Artifacts room draws a panel section (here the unit catalog) under its section tabs.
+  const { default: ArtifactsRoom } = await server.ssrLoadModule("/src/panels/rooms/ArtifactsRoom.svelte");
+  rooms.goto("artifacts", "units");
+  const artifactsHtml = render(ArtifactsRoom, {}).body;
+  for (const label of ["Units", "Lenses", "Build", "Packs", "SAEs"]) assert.match(artifactsHtml, new RegExp(`>${label}<`));
+  assert.match(artifactsHtml, /No unit catalog here yet/);
+  rooms.goto("workbench");
   chatLog.turns = [
     { role: "user", text: "Write one sentence." },
     { role: "assistant", text: "Above the stars hung.", generated: true, nodeId: "n1", tokens: tokens.map(t => ({ text: t.token, rawIndex: t.raw_index })) },

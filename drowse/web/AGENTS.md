@@ -253,9 +253,10 @@ main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog
 panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread,
                       ConversationFormat (Chat | Raw)
 panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace)
-panels/rooms/         RoomSections (Manifolds, Model), ModelFacts (the Model room's depth ramp
-                      and lenses), LensRoom (lens/: the depth axis, a family column, a card),
-                      UnitsRoom (+ UnitAtlas)
+panels/rooms/         RoomSections (a room's tabs: Artifacts, Model), ModelFacts (the Model room's
+                      depth ramp and lenses), LensRoom (lens/: the depth axis, a family column, a
+                      card), UnitsRoom (+ UnitAtlas), ProbesRoom, ArtifactsRoom (artifacts/: its
+                      panel sections, UnitCatalog, LensSources, SaeSources)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/ (the probe
                       cards; TermEditor and LayerStrip, the term editor under the chips)
@@ -298,7 +299,11 @@ slices that stream, loom, chat and instruments share. Narrower slices (`selectio
 `rooms`, `workbench`, `manifoldJobs`, `preparations`, …) are imported directly.
 
 The shell's own state is three small slices. `rooms.svelte.ts` is the route (`#/lens`,
-`#/manifolds/packs`): the room, its section and in-memory params for the tool it hosts.
+`#/artifacts/packs`): the room, its section and in-memory params for the tool it hosts. The rooms,
+in order: Workbench, Units, Lens, Probes, Artifacts, Model. A section (`ROOM_SECTIONS`) is either a
+hosted drawer or, with `drawer: null`, a panel its room draws: the room passes `RoomSections` a
+`panels` map from section value to component, and a panel section the room leaves out of the map
+is not shown. Section values are unique across rooms, so an agent's `section` alone names its room.
 `selection.svelte.ts` is what the Inspector shows (none, token, probe, term, unit).
 `workbench.svelte.ts` is what the Page region shows (the conversation or the loom) and the
 phone's sheet.
@@ -361,7 +366,7 @@ opens it. `RAIL_CATEGORIES` (the command palette's tools) is derived from the la
 a tool opens depends on what it is. `token_drilldown` and `probe_inspector` are selections,
 shown in the workbench's Inspector. The tools a room hosts (`ROOM_SECTIONS` in
 `lib/stores/rooms.svelte.ts`: the manifold builder, packs, merge, template lab and roles in
-Manifolds; health, the local runtime and API access in Model) go to their room and section,
+Artifacts; health, the local runtime and API access in Model) go to their room and section,
 where their close returns to the workbench. Everything else opens as a dialog over the page.
 
 To add a drawer, add its name to `DrawerName` in `lib/types.ts` and add three rows: one in

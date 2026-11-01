@@ -1,8 +1,10 @@
 <script lang="ts">
-  // A room of tools: Manifolds (build, packs, combine, templates, roles) and Model (its shape, depth
-  // and lenses, then health or the local runtime, API access). Its sections are tabs, each a tool
-  // that used to open as a drawer, shown in place (``openDrawer`` of one of these lands here; see
-  // lib/stores/rooms.svelte.ts).
+  // A room of tools: Artifacts (the unit catalog, lenses, build, packs, combine, templates, roles,
+  // SAEs) and Model (its shape, depth and lenses, then health or the local runtime, API access). Its
+  // sections are tabs. A drawer section is a tool that used to open as a drawer, shown in place
+  // (``openDrawer`` of one of these lands here); a panel section (``drawer: null``) is the component
+  // the room passes in ``panels`` under the section's value (lib/stores/rooms.svelte.ts).
+  import type { Component } from "svelte";
   import { Swap, Tabs } from "@stdlogits/ledger";
   import DrawerOutlet from "../../drawers/DrawerOutlet.svelte";
   import ModelFacts from "./ModelFacts.svelte";
@@ -14,9 +16,10 @@
   import { loomTree } from "../../lib/stores/loom.svelte";
   import { DROWSE_UI_VERSION } from "../../lib/version";
 
-  let { room }: { room: Room } = $props();
+  let { room, panels = {} }: { room: Room; panels?: Readonly<Record<string, Component>> } = $props();
 
   const sections = $derived((ROOM_SECTIONS[room] ?? []).filter(row => {
+    if (row.drawer === null) return row.value in panels;
     if (runtimeClient.mode === "http" && row.drawer === "local_runtime") return false;
     if (runtimeClient.mode !== "http" && (row.drawer === "health" || row.drawer === "session_admin")) return false;
     return drawerAvailability(row.drawer).available;
@@ -25,7 +28,8 @@
   const title = $derived(room === "model"
     ? (sessionState.info?.model_id.split("/").at(-1) ?? "Model")
     : ROOMS.find(row => row.value === room)?.label ?? room);
-  const params = $derived(section ? drawerParams(section.drawer, { ...(route.params as Record<string, unknown> | null ?? {}), embedded: true }) : null);
+  const params = $derived(section?.drawer ? drawerParams(section.drawer, { ...(route.params as Record<string, unknown> | null ?? {}), embedded: true }) : null);
+  const Panel = $derived(section && section.drawer === null ? panels[section.value] : undefined);
 </script>
 
 <div class="dw-room">
@@ -62,11 +66,15 @@
       options={sections.map(row => ({ value: row.value, label: row.label }))} />
   {/if}
 
-  {#if section}
-    <Swap key={section.drawer}>
+  {#if section?.drawer}
+    <Swap key={section.value}>
       <div class="tool">
         <DrawerOutlet name={section.drawer} {params} />
       </div>
+    </Swap>
+  {:else if section && Panel}
+    <Swap key={section.value}>
+      <Panel />
     </Swap>
   {:else}
     <div class="dw-empty"><p>Nothing here is available in this runtime.</p></div>

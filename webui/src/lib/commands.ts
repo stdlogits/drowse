@@ -27,9 +27,10 @@ export interface PaletteCommand {
 
 const ROOM_KEYWORDS: Record<Room, string> = {
   workbench: "home conversation chat thread page inspector",
-  manifolds: "concepts scales packs build combine templates roles",
   units: "neurons heads atlas",
   lens: "jacobian j-lens r-lens s-lens sources fit fetch",
+  probes: "readings vectors concepts scales manifolds",
+  artifacts: "catalog lenses saes concepts scales manifolds packs build combine templates roles fit fetch install",
   model: "health device runtime api access key",
 };
 

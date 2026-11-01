@@ -16,9 +16,10 @@
 
   const places = [
     { name: "Workbench", what: "The thread you are on, the conversation, and whatever you select: a token layer by layer, a probe, a steering term. With nothing selected, the instruments." },
-    { name: "Manifolds", what: "Build, install, combine and test the concepts you steer with and read by, and the roles that speak." },
     { name: "Units", what: "The model's neurons and heads, by layer." },
     { name: "Lens", what: "Which lens and which SAE read each layer, and where they come from: fetched, fitted or trained." },
+    { name: "Probes", what: "The concepts you read by, on this conversation." },
+    { name: "Artifacts", what: "Fetch, fit, build and install what the model is read and steered with: the unit catalog, lenses, concepts and their packs, templates, the roles that speak, and SAEs." },
     { name: "Model", what: "Health, the settings reset, and API access." },
     { name: "Loom", what: "Every branch of the conversation. Weave shows your text beside its alternatives; Map shows where paths divide (drag to move, pinch to zoom)." },
   ];

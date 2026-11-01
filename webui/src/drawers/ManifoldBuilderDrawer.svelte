@@ -30,7 +30,7 @@
   // The shared field/step/node styling lives in ``manifold/form.css``,
   // scoped under the ``.mb-form`` class on the body below, so the three
   // forms read as one surface without each carrying a copy. In the
-  // Manifolds room the room draws the title and the way back; as a
+  // Artifacts room the room draws the title and the way back; as a
   // dialog (drowse.ai's shell) the tool draws its own head.
 
   import { IconButton } from "@stdlogits/ledger";

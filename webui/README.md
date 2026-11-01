@@ -42,8 +42,8 @@ seams it swaps; keep shared code behind `lib/runtime/client.ts` (enforced by
 
 ## Application shape
 
-The header holds the rooms as routes: Workbench, Manifolds, Units, Lens and
-Model. The workbench is three regions: the thread (the loom as the path you are
+The header holds the rooms as routes: Workbench, Units, Lens, Probes, Artifacts
+and Model. The workbench is three regions: the thread (the loom as the path you are
 on, and earlier chats), the page (the conversation or the loom's map) and the
 Inspector, which shows what is selected (a token's drilldown and anatomy, a
 probe, a unit, a steering term) and, with nothing selected, the instruments.
@@ -66,7 +66,7 @@ src/
   main.ts, App.svelte   runtime install and mount; the shell (header, rooms, dialog host)
   panels/workbench/     the workbench and its thread
   panels/inspector/     the Inspector, the instruments, the unit view
-  panels/rooms/         the Manifolds, Units, Lens and Model rooms
+  panels/rooms/         the Units, Lens, Probes, Artifacts and Model rooms
   panels/               the page (Chat, RawBuffer), the recipe chips, the probe rack, loom/, rack/
   drawers/              one component per tool; token/ is the token drilldown
   lib/runtime/          the RuntimeClient contract and the HTTP runtime

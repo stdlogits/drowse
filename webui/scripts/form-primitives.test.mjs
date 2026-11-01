@@ -80,7 +80,8 @@ try {
   // Help: the rooms, the keys the shell actually binds, and the grammar as rows.
   const { default: Help } = await server.ssrLoadModule("/src/drawers/HelpDrawer.svelte");
   const help = render(Help).body;
-  for (const room of ["Workbench", "Manifolds", "Units", "Lens", "Model", "Loom"]) assert.match(help, new RegExp(`<dt[^>]*>${room}</dt>`));
+  for (const room of ["Workbench", "Units", "Lens", "Probes", "Artifacts", "Model", "Loom"]) assert.match(help, new RegExp(`<dt[^>]*>${room}</dt>`));
+  assert.doesNotMatch(help, /<dt[^>]*>Manifolds<\/dt>/, "the Manifolds room is gone: its tools are the Artifacts room's");
   assert.match(help, /Searches everything/);
   assert.doesNotMatch(help, /without generating/, "the composer has no add-without-generating key");
   assert.equal((help.match(/class="forms/g) ?? []).length, 7);

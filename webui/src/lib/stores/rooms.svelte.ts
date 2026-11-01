@@ -1,25 +1,28 @@
-// The dashboard's rooms, as routes. The workbench is home; Manifolds, Units, Lens and Model are
-// rooms beside it, reached from the header's tabs, the command palette or a link (``#/lens``).
-// A room may hold sections (``#/manifolds/packs``), and the tools that used to open as drawers
-// live in them: opening one of those drawers (``openDrawer("manifold_pack")``) goes to its room.
+// The dashboard's rooms, as routes. The workbench is home; Units, Lens, Probes, Artifacts and Model
+// are rooms beside it, reached from the header's tabs, the command palette or a link (``#/lens``).
+// A room may hold sections (``#/artifacts/packs``). A section is either a tool that used to open
+// as a drawer (opening that drawer, ``openDrawer("manifold_pack")``, goes to its room) or a panel
+// its room draws itself (``drawer: null``; the room maps the section's value to a component).
 import type { DrawerName } from "../types";
 import { getRuntimeClient } from "../runtime/registry";
 import { unitReadsAvailable } from "../runtime/contracts";
 
-export type Room = "workbench" | "manifolds" | "units" | "lens" | "model";
+export type Room = "workbench" | "units" | "lens" | "probes" | "artifacts" | "model";
 
 export const ROOMS: readonly { value: Room; label: string }[] = [
   { value: "workbench", label: "Workbench" },
-  { value: "manifolds", label: "Manifolds" },
   { value: "units", label: "Units" },
   { value: "lens", label: "Lens" },
+  { value: "probes", label: "Probes" },
+  { value: "artifacts", label: "Artifacts" },
   { value: "model", label: "Model" },
 ];
 
+/** A room's section: a hosted drawer, or (``drawer: null``) a panel its room draws by ``value``. */
 export interface RoomSection {
   value: string;
   label: string;
-  drawer: DrawerName;
+  drawer: DrawerName | null;
 }
 
 /** The rooms this runtime has: Units needs a runtime that reads units (``unitReadsAvailable``). */
@@ -27,15 +30,19 @@ export function shownRooms(): readonly { value: Room; label: string }[] {
   return ROOMS.filter(room => room.value !== "units" || unitReadsAvailable(getRuntimeClient()));
 }
 
-/** The drawers each room hosts, in display order. ``local_runtime`` and ``health`` are the two
- *  runtimes' model views (browser and HTTP); a room shows the one this runtime has. */
+/** Each room's sections, in display order. A section's value is unique across rooms (an agent's
+ *  ``section`` alone names its room). ``local_runtime`` and ``health`` are the two runtimes' model
+ *  views (browser and HTTP); a room shows the one this runtime has. */
 export const ROOM_SECTIONS: Partial<Record<Room, readonly RoomSection[]>> = {
-  manifolds: [
+  artifacts: [
+    { value: "units", label: "Units", drawer: null },
+    { value: "lenses", label: "Lenses", drawer: null },
     { value: "build", label: "Build", drawer: "manifold_builder" },
     { value: "packs", label: "Packs", drawer: "manifold_pack" },
     { value: "combine", label: "Combine", drawer: "manifold_merge" },
     { value: "templates", label: "Templates", drawer: "template_lab" },
     { value: "roles", label: "Roles", drawer: "cast" },
+    { value: "saes", label: "SAEs", drawer: null },
   ],
   model: [
     { value: "health", label: "Health", drawer: "health" },

@@ -1,8 +1,8 @@
 <script lang="ts">
   // The dashboard shell, drawn in Ledger: the header (the drowse mark, the rooms as tabs, the model
   // pill, search and the theme), then the room you are in. The workbench is home (Thread | Page |
-  // Inspector); Manifolds, Units, Lens and Model are rooms beside it, as routes (#/lens). Tools that
-  // are neither a room nor a selection open as a dialog over the page.
+  // Inspector); Units, Lens, Probes, Artifacts and Model are rooms beside it, as routes (#/lens).
+  // Tools that are neither a room nor a selection open as a dialog over the page.
   import { onMount, tick } from "svelte";
   import { IconButton, Tabs, ThemeButton, fadeIn, fadeOut, rise, tips } from "@stdlogits/ledger";
   import { theme } from "./lib/theme";
@@ -45,6 +45,8 @@
   import RoomSections from "./panels/rooms/RoomSections.svelte";
   import LensRoom from "./panels/rooms/LensRoom.svelte";
   import UnitsRoom from "./panels/rooms/UnitsRoom.svelte";
+  import ProbesRoom from "./panels/rooms/ProbesRoom.svelte";
+  import ArtifactsRoom from "./panels/rooms/ArtifactsRoom.svelte";
   import CommandPalette from "./panels/CommandPalette.svelte";
   import Toaster from "./lib/Toaster.svelte";
   import ConversationAutosave from "./lib/ui/ConversationAutosave.svelte";
@@ -394,12 +396,16 @@
       <div class="room" hidden={route.room !== "workbench"}>
         <Workbench {phone} active={route.room === "workbench"} />
       </div>
-      {#if route.room === "manifolds" || route.room === "model"}
-        {#key route.room}<div class="room" in:rise><RoomSections room={route.room} /></div>{/key}
+      {#if route.room === "units"}
+        <div class="room" in:rise><UnitsRoom /></div>
       {:else if route.room === "lens"}
         <div class="room" in:rise><LensRoom /></div>
-      {:else if route.room === "units"}
-        <div class="room" in:rise><UnitsRoom /></div>
+      {:else if route.room === "probes"}
+        <div class="room" in:rise><ProbesRoom /></div>
+      {:else if route.room === "artifacts"}
+        <div class="room" in:rise><ArtifactsRoom /></div>
+      {:else if route.room === "model"}
+        <div class="room" in:rise><RoomSections room="model" /></div>
       {/if}
     </main>
 
