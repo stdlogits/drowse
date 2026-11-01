@@ -106,6 +106,11 @@ const PAD = 28;
 /** The rank-3 reference triad's reach past the farthest framed point; the base scale fits it in
  *  the PAD box, so a node label (11px above its dot) and a triad name stay on the canvas. */
 const AXIS_REACH = 1.1;
+/** The gap between a triad axis's end and its name, and the name's line height (``FONT_AXIS``). */
+const AXIS_LABEL_GAP = 6;
+const AXIS_LABEL_HEIGHT = 11;
+/** How far a drawn point keeps from a triad name (a dot's radius and a little air). */
+const AXIS_LABEL_CLEAR = 6;
 /** The rank-3 view's opening zoom: fit, with everything drawn centred and inside. */
 export const DEFAULT_ORBIT_ZOOM = 1;
 
@@ -603,6 +608,7 @@ function drawRank3(
   // PC1/PC2/PC3 reference triad through the pivot (behind everything),
   // rotating rigidly with the cloud so orientation is always readable.
   {
+    const drawnScreen = [neutral3, ...node3, ...trail3, ...(live3 ? [live3] : [])].map((p) => p.s);
     const axLen = rho * AXIS_REACH;
     const triad: Array<{ dir: Vec3; name: string }> = [
       { dir: [1, 0, 0], name: "PC1" },
@@ -630,7 +636,28 @@ function drawRank3(
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = pal.muted;
       ctx.font = FONT_AXIS;
-      ctx.fillText(name, pos.s[0] + 3, pos.s[1] - 2);
+      // The name sits just past the axis's end, its box running away from the pivot, unless a
+      // drawn point (the neutral ring on PC2 in the months view) would sit under it: then it moves
+      // out along the axis's direction on screen to the reach of the whole cloud (every point lies
+      // within ``rho`` of the pivot), where nothing is drawn. Clamped to the canvas.
+      const run = Math.hypot(pos.s[0] - ox, pos.s[1] - oy);
+      const ux = run > 1e-6 ? (pos.s[0] - ox) / run : Math.SQRT1_2;
+      const uy = run > 1e-6 ? (pos.s[1] - oy) / run : -Math.SQRT1_2;
+      const tw = ctx.measureText(name).width;
+      const boxAt = (reach: number): [number, number] => {
+        const ax = ox + ux * (reach + AXIS_LABEL_GAP);
+        const ay = oy + uy * (reach + AXIS_LABEL_GAP);
+        return [
+          Math.max(2, Math.min(w - 2 - tw, ux >= 0 ? ax : ax - tw)),
+          Math.max(AXIS_LABEL_HEIGHT + 1, Math.min(h - 2, uy <= 0 ? ay : ay + AXIS_LABEL_HEIGHT)),
+        ];
+      };
+      const covers = ([tx, ty]: [number, number]): boolean => drawnScreen.some(([x, y]) =>
+        x >= tx - AXIS_LABEL_CLEAR && x <= tx + tw + AXIS_LABEL_CLEAR
+        && y >= ty - AXIS_LABEL_HEIGHT - AXIS_LABEL_CLEAR && y <= ty + AXIS_LABEL_CLEAR);
+      const atEnd = boxAt(run);
+      const [tx, ty] = covers(atEnd) ? boxAt(Math.max(run, rho * AXIS_REACH * scale)) : atEnd;
+      ctx.fillText(name, tx, ty);
     }
     ctx.globalAlpha = 1;
   }

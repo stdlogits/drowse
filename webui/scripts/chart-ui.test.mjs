@@ -161,7 +161,10 @@ try {
           assert.ok(hit.screen[0] >= 6 && hit.screen[0] <= width - 6 && hit.screen[1] >= 6 && hit.screen[1] <= height - 6,
             `with a reading past the ring, ${hit.label} is still inside the ${width}x${height} plot`);
         }
+        // The label checks below read this render's text (the reading's render above drew its own).
         textCalls.length = 0;
+        renderProbeGeometry(canvas, { ...ringInput, orbit: { q, zoom: DEFAULT_ORBIT_ZOOM } });
+        assert.ok(textCalls.some((call) => call.text === "PC2"), "the label checks have the render's text");
         for (const hit of hits) {
           assert.ok(hit.screen[0] >= 6 && hit.screen[0] <= width - 6 && hit.screen[1] >= 6 && hit.screen[1] <= height - 6,
             `${hit.label} is drawn inside the ${width}x${height} plot`);
@@ -169,6 +172,15 @@ try {
         for (const call of textCalls) {
           assert.ok(call.x >= 0 && call.x + call.text.length * 6 <= width && call.y - 11 >= 0 && call.y <= height,
             `the label ${call.text} fits the ${width}x${height} plot`);
+        }
+        // Regression (W5): the neutral ring was drawn over the PC2 name. A triad name sits past
+        // its axis's end, clear of every drawn point.
+        for (const call of textCalls.filter((c) => /^PC\d$/.test(c.text))) {
+          const box = [call.x - 3, call.y - 11 - 3, call.x + call.text.length * 6 + 3, call.y + 3];
+          for (const hit of hits) {
+            const inside = hit.screen[0] >= box[0] && hit.screen[0] <= box[2] && hit.screen[1] >= box[1] && hit.screen[1] <= box[3];
+            assert.ok(!inside, `${hit.label} is not drawn under ${call.text} (${width}x${height})`);
+          }
         }
         // Regression (W4): neighbouring nodes' labels overlapped (december, november, january).
         const drawn = textCalls.filter((call) => months.includes(call.text));
