@@ -36,7 +36,7 @@
 </script>
 
 {#if shape}
-  <section class="dw-sec" aria-labelledby="model-depth-head">
+  <section class="dw-sec facts" aria-labelledby="model-depth-head">
     <div class="dw-sec-head"><span class="head" id="model-depth-head">Depth</span><span class="meta">{count(shape.hidden_size)} wide · {compact.format(shape.parameters)} parameters</span></div>
     <div class="depth" role="img" aria-label={`${shape.layers} layers, from L0 to L${shape.layers - 1}`}>
       <div class="ramp" style:--n={n}>
@@ -47,7 +47,7 @@
   </section>
 {/if}
 
-<section class="dw-sec" aria-labelledby="model-lens-head">
+<section class="dw-sec facts" aria-labelledby="model-lens-head">
   <div class="dw-sec-head"><span class="head" id="model-lens-head">Lenses</span>{#if lenses.length > 0}<span class="meta">{lenses.length === 1 ? "one prepared" : `${lenses.length} prepared`}</span>{/if}</div>
   {#if lenses.length > 0}
     <div class="lenses">
@@ -70,11 +70,12 @@
 </section>
 
 <style>
-  .depth { display: grid; gap: var(--s1); max-width: 720px; }
+  .facts { max-width: 720px; }
+  .depth { display: grid; gap: var(--s1); }
   .ramp { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); gap: 2px; height: 24px; }
   .ramp > i { display: block; border-radius: 2px; }
   .ends { display: flex; justify-content: space-between; }
-  .lenses { display: grid; gap: 2px; max-width: 720px; }
+  .lenses { display: grid; gap: 2px; }
   .lens { display: grid; gap: 2px; min-width: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
   .top { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s2); min-width: 0; }
   .uid { color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
