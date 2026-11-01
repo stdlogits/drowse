@@ -10,6 +10,7 @@
 import { tick } from "svelte";
 import { RAIL_CATEGORIES } from "../drawers";
 import { ROOMS, goto, roomFor, shownRooms, shownSections, type Room } from "./stores/rooms.svelte";
+import { unitsAvailable } from "./stores/units.svelte";
 import type { DrawerName } from "./types";
 import { setInspectorTab, type InspectorTab } from "./stores.svelte";
 import { clearSelection } from "./stores/selection.svelte";
@@ -22,7 +23,7 @@ export type PaletteAction =
   | { kind: "room"; room: Room }
   | { kind: "section"; room: Room; section: string }
   | { kind: "drawer"; drawer: DrawerName }
-  | { kind: "instrument"; tab: InspectorTab };
+  | { kind: "instrument"; tab: InspectorTab | "units" };
 
 export interface PaletteCommand {
   label: string;
@@ -41,8 +42,8 @@ const ROOM_KEYWORDS: Record<Room, string> = {
 };
 
 /** The flattened index: the rooms first, then the instruments (in the dashboard's order of
- *  priority: the lens, the probes, the SAE's features), then the rooms' sections, then every other
- *  registry tool. */
+ *  priority, the Inspector's: the unit probes where units read, the lens, the probes, the SAE's
+ *  features), then the rooms' sections, then every other registry tool. */
 export function paletteCommands(): PaletteCommand[] {
   const cmds: PaletteCommand[] = shownRooms().map(room => ({
     label: room.label,
@@ -50,6 +51,9 @@ export function paletteCommands(): PaletteCommand[] {
     action: { kind: "room", room: room.value },
     keywords: ROOM_KEYWORDS[room.value],
   }));
+  if (unitsAvailable()) {
+    cmds.push({ label: "Unit probes", group: "Instruments", action: { kind: "instrument", tab: "units" }, keywords: "neurons heads units probed readings" });
+  }
   cmds.push(
     { label: "Live lens readout", group: "Instruments", action: { kind: "instrument", tab: "lens" }, keywords: "layer predictions jacobian jlens workspace token" },
     { label: "Probes", group: "Instruments", action: { kind: "instrument", tab: "subspace" }, keywords: "concepts readings flat affine subspace curved manifold moods scales" },
@@ -101,9 +105,9 @@ export function searchCommands(commands: readonly PaletteCommand[], query: strin
 }
 
 /** Shows the workbench's instruments at one of them (the Inspector with nothing selected). */
-export function showInstrument(tab: InspectorTab): void {
-  const id = tab === "lens" ? "instrument-lens" : tab === "sae" ? "instrument-sae" : "instrument-probes";
-  setInspectorTab(tab);
+export function showInstrument(tab: InspectorTab | "units"): void {
+  const id = tab === "units" ? "instrument-units" : tab === "lens" ? "instrument-lens" : tab === "sae" ? "instrument-sae" : "instrument-probes";
+  if (tab !== "units") setInspectorTab(tab);
   clearSelection();
   goto("workbench");
   showConversation();

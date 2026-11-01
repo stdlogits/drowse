@@ -387,9 +387,9 @@ has a lazy `load()` (rendered by `DrawerOutlet` and cached after the first open)
 fixed `params` (how one `RackDrawer` serves both `subspace` and `manifolds`), `narrow`,
 and either a `launcher` or `launcher: null` with a `via` string naming the surface that
 opens it. `RAIL_CATEGORIES` (the command palette's tools) is derived from the launchers. The
-palette (`lib/commands.ts`) lists the rooms, the instruments (the lens, the probes, the SAE's
-features), every room's sections by what they do, then the remaining tools; a tool a room hosts is
-listed once, as its section. `searchCommands` is its one filter and ranking.
+palette (`lib/commands.ts`) lists the rooms, the instruments in the Inspector's order (the unit probes
+where units read, the lens, the probes, the SAE's features), every room's sections by what they
+do, then the remaining tools; a tool a room hosts is listed once, as its section. `searchCommands` is its one filter and ranking.
 
 `openDrawer(name, params)` (`lib/stores/drawers.svelte.ts`) is the one entry point, and where
 a tool opens depends on what it is. `token_drilldown` and `probe_inspector` are selections,

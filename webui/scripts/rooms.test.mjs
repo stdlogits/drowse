@@ -35,12 +35,15 @@ try {
     for (const row of rows) assert.ok(row.does && row.keywords, `${row.value} says what it does`);
   }
 
-  // The palette: rooms first in header order, the instruments by priority (the lens, the probes,
-  // the SAE's features), then each section by what it does. A tool a room hosts is listed once.
+  // The palette: rooms first in header order, the instruments by priority, the Inspector's order
+  // (W6 integration: the unit probes first, where units read; the palette had left them out), then
+  // each section by what it does. A tool a room hosts is listed once.
   const { paletteCommands, searchCommands } = await server.ssrLoadModule("/src/lib/commands.ts");
   const commands = paletteCommands();
   assert.deepEqual(commands.filter(c => c.group === "Rooms").map(c => c.label), ["Workbench", "Units", "Lens", "Probes", "Artifacts", "Model"]);
-  assert.deepEqual(commands.filter(c => c.group === "Instruments").map(c => c.action.tab), ["lens", "subspace", "sae"]);
+  assert.deepEqual(commands.filter(c => c.group === "Instruments").map(c => c.action.tab), ["units", "lens", "subspace", "sae"]);
+  const instrumentIds = readFileSync(new URL("../src/lib/commands.ts", import.meta.url), "utf8");
+  assert.match(instrumentIds, /tab === "units" \? "instrument-units"/, "the unit probes scroll to the Inspector's Units");
   assert.deepEqual(commands.filter(c => c.group === "Artifacts").map(c => c.action.section), ["units", "lenses", "build", "packs", "combine", "templates", "roles", "saes"]);
   const { roomFor } = rooms;
   assert.deepEqual(commands.filter(c => c.action.kind === "drawer" && roomFor(c.action.drawer)).map(c => c.label), [], "a hosted tool is its section");
