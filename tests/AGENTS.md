@@ -12,7 +12,7 @@ goldens the drowse.ai browser runtime replays.
 |---|---|
 | `pytest -q -m "not gpu"` | The CPU suite. CI runs exactly this (plus informational `--cov`) on Python 3.11, 3.12 and 3.13. |
 | `pytest -q -n auto -m "not perf"` | Everything this machine can run, GPU included (about 80 s on Apple Silicon with MPS). |
-| `pytest -m perf -p no:xdist` | The two throughput gates, serially, on an otherwise idle machine. |
+| `pytest -m perf -p no:xdist` | The four throughput gates, serially, on an otherwise idle machine. |
 | `pytest tests/gpu/test_smoke.py` | Real-model smoke tests only. |
 
 - `--strict-markers` is in `addopts` and `xfail_strict = true`: a new marker
@@ -67,7 +67,7 @@ so keep test modules exactly one directory deep.
 |---|---|---|
 | `gpu` | Needs CUDA or MPS; may download weights. CI deselects it. | `tests/gpu/` except `test_gpu_model.py` (CPU tests of the skip helper); the `mps` params of `tests/model/test_model_numerics.py` and `tests/generation/test_generation_metadata.py`; `tests/generation/test_scoring.py::test_real_forward_score_choices_distribution`. A test that requests `gpu_session` is marked automatically. |
 | `gpu_gemma` | Needs explicit gated Gemma model and artifact access. | `tests/gpu/test_sae_lens_smoke.py` (also `gpu`, and opt-in via `DROWSE_TEST_SAELENS`). |
-| `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s), `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower) and `test_throughput_with_unit_ablation` (8 neurons and 2 heads mean-ablated ≥ 80%). All are also `gpu`. |
+| `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s), `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower) and `test_throughput_with_unit_ablation` (8 neurons and 2 heads mean-ablated ≥ 80%) and `test_throughput_with_dashboard_instruments` (the served dashboard's decode ≥ 50%: the default roster scored per token with subspace coordinates, the live R readout over a micro-fit lens's every layer, eight alternatives, a loom row and a serialized WebSocket frame per token; about 63% on SmolLM2/MPS). All are also `gpu`. |
 
 GPU modules load with `device="auto"` (cuda > mps > cpu) and skip without CUDA
 or MPS. `load_or_skip_inaccessible` skips when loading fails on access (a gated

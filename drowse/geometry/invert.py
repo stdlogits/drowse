@@ -13,7 +13,7 @@ import torch
 
 from drowse.geometry.domains import ManifoldDomain
 from drowse.geometry.rbf import eval_rbf, eval_rbf_jet
-from drowse.geometry.subspace import LayerSubspace
+from drowse.geometry.subspace import LayerSubspace, StackedRbf
 
 # The solve is warm-started from the nearest fit node(s) and Marquardt-damped,
 # so a fixed dozen iterations converges in authoring-coord space independent
@@ -52,11 +52,18 @@ def _gn_step(
     position.  The ``n ≤ 2`` normal equations are solved in closed form: a
     batched ``linalg.solve`` checks for singularity with a host sync, which on
     the steering hot path would drain the device queue mid-forward.
+
+    Stacked parameters (a :class:`~drowse.geometry.subspace.StackedRbf`'s
+    leading dim ``L``) take ``p`` ``(L, X, n)`` against ``q`` ``(L, 1, R)``:
+    every stack entry steps against its own surface.
     """
+    if coord_offset.ndim > 1:
+        coord_offset = coord_offset.unsqueeze(-2)                 # (L, 1, m)
+        coord_scale = coord_scale.unsqueeze(-2)
     emb = (domain.embed(p) - coord_offset) / coord_scale          # (.., m)
     value, jac = eval_rbf_jet(node_params, rbf_weights, poly_coeffs, emb)
     resid = value - q                                             # (.., R)
-    j_auth = (jac / coord_scale) @ domain.tangent_jacobian(p)     # (.., R, n)
+    j_auth = (jac / coord_scale.unsqueeze(-2)) @ domain.tangent_jacobian(p)  # (.., R, n)
     jt = j_auth.transpose(-1, -2)                                 # (.., n, R)
     jtj = jt @ j_auth                                             # (.., n, n)
     jtr = jt @ resid.unsqueeze(-1)                                # (.., n, 1)
@@ -119,7 +126,6 @@ def invert_parameterization(
     device = query.device
     dtype = query.dtype if query.dtype.is_floating_point else torch.float32
     flat = query.reshape(-1, R).to(dtype)  # (N, R)
-    N = flat.shape[0]
 
     # The caller may hand a subspace still resident on its load device.
     np_, rw, pc = subspace.rbf_params()
@@ -128,22 +134,95 @@ def invert_parameterization(
     pc = pc.to(device=device, dtype=dtype)
     offset = subspace.coord_offset.to(device=device, dtype=dtype)  # (m,)
     scale = subspace.coord_scale.to(device=device, dtype=dtype)  # (m,)
-
-    node_coords = node_coords.to(device=device, dtype=dtype)  # (K, n)
-    K = node_coords.shape[0]
-
     # Surface values at the fit nodes: the seed metric for the restarts.
     node_vals = eval_rbf(np_, rw, pc, np_)  # (K, R)
+    ws = (
+        warm_start.to(device=device, dtype=dtype).reshape(flat.shape[0], n)
+        if warm_start is not None else None
+    )
+    pos, dist = _foot_solve(
+        np_, rw, pc, offset, scale, node_vals, domain, flat,
+        node_coords.to(device=device, dtype=dtype), torch.cdist(flat, node_vals),
+        warm_start=ws, max_iter=max_iter, n_restarts=n_restarts,
+        warm_iter=warm_iter, damping=damping,
+    )
+    return pos.reshape(*lead, n), dist.reshape(lead)
+
+
+def invert_stacked(
+    surfaces: StackedRbf,
+    domain: ManifoldDomain,
+    query: torch.Tensor,
+    node_coords: torch.Tensor,
+    *,
+    max_iter: int = DEFAULT_INVERSION_MAX_ITER,
+    n_restarts: int = DEFAULT_INVERSION_RESTARTS,
+    warm_start: torch.Tensor | None = None,
+    warm_iter: int = DEFAULT_INVERSION_WARM_ITER,
+    damping: float = DEFAULT_INVERSION_DAMPING,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """:func:`invert_parameterization` for one query per stacked surface.
+
+    ``query`` ``(L, R)`` holds one reduced-space target per layer of
+    ``surfaces`` (on its device, fp32; zero in a layer's padded rank columns);
+    ``warm_start`` ``(L, n)`` the carried feet.  Returns ``(positions (L, n),
+    dist (L,))``.  The same restarts and LM steps as a per-layer solve, run as
+    one batched solve whose every kernel computes each stack entry as the
+    per-layer kernel does, so the monitor's curved read costs a fixed handful
+    of kernels however many layers the probe spans.
+    """
+    flat = query.to(surfaces.node_params.dtype)  # (L, R)
+    np_, rw, pc = surfaces.node_params, surfaces.rbf_weights, surfaces.poly_coeffs
+    # Each layer's surface at its fit nodes, evaluated as the one-layer solve
+    # does (per stack entry, on the read device): the restart seed metric.
+    node_vals = eval_rbf(np_, rw, pc, np_)  # (L, K, R)
+    seed_dist = torch.cdist(flat.unsqueeze(-2), node_vals).squeeze(-2)  # (L, K)
+    return _foot_solve(
+        np_, rw, pc, surfaces.coord_offset, surfaces.coord_scale, node_vals,
+        domain, flat, node_coords.to(device=flat.device, dtype=flat.dtype), seed_dist,
+        warm_start=warm_start, max_iter=max_iter, n_restarts=n_restarts,
+        warm_iter=warm_iter, damping=damping,
+    )
+
+
+def _foot_solve(
+    np_: torch.Tensor,
+    rw: torch.Tensor,
+    pc: torch.Tensor,
+    offset: torch.Tensor,
+    scale: torch.Tensor,
+    node_vals: torch.Tensor,
+    domain: ManifoldDomain,
+    flat: torch.Tensor,
+    node_coords: torch.Tensor,
+    seed_dist: torch.Tensor,
+    *,
+    warm_start: torch.Tensor | None,
+    max_iter: int,
+    n_restarts: int,
+    warm_iter: int,
+    damping: float,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """The one restarted LM solve over ``N`` queries ``flat`` ``(N, R)``.
+
+    The surface parameters are one layer's (shared by every query) or a stack
+    with one entry per query (leading dim ``N``); ``seed_dist`` ``(N, K)`` is
+    each query's reduced-space distance to the fit nodes' surface values.
+    Returns ``(positions (N, n), dist (N,))``.
+    """
+    n = domain.intrinsic_dim
+    N = flat.shape[0]
+    K = node_coords.shape[0]
     if warm_start is not None:
-        ws = warm_start.to(device=device, dtype=dtype).reshape(N, n)  # (N, n)
-        near1 = torch.cdist(flat, node_vals).argmin(dim=-1)  # (N,)
+        ws = warm_start.reshape(N, n)  # (N, n)
+        near1 = seed_dist.argmin(dim=-1)  # (N,)
         p = domain.clamp_position(
             torch.stack([ws, node_coords[near1]], dim=1)  # (N, 2, n)
         )
         iters = int(warm_iter)
     else:
         restarts = max(1, min(int(n_restarts), K))
-        seed_idx = torch.cdist(flat, node_vals).topk(
+        seed_idx = seed_dist.topk(
             restarts, dim=-1, largest=False,
         ).indices  # (N, S)
         p = domain.clamp_position(node_coords[seed_idx])  # (N, S, n)
@@ -153,12 +232,14 @@ def invert_parameterization(
     for _ in range(iters):
         p = _gn_step(p, q, np_, rw, pc, offset, scale, domain, damping)
 
+    if offset.ndim > 1:
+        offset, scale = offset.unsqueeze(-2), scale.unsqueeze(-2)  # (N, 1, m)
     final = eval_rbf(np_, rw, pc, (domain.embed(p) - offset) / scale)
     final_res = torch.linalg.vector_norm(final - q, dim=-1)  # (N, S)
     best = final_res.argmin(dim=-1)  # (N,)
     pos = p.gather(1, best[:, None, None].expand(N, 1, n)).squeeze(1)  # (N, n)
     dist = final_res.gather(1, best[:, None]).squeeze(1)  # (N,)
-    return pos.reshape(*lead, n), dist.reshape(lead)
+    return pos, dist
 
 
 def neutral_origin(
@@ -193,5 +274,6 @@ __all__ = [
     "DEFAULT_INVERSION_RESTARTS",
     "DEFAULT_INVERSION_WARM_ITER",
     "invert_parameterization",
+    "invert_stacked",
     "neutral_origin",
 ]

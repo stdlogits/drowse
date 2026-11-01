@@ -17,7 +17,11 @@ field) is right-hand-side work:
 
 :func:`eval_rbf`, :func:`eval_rbf_jacobian` and :func:`eval_rbf_jet` are the
 evaluation side; they are reachable from the generation hot path and are free
-of host syncs.  Fitting is CPU/fp32: the saddle system is symmetric
+of host syncs.  Each takes one layer's ``(K, m)`` / ``(K, R)`` / ``(m+1, R)``
+parameters against a query of any leading shape, or a stack of them (one
+leading dim ``L``) against an ``(L, X, m)`` query, where every stack entry
+evaluates its own interpolant; the monitor's curved read evaluates every layer
+at once that way (:class:`~drowse.geometry.subspace.StackedRbf`).  Fitting is CPU/fp32: the saddle system is symmetric
 indefinite (LU, never Cholesky) and unsupported on MPS.
 """
 from __future__ import annotations
@@ -286,9 +290,10 @@ def eval_rbf(
     """Evaluate the interpolant at ``query`` ``(.., m)`` (embedded + normalized).
 
     ``node_params`` ``(K, m)``, ``rbf_weights`` ``(K, R)``, ``poly_coeffs``
-    ``(m+1, R)``.  Returns ``(.., R)``.  Hot-path safe: no host sync.
+    ``(m+1, R)``.  Returns ``(.., R)``.  Stacked parameters (one leading dim
+    ``L``) take an ``(L, X, m)`` query.  Hot-path safe: no host sync.
     """
-    diff = query.unsqueeze(-2) - node_params  # (.., K, m)
+    diff = query.unsqueeze(-2) - _node_rows(node_params)  # (.., K, m)
     r = torch.linalg.vector_norm(diff, dim=-1)  # (.., K)
     phi = r.pow(3)
     rbf_part = torch.matmul(phi, rbf_weights)  # (.., R)
@@ -310,11 +315,10 @@ def eval_rbf_jacobian(
     ``d/dx[r**3] = 3 r (x − p_j)``; the polynomial contributes its linear
     coefficients.  No autograd.
     """
-    diff = query.unsqueeze(-2) - node_params  # (.., K, m)
+    diff = query.unsqueeze(-2) - _node_rows(node_params)  # (.., K, m)
     r = torch.linalg.vector_norm(diff, dim=-1)  # (.., K)
     grad_phi = 3.0 * r.unsqueeze(-1) * diff  # (.., K, m)
-    j_rbf = torch.einsum("kr,...km->...rm", rbf_weights, grad_phi)  # (.., R, m)
-    return j_rbf + poly_coeffs[1:].T
+    return _weighted_grad(rbf_weights, grad_phi) + _linear_part(poly_coeffs)
 
 
 def eval_rbf_jet(
@@ -329,14 +333,41 @@ def eval_rbf_jet(
     the two separate calls.  The foot solve needs both at every step, so the
     fusion halves the distance work on the curved hot path.
     """
-    diff = query.unsqueeze(-2) - node_params  # (.., K, m)
+    diff = query.unsqueeze(-2) - _node_rows(node_params)  # (.., K, m)
     r = torch.linalg.vector_norm(diff, dim=-1)  # (.., K)
     value = torch.matmul(r.pow(3), rbf_weights) + torch.matmul(
         torch.cat([torch.ones_like(query[..., :1]), query], dim=-1), poly_coeffs,
     )
     grad_phi = 3.0 * r.unsqueeze(-1) * diff
-    jac = torch.einsum("kr,...km->...rm", rbf_weights, grad_phi) + poly_coeffs[1:].T
+    jac = _weighted_grad(rbf_weights, grad_phi) + _linear_part(poly_coeffs)
     return value, jac
+
+
+def _node_rows(node_params: torch.Tensor) -> torch.Tensor:
+    """``node_params`` broadcastable against a ``(.., 1, m)`` query.
+
+    One layer's ``(K, m)`` broadcasts as is; a stack ``(L, K, m)`` gains the
+    query's ``X`` axis, ``(L, 1, K, m)``.
+    """
+    return node_params if node_params.ndim == 2 else node_params.unsqueeze(-3)
+
+
+def _weighted_grad(rbf_weights: torch.Tensor, grad_phi: torch.Tensor) -> torch.Tensor:
+    """``Σ_k w[k, r] · ∇φ_k[.., k, m]`` → ``(.., R, m)``.
+
+    The stacked form contracts each stack entry exactly as the one-layer form
+    does (the same ``(R, K) @ (K, X·m)`` product per entry), so a stacked read
+    reproduces the per-layer values.
+    """
+    if rbf_weights.ndim == 2:
+        return torch.einsum("kr,...km->...rm", rbf_weights, grad_phi)
+    return torch.einsum("lkr,lxkm->lxrm", rbf_weights, grad_phi)
+
+
+def _linear_part(poly_coeffs: torch.Tensor) -> torch.Tensor:
+    """The polynomial's linear coefficients as a ``(.., R, m)`` Jacobian term."""
+    lin = poly_coeffs[..., 1:, :].transpose(-1, -2)
+    return lin if poly_coeffs.ndim == 2 else lin.unsqueeze(-3)
 
 
 def rbf_cardinal_weights(

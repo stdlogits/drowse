@@ -12,14 +12,14 @@ from drowse.geometry.domains import (
     KleinBottleDomain,
     ProjectivePlaneDomain,
 )
-from drowse.geometry.invert import invert_parameterization
 from drowse.readout.monitor_attach import (
     DEFAULT_NEAREST_TOP_N,
     _FRACTION_EPSILON,
     AttachedManifoldProbe,
+    _CurvedStack,
     _FactorStack,
     _attach_manifold_probe,
-    _layer_geometry,
+    _curved_geometry,
 )
 from drowse.readout.monitor_flat import _FlatEngine, stack_hidden
 from drowse.readout.types import ProbeReading
@@ -104,19 +104,37 @@ class _GatePlan:
 
 @dataclass
 class _CurvedTerms:
-    """Device-side pieces of one curved probe's read (see ``_curved_terms``)."""
+    """Device-side pieces of one curved probe's read (see ``_curved_terms``).
+
+    The per-layer traces are ``(L, ..)`` tensors in ``shared`` order; ``ranks``
+    are the layers' true ranks inside the padded ``cq_layers`` columns.
+    """
 
     shared: list[int]
     w_shared: dict[int, float]
+    ranks: tuple[int, ...]
     frac_mean: torch.Tensor
     coords_mean: torch.Tensor | None = None
     mem_mean: torch.Tensor | None = None
     resid_mean: torch.Tensor | None = None
     dist_acc: torch.Tensor | None = None
-    frac_terms: list[torch.Tensor] = field(default_factory=list)
-    resid_terms: list[torch.Tensor] = field(default_factory=list)
-    coord_terms: list[torch.Tensor] = field(default_factory=list)
-    cq_terms: list[torch.Tensor] = field(default_factory=list)
+    frac_layers: torch.Tensor | None = None     # (L,)
+    resid_layers: torch.Tensor | None = None    # (L,)
+    coord_layers: torch.Tensor | None = None    # (L, n)
+    cq_layers: torch.Tensor | None = None       # (L, R)
+
+
+def _fold_layers(t: torch.Tensor) -> torch.Tensor:
+    """``t[0] + t[1] + … + t[L-1]`` over dim 0, accumulated left to right.
+
+    A curved probe's cross-layer means accumulate in layer order, one add per
+    layer, so a reading does not depend on how the per-layer terms were
+    batched.
+    """
+    acc = t[0]
+    for i in range(1, int(t.shape[0])):
+        acc = acc + t[i]
+    return acc
 
 
 def _depth_stats(
@@ -220,11 +238,18 @@ class Monitor:
             tuple[torch.device, frozenset[str] | None], _FlatEngine | None
         ] = {}
 
-        # Curved-probe per-token foot-follow, keyed ``(probe, layer)``.  Only
+        # Curved-probe per-token foot-follow, keyed ``(probe, layers)``.  Only
         # the sequential live-scoring path enables it (``enable_curved_warm``);
         # one-off reads stay on the cold, reproducible solve.
-        self._curved_feet: dict[tuple[str, int], torch.Tensor] = {}
+        self._curved_feet: dict[tuple[str, tuple[int, ...]], torch.Tensor] = {}
         self._curved_warm: bool = False
+        # Curved read views per (probe, device, layers the read saw): the
+        # probe's stack (restricted when the read saw only some layers) and
+        # its rows in the read stack.  Dropped with the read stacks.
+        self._curved_views: dict[
+            tuple[str, torch.device, tuple[int, ...]],
+            tuple[_CurvedStack, slice | torch.Tensor],
+        ] = {}
         # Probe-inspector trail: stamp each reading's per-layer whitened query
         # coords (``subspace_coords_per_layer``) — on only while a client asks.
         self._emit_subspace_coords: bool = False
@@ -328,6 +353,7 @@ class Monitor:
         """Drop the per-device read state (rebuilt lazily on the next read)."""
         self._read_stacks = {}
         self._engines = {}
+        self._curved_views = {}
 
     def _read_stack(self, device: torch.device) -> _FactorStack:
         stack = self._read_stacks.get(device)
@@ -515,6 +541,37 @@ class Monitor:
             out[name] = reading
         return out
 
+    def _curved_view(
+        self, probe: AttachedManifoldProbe, stack: _FactorStack,
+        present: frozenset[int],
+    ) -> "tuple[_CurvedStack, slice | torch.Tensor] | None":
+        """The probe's stack over the layers this read saw, and their stack rows.
+
+        Both are cached per read stack: the rows are a slice when the layers
+        sit contiguously in the read stack (the usual case), else a device
+        index; a read that saw only some of the probe's layers gets a stack
+        restricted to them.
+        """
+        cs = probe.curved
+        assert cs is not None, f"curved probe {probe.name!r} has no stacked read state"
+        shared = tuple(L for L in cs.layers if L in present)
+        if not shared:
+            return None
+        key = (probe.name, stack.device, shared)
+        hit = self._curved_views.get(key)
+        if hit is not None:
+            return hit
+        view = cs if shared == cs.layers else cs.subset(shared, probe.share_weights)
+        rows_list = [stack.index[L] for L in shared]
+        first = rows_list[0]
+        rows: slice | torch.Tensor
+        if rows_list == list(range(first, first + len(rows_list))):
+            rows = slice(first, first + len(rows_list))
+        else:
+            rows = torch.tensor(rows_list, device=stack.device, dtype=torch.long)
+        self._curved_views[key] = (view, rows)
+        return view, rows
+
     def _curved_terms(
         self,
         probe: AttachedManifoldProbe,
@@ -532,107 +589,93 @@ class Monitor:
     ) -> _CurvedTerms | None:
         """One curved probe's share-weighted per-layer read, on device.
 
-        The need flags gate the work: ``foot`` runs the nearest-point solve
-        (coords; required for ``membership`` / ``traces``), ``dist`` the
-        per-candidate whitened distances, ``traces`` the per-layer fraction /
-        coord / residual terms, ``subspace`` the inspector's whitened queries.
-        ``H``/``sih`` are the read's ``(n, T, D)`` stacks; ``col`` picks the token.
+        Every layer at once over the probe's :class:`_CurvedStack`: a fixed
+        sequence of batched kernels whatever the layer count.  The need flags
+        gate the work: ``foot`` runs the nearest-point solve (coords; required
+        for ``membership`` / ``traces``), ``dist`` the per-candidate whitened
+        distances, ``traces`` the per-layer fraction / coord / residual terms,
+        ``subspace`` the inspector's whitened queries.  ``H``/``sih`` are the
+        read's ``(n, T, D)`` stacks; ``col`` picks the token.
         """
-        manifold = probe.manifold
-        shared = [L for L in manifold.layers if L in present]
-        if not shared:
+        found = self._curved_view(probe, stack, present)
+        if found is None:
             return None
-        sw = probe.share_weights
-        total_w = sum(sw[L] for L in shared)
-        w_shared = {L: sw[L] / total_w for L in shared}
-        n_dim = manifold.domain.intrinsic_dim
-        reference_layer = max(shared, key=lambda layer: w_shared[layer])
-        reference_coord: torch.Tensor | None = None
-        terms: _CurvedTerms | None = None
-        for layer_idx in shared:
-            i = stack.index[layer_idx]
-            wh = probe.whitened[layer_idx]
-            frac_t, cq, c = _layer_geometry(
-                probe, layer_idx, H[i, col], sih[i, col],
-            )
-            w = w_shared[layer_idx]
-            frac_t = frac_t.reshape(1)
-            if terms is None:
-                terms = _CurvedTerms(
-                    shared=shared, w_shared=w_shared, frac_mean=w * frac_t,
-                )
-            else:
-                terms.frac_mean = terms.frac_mean + w * frac_t
-            if traces:
-                terms.frac_terms.append(frac_t)
-            if subspace:
-                terms.cq_terms.append(cq.reshape(-1))
-            if dist:
-                # Neutral rides ``node_white_aug`` as the K-th candidate.
-                d = torch.linalg.vector_norm(
-                    wh.node_white_aug - cq.reshape(1, -1), dim=-1,
-                ) * w
-                terms.dist_acc = d if terms.dist_acc is None else terms.dist_acc + d
-            if not foot:
-                continue
-            sub = manifold.layers[layer_idx]
-            foot_key = (probe.name, layer_idx)
+        cs, rows = found
+        manifold = probe.manifold
+        if isinstance(rows, slice):
+            h, s_h = H[rows, col], sih[rows, col]
+        else:
+            h, s_h = H[:, col].index_select(0, rows), sih[:, col].index_select(0, rows)
+        frac, cq, c, node_dist = _curved_geometry(cs, h, s_h)
+        # The share-weighted cross-layer means sum ``w_L · term_L`` as a left
+        # fold in layer order (:func:`_fold_layers`), every summed term side by
+        # side in one ``(L, F)`` block: the per-layer reads and the solve are
+        # batched, the accumulation order is the per-layer one.
+        summed: list[torch.Tensor] = [frac.unsqueeze(-1)]
+        terms = _CurvedTerms(
+            shared=list(cs.layers), w_shared=cs.w_shared, ranks=cs.ranks,
+            frac_mean=frac.new_zeros(1),
+        )
+        if traces:
+            terms.frac_layers = frac
+        if subspace:
+            terms.cq_layers = cq
+        n_cand = 0
+        if dist:
+            # Neutral rides ``node_white_aug`` as the K-th candidate.
+            summed.append(node_dist)
+            n_cand = int(node_dist.shape[-1])
+        pos = res = None
+        n_space = 0
+        if foot:
+            foot_key = (probe.name, cs.layers)
             warm = self._curved_feet.get(foot_key) if self._curved_warm else None
-            pos, res = invert_parameterization(
-                sub, manifold.domain, c.reshape(1, -1),
-                manifold.node_coords, warm_start=warm,
-            )
+            pos, res = cs.solve(manifold.domain, c, warm)        # (L, n), (L,)
             if self._curved_warm:
                 self._curved_feet[foot_key] = pos.detach()
-            coord_t = pos.reshape(-1)[:n_dim]
-            if coord_t.numel() < n_dim:
-                coord_t = torch.cat(
-                    [coord_t, coord_t.new_zeros(n_dim - coord_t.numel())],
-                )
-            if layer_idx == reference_layer:
-                reference_coord = coord_t
-            mean_coord = w * _mean_coordinate_space(manifold.domain, coord_t)
-            terms.coords_mean = (
-                mean_coord if terms.coords_mean is None
-                else terms.coords_mean + mean_coord
-            )
-            res_flat = res.reshape(-1)[:1]
+            space = _mean_coordinate_space(manifold.domain, pos)
+            summed.append(space)
+            n_space = int(space.shape[-1])
             if membership:
                 # Tube-fit membership ``exp(−res²/2σ²)`` at the foot (both raw
                 # reduced-space distances); no σ-field ⇒ full membership.
-                if sub.has_sigma:
-                    sig_foot = sub.sigma_at(
-                        manifold.domain.embed(pos.reshape(1, -1)),
-                    ).reshape(1)
-                    mem_t = torch.exp(
-                        -(res_flat ** 2)
+                if cs.has_sigma:
+                    sig_foot = cs.sigma_at(manifold.domain.embed(pos))
+                    mem = torch.exp(
+                        -(res ** 2)
                         / (2.0 * (sig_foot ** 2).clamp(min=_FRACTION_EPSILON))
                     )
                 else:
-                    mem_t = frac_t.new_ones(1)
-                terms.mem_mean = (
-                    w * mem_t if terms.mem_mean is None
-                    else terms.mem_mean + w * mem_t
-                )
+                    mem = torch.ones_like(res)
+                summed.append(mem.unsqueeze(-1))
             if traces:
-                par_norm = torch.linalg.vector_norm(c)
-                resid_t = torch.where(
+                par_norm = torch.stack([
+                    torch.linalg.vector_norm(c[i, :r]) for i, r in enumerate(cs.ranks)
+                ])
+                resid = torch.where(
                     par_norm < _FRACTION_EPSILON,
-                    torch.zeros_like(res_flat),
-                    res_flat / par_norm.clamp(min=_FRACTION_EPSILON),
+                    torch.zeros_like(res),
+                    res / par_norm.clamp(min=_FRACTION_EPSILON),
                 )
-                terms.resid_terms.append(resid_t)
-                terms.coord_terms.append(coord_t)
-                terms.resid_mean = (
-                    w * resid_t if terms.resid_mean is None
-                    else terms.resid_mean + w * resid_t
-                )
-        assert terms is not None
-        if terms.coords_mean is not None:
+                terms.resid_layers = resid
+                terms.coord_layers = pos
+                summed.append(resid.unsqueeze(-1))
+        means = _fold_layers(torch.cat(summed, dim=-1) * cs.weights.unsqueeze(-1))
+        o = 1
+        terms.frac_mean = means[:1]
+        if dist:
+            terms.dist_acc = means[o:o + n_cand]
+            o += n_cand
+        if pos is not None:
             terms.coords_mean = _mean_domain_coordinates(
-                manifold.domain, terms.coords_mean,
-                cast(torch.Tensor, reference_coord),
+                manifold.domain, means[o:o + n_space], pos[cs.reference],
             )
+            o += n_space
+            if membership:
+                terms.mem_mean = means[o:o + 1]
+                o += 1
+            if traces:
+                terms.resid_mean = means[o:o + 1]
         return terms
 
     def _curved_reading(
@@ -670,10 +713,11 @@ class Monitor:
         Kc = int(terms.dist_acc.numel())
         req = int(probe.top_n)
         top_n = min(max(req if req >= 0 else Kc + req, 0), Kc)
+        assert terms.frac_layers is not None and terms.resid_layers is not None
+        assert terms.coord_layers is not None
         parts: list[torch.Tensor] = [
             terms.frac_mean, terms.resid_mean, terms.coords_mean, terms.mem_mean,
-            torch.cat(terms.frac_terms), torch.cat(terms.resid_terms),
-            torch.stack(terms.coord_terms, 0).reshape(-1),
+            terms.frac_layers, terms.resid_layers, terms.coord_layers.reshape(-1),
         ]
         has_assign = False
         if top_n:
@@ -693,7 +737,8 @@ class Monitor:
                 parts += [ap_t, ai_t.to(torch.float32)]
                 has_assign = True
         if subspace:
-            parts += terms.cq_terms
+            assert terms.cq_layers is not None
+            parts.append(terms.cq_layers)
         flat = torch.cat([p.reshape(-1) for p in parts]).detach().cpu().tolist()
 
         shared = terms.shared
@@ -745,12 +790,12 @@ class Monitor:
             depth_spread=depth_spread,
         )
         if subspace:
-            sub_coords: dict[int, tuple[float, ...]] = {}
-            for layer, cq in zip(shared, terms.cq_terms, strict=True):
-                n = int(cq.numel())
-                sub_coords[layer] = tuple(flat[o:o + n])
-                o += n
-            reading.subspace_coords_per_layer = sub_coords
+            assert terms.cq_layers is not None
+            width = int(terms.cq_layers.shape[-1])
+            reading.subspace_coords_per_layer = {
+                layer: tuple(flat[o + i * width:o + i * width + rank])
+                for i, (layer, rank) in enumerate(zip(shared, terms.ranks, strict=True))
+            }
         return reading
 
     # -------------------------------------------------------------- gates

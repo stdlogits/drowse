@@ -17,7 +17,7 @@ from drowse.geometry.domains import BoxAxis, BoxDomain
 from drowse.geometry.subspace import LayerSubspace
 from drowse.geometry.manifold import Manifold
 from drowse.geometry.subspace import fit_curved_subspace
-from drowse.readout.monitor import Monitor, _layer_geometry
+from drowse.readout.monitor import Monitor, _curved_geometry
 from tests.support.whitener import isotropic_whitener
 
 
@@ -118,8 +118,9 @@ class TestMonitorWhitened:
         torch.manual_seed(3)
         for _ in range(5):
             h = torch.randn(8)
-            frac_t, cdist_q, invert_q = _layer_geometry(
-                probe, 0, h, w.apply_inv(0, h),
+            assert probe.curved is not None
+            frac_t, cdist_q, invert_q, _node_dist = _curved_geometry(
+                probe.curved, h.reshape(1, -1), w.apply_inv(0, h).reshape(1, -1),
             )
             cdist_nodes = probe.whitened[0].node_white
             frac = float(frac_t.item())
@@ -168,7 +169,10 @@ class TestMonitorWhitened:
         torch.manual_seed(11)
         for _ in range(5):
             h = torch.randn(8)
-            f = float(_layer_geometry(p, 0, h, iso.apply_inv(0, h))[0].item())
+            assert p.curved is not None
+            f = float(_curved_geometry(
+                p.curved, h.reshape(1, -1), iso.apply_inv(0, h).reshape(1, -1),
+            )[0].item())
             assert 0.0 <= f <= 1.0 + 1e-6
 
             # Euclidean reference: L2-orthogonal projection energy share onto

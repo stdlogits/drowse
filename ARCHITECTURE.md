@@ -868,7 +868,8 @@ each owner keeps exactly the state it claims.
 
 The rules are architectural, not micro-optimizations; the root `AGENTS.md`
 lists them and the throughput gates in `tests/gpu/test_smoke.py` protect the
-ordinary steered path (≥ 85% of vanilla tok/s, ablation ≥ 80%).
+ordinary steered path (≥ 85% of vanilla tok/s, ablation ≥ 80%) and the
+served dashboard's instrumented decode (≥ 50%).
 
 Beyond those rules:
 
@@ -878,7 +879,9 @@ Beyond those rules:
   Gauss-Newton step and frame transport, and an `n ≥ 2` SVD that hops to CPU
   on MPS.
 - The whole flat geometry roster shares one Woodbury `Σ⁻¹h` apply and batched
-  reduced-space products per layer.
+  reduced-space products per layer. A curved probe reads all its layers in
+  one stacked pass (one batched foot solve, per-layer reductions, means folded
+  in layer order), bit-identical to reading them one at a time.
 - The R family's live lens readout and SAE reads reuse the generation's capture and stashes; no
   second forward.
 - The alternative-token width is resolved once per generation and shared by
