@@ -124,6 +124,44 @@ try {
   assert.doesNotMatch(lensRoom, /readout\?\.aggregate/, "no reply-level words: the node keeps none");
   assert.doesNotMatch(lensRoom, /No lens read this reply/);
   assert.match(lensRoom, /\{:else if pins\.length === 0\}[^]*?>No lens probes<[^]*?showInstrument\("lens"\)\}>Watch a word</);
+  // W6 review: a reading shows as the token's only while it answers the token's request (its key):
+  // a failed replay had left the previous token's anatomy at full opacity under the new heading,
+  // and the lens probes "at this token" read it unconditionally.
+  assert.match(lensRoom, /const fresh = \$derived\(held !== null && want !== null && held\.key === want\.key\);/);
+  assert.match(lensRoom, /const shownRead = \$derived\(held === null \|\| \(!fresh && read\.status === "error"\) \? null : held\.value\);/);
+  assert.match(lensRoom, /const tokenPins = \$derived\(shownRead\?\.pins \?\? \{\}\);/);
+  assert.match(lensRoom, /class="dw-sec probes" class:stale=\{!whole && stale\}/);
+  assert.doesNotMatch(lensRoom, /value: read\.value/, "no request keeps the old value as its own");
+  // W6 review: a runtime with the lens token readout but no anatomy (drowse.ai's browser runtime)
+  // reads each token through the readout, R lens alone, instead of "does not replay tokens".
+  {
+    const { render } = await server.ssrLoadModule("svelte/server");
+    const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+    const { chatLog } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
+    const selectionStore = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
+    const { lensSourceState } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+    sessionState.info = { model_id: "m", jlens_fitted: true, instruments: [{ family: "lens", capabilities: { token_readout: true } }] };
+    lensSourceState.sources = [{ source: "local:r", family: "R", active: true }];
+    chatLog.turns = [
+      { role: "user", text: "q", nodeId: "u1" },
+      { role: "assistant", text: "Yes.", generated: true, nodeId: "a1", tokens: [{ text: "Yes", rawIndex: 0, tokenId: 9 }, { text: ".", rawIndex: 1, tokenId: 10 }] },
+    ];
+    selectionStore.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 0 } });
+    const { default: LensRoom } = await server.ssrLoadModule("/src/panels/rooms/LensRoom.svelte");
+    const body = render(LensRoom, {}).body;
+    assert.doesNotMatch(body, /does not replay tokens/);
+    assert.match(body, /id="lens-token-head"/, "the token's read section, loading");
+    sessionState.info = { model_id: "m", jlens_fitted: true, instruments: [{ family: "lens", capabilities: { token_readout: false } }] };
+    assert.match(render(LensRoom, {}).body, /does not replay tokens/, "neither the anatomy nor the readout");
+    const lensLib = await server.ssrLoadModule("/src/lib/lensRoom.ts");
+    const layers = lensLib.readoutLayers({ layers: [{ layer: 3, tokens: [{ token: " sea", id: 7, logprob: Math.log(0.5) }] }] }, "local:r");
+    assert.deepEqual(layers[0].reads_as.r.tokens, [{ token_id: 7, token: " sea", value: 0.5 }]);
+    assert.deepEqual([layers[0].layer, layers[0].reads_as.r.weight, layers[0].reads_as.r.unit, layers[0].reads_as.s.absent], [3, 1, "probability", lensLib.NO_S_READ]);
+    selectionStore.clearSelection();
+    chatLog.turns = [];
+    sessionState.info = null;
+    lensSourceState.sources = [];
+  }
   const model = read("panels/rooms/ModelFacts.svelte");
   assert.ok(model.includes(`goto("artifacts", "lenses")}>{canFit ? "Fit a lens here"`));
   assert.ok(model.includes(`goto("artifacts", "saes")}>{sae ? "SAEs" : "Choose an SAE"}`));

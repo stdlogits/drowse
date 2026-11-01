@@ -7,13 +7,14 @@
   import { Token } from "@stdlogits/ledger";
   import { depthTint } from "../../../lib/charts/depth";
   import { halfValue } from "../../../drawers/token/anatomy";
-  import type { AnatomyLayer, FamilyReadDict } from "../../../lib/types";
+  import type { LensLayerRead } from "../../../lib/lensRoom";
+  import type { FamilyReadDict } from "../../../lib/types";
 
-  let { layers, tokenId, shown = 3 }: { layers: readonly AnatomyLayer[]; tokenId: number; shown?: number } = $props();
+  let { layers, tokenId, shown = 3 }: { layers: readonly LensLayerRead[]; tokenId: number; shown?: number } = $props();
 
   const n = $derived(layers.length);
   const tint = (layer: number) => depthTint(n > 1 ? layer / (n - 1) : 0);
-  const both = (layer: AnatomyLayer) => layer.reads_as.s.weight > 0 && layer.reads_as.r.weight > 0;
+  const both = (layer: LensLayerRead) => layer.reads_as.s.weight > 0 && layer.reads_as.r.weight > 0;
   /** A half's opacity: its weight, never fainter than a read can be made out. */
   const fade = (half: FamilyReadDict) => (half.weight > 0 ? 0.45 + 0.55 * half.weight : 0.3);
 </script>
@@ -58,6 +59,10 @@
   .w > i.r { opacity: 1; }
   .cell { display: flex; flex-wrap: nowrap; align-items: center; gap: var(--s1); min-width: 0; overflow: hidden; transition: opacity var(--fast) var(--ease); }
   .tok { flex: none; max-width: 100%; }
+  /* A phone's row holds two words a lens, whole, rather than clipping a third. */
+  @media (max-width: 720px) {
+    .tok:nth-child(n + 3) { display: none; }
+  }
   .absent { color: var(--ink3); }
 
   @media (max-width: 520px) {

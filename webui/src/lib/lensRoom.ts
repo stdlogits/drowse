@@ -2,7 +2,32 @@
 // a layer (the server's crossover band), each source's coverage and split-half difference per
 // layer, the per-family source list (prepared rows and the providers still to fetch), and the
 // local fit's document ladder around the server's default.
-import type { InstrumentSourceJSON, LensBandJSON, LensProviderJSON, PreparationStatusJSON } from "./types";
+import type { FamilyReadDict, InstrumentSourceJSON, LensBandJSON, LensProviderJSON, LensTokenReadoutJSON, PreparationStatusJSON } from "./types";
+
+/** One layer through both lenses, as LensLayers draws it (the token anatomy's layers carry it). */
+export interface LensLayerRead {
+  layer: number;
+  reads_as: { r: FamilyReadDict; s: FamilyReadDict };
+}
+
+/** Why a layer has no S read where a runtime replays the lens readout, not the anatomy. */
+export const NO_S_READ = "This runtime replays the R lens alone";
+
+/** A runtime without the token anatomy replays the lens readout (the R lens's top words at each
+ *  layer, as log-probabilities): its layers as LensLayers draws them, the R half at full weight
+ *  and the S half absent. */
+export function readoutLayers(readout: Pick<LensTokenReadoutJSON, "layers">, lens: string | null): LensLayerRead[] {
+  return readout.layers.map((row) => ({
+    layer: row.layer,
+    reads_as: {
+      r: {
+        family: "R", weight: 1, unit: "probability", lens, centred: false, absent: null,
+        tokens: row.tokens.map((t) => ({ token_id: t.id, token: t.token, value: Math.exp(t.logprob) })),
+      },
+      s: { family: "S", weight: 0, unit: "footprint_z", lens: null, centred: false, tokens: [], absent: NO_S_READ },
+    },
+  }));
+}
 
 export type LensFamily = "R" | "S";
 export type LensSite = "out" | "mid";

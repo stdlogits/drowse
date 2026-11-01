@@ -3,15 +3,17 @@
   // layer through both lenses (LensLayers: the S lens's read, input, and the R lens's say, output,
   // each by its weight in the depth rule, the crossover band on a wash) and the lens probes' values
   // there, from one replay of the token (the token anatomy, as the workbench's token view replays
-  // it, steered as the token was or, asked, without the steering). Whole, the lens probes over the
-  // reply (its node's aggregate envelope; the live readout's words are per token and the node keeps
-  // no reply-level words), or, with none, the way to watch a word. Fitting and fetching lenses live
-  // in the Artifacts room; without a lens the room links there.
+  // it, steered as the token was or, asked, without the steering; a runtime without the anatomy
+  // replays the lens readout, the R lens alone). Whole, the lens probes over the reply (its node's
+  // aggregate envelope; the live readout's words are per token and the node keeps no reply-level
+  // words), or, with none, the way to watch a word. A reading shows as the token's only while it
+  // answers that token's request: a new one dims it, a failed one takes it away. Fitting and
+  // fetching lenses live in the Artifacts room; without a lens the room links there.
   import { onMount } from "svelte";
   import { Icon, MorphText, Segmented, Token } from "@stdlogits/ledger";
   import TokenStrip from "./TokenStrip.svelte";
   import LensLayers from "./lens/LensLayers.svelte";
-  import { cachedTokenAnatomy } from "../../lib/runtime/tokenReadoutCache";
+  import { cachedTokenAnatomy, cachedTokenReadout } from "../../lib/runtime/tokenReadoutCache";
   import { replayCapabilities } from "../../lib/runtime/contracts";
   import { getRuntimeClient } from "../../lib/runtime/registry";
   import { userFacingError } from "../../lib/runtime/userFacingError";
@@ -20,20 +22,32 @@
   import { goto } from "../../lib/stores/rooms.svelte";
   import { showInstrument } from "../../lib/commands";
   import { lensSourceState, refreshLensSources } from "../../lib/stores/instruments.svelte";
+  import { instrumentFamily } from "../../lib/stores/session.svelte";
   import { probeRack } from "../../lib/stores/probes.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
   import { settled, tokenCursor } from "../../lib/stores/tokenCursor.svelte";
   import { depthTint, readingText } from "../../lib/charts/depth";
-  import { replayAnchor } from "../../drawers/token/readings";
+  import { lensReplay, replayAnchor } from "../../drawers/token/readings";
+  import { readoutLayers, type LensLayerRead } from "../../lib/lensRoom";
   import { probeTitle } from "../rack/probeRows";
-  import type { MeasurementsEnvelopeJSON, ScalarReadingJSON } from "../../lib/types";
+  import type { ScalarReadingJSON } from "../../lib/types";
 
   const anatomyAvailable = replayCapabilities(getRuntimeClient().instruments).tokenAnatomy;
+  /** A runtime without the anatomy (the browser's) replays the lens readout instead. */
+  const readoutAvailable = $derived(instrumentFamily("lens")?.capabilities.token_readout === true);
   onMount(() => {
     if (lensSourceState.sources.length === 0) void refreshLensSources();
   });
-  /** A lens to read with: the R lens fitted, or any active lens (the anatomy reads through either). */
-  const lensReady = $derived(sessionState.info?.jlens_fitted === true || lensSourceState.sources.some((source) => source.active));
+  /** A lens to read with: the anatomy reads through the R lens or any active lens, the readout
+   *  through the R lens (the workbench's token view gates on the same answer). */
+  const gate = $derived(lensReplay({
+    anatomy: anatomyAvailable,
+    tokenReadout: readoutAvailable,
+    rLens: sessionState.info?.jlens_fitted === true,
+    activeLens: lensSourceState.sources.some((source) => source.active),
+    replayContext: true,
+  }));
+  const lensReady = $derived(gate.ready);
 
   const here = settled(() => tokenCursor.token);
   const cursorToken = $derived(tokenCursor.token);
@@ -43,29 +57,54 @@
   const steering = $derived(token ? replayAnchor(node, token.token, token.turn.appliedSteering).steering : null);
   let steered = $state(true);
 
-  // ---------- one token: its anatomy
-  let read = $state.raw<{ key: string; status: "loading" | "ready" | "error"; value: MeasurementsEnvelopeJSON | null; error: string | null }>({
-    key: "", status: "loading", value: null, error: null,
+  // ---------- one token: its anatomy, or the lens readout where the runtime has no anatomy
+  /** One token's read: each layer through the lenses, and the lens probes' values there. */
+  interface TokenRead { layers: LensLayerRead[]; tokenId: number; pins: Record<string, ScalarReadingJSON> }
+  /** The request in flight or last answered (``key``), and how it went. */
+  let read = $state.raw<{ key: string; status: "loading" | "ready" | "error"; error: string | null }>({
+    key: "", status: "loading", error: null,
   });
+  /** The last reading that came back, with the key of the request it answers. */
+  let held = $state.raw<{ key: string; value: TokenRead } | null>(null);
   let attempt = $state(0);
   const want = $derived.by(() => {
-    if (!anatomyAvailable || !lensReady || !token || token.nodeId === null || token.index === null) return null;
+    if ((!anatomyAvailable && !readoutAvailable) || !lensReady || !token || token.nodeId === null || token.index === null) return null;
     const asSteered = steered || steering === null;
-    return { nodeId: token.nodeId, index: token.index, steered: asSteered, raw: effectiveRawMode(), key: `${token.nodeId}:${token.index}:${asSteered}:${effectiveRawMode()}:${attempt}` };
+    const kind = anatomyAvailable ? "anatomy" : "readout";
+    return {
+      kind, nodeId: token.nodeId, index: token.index, tokenId: token.token.tokenId ?? -1, steered: asSteered, raw: effectiveRawMode(),
+      key: `${kind}:${token.nodeId}:${token.index}:${asSteered}:${effectiveRawMode()}:${attempt}`,
+    };
   });
+  /** One token's read, through whichever replay this runtime has. */
+  async function readToken(w: NonNullable<typeof want>): Promise<TokenRead> {
+    if (w.kind === "anatomy") {
+      const { measurements } = await cachedTokenAnatomy(w.nodeId, w.index, { k: 8, units: 1, patterns: 0, steered: w.steered, raw: w.raw });
+      if (!measurements.anatomy) throw new Error("No anatomy came back for this token.");
+      return { layers: measurements.anatomy.layers, tokenId: measurements.anatomy.token.token_id, pins: measurements.instruments.lens?.readings ?? {} };
+    }
+    const { measurements } = await cachedTokenReadout("lens", w.nodeId, w.index, { topK: 8, steered: w.steered, raw: w.raw, layers: "all" });
+    const lens = measurements.instruments.lens;
+    if (!lens?.readout) throw new Error("No lens reading came back. Check the active lens source.");
+    return { layers: readoutLayers({ layers: lens.readout.layers ?? [] }, lens.binding.sources.R ?? null), tokenId: w.tokenId, pins: lens.readings ?? {} };
+  }
   $effect(() => {
     const w = want;
     if (!w || genStatus.active || read.key === w.key) return;
     const key = w.key;
-    read = { key, status: "loading", value: read.value, error: null };
-    cachedTokenAnatomy(w.nodeId, w.index, { k: 8, units: 1, patterns: 0, steered: w.steered, raw: w.raw }).then(
-      (value) => { if (read.key === key) read = { key, status: "ready", value: value.measurements, error: null }; },
-      (error: unknown) => { if (read.key === key) read = { key, status: "error", value: read.value, error: userFacingError(error, "This token's lenses could not be replayed.") }; },
+    read = { key, status: "loading", error: null };
+    readToken(w).then(
+      (value) => { if (read.key === key) { read = { key, status: "ready", error: null }; held = { key, value }; } },
+      (error: unknown) => { if (read.key === key) read = { key, status: "error", error: userFacingError(error, "This token's lenses could not be replayed.") }; },
     );
   });
-  const anatomy = $derived(read.value?.anatomy ?? null);
-  const stale = $derived(read.status === "loading" || (anatomy !== null && token !== null && anatomy.token.raw_index !== token.index));
-  const tokenPins = $derived(read.value?.instruments.lens?.readings ?? {});
+  /** The reading answers the token, setting and attempt asked for now. */
+  const fresh = $derived(held !== null && want !== null && held.key === want.key);
+  /** What the token view draws: the fresh reading, or the last one dimmed while the next loads;
+   *  never the last one beside a failed read. */
+  const shownRead = $derived(held === null || (!fresh && read.status === "error") ? null : held.value);
+  const stale = $derived(!fresh || cursorToken?.ordinal !== token?.ordinal);
+  const tokenPins = $derived(shownRead?.pins ?? {});
 
   // ---------- the whole reply: its lens probes
   const reply = $derived(tokenCursor.reply);
@@ -90,14 +129,17 @@
     </div>
   {:else if whole}
     {#if !reply}
-      <p class="meta none">The lenses read here once the model has written a reply.</p>
+      <div class="dw-empty">
+        <span class="head">No reply yet</span>
+        <button type="button" class="dw-quiet" onclick={() => goto("workbench")}>Workbench<Icon name="right" /></button>
+      </div>
     {:else if pins.length === 0}
       <div class="dw-empty">
         <span class="head">No lens probes</span>
         <button type="button" class="dw-quiet" onclick={() => showInstrument("lens")}>Watch a word<Icon name="right" /></button>
       </div>
     {/if}
-  {:else if !anatomyAvailable}
+  {:else if !anatomyAvailable && !readoutAvailable}
     <div class="dw-empty"><span class="head">Lens</span><p>This runtime does not replay tokens.</p></div>
   {:else if token && (token.nodeId === null || token.index === null)}
     <div class="dw-empty"><span class="head">Lens</span><p>This token has no replay record.</p></div>
@@ -113,9 +155,9 @@
       {#if read.status === "error" && read.key === want?.key}
         <div class="dw-row"><span class="meta">{read.error}</span><button type="button" class="dw-text" onclick={() => (attempt += 1)}>Try again</button></div>
       {/if}
-      {#if anatomy}
-        <div class="read" class:stale={stale || cursorToken?.ordinal !== token?.ordinal}>
-          <LensLayers layers={anatomy.layers} tokenId={anatomy.token.token_id} />
+      {#if shownRead}
+        <div class="read" class:stale>
+          <LensLayers layers={shownRead.layers} tokenId={shownRead.tokenId} />
         </div>
       {:else if read.status !== "error"}
         <div class="ghost" aria-hidden="true">{#each [0, 1, 2, 3, 4, 5] as k (k)}<i></i>{/each}</div>
@@ -124,7 +166,7 @@
   {/if}
 
   {#if lensReady && pins.length > 0}
-    <section class="dw-sec probes" aria-labelledby="lens-probes-head">
+    <section class="dw-sec probes" class:stale={!whole && stale} aria-labelledby="lens-probes-head">
       <div class="dw-sec-head"><span class="head" id="lens-probes-head">Lens probes</span><span class="meta"><MorphText text={whole ? "over this reply" : "at this token"} /></span></div>
       <div class="rows">
         {#each pins as [name, reading] (name)}
@@ -142,11 +184,10 @@
 
 <style>
   .lens { max-width: 960px; }
-  .read { transition: opacity var(--fast) var(--ease); }
-  .read.stale { opacity: 0.55; }
+  .read, .probes { transition: opacity var(--fast) var(--ease); }
+  .read.stale, .probes.stale { opacity: 0.55; }
   .ghost { display: grid; gap: 2px; }
   .ghost > i { display: block; height: 36px; border-radius: var(--r-box); background: var(--wash); }
-  .none { margin: 0; }
 
   .meter { position: relative; display: block; width: 56px; height: 4px; border-radius: 2px; background: var(--wash2); }
   .meter > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--tint, var(--deep)); transition: width var(--glide) var(--ease); }
