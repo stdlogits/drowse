@@ -12,6 +12,8 @@ pinned in ``test_token_replay``.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from types import SimpleNamespace
 from typing import Any
 
@@ -34,6 +36,9 @@ class _StubMonitor:
         self._layers = set(layers)
         self.scored: list[dict[int, torch.Tensor]] = []
         self.warm_calls: list[bool] = []
+        self.emitting = False
+        #: Whether each score emitted the per-layer whitened coordinates.
+        self.emitted: list[bool] = []
 
     def probe_layers(self) -> set[int]:
         return set(self._layers)
@@ -41,10 +46,19 @@ class _StubMonitor:
     def enable_curved_warm(self, flag: bool) -> None:
         self.warm_calls.append(bool(flag))
 
+    @contextmanager
+    def subspace_coords_emitted(self) -> Iterator[None]:
+        self.emitting = True
+        try:
+            yield
+        finally:
+            self.emitting = False
+
     def score_single_token(
         self, hidden: dict[int, torch.Tensor],
     ) -> dict[str, ProbeReading]:
         self.scored.append(hidden)
+        self.emitted.append(self.emitting)
         return {
             name: ProbeReading(
                 fraction=0.4,
@@ -86,6 +100,9 @@ def test_geometry_replay_reads_the_roster_at_the_producing_position() -> None:
     # must not seed a one-shot read).
     assert set(session._monitor.scored[0]) == {0, 1}
     assert session._monitor.warm_calls == [False]
+    # Each reading carries its per-layer whitened coordinates (the probe
+    # plot places the replayed token with them).
+    assert session._monitor.emitted == [True]
     assert rig.exclusive_messages[0][0] == (
         "session.geometry.token_readout called while another model use is "
         "in flight"
