@@ -145,13 +145,12 @@
           <div class="item rise" role="status" aria-label="Lens fit progress">
             <span class="l1">{fitSource}</span>
             <span class="prog">
-              <span class="meter" role="progressbar" aria-label="Documents fitted" aria-valuemin={0}
+              <span class="meter" role="progressbar" aria-label="Documents fitted" data-tip="Generation pauses while documents are fitted" aria-valuemin={0}
                 aria-valuemax={Math.max(lensFit.state.total, 1)} aria-valuenow={lensFit.state.current}>
                 <i style:--lens-fill={family === "S" ? "var(--deep)" : "var(--late)"} style:width={`${(fitShare * 100).toFixed(1)}%`}></i>
               </span>
               <span class="meta stage" data-tip={progressText}><MorphText text={progressText} /></span>
               {#if left}<span class="meta"><MorphText text={left} /></span>{/if}
-              <span class="meta">Generation pauses while documents are fitted</span>
             </span>
             <button type="button" class="dw-text act" disabled={lensFit.state.cancelling} onclick={() => void lensFit.cancel()}>Cancel</button>
           </div>
@@ -167,7 +166,6 @@
     {#if allowFit && !fitting && documents !== null}
       <div class="dw-sec tight">
         <span class="head">Fit locally</span>
-        <p class="meta note">Generation pauses while documents are fitted; a large fit can take hours.</p>
         <div class="fitctl">
           <div class="step" role="group" aria-label="Documents">
             <IconButton icon="left" label="Fewer documents" disabled={documents <= ladder[0]}
@@ -179,7 +177,8 @@
           <Segmented label="Kind" value={fitKind} options={kindOptions} onchange={(value) => (kind = value)} />
           <Segmented label="Sites to fit" value={both ? "both" : "out"} onchange={(value) => (both = value === "both")}
             options={[{ value: "out", label: "Out" }, { value: "both", label: "Out and mid" }]} />
-          <button type="button" class="dw-button go" disabled={busy} onclick={() => startFit()}>Fit</button>
+          <button type="button" class="dw-button go" disabled={busy} onclick={() => startFit()}
+            data-tip="Generation pauses while documents are fitted; a large fit can take hours">Fit</button>
         </div>
       </div>
     {/if}
@@ -223,7 +222,6 @@
   .im :global(.morph-text) { display: block; overflow: hidden; text-overflow: ellipsis; }
   .act { font: var(--type-meta); }
   .err { color: var(--ink2); }
-  .note { margin: 0; }
   .replace { justify-self: start; }
 
   .prog { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); min-width: 0; }

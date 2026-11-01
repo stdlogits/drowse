@@ -216,6 +216,10 @@ try {
   assert.equal(terms.coefficientText(-0.2), "−0.2");
   assert.equal(terms.coefficientText(0.35, { fixed: true }), "0.35");
   assert.equal(terms.coefficientText(-0.004, { fixed: true }), "0.00");
+  // A projection's subtitle is its relation alone (it read "all but the part along another concept").
+  const notAlong = { mode: "projection", base: "a", operator: "|", onto: "default/warm.clinical", alpha: 0.5, trigger: "BOTH", enabled: true };
+  assert.equal(terms.termKind(notAlong, null), "");
+  assert.equal(terms.termSource("a|default/warm.clinical", notAlong), "not along warm.clinical");
   assert.equal(terms.chipStrength("jlens/storm", { mode: "jlens", ablate: true, alpha: 1 }, 0.5), "without");
   assert.equal(terms.chipStrength("head/L2h0", { mode: "unit", ablate: true, alpha: 1 }, 0.5), "without");
   assert.equal(terms.chipStrength("default/honest", { mode: "subspace", ablate: false }, 0.5), "0.5", "a flat term shows the shared strength");

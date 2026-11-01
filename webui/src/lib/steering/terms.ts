@@ -149,9 +149,10 @@ export function termSource(name: string, entry: SteerEntry): string {
   }
 }
 
-/** What the term is, for the editor's facts: ``a 20-node manifold``, ``a concept``. */
+/** What the term is, for the editor's facts: ``a 20-node manifold``, ``a concept``. A projection
+ *  says nothing more: its source already names the relation (``not along warm.clinical``). */
 export function termKind(entry: SteerEntry, info: ManifoldInfo | null): string {
-  if (entry.mode === "projection") return entry.operator === "~" ? "the part along another concept" : "all but the part along another concept";
+  if (entry.mode === "projection") return "";
   if (entry.mode === "subspace" || entry.mode === "manifold") {
     if (!info) return "";
     const nodes = info.node_count;
