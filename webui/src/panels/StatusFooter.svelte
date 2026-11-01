@@ -71,7 +71,7 @@
   <div class="status-details">
     <span class="text lifecycle" class:done-label={!genStatus.active} role="status"><MorphText text={savedEdit ? "Edit saved" : !hasRun && !genStatus.active ? "Ready" : preparingContinuation ? "Preparing continuation…" : genStatus.active ? genStatus.replay ? "Continuing" : "Writing" : finishLabel ?? (genStatus.finishReason === "stop" ? "Complete" : "Ended")} numbers={false} /></span>
     {#if !savedEdit && (hasRun || genStatus.active)}
-      <span class="text token-count"><MorphText text={genStatus.tokensSoFar} />{#if genStatus.active} / {genStatus.maxTokens || "?"}{/if} tokens</span>
+      <span class="text token-count"><MorphText text={genStatus.tokensSoFar} />{#if genStatus.active}{" / "}{genStatus.maxTokens || "?"}{/if} tokens</span>
       {#if genStatus.active}
         <span class="bar-wrap" aria-label={preparingContinuation ? "Preparing saved context" : "progress"}>
           <Bar value={preparingContinuation ? genStatus.replay!.completed : genStatus.tokensSoFar} max={preparingContinuation ? genStatus.replay!.total : genStatus.maxTokens || Math.max(genStatus.tokensSoFar, 1)} width={120} height={4} color="var(--tint)" />

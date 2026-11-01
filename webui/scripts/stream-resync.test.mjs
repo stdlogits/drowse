@@ -99,6 +99,14 @@ try {
   for (const index of [0, 1, 2, 3]) emit(token(index));
   const live = turn().tokens.slice();
   assert.equal(turn().text, words.slice(0, 4).join(""));
+  // The status line's count reads "4 / 1024 tokens" (a space each side of the slash).
+  {
+    const { render } = await server.ssrLoadModule("svelte/server");
+    const { default: StatusFooter } = await server.ssrLoadModule("/src/panels/StatusFooter.svelte");
+    genStatus.maxTokens = 1024;
+    const text = render(StatusFooter, {}).body.replace(/<!--[^>]*-->/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    assert.match(text, /4 \/ 1024 tokens/, "the count and the limit are spaced");
+  }
 
   // Frames 4..9 were dropped; the tree holds rows 0..10 when the client reads it.
   snapshot = tree(2, [root, ask, reply([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(row))], "reply");
@@ -130,8 +138,12 @@ try {
   emit({ type: "tree_mutated", op: "finalize_assistant", rev: 3, added: [], removed: [], updated: [final], active_node_id: "reply", cast: {} });
   emit({ type: "done", node_id: "reply", sibling_index: 0, sibling_count: 1, result: {
     text: final.text, tokens: 13, finish_reason: "length", applied_steering: null, usage: {}, mean_logprob: -0.5, mean_surprise: 0.5,
+    tok_per_sec: 66.5, elapsed: 0.25,
   } });
   assert.equal(turn().text, final.text);
+  // The status line reads the model's rate and time, not how fast this page took the frames.
+  assert.equal(genStatus.tokPerSec, 66.5);
+  assert.ok(Math.abs(genStatus.finishedAt - genStatus.startedAt - 250) < 1e-6);
   assert.equal(turn().finishReason, "length");
   assert.equal(genStatus.active, false);
   assert.equal(loomTree.rev, 3);

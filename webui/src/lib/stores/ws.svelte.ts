@@ -690,7 +690,17 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       adoptStreamingNode(msg.node_id);
       const lastSibling = msg.sibling_index + 1 >= msg.sibling_count || msg.result.finish_reason === "cancelled";
       genStatus.active = !lastSibling;
-      genStatus.finishedAt = performance.now();
+      // The runtime's own timing: frame arrivals measure how fast this page read, which after a
+      // resync is not how fast the model wrote.
+      const serverElapsed = msg.result?.elapsed;
+      genStatus.finishedAt = typeof serverElapsed === "number" && Number.isFinite(serverElapsed) &&
+        serverElapsed >= 0 && genStatus.startedAt !== null
+        ? genStatus.startedAt + serverElapsed * 1000
+        : performance.now();
+      const serverRate = msg.result?.tok_per_sec;
+      if (typeof serverRate === "number" && Number.isFinite(serverRate) && serverRate >= 0) {
+        genStatus.tokPerSec = serverRate;
+      }
       genStatus.finishReason = msg.result?.finish_reason ?? "stop";
       // Probe rack — end-of-gen aggregate (the settled ``ProbeReading`` per
       // probe: coords / fraction / nearest / residual + per-layer traces),

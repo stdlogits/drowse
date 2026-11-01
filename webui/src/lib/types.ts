@@ -660,6 +660,11 @@ export interface WSDoneResult {
    *  logprob capture wasn't live (replay / no on_token consumer). */
   mean_logprob?: number | null;
   mean_surprise?: number | null;
+  /** The runtime's own decode rate and elapsed seconds for this reply. A page that read the
+   *  stream slower than it was written (a resync) shows these, not its frame arrival rate.
+   *  Optional: a runtime that omits them leaves the page's own measure. */
+  tok_per_sec?: number;
+  elapsed?: number;
   /** End-of-generation measurement envelope, ``scope: "aggregate"`` — the
    *  same shape the ``token`` frame carries, pooled at the last-content
    *  token.  The per-attached-probe readings live under
@@ -1133,7 +1138,8 @@ export interface GenStatus {
   maxTokens: number;
   /** Wall-clock start (``performance.now()`` ms). */
   startedAt: number | null;
-  /** Wall-clock completion, retained so the final elapsed time stays frozen. */
+  /** Completion (``performance.now()`` ms), retained so the final elapsed time stays frozen: the
+   *  runtime's ``elapsed`` after ``startedAt`` when the done frame carries it, else wall clock. */
   finishedAt: number | null;
   tokPerSec: number;
   ppl: PerplexityAccumulator;

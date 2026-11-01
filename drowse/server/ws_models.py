@@ -188,10 +188,15 @@ def build_input(
 
 
 def result_to_json(result: GenerationResult) -> dict[str, Any]:
+    """The ``done`` frame's result.  ``tok_per_sec`` and ``elapsed`` are the
+    engine's own timing: a page that read the stream slower than the model
+    wrote it (a resync) cannot measure the model's rate from frame arrivals."""
     return {
         "text": result.text,
         "tokens": result.token_count,
         "finish_reason": result.finish_reason,
         "applied_steering": result.applied_steering,
         "usage": usage_dict(result),
+        "tok_per_sec": result.tok_per_sec,
+        "elapsed": result.elapsed,
     }
