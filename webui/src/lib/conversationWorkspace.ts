@@ -119,6 +119,21 @@ export async function restoreConversationSnapshot(
   };
 }
 
+/** A reload in server mode: the server still holds the tree and the probe roster, but the
+ *  workspace the page kept (the steer rack, its read-only recipe, sampling, the highlight and the
+ *  probe sort) lived only in the page. Put it back from the autosave record of this tree, so the
+ *  autosave that follows never writes an empty rack over the saved one. The rack validates as it
+ *  restores (``restoreRack``): a recipe that no longer resolves stays read-only with its reason. */
+export function restoreWorkspaceSettings(snapshot: ConversationSnapshotV8): void {
+  const portableSnapshot = clone(snapshot);
+  validateConversationSnapshot(portableSnapshot, CONVERSATION_SAMPLING_KEYS);
+  const plan = buildConversationImportPlan(portableSnapshot);
+  restoreRack([...plan.steerEntries].map(([name, entry]) => [name, clone(entry)]), plan.snapshot.subspaceAlong, plan.snapshot.readOnlyRecipe);
+  Object.assign(samplingState, clone(plan.snapshot.samplingState));
+  Object.assign(highlightState, clone(plan.snapshot.highlightState));
+  probeRack.sortMode = plan.snapshot.probeRack.sortMode;
+}
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }

@@ -18,7 +18,7 @@
   import { paletteState, closePalette, openPalette } from "./lib/stores/palette.svelte";
   import { runtimeClient } from "./lib/runtime/client";
   import { userFacingError } from "./lib/runtime/userFacingError";
-  import { restoreConversationSnapshot } from "./lib/conversationWorkspace";
+  import { restoreConversationSnapshot, restoreWorkspaceSettings } from "./lib/conversationWorkspace";
   import { resetSettings } from "./lib/stores/settingsReset.svelte";
   import { conversationLibrary, savedConversationState } from "./lib/stores/savedConversations.svelte";
   import { clearConversationOpen, peekConversationOpen } from "./lib/conversationOpen";
@@ -153,6 +153,22 @@
           savedConversationState.accent = record.accent ?? "purple";
         } else if (tree?.nodes.length === 1 && tree.active_node_id === tree.root_id) {
           await resetSettings(true);
+        }
+      } else if (sessionState.info) {
+        // Server mode: the server kept the tree and the probes; the page's own workspace (the steer
+        // rack above all) comes back from this tree's autosave record before autosave starts.
+        // A record this build cannot read is left alone: the workbench opens without it.
+        try {
+          const tree = currentLoomTreeSnapshot();
+          const record = tree && await conversationLibrary.findForTree(sessionState.info.model_id, tree.root_id);
+          if (record) {
+            restoreWorkspaceSettings(record.snapshot);
+            savedConversationState.activeId = record.id;
+            savedConversationState.avatarSeed = record.avatarSeed;
+            savedConversationState.accent = record.accent ?? "purple";
+          }
+        } catch (error) {
+          console.warn("The saved workspace for this chat could not be restored", error);
         }
       }
       // Open the WebSocket now so the first generation doesn't pay connect latency; the send

@@ -93,5 +93,33 @@ try {
   roster = ["a", "b"];
   await refreshVectorList();
   assert.equal(steerRack.correlation, null, "a registered vector joins the pool");
+  // Regression: in server mode a reload restored nothing from the chat's autosave record, so the
+  // steer rack came back empty and the autosave that followed wrote the empty rack over the saved
+  // one. The page's own workspace now comes back from the record (the server keeps the tree).
+  {
+    const { restoreWorkspaceSettings } = await server.ssrLoadModule("/src/lib/conversationWorkspace.ts");
+    const { samplingState } = await server.ssrLoadModule("/src/lib/stores/sampling.svelte.ts");
+    const { highlightState, probeRack } = await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
+    const sampling = { ...JSON.parse(JSON.stringify(samplingState)), temperature: 1.3 };
+    const saved = {
+      version: 8, savedAt: "2026-11-01T00:00:00.000Z", model_id: "fixture/model", session_id: "default",
+      tree: { tree_format: 2, drowse_version: "fixture", model_id: "fixture/model", session_id: "default", name: null,
+        root_id: "root", active_node_id: "root", rev: 141, nodes: [], children_of: {}, cast: {} },
+      steerRack: [{ name: "default/formal.casual", mode: "subspace", ablate: false, coords: [1], label: "formal",
+        variant: "raw", trigger: "BOTH", enabled: true }],
+      subspaceAlong: 0.5, readOnlyRecipe: null,
+      probeRack: { sortMode: "value", active: [], entries: [] },
+      highlightState: { target: null, compareTarget: null, compareTwo: false, smoothBlend: true },
+      samplingState: sampling,
+    };
+    steerRack.entries.clear();
+    restoreWorkspaceSettings(saved);
+    assert.deepEqual([...steerRack.entries.keys()], ["default/formal.casual"], "the saved rack comes back");
+    assert.equal(steerRack.subspaceAlong, 0.5);
+    assert.equal(currentSteeringExpression(), "0.5 default/formal.casual%formal");
+    assert.equal(samplingState.temperature, 1.3);
+    assert.equal(highlightState.smoothBlend, true);
+    assert.equal(probeRack.sortMode, "value");
+  }
   console.log("Steering rack: one patch path for every term, label binding, mode guards, queued edits, and correlation freshness passed");
 } finally { await server.close(); }
