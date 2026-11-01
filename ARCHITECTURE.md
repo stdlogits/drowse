@@ -918,14 +918,15 @@ executable statement of why a boundary is strict.
 ## 16. Known boundaries
 
 - J-lens atoms and probes name one tokenizer token; multi-token words raise
-  `MultiTokenWordError`. `slens` pushes parse but raise
-  `ProfileNotRegisteredError`.
+  `MultiTokenWordError`. An `slens/<word>` atom steers along the word's S-lens
+  footprint at the S lens's `out` layers; a token the S read's mask drops is
+  refused.
 - Unit ablation rewrites a projection's input through a module pre-hook, so a
   steered generation with `!neuron/…`/`!head/…` (or a unit probe's tap) runs
   the eager module on a compiled session. Unit statistics measure the neutral
   corpus only (96 documents, so `act_top` is the median of the top quarter of
-  document maxima), and a mean-ablation replaces every position, the
-  attention sink included.
+  document maxima), taken from position 1 on, and a mean-ablation replaces
+  every position but the attention sink, which keeps its own activation.
 - `BlockSpec` (`model/blocks.py`) describes dense decoders only: llama,
   mistral, qwen2/3 and gemma2/3/4 without per-layer inputs, KV sharing or MoE.
   MoE, fused gate-up or qkv projections, hybrid linear-attention stacks,

@@ -259,7 +259,7 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   or `k` (their input-side S- and K-lenses), each at `local:<kind>`;
   `--sites out,mid` (default both); `--corpus FILE` (one document per line,
   JSON lines contribute `text`) or repeatable `--hf-corpus`, else FineWeb-Edu
-  `sample-10BT` (needs `drowse.ai[hf]`). `--prompts` defaults to 25. A Hub
+  `sample-10BT` (needs `drowse.ai[hf]`). `--prompts` defaults to 64 (`lens/key.py::DEFAULT_FIT_DOCUMENTS`). A Hub
   corpus is pinned once and the pinned spec serves both the no-op proof and
   the stream. Unset numeric flags take the `lens.jlens` defaults
   (`--dim-batch` 256 seeds per transport pass). `--layers` resolves per site
