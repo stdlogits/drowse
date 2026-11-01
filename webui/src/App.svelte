@@ -22,6 +22,7 @@
   import { resetSettings } from "./lib/stores/settingsReset.svelte";
   import { conversationLibrary, savedConversationState } from "./lib/stores/savedConversations.svelte";
   import { clearConversationOpen, peekConversationOpen } from "./lib/conversationOpen";
+  import { readWorkspaceDraft } from "./lib/workspaceDraft";
   import { containTab, tabStops } from "./lib/focusTrap";
   import {
     bootstrap,
@@ -165,6 +166,10 @@
             savedConversationState.activeId = record.id;
             savedConversationState.avatarSeed = record.avatarSeed;
             savedConversationState.accent = record.accent ?? "purple";
+          } else if (tree && !tree.nodes.some(node => node.parent_id !== null)) {
+            // No turns yet, so no record: the workspace built so far is the draft.
+            const draft = readWorkspaceDraft(sessionState.info.model_id, tree.root_id);
+            if (draft) restoreWorkspaceSettings(draft);
           }
         } catch (error) {
           console.warn("The saved workspace for this chat could not be restored", error);

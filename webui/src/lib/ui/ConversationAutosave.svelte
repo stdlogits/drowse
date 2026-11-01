@@ -10,6 +10,7 @@
   import { conversationLibrary, savedConversationState, registerConversationAutosave } from "../stores/savedConversations.svelte";
   import { userFacingError } from "../runtime/userFacingError";
   import { openDrawer, drawerState } from "../stores/drawers.svelte";
+  import { clearWorkspaceDraft, saveWorkspaceDraft } from "../workspaceDraft";
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let tail: Promise<void> = Promise.resolve();
@@ -32,6 +33,10 @@
     const task = tail.catch(() => undefined).then(async () => {
       try {
         const record = await conversationLibrary.autosave(snapshot, requestedId, modelType);
+        // A tree with no turns gets no record: its workspace (a recipe built before the first
+        // message) is kept as the draft instead, until a record takes over.
+        if (record === null) saveWorkspaceDraft(snapshot);
+        else clearWorkspaceDraft();
         if (disposed || loomTree.root_id !== snapshot.tree.root_id || savedConversationState.activeId !== requestedId) return;
         savedConversationState.activeId = record?.id ?? null;
         savedConversationState.avatarSeed = record?.avatarSeed ?? null;

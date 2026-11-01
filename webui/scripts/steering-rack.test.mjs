@@ -204,6 +204,24 @@ try {
     assert.equal(samplingState.temperature, 1.3);
     assert.equal(highlightState.smoothBlend, true);
     assert.equal(probeRack.sortMode, "value");
+
+    // Regression: a tree with no turns gets no autosave record, so a recipe built before the first
+    // message vanished on reload. It is kept as the draft of its model and root until a record
+    // takes over, and comes back like a record's workspace.
+    const { saveWorkspaceDraft, readWorkspaceDraft, clearWorkspaceDraft } = await server.ssrLoadModule("/src/lib/workspaceDraft.ts");
+    const store = new Map();
+    const storage = { getItem: (k) => store.get(k) ?? null, setItem: (k, v) => store.set(k, String(v)), removeItem: (k) => store.delete(k) };
+    assert.equal(saveWorkspaceDraft(saved, storage), true);
+    assert.equal(readWorkspaceDraft("fixture/model", "other-root", storage), null, "another tree");
+    assert.equal(readWorkspaceDraft("other/model", "root", storage), null, "another model");
+    steerRack.entries.clear();
+    restoreWorkspaceSettings(readWorkspaceDraft("fixture/model", "root", storage));
+    assert.equal(currentSteeringExpression(), "0.5 default/formal.casual%formal", "the draft rack comes back");
+    clearWorkspaceDraft(storage);
+    assert.equal(readWorkspaceDraft("fixture/model", "root", storage), null);
+    store.set("drowse.workspace-draft.v1", "{not json");
+    assert.equal(readWorkspaceDraft("fixture/model", "root", storage), null, "an unreadable draft is none");
+    assert.equal(saveWorkspaceDraft(saved, { ...storage, setItem: () => { throw new Error("quota"); } }), false);
   }
   // Regression (a9's decision: no recipe typed as text): the automatic comparison's custom field
   // took steering=<expression> and the server applied it. It changes sampling only now.
