@@ -431,6 +431,17 @@ try {
   const { default: SaeProbeCard } = await server.ssrLoadModule("/src/panels/rack/SaeProbeCard.svelte");
   const card = { token: "word", probeName: "custom lens alias", strength: null,
     com: null, spread: null, series: [], cells: [], pinned: true };
+  // Regression: the pair suffix sat flush against the word ("Parisread"), and the two pins of a
+  // word sorted read before said, the reverse of the As said | As read toggle.
+  assert.match(render(JLensProbeCard, { props: { ...card, pairWord: "read" } }).body, /<span class="pair[^"]*"> read<\/span>/, "the suffix keeps its space");
+  const { pairLensPins } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
+  const pins = [
+    { key: "other", token: "sea", pinned: true, namespace: "jlens" },
+    { key: "read", token: "Paris", pinned: true, namespace: "slens" },
+    { key: "found", token: "Paris", pinned: false, namespace: "jlens" },
+    { key: "said", token: "Paris", pinned: true, namespace: "jlens" },
+  ];
+  assert.deepEqual(pairLensPins(pins).map(row => row.key), ["other", "said", "read", "found"]);
   const lensCard = render(JLensProbeCard, { props: card }).body;
   assert.match(lensCard, /Not measured/);
   assert.match(lensCard, /Unpin probe custom lens alias/);

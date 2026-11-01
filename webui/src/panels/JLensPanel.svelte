@@ -10,7 +10,7 @@
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Segmented, Switch, Token, ease, reducedMotion } from "@stdlogits/ledger";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
-  import { foundLensRows, lensReadoutCells, mergeInstrumentProbeRows } from "./rack/probeRows";
+  import { foundLensRows, lensReadoutCells, mergeInstrumentProbeRows, pairLensPins } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
   import { depthTint, layerDepth } from "../lib/charts/depth";
   import { apiInstruments, apiSessions, describeError } from "../lib/runtime/services";
@@ -143,7 +143,7 @@
   });
 
   const words = $derived(
-    mergeInstrumentProbeRows(pinnedRows, liveOn || tokenHoverState.active ? foundRows : [], lensState.workspaceSortMode),
+    pairLensPins(mergeInstrumentProbeRows(pinnedRows, liveOn || tokenHoverState.active ? foundRows : [], lensState.workspaceSortMode)),
   );
 
   const SORTS: LensWorkspaceSortMode[] = ["strength", "name", "depth"];

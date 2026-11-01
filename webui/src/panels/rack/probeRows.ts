@@ -97,3 +97,20 @@ export function lensReadoutCells(
     return { layer, p: hit ? hit[1] : null };
   });
 }
+
+/** A word pinned both ways reads as one pair, As said then As read (the toggle's order), at the
+ *  place the first of the two sorts to: the two read in different units (a probability, a z), so
+ *  no sort ranks one against the other. Every other row keeps its place. */
+export function pairLensPins<T extends { pinned: boolean; token: string; namespace: "jlens" | "slens" }>(rows: readonly T[]): T[] {
+  const out: T[] = [];
+  const placed = new Set<T>();
+  for (const row of rows) {
+    if (placed.has(row)) continue;
+    const partner = row.pinned
+      ? rows.find((other) => other !== row && other.pinned && other.token === row.token && other.namespace !== row.namespace)
+      : undefined;
+    const pair = partner ? (row.namespace === "jlens" ? [row, partner] : [partner, row]) : [row];
+    for (const item of pair) { out.push(item); placed.add(item); }
+  }
+  return out;
+}

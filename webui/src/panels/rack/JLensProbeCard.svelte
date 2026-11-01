@@ -86,7 +86,7 @@
 <InstrumentRow pressed={pinned && isHighlight} onselect={pinned ? choose : undefined} tint={depthTint(com)}
   title={`${pinned ? name : `"${token}", averaged across fitted layers`}${depthText}`}>
   {#snippet lead()}
-    <span class="n">{#if wordStart}<span class="ws">·</span>{/if}{display}{#if pairWord}<span class="pair"> {pairWord}</span>{/if}</span>
+    <span class="n">{#if wordStart}<span class="ws">·</span>{/if}{display}{#if pairWord}<span class="pair">{` ${pairWord}`}</span>{/if}</span>
   {/snippet}
   {#snippet mark()}
     {#if cells.length > 0}
@@ -109,5 +109,5 @@
 </InstrumentRow>
 
 <style>
-  .pair { color: var(--ink3); font: var(--type-meta); }
+  .pair { color: var(--ink3); font: var(--type-meta); white-space: pre; }
 </style>
