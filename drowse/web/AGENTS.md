@@ -218,7 +218,9 @@ lack is optional (`?`) with an entry there and a check the UI tests before showi
 `unitReadsAvailable`); and `unitLabels?`, the catalog's labels for the token anatomy's rows.
 The token view shows the anatomy (`drawers/token/TokenAnatomy.svelte`, queued with the
 token readouts in `runtime/tokenReadoutCache.ts`) where `tokenAnatomy` exists, and the lens
-readout (`LensReading.svelte`) where it does not.
+readout (`LensReading.svelte`) where it does not; the Lens room likewise draws the lens readout
+(R lens alone, `lib/lensRoom.ts::readoutLayers`) where the anatomy is absent and the lens family
+reports `token_readout`.
 
 `main.ts` installs `HttpRuntimeClient` into `runtime/registry.ts` before it imports `App`.
 The registry refuses a second runtime. drowse.ai also installs `RuntimeCapabilities` and a
@@ -389,9 +391,11 @@ has a lazy `load()` (rendered by `DrawerOutlet` and cached after the first open)
 fixed `params` (how one `RackDrawer` serves both `subspace` and `manifolds`), `narrow`,
 and either a `launcher` or `launcher: null` with a `via` string naming the surface that
 opens it. `RAIL_CATEGORIES` (the command palette's tools) is derived from the launchers. The
-palette (`lib/commands.ts`) lists the rooms, the instruments in the Inspector's order (the unit probes
-where units read, the lens, the probes, the SAE's features), every room's sections by what they
-do, then the remaining tools; a tool a room hosts is listed once, as its section. `searchCommands` is its one filter and ranking.
+palette (`lib/commands.ts`) lists the rooms, "+ Steer"'s kinds (group Steer: a neuron or head where
+units read, a lens token, a concept, a manifold position, an SAE feature; each opens the picker on
+its kind through `stores/workbench.svelte.ts::openSteerPicker`), the instruments in the Inspector's
+order (the unit probes where units read, the lens, the probes, the SAE's features), every room's
+sections by what they do, then the remaining tools; a tool a room hosts is listed once, as its section. `searchCommands` is its one filter and ranking.
 
 `openDrawer(name, params)` (`lib/stores/drawers.svelte.ts`) is the one entry point, and where
 a tool opens depends on what it is. `token_drilldown` and `probe_inspector` are selections,
