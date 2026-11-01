@@ -2,9 +2,11 @@
 
 The bundle is a single-page app with hash routes.  A path the server does
 not know answers ``index.html`` (an old ``/chat`` bookmark still lands on
-the dashboard) unless it names a file: a path whose last segment has an
-extension the bundle lacks (``/apple-touch-icon.png``) is a 404, never the
-shell with a 200.  The shell is public: it holds
+the dashboard) unless it names a file: a path whose last segment is a
+dotfile or has a static-file extension the bundle lacks
+(``/apple-touch-icon.png``, ``/favicon.png/``) is a 404, never the shell
+with a 200; a bipolar concept's dotted name (``/manifolds/ns/happy.sad``)
+is still a route.  The shell is public: it holds
 no data, and the API key is entered client-side and rides each API call
 (only the API prefixes authenticate).  The entry chunks keep fixed names
 (``assets/drowse.js``, ``assets/App.css``) while split chunks are
@@ -29,8 +31,14 @@ from drowse.errors import DrowseError
 
 _REVALIDATE = {"Cache-Control": "no-cache"}
 
-# A path segment that names a file (``favicon.png``, ``.env``), not a route.
-_FILE_NAME = re.compile(r"\.[0-9A-Za-z]+$")
+# A path segment that names a file (``favicon.png``, ``.env``), not a route:
+# a dotfile or a static-file extension.  A bipolar concept's name holds a
+# dot (``happy.sad``), so any other extension is still a route.
+_FILE_NAME = re.compile(
+    r"^\.|\.(?:png|jpe?g|gif|webp|avif|bmp|ico|svg|webmanifest|json|js|mjs|cjs|css|map"
+    r"|txt|xml|html?|woff2?|ttf|otf|eot|wasm|pdf|zip|gz|mp4|webm|mp3|wav)$",
+    re.IGNORECASE,
+)
 
 
 class _RevalidatingFiles(StaticFiles):
@@ -134,6 +142,6 @@ def register_web_routes(app: FastAPI) -> None:
         # A file the bundle lacks is a 404: the shell would answer a
         # browser's /apple-touch-icon.png or /manifest.webmanifest with
         # HTML and a 200.
-        if _FILE_NAME.search(full_path.rsplit("/", 1)[-1]):
+        if _FILE_NAME.search(full_path.rstrip("/").rsplit("/", 1)[-1]):
             raise HTTPException(404, "not found")
         return FileResponse(str(index_html), headers=_REVALIDATE)

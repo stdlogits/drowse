@@ -115,6 +115,7 @@ def test_missing_dashboard_asset_is_not_an_html_fallback(web_client: Any) -> Non
     "/robots.txt",
     "/icons/drowse-192.png",
     "/.env",
+    "/favicon.png/",  # a trailing slash still names the file
 ])
 def test_a_file_the_bundle_lacks_is_a_404_not_the_shell(web_client: Any, path: str) -> None:
     """Regression: the SPA fallback answered any unknown path, files included,
@@ -206,7 +207,9 @@ class TestWebMount:
         _session, client = web_client
         # SPA fallback: /lab is a client-side route the SPA owns; the
         # server returns index.html so the SPA can take over routing.
-        for path in ("/lab", "/manifolds/emotions"):
+        # Regression: a bipolar concept's dotted name read as a file
+        # extension and an old bookmark to it answered 404.
+        for path in ("/lab", "/manifolds/emotions", "/manifolds/default/happy.sad", "/icons/"):
             r = client.get(path)
             assert r.status_code == 200, path
             assert b'id="app"' in r.content

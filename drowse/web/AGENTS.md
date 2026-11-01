@@ -16,8 +16,9 @@ call adds shadowed duplicates without raising.
 `/assets` is a `StaticFiles` mount, and `GET /` serves `index.html`. The catch-all
 `GET /{full_path:path}` returns 404 for `api`, `v1`, `drowse` and anything under them.
 Otherwise it serves top-level dist files from an allowlist built at mount time; a path whose
-last segment has a file extension and is not in dist is a 404 (the dashboard routes by hash,
-so a browser's `/apple-touch-icon.png` must not read the shell); anything else falls back to
+last segment (a trailing slash stripped) is a dotfile or has a static-file extension and is
+not in dist is a 404 (the dashboard routes by hash, so a browser's `/apple-touch-icon.png`
+must not read the shell; a bipolar concept's dotted name is still a route); anything else falls back to
 `index.html`. Because `full_path` is only ever used as a dict key, `..` traversal is
 impossible.
 
