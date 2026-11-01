@@ -39,7 +39,24 @@ try {
     "hidden control-token gaps must not invent raw token identities");
 
   // Loom dialog helpers: fan-out strengths and go-to-turn id prefixes.
-  const { parseStrengthList, resolveNodeIdPrefix } = await server.ssrLoadModule("/src/panels/loom/loomCommands.ts");
+  const { parseStrengthList, resolveNodeIdPrefix, fanoutConcepts, fanoutRecipe } = await server.ssrLoadModule("/src/panels/loom/loomCommands.ts");
+  // Regression: the guided-variation dialog took a free-text "steering direction" and built
+  // ``steering=${alpha} ${text}``, so any expression could be typed there. It now picks a fitted
+  // flat concept and a node, and each variation's recipe is the chips' own term for it.
+  const concept = (name, fit_mode, fitted, labels) => ({
+    namespace: "default", name, fit_mode, resolved_fit_mode: fit_mode === "auto" ? null : fit_mode, fitted_for_session: fitted,
+    node_count: labels.length, node_labels: labels, node_coords: labels.map((_, i) => [i === 0 ? 1 : -1]),
+  });
+  const catalog = [
+    concept("honest.deceptive", "pca", true, ["honest", "deceptive"]),
+    concept("emotions", "spectral", true, ["wonder", "dread"]),
+    concept("calm.anxious", "pca", false, ["calm", "anxious"]),
+    concept("tone", "auto", true, ["warm", "cold"]),
+  ];
+  assert.deepEqual(fanoutConcepts(catalog).map((row) => row.name), ["honest.deceptive"], "fitted flat concepts only");
+  assert.equal(fanoutRecipe(catalog[0], "deceptive", -0.5), "steering=-0.5 default/honest.deceptive%deceptive");
+  assert.equal(fanoutRecipe(catalog[0], "honest", 0.1 + 0.2), "steering=0.3 default/honest.deceptive%honest", "the strength as %g");
+  assert.equal(fanoutRecipe(catalog[0], "0.3 jlens/x + honest", 0.3), null, "only one of its nodes");
   assert.deepEqual(parseStrengthList("0, 0.3, -1"), [0, 0.3, -1]);
   assert.deepEqual(parseStrengthList("linspace(-1, 1, 5)"), [-1, -0.5, 0, 0.5, 1]);
   assert.deepEqual(parseStrengthList("0:1:0.25"), [0, 0.25, 0.5, 0.75, 1]);

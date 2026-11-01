@@ -1,5 +1,29 @@
-// Pure helpers behind the loom dialogs: the fan-out strength list and the
-// go-to-turn id lookup.
+// Pure helpers behind the loom dialogs: the fan-out's concepts, its strength list and the
+// recipe each variation runs, and the go-to-turn id lookup.
+
+import { formatTerm } from "../../lib/expression";
+import { fitGeometry } from "../../lib/manifolds/fitKind";
+import type { ManifoldInfo } from "../../lib/types";
+
+/** The concepts a fan-out sweeps: the fitted flat fits (the rack's "A concept" list) with nodes to
+ *  steer toward. A curved fit has no signed strength, so it is not offered. */
+export function fanoutConcepts(catalog: readonly ManifoldInfo[]): ManifoldInfo[] {
+  return catalog.filter((row) => row.fitted_for_session && fitGeometry(row) === "flat" && row.node_labels.length > 0);
+}
+
+/** One variation's partial recipe: steered by ``info`` toward its node ``toward`` alone, at
+ *  ``alpha``, written as the chips write it (``steering=-0.5 default/honest.deceptive%honest``);
+ *  ``null`` when ``toward`` is not one of its nodes. Picked, never typed: the dashboard takes no
+ *  recipe text. */
+export function fanoutRecipe(info: ManifoldInfo, toward: string, alpha: number): string | null {
+  const index = info.node_labels.indexOf(toward);
+  if (index < 0) return null;
+  const term = formatTerm(`${info.namespace}/${info.name}`, {
+    mode: "subspace", ablate: false, coords: [...(info.node_coords[index] ?? [])], label: toward,
+    variant: "raw", trigger: "BOTH", enabled: true,
+  }, alpha);
+  return `steering=${term}`;
+}
 
 /** Parse a fan-out alpha string (comma list / ``linspace(a, b, n)`` /
  *  ``start:stop:step``) into ``number[]``. */
