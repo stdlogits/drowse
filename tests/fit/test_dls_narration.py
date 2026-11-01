@@ -1,0 +1,113 @@
+"""DLS narrates the layers it drops, at fit time and on serve's startup roster.
+
+Regression: on Qwen3-8B DLS kept 2 of 36 layers of ``default/honest.deceptive``
+and nothing said so; the probe looked healthy until a scoped term was refused.
+"""
+from __future__ import annotations
+
+from typing import Any
+
+import pytest
+import torch
+
+from drowse.fit import capture
+from drowse.fit.pipeline import dls_drop_note, dls_fit_note, dls_load_note
+from drowse.geometry.subspace import LayerSubspace
+from drowse.store.manifold_authoring import create_discover_manifold_folder
+from tests.support.sessions import baseline_corpus
+
+
+def _sub(*coords: float) -> LayerSubspace:
+    return LayerSubspace.affine(
+        mean=torch.zeros(2), basis=torch.tensor([[1.0, 0.0]]),
+        node_coords=torch.tensor([[c] for c in coords]),
+    )
+
+
+def test_the_drop_note_names_kept_and_dropped_layers() -> None:
+    note = dls_drop_note("honest.deceptive", [1, 2], list(range(36)))
+    assert note == (
+        "DLS kept 2 of 36 layers of 'honest.deceptive' (1-2); at 0,3-35 its "
+        "nodes sit on one side of the neutral mean on every axis"
+    )
+    assert dls_drop_note("x", [0, 1, 2], [0, 1, 2]) is None
+
+
+def test_the_fit_note_names_the_all_fail_fallback() -> None:
+    same_side = {0: _sub(1.2, 0.1), 1: _sub(1.1, 0.05)}
+    note = dls_fit_note("honest.deceptive", [0, 1], same_side)
+    assert note is not None and note.startswith(
+        "DLS: at no layer of 'honest.deceptive' do its nodes sit on both sides"
+    )
+    assert "all 2 layers kept" in note
+    straddling = {1: _sub(0.4, -0.6)}
+    assert dls_fit_note("x", [0, 1], straddling) == dls_drop_note("x", [1], [0, 1])
+    assert dls_fit_note("x", [1], straddling) is None
+
+
+def test_the_load_note_reads_only_sidecar_metadata() -> None:
+    manifold = type("M", (), {})()
+    manifold.layers = {1: object(), 2: object()}
+    manifold.metadata = {"node_spread_per_layer": {"0": 1.0, "1": 1.0, "2": 1.0, "3": 1.0}}
+    assert dls_load_note("default/x", manifold) == dls_drop_note("default/x", [1, 2], [0, 1, 2, 3])
+    manifold.metadata = {}
+    assert dls_load_note("default/x", manifold) is None
+
+
+def _keep_first_layer(monkeypatch: pytest.MonkeyPatch) -> None:
+    real = capture.compute_dls_axes
+
+    def keep_first(centroids: Any, bases: Any, means: Any) -> dict[int, set[int]]:
+        out = real(centroids, bases, means)
+        first = min(out)
+        return {first: out[first]}
+
+    monkeypatch.setattr(capture, "compute_dls_axes", keep_first)
+
+
+def _author(namespace: str, name: str, tags: list[str]) -> None:
+    create_discover_manifold_folder(
+        namespace, name, "test axis", fit_mode="pca",
+        node_corpora={
+            "calm": baseline_corpus("I feel calm and settled today."),
+            "angry": baseline_corpus("I am furious about all of this!"),
+        },
+        hyperparams={"max_dim": 1}, tags=tags,
+    )
+
+
+@pytest.mark.usefixtures("isolated_home")
+def test_a_fit_narrates_dropped_layers(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from drowse.base.paths import manifold_dir
+
+    _keep_first_layer(monkeypatch)
+    _author("local", "mood", [])
+    lines: list[str] = []
+    manifold = tiny_session.fit(manifold_dir("local", "mood"), on_progress=lines.append)
+    notes = [line for line in lines if line.startswith("DLS")]
+    n_layers = len(tiny_session.layers)
+    assert len(manifold.layers) == 1 and n_layers > 1
+    assert len(notes) == 1
+    assert notes == [dls_drop_note("mood", sorted(manifold.layers), list(range(n_layers)))]
+
+
+@pytest.mark.usefixtures("isolated_home")
+def test_serve_startup_narrates_a_probe_once_whether_fitted_or_cached(
+    make_tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _keep_first_layer(monkeypatch)
+    _author("default", "w4axis", ["w4test"])
+
+    first: list[str] = []
+    make_tiny_session(probes=["w4test"], on_progress=first.append)
+    fit_notes = [line for line in first if line.startswith("DLS") and "w4axis" in line]
+    assert len(fit_notes) == 1, first
+
+    again: list[str] = []
+    session = make_tiny_session(probes=["w4test"], on_progress=again.append)
+    load_notes = [line for line in again if line.startswith("DLS") and "w4axis" in line]
+    n_layers = len(session.layers)
+    kept = sorted(session.manifolds["default/w4axis"].layers)
+    assert load_notes == [dls_drop_note("default/w4axis", kept, list(range(n_layers)))]

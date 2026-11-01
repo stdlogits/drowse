@@ -41,7 +41,7 @@ from drowse.fit.capture_cache import CaptureCache
 from drowse.geometry.manifold import MANIFOLD_FIT_POLICY_VERSION
 from drowse.geometry.topology import PcaDiagnostics, SpectralDiagnostics
 from drowse.model.fingerprint import loaded_model_fingerprint
-from drowse.model.layers import resolve_model_layers
+from drowse.model.layers import format_layer_indices, resolve_model_layers
 from drowse.sae.backend import SaeBackend
 from drowse.base.paths import tensor_filename
 from drowse.fit.publish import (
@@ -880,6 +880,59 @@ def _sae_reconstruct(
         return backend.decode_layer(layer, features).detach().to("cpu", torch.float32)
 
 
+def dls_drop_note(name: str, kept: Sequence[int], evaluated: Sequence[int]) -> str | None:
+    """One line naming the layers DLS dropped from a flat fit, or ``None``.
+
+    ``evaluated`` is the fit's layer roster before DLS, ``kept`` the layers it
+    kept.  A two-layer probe out of 36 is otherwise invisible until a scoped
+    term is refused, so the fit (and serve's startup roster) says so.
+    """
+    kept_set = set(kept)
+    dropped = [layer for layer in evaluated if layer not in kept_set]
+    if not dropped or not kept_set:
+        return None
+    return (
+        f"DLS kept {len(kept_set)} of {len(evaluated)} layers of '{name}' "
+        f"({format_layer_indices(kept_set)}); at {format_layer_indices(dropped)} "
+        f"its nodes sit on one side of the neutral mean on every axis"
+    )
+
+
+def dls_fit_note(
+    name: str, evaluated: Sequence[int], layer_subs: Mapping[int, "LayerSubspace"],
+) -> str | None:
+    """The fit-time DLS narration of a flat fit's host-side layers.
+
+    Besides the dropped layers (:func:`dls_drop_note`) it names the all-fail
+    fallback: when no kept axis straddles the neutral mean (its neutral-
+    anchored node coords never change sign), every layer survived only
+    because nothing passed.
+    """
+    straddles = any(
+        bool(((coords.amin(dim=0) < 0) & (coords.amax(dim=0) > 0)).any())
+        for coords in (sub.node_coords for sub in layer_subs.values())
+        if coords is not None and coords.numel()
+    )
+    if layer_subs and not straddles:
+        return (
+            f"DLS: at no layer of '{name}' do its nodes sit on both sides of "
+            f"the neutral mean; all {len(layer_subs)} layers kept, so the axis "
+            f"is degenerate on this model"
+        )
+    return dls_drop_note(name, sorted(layer_subs), evaluated)
+
+
+def dls_load_note(name: str, manifold: "Manifold") -> str | None:
+    """:func:`dls_drop_note` for a loaded fit, read from its sidecar metadata
+    (``node_spread_per_layer`` keeps the pre-DLS roster); no tensor is read."""
+    spread = manifold.metadata.get("node_spread_per_layer")
+    if not isinstance(spread, Mapping):
+        return None
+    return dls_drop_note(
+        name, sorted(manifold.layers), sorted(int(layer) for layer in spread),
+    )
+
+
 class ManifoldExtractionPipeline:
     """Fit a steering manifold for the handle's model from a manifold folder.
 
@@ -1345,6 +1398,9 @@ class ManifoldExtractionPipeline:
             layer_subs, shares = self._fit_affine_layers(
                 stacks, whitened, geometry, fit_layers, dls=dls,
             )
+            note = dls_fit_note(mf.name, fit_layers, layer_subs) if dls else None
+            if note is not None:
+                progress(note)
             node_coords = _neutral_centered_layout(
                 node_coords, whitened, handle.layer_means, fit_layers,
             )

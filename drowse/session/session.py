@@ -4,6 +4,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, cast, overload
 
@@ -15,6 +16,7 @@ from transformers import (
 
 from drowse.fit.capture import _capture_all_hidden_states
 from drowse.fit.corpus import RESPONSE_MAX_TOKENS, CorpusGenerator
+from drowse.fit.pipeline import dls_load_note
 from drowse.session.extraction import Extraction
 from drowse.errors import GenerationRequestError
 from drowse.events import (
@@ -597,10 +599,27 @@ class DrowseSession:
             # bundled multi-node manifolds).  The neutral baseline comes first:
             # fitting needs the whitener.  An explicit ``probes=[]`` skips both.
             self._neutral.ensure(on_progress=on_progress)
+            # A probe DLS left with a few layers is narrated: a fit says so
+            # itself, and a cached load reads it from the sidecar here.
+            fitted_now: set[str] = set()
+
+            def fit_probe(folder: Any, progress: Any) -> Manifold:
+                path = Path(folder)
+                fitted_now.add(f"{path.parent.name}/{path.name}")
+                return self.fit(folder, on_progress=progress)
+
+            def load_probe(key: str) -> Manifold:
+                manifold = self._registry.ensure_manifold_loaded(key)
+                if on_progress is not None and key not in fitted_now:
+                    note = dls_load_note(key, manifold)
+                    if note is not None:
+                        on_progress(note)
+                return manifold
+
             roster = bootstrap_probe_roster(
                 probe_categories, model_id=self.model_id,
-                load=self._registry.ensure_manifold_loaded,
-                fit=lambda folder, progress: self.fit(folder, on_progress=progress),
+                load=load_probe,
+                fit=fit_probe,
                 include_fitted_defaults=probes is None,
                 on_progress=on_progress,
             )
