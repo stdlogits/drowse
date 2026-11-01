@@ -451,6 +451,11 @@ try {
   // arrives, and the room fades in.
   assert.match(app, /<div class="booting"[^>]*in:fadeIn>/);
   assert.doesNotMatch(app, /<div class="booting"[^>]*out:/);
+  // Wave 4: the atlas head read "At to", the token run into the sentence. A token in the Units
+  // room's prose is a Ledger Token chip, as everywhere else in the dashboard.
+  const room = readFileSync(new URL("../src/panels/rooms/UnitsRoom.svelte", import.meta.url), "utf8");
+  assert.match(room, /At <Token token=\{focusToken\.token\} \/>/);
+  assert.doesNotMatch(room, /@render ws\(/, "no token is spliced into the prose as bare text");
 
   console.log("units: ids, reads, activity, atlas, search, recipe, probes, WebMCP and both catalog states");
 } finally {

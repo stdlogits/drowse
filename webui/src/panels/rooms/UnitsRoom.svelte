@@ -331,10 +331,6 @@
 
 <svelte:window onkeydown={onKey} />
 
-{#snippet ws(token: string)}
-  {@const parts = tokenParts(token)}{#if parts.lead}<span class="dw-ws">·</span>{/if}{parts.empty ? "∅" : parts.text}
-{/snippet}
-
 <div class="dw-room units">
   {#if !available}
     <div class="dw-empty"><span class="head">Units</span><p>This runtime does not read neurons and heads.</p></div>
@@ -365,7 +361,7 @@
     <section class="atlas-sec" aria-label="Atlas">
       <div class="dw-sec-head">
         <span class="ah">
-          {#if focusToken && (kind === "head" || every || !word)}<span class="head">At {@render ws(focusToken.token)}</span>{:else if word}<span class="head">Writes {@render ws(word.shown)}</span>{/if}
+          {#if focusToken && (kind === "head" || every || !word)}<span class="head">At <Token token={focusToken.token} /></span>{:else if word}<span class="head">Writes <Token token={word.shown} /></span>{/if}
           <span class="meta">{subset}</span>
         </span>
         <span class="meta"><MorphText text={layerFact} /></span>
@@ -385,7 +381,7 @@
     <div class="below">
       <section class="list" aria-label="Results">
         <div class="dw-sec-head">
-          <span class="head">{heading.pre}{#if heading.word !== null}{@render ws(heading.word)}{/if}</span>
+          <span class="head">{heading.pre}{#if heading.word !== null}<Token token={heading.word} />{/if}</span>
           <span class="meta">{heading.meta}</span>
         </div>
         {#if visible.length > 0}
@@ -407,7 +403,7 @@
         {:else if q.mode === "id"}
           <p class="meta none">No unit {committed.trim()}</p>
         {:else if word}
-          <p class="meta none">No unit writes {@render ws(word.shown)}</p>
+          <p class="meta none">No unit writes <Token token={word.shown} /></p>
         {:else if data}
           <p class="meta none">{filter === "labelled" ? "No unit here has a label" : kind === "head" ? "No head wrote here" : "No neuron fired here"}</p>
         {/if}
@@ -428,7 +424,7 @@
               {#if selLabel}<p class="label">{selLabel}</p>{/if}
             </div>
             <div class="dw-facts">
-              {#if trace && peakAt >= 0}<span>peak here <b>{signed(trace[peakAt] ?? 0)}</b> on {@render ws(tokens[peakAt]?.token ?? "")}</span>{/if}
+              {#if trace && peakAt >= 0}<span>peak here <b>{signed(trace[peakAt] ?? 0)}</b> on <Token token={tokens[peakAt]?.token ?? ""} /></span>{/if}
               {#if selFact}<span>{selFact.pre}<b>{selFact.b}</b>{selFact.post}</span>{/if}
             </div>
             {#if trace && trace.length > 0}
