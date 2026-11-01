@@ -169,7 +169,7 @@
   onfetch={loadSelectedSae}
   unavailableMessage="This model has no compatible SAE pack installed. Add one in Model settings if a pack is available."
   localSectionLabel="Create on this device"
-  localActionLabel={trainConfirm ? "confirm train" : "train"}
+  localActionLabel={trainConfirm ? "Confirm train" : "Train"}
   localActionDisabled={!localName.trim() || sourceBusy}
   onlocal={requestTrain}
 >
@@ -177,18 +177,18 @@
     <Select
       bind:value={selectedLayer}
       options={layerOptions}
-      placeholder="layer"
+      placeholder="Layer"
       disabled={sourceBusy || layerOptions.length === 0}
       ariaLabel="SAE measurement layer"
     />
   {/snippet}
   {#snippet localControls()}
     <label class="setup-field setup-field-wide">
-      <span class="setup-field-label">name</span>
-      <input class="add-input" bind:value={localName} placeholder="name" aria-label="Local SAE name" />
+      <span class="setup-field-label">Name</span>
+      <input class="add-input" bind:value={localName} placeholder="Name" aria-label="Local SAE name" />
     </label>
     <label class="setup-field setup-field-medium">
-      <span class="setup-field-label">tokens</span>
+      <span class="setup-field-label">Tokens</span>
       <input
         class="add-input"
         type="number"
@@ -200,12 +200,12 @@
       />
     </label>
     <label class="setup-field setup-field-narrow">
-      <span class="setup-field-label">layer</span>
+      <span class="setup-field-label">Layer</span>
       <input
         class="add-input"
         inputmode="numeric"
         bind:value={trainLayer}
-        placeholder="auto"
+        placeholder="Auto"
         aria-label="Residual layer (blank for automatic)"
       />
     </label>
@@ -213,7 +213,7 @@
   {#snippet progress()}
     <div class="train-progress loading-pulse loading-placeholder" role="status" aria-live="polite">
       <div class="train-line">
-        <span class="work-status"><MorphText text={saeTrain.state.message ?? "training…"} /></span>
+        <span class="work-status"><MorphText text={saeTrain.state.message ?? "Training…"} /></span>
         <span class="train-count">
           <MorphText text={saeTrain.state.current.toLocaleString()} />/<MorphText text={saeTrain.state.total.toLocaleString()} />
         </span>
@@ -231,7 +231,7 @@
         disabled={saeTrain.state.cancelling}
         onclick={() => void saeTrain.cancel()}
       >
-        <MorphText text={saeTrain.state.cancelling ? "cancelling…" : "cancel"} />
+        <MorphText text={saeTrain.state.cancelling ? "Cancelling…" : "Cancel"} />
       </Button>
     </div>
   {/snippet}
