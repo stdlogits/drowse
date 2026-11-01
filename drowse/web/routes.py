@@ -1,7 +1,10 @@
 """Mount the pre-built Svelte+Vite bundle from ``drowse/web/dist/``.
 
-The bundle is a single-page app — every unknown route falls back to
-``index.html`` so client-side routing works.  The shell is public: it holds
+The bundle is a single-page app with hash routes.  A path the server does
+not know answers ``index.html`` (an old ``/chat`` bookmark still lands on
+the dashboard) unless it names a file: a path whose last segment has an
+extension the bundle lacks (``/apple-touch-icon.png``) is a 404, never the
+shell with a 200.  The shell is public: it holds
 no data, and the API key is entered client-side and rides each API call
 (only the API prefixes authenticate).  The entry chunks keep fixed names
 (``assets/drowse.js``, ``assets/App.css``) while split chunks are
@@ -13,6 +16,7 @@ upgraded server.
 """
 from __future__ import annotations
 
+import re
 from importlib import resources as _resources
 from pathlib import Path
 
@@ -24,6 +28,9 @@ from starlette.types import Scope
 from drowse.errors import DrowseError
 
 _REVALIDATE = {"Cache-Control": "no-cache"}
+
+# A path segment that names a file (``favicon.png``, ``.env``), not a route.
+_FILE_NAME = re.compile(r"\.[0-9A-Za-z]+$")
 
 
 class _RevalidatingFiles(StaticFiles):
@@ -82,35 +89,31 @@ def register_web_routes(app: FastAPI) -> None:
             f"Build it with: cd webui && npm ci && npm run build"
         )
 
-    # Mount public asset directories on StaticFiles; fall back to index.html
-    # for any other path so client-side routing in the SPA works.
-    for directory in ("assets", "icons"):
-        static_dir = dist / directory
-        if static_dir.is_dir():
-            app.mount(
-                f"/{directory}",
-                _RevalidatingFiles(directory=str(static_dir)),
-                name=f"drowse-web-{directory}",
-            )
+    # The bundle's chunks, fonts and indexes live under ``assets/``, whose
+    # mount answers a missing one with its own 404.
+    static_dir = dist / "assets"
+    if static_dir.is_dir():
+        app.mount(
+            "/assets",
+            _RevalidatingFiles(directory=str(static_dir)),
+            name="drowse-web-assets",
+        )
 
     @app.get("/", include_in_schema=False)
     async def _root() -> FileResponse:
         return FileResponse(str(dist / "index.html"), headers=_REVALIDATE)
 
-    # Catch-all for any other top-level route the SPA needs to handle —
-    # e.g. /chat, /lab, /manifolds/<name>. Won't shadow any earlier
-    # /api/*, /v1/*, /drowse/v1/* routes because FastAPI evaluates in
-    # registration order; create_app mounts this last.
+    # Catch-all for every other path. Won't shadow any earlier /api/*,
+    # /v1/*, /drowse/v1/* routes because FastAPI evaluates in registration
+    # order; create_app mounts this last.
     dist_root = dist.resolve()
     index_html = dist_root / "index.html"
 
     # Build an allowlist of top-level dist files at mount time
-    # (favicon.ico, manifest.json, robots.txt, …).  ``full_path`` from
-    # the request is then only ever used as a dict key — never as a
-    # path component — so ``..`` traversal and absolute-path injection
-    # are structurally impossible.  Nested paths fall through to the
-    # SPA shell; the bundle assets are already served by the
-    # StaticFiles mount on ``/assets``.
+    # (favicon.ico, the marks, theme-preflight.js, the licences).
+    # ``full_path`` from the request is then only ever used as a dict key —
+    # never as a path component — so ``..`` traversal and absolute-path
+    # injection are structurally impossible.
     top_level_files: dict[str, Path] = {
         p.name: p
         for p in dist_root.iterdir()
@@ -128,4 +131,9 @@ def register_web_routes(app: FastAPI) -> None:
         direct = top_level_files.get(full_path)
         if direct is not None:
             return FileResponse(str(direct), headers=_REVALIDATE)
+        # A file the bundle lacks is a 404: the shell would answer a
+        # browser's /apple-touch-icon.png or /manifest.webmanifest with
+        # HTML and a 200.
+        if _FILE_NAME.search(full_path.rsplit("/", 1)[-1]):
+            raise HTTPException(404, "not found")
         return FileResponse(str(index_html), headers=_REVALIDATE)

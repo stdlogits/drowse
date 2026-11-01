@@ -13,11 +13,13 @@ can never shadow `/v1/*`, `/api/*` or `/drowse/v1/*`. `drowse serve` mounts by d
 `--no-web` opts out; `create_app` defaults to `web=False`. Mount once per app: a second
 call adds shadowed duplicates without raising.
 
-`/assets` and `/icons` are `StaticFiles` mounts, and `GET /` serves `index.html`. The
-catch-all `GET /{full_path:path}` returns 404 for `api`, `v1`, `drowse` and anything under
-them. Otherwise it serves top-level dist files from an allowlist built at mount time, and
-falls back to `index.html`. Because `full_path` is only ever used as a dict key, `..`
-traversal is impossible.
+`/assets` is a `StaticFiles` mount, and `GET /` serves `index.html`. The catch-all
+`GET /{full_path:path}` returns 404 for `api`, `v1`, `drowse` and anything under them.
+Otherwise it serves top-level dist files from an allowlist built at mount time; a path whose
+last segment has a file extension and is not in dist is a 404 (the dashboard routes by hash,
+so a browser's `/apple-touch-icon.png` must not read the shell); anything else falls back to
+`index.html`. Because `full_path` is only ever used as a dict key, `..` traversal is
+impossible.
 
 Only split JS chunks are content-hashed. `assets/drowse.js` and all CSS, font and JSON
 assets keep fixed names, so ETag/Last-Modified revalidation is load-bearing: every
@@ -530,8 +532,9 @@ drowse.ai too.
 The node suites load modules through Vite SSR (`ssrLoadModule`) with a stub
 `installRuntimeClient`. `saeDescriptions.ts` and `tokens.ts` are also imported by plain
 Node (here or in drowse.ai), so they must not use extensionless value imports.
-`tests/web/test_web.py` covers the mount: files served as files (the marks, the theme
-preflight), the 404 for a missing asset, the SPA fallback, traversal, a public shell under an
+`tests/web/test_web.py` covers the mount: files served as files (the marks, `favicon.ico`,
+the theme preflight), the 404 for a missing asset or any file the bundle lacks, the SPA
+fallback, traversal, a public shell under an
 API key, `web=False`, and an empty dist. `tests/invariants/test_webui_types_parity.py`
 gates the generated types, and `test_layering` places `web` in the top layer.
 

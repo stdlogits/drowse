@@ -107,6 +107,26 @@ def test_missing_dashboard_asset_is_not_an_html_fallback(web_client: Any) -> Non
     assert client.get("/assets/nonexistent.png").status_code == 404
 
 
+@pytest.mark.parametrize("path", [
+    "/favicon.png",
+    "/favicon.svg",  # the hosted site's, not the dashboard's
+    "/apple-touch-icon.png",
+    "/manifest.webmanifest",
+    "/robots.txt",
+    "/icons/drowse-192.png",
+    "/.env",
+])
+def test_a_file_the_bundle_lacks_is_a_404_not_the_shell(web_client: Any, path: str) -> None:
+    """Regression: the SPA fallback answered any unknown path, files included,
+    with index.html and a 200, so a browser's probe for /favicon.png or a web
+    manifest read the dashboard's HTML as the file.  The dashboard routes by
+    hash; a path that names a file the bundle lacks is a 404."""
+    _, client = web_client
+    response = client.get(path)
+    assert response.status_code == 404
+    assert b'id="app"' not in response.content
+
+
 @pytest.fixture
 def api_only_client():
     """Same session but no dashboard mount; mirrors ``--no-web`` mode
@@ -186,9 +206,10 @@ class TestWebMount:
         _session, client = web_client
         # SPA fallback: /lab is a client-side route the SPA owns; the
         # server returns index.html so the SPA can take over routing.
-        r = client.get("/lab")
-        assert r.status_code == 200
-        assert b'id="app"' in r.content
+        for path in ("/lab", "/manifolds/emotions"):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert b'id="app"' in r.content
 
     def test_dashboard_shell_is_public_when_an_api_key_is_set(self) -> None:
         """Regression: an app-level auth dependency 401'd the SPA shell itself,
