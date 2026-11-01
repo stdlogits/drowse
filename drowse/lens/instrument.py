@@ -1039,6 +1039,7 @@ class LensInstrument:
         split_half: bool = True,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: Any | None = None,
+        stop_event: Any | None = None,
     ) -> Any:
         """Fit (or resume) this model's ``kind`` lens at ``sites``.
 
@@ -1053,6 +1054,14 @@ class LensInstrument:
         guard, unsteered; a fit holding ``out`` is selected and becomes its
         family's resident lens (the other family's is untouched).  Returns
         the fitted lens restricted to the requested sites and layers.
+
+        ``cancel_event`` stops promptly (a document in flight is abandoned;
+        the last checkpoint stands); ``stop_event`` stops gracefully (the
+        document in flight finishes and is checkpointed).  Either raises
+        :class:`~drowse.lens.jlens.JacobianLensCancelled`.  Besides every
+        ``checkpoint_every`` documents, a fit checkpoints at the first
+        document boundary ten minutes after its last checkpoint
+        (:data:`~drowse.lens.jlens.CHECKPOINT_SECONDS`).
         """
         from drowse.lens.jlens import (
             DEFAULT_CHECKPOINT_EVERY,
@@ -1086,6 +1095,7 @@ class LensInstrument:
                 return self._fitter.run(
                     prompts, request,
                     on_progress=on_progress, cancel_event=cancel_event,
+                    stop_event=stop_event,
                 )
 
     def fit_is_noop(

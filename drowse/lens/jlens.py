@@ -51,6 +51,11 @@ DEFAULT_SEQ_LEN = 128
 DEFAULT_DIM_BATCH = 256
 #: Checkpoint cadence (prompts) for resumable fits.
 DEFAULT_CHECKPOINT_EVERY = 25
+#: A fit also checkpoints at the first document boundary this many seconds
+#: after its last checkpoint (or its start), whatever the count: at 8B on MPS
+#: a document takes about four minutes, so 25 documents would be 1.7 hours of
+#: unsaved work.  A fixed rule, not a knob.
+CHECKPOINT_SECONDS = 600.0
 
 # The fit-configuration defaults above stay with the artifact: io/cli/session
 # read them to stamp and validate sidecars without wanting the estimator, and

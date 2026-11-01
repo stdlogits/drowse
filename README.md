@@ -431,7 +431,9 @@ difference per site (how differently two halves of the corpus read: the
 signal for whether more documents would help). Fits run on dense models
 (llama, mistral, qwen2/3, gemma 2/3/4 text); mixture-of-experts and hybrid
 stacks are refused, though their published lenses still load. Lens fits are
-resumable: an interrupted fit checkpoints and continues, and an exact repeat
+resumable: a fit checkpoints every 25 documents and every ten minutes, Ctrl-C
+or SIGTERM finishes the document in flight and saves before exiting (a second
+signal stops at once), rerunning the command continues, and an exact repeat
 is recognized without loading the model. A fit never silently replaces a
 local lens over more documents or more layers: a 5.4 lens fitted with the
 old default of 100 documents needs `--prompts 100` (which adds the `mid`

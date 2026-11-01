@@ -355,9 +355,20 @@ neuron-lens's hand-written maps and generalized over
   `dim_batch` (kept down for the rest of the fit) and retries the pass.
   `empty_cache` runs at checkpoint cadence; teardown drains, collects and
   flushes the allocator.
-- **Cancellation** is checked between passes and documents. A stop between
-  documents checkpoints the completed prefix; one inside a document abandons
-  its partial sums (the lifecycle reloads from the last checkpoint).
+- **Checkpoint cadence.** `on_checkpoint` fires every `checkpoint_every`
+  documents and at the first document boundary `CHECKPOINT_SECONDS` (600)
+  after the last checkpoint or the start, never twice for one document
+  count. At 8B on MPS a document takes about four minutes, so the count
+  alone saved once every 1.7 hours.
+- **Cancellation** has two tiers. `cancel_event` is prompt: checked between
+  passes and documents, a stop between documents checkpoints the completed
+  prefix and one inside a document abandons its partial sums (the lifecycle
+  reloads from the last checkpoint). `stop_event` is graceful: checked only
+  before a document, so the document in flight finishes, is checkpointed,
+  and the fit raises `JacobianLensCancelled`. `LensInstrument.fit` takes
+  both; the CLI's SIGINT/SIGTERM handler sets `stop_event` on the first
+  signal and `cancel_event` on the second
+  (`tests/lens/test_fit_checkpoint_cadence.py`).
 - `initial=LensSums.from_means(lens, odd)` takes ownership of an averaged
   base and scales it to sums in place, so don't reuse the passed lens.
 - The autograd estimator lives on as the test oracle

@@ -647,6 +647,7 @@ class LensFitter:
         *,
         on_progress: Callable[[str], None] | None = None,
         cancel_event: Any | None = None,
+        stop_event: Any | None = None,
     ) -> JacobianLens:
         from drowse.lens.store import (
             load_lens_checkpoint_sidecar,
@@ -691,7 +692,7 @@ class LensFitter:
         )
         run = _FitRun(
             self, model, spec, identity, request, residency,
-            on_progress=on_progress, cancel_event=cancel_event,
+            on_progress=on_progress, cancel_event=cancel_event, stop_event=stop_event,
         )
         name = identity.name
         if request.force:
@@ -725,6 +726,7 @@ class _FitRun:
         *,
         on_progress: Callable[[str], None] | None,
         cancel_event: Any | None,
+        stop_event: Any | None = None,
     ) -> None:
         self.model_id = fitter._model_id
         self.tokenizer = fitter._tokenizer
@@ -739,6 +741,9 @@ class _FitRun:
         self.request = request
         self.on_progress = on_progress
         self.cancel_event = cancel_event
+        #: The graceful stop (``fit_lens``'s ``stop_event``): finish the
+        #: document in flight, checkpoint, then raise.
+        self.stop_event = stop_event
         #: Set once the resident lens was evicted ahead of a checkpoint load,
         #: with the live configuration it had (restored on adoption).
         self.evicted_early = False
@@ -828,6 +833,7 @@ class _FitRun:
             progress_base=start,
             input_id_rows=self.identity.corpus.id_rows(start),
             cancel_event=self.cancel_event,
+            stop_event=self.stop_event,
             initial=initial,
             spec=self.spec,
         )
