@@ -74,6 +74,12 @@ try {
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(edgeLabelCache.size, 0, "restored chats cannot receive old edge responses");
 
+  // Regression: a reply's "perplexity N" came only from the live done frame, so a reload dropped it;
+  // the node keeps the same rollup.
+  applyTreeSnapshot({ ...snapshot, rev: 8, nodes: snapshot.nodes.map((n) => (n.id === "b" ? { ...n, mean_logprob: -0.18 } : n)) });
+  syncChatLogFromTree();
+  assert.equal(chatLog.turns.find((turn) => turn.nodeId === "b")?.meanLogprob, -0.18);
+
   genStatus.active = true;
   loomTree.pendingNodeId = "b";
   applyTreeDelta({ rev: 9, updated: [{ ...loomTree.nodes.get("b"), text: "", finish_reason: null }] });

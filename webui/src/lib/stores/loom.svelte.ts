@@ -152,6 +152,8 @@ function nodeToTurn(n: LoomNodeJSON): ChatTurn {
     appliedSteering: n.applied_steering ?? null,
     aggregateReadings: n.aggregate_readings ?? undefined,
     finishReason: n.finish_reason ?? undefined,
+    // The same rollup the live done frame carries (read off this node), so a reload keeps it.
+    meanLogprob: n.mean_logprob ?? null,
   };
   if (n.tokens && n.tokens.length > 0) {
     turn.tokens = n.tokens.map((r) => {
@@ -271,6 +273,8 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
         prev.appliedSteering = node.applied_steering ?? null;
         prev.aggregateReadings = node.aggregate_readings ?? prev.aggregateReadings;
         prev.finishReason = node.finish_reason ?? prev.finishReason;
+        // A settled node's rollup (an edit clears it); a streaming one keeps the live value.
+        if (node.finish_reason !== null) prev.meanLogprob = node.mean_logprob ?? null;
         // Server-shipped node tokens are authoritative. Preserve the live
         // arrays only until the finalized node snapshot carries them.
         if (node.finish_reason !== null || (prev.tokens?.length ?? 0) === 0) {
