@@ -415,7 +415,7 @@
               <li class="mf-row stack rise" style:--i={i} {...{ "aria-description": (m.description || key) }}>
                 <span class="mf-id">
                   <span class="mf-name">{key}</span>
-                  <span class="meta">{m.domain_label} · {m.node_count} nodes{badge ? ` · ${badge}` : ""}</span>
+                  <span class="meta">{m.domain_label} · {m.node_count} {m.node_count === 1 ? "node" : "nodes"}{badge ? ` · ${badge}` : ""}</span>
                 </span>
                 <span class="mf-end">
                   {#if fit.word}<span class="meta">{fit.word}</span>{/if}
@@ -461,7 +461,7 @@
               <li class="mf-row stack rise" style:--i={i} {...{ "aria-description": (row.description || target) }}>
                 <span class="mf-id">
                   <span class="mf-name">{target}</span>
-                  <span class="meta">{row.domain_label} · {row.node_count} nodes{badge ? ` · ${badge}` : ""}{row.tensor_models.length > 0 ? ` · ${row.tensor_models.length} fit${row.tensor_models.length === 1 ? "" : "s"}` : ""}</span>
+                  <span class="meta">{row.domain_label} · {row.node_count} {row.node_count === 1 ? "node" : "nodes"}{badge ? ` · ${badge}` : ""}{row.tensor_models.length > 0 ? ` · ${row.tensor_models.length} fit${row.tensor_models.length === 1 ? "" : "s"}` : ""}</span>
                   {#if inFlight && installStage}
                     <span class="meta stage" aria-live="polite"><MorphText text={installStage} /></span>
                   {/if}

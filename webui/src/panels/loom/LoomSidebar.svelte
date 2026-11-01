@@ -1566,7 +1566,7 @@
       <ul class="examples">
         <li><code>agg:angry.calm &gt; 0.4</code></li>
         <li><code>starred, text:fox</code></li>
-        <li><code>sort:surprise, agg:honest &lt; 0</code></li>
+        <li><code>sort:surprise, agg:deceptive &gt; 0.5</code></li>
       </ul>
     </div>
   {/if}

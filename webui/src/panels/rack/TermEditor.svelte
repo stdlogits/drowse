@@ -213,13 +213,14 @@
 
   // ---------- which part (all of a concept, or only or all but its part along a second one)
 
-  /** The flat two-node concepts a projection relates to, by their rack name. */
+  /** The flat one- and two-node concepts a projection relates to (each folds to one direction:
+   *  ``deceptive``, ``formal.casual``), by their rack name. */
   const concepts = $derived(steerRack.catalog
-    .filter(row => row.node_count === 2 && fitGeometry(row) === "flat")
+    .filter(row => (row.node_count === 1 || row.node_count === 2) && fitGeometry(row) === "flat")
     .map(row => `${row.namespace}/${row.name}`));
   const part = $derived<"all" | "~" | "|">(entry.mode === "projection" ? entry.operator : "all");
   /** A concept's catalog name (``ns/name``), whichever way a term wrote it (an agent may write the
-   *  bare ``honest.deceptive``). */
+   *  bare ``formal.casual``). */
   function catalogName(written: string): string {
     const row = manifoldByName(written);
     return row ? `${row.namespace}/${row.name}` : written;

@@ -166,7 +166,7 @@
                 />
                 <span class="mf-id">
                   <span class="mf-name">{key}</span>
-                  <span class="meta">{m.domain_label} · {m.node_count} nodes · {m.fit_mode}</span>
+                  <span class="meta">{m.domain_label} · {m.node_count} {m.node_count === 1 ? "node" : "nodes"} · {m.fit_mode}</span>
                 </span>
                 <span class="tick" aria-hidden="true">{#if selected.has(key)}<span class="glyph" in:fadeIn><Icon name="check" /></span>{/if}</span>
               </label>

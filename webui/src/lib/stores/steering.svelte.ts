@@ -43,7 +43,7 @@ import { enqueueOrApply } from "./pending.svelte";
 const DEFAULT_SUBSPACE_ALONG = 0.5;
 
 export interface SteerRack {
-  /** Rack key = atom display form (``honest``, ``ns/foo``, ``happy.sad``,
+  /** Rack key = atom display form (``deceptive``, ``ns/foo``, ``happy.sad``,
    *  ``personas``).  One entry per name; ``mode`` discriminates subspace
    *  (flat) vs manifold (curved).  Variant lives on the entry, not the key —
    *  matching the drowse parser's Steering.alphas semantics. */
@@ -331,8 +331,8 @@ export function setSubspaceAlong(along: number): void {
   });
 }
 
-/** Add a flat (subspace) term.  A 2-node concept defaults to its positive
- *  pole (label form); a higher-rank flat (personas) to the domain centroid;
+/** Add a flat (subspace) term.  A 1- or 2-node concept defaults to its first
+ *  node, the positive pole (label form); a higher-rank flat (personas) to the domain centroid;
  *  an uncatalogued typed name to its positive pole label.  Magnitude is the
  *  shared ``subspaceAlong`` master, not per-card. */
 export function addSubspaceToRack(name: string, variant: Variant = "raw"): void {
@@ -341,7 +341,7 @@ export function addSubspaceToRack(name: string, variant: Variant = "raw"): void 
   const info = manifoldByName(name);
   let coords: number[] = [];
   let label: string | null = null;
-  if (info && info.node_count === 2 && info.node_labels.length > 0) {
+  if (info && (info.node_count === 1 || info.node_count === 2) && info.node_labels.length > 0) {
     label = info.node_labels[0];
     coords = info.node_coords?.[0] ? [...info.node_coords[0]] : [];
   } else if (info) {
