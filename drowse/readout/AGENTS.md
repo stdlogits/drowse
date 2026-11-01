@@ -384,11 +384,12 @@ is often below 1e-4 and is read on a log scale, so fixed places would zero it.
   depth_spread), each scalar reading whole (its `per_layer` is a lens probe's
   band or one unit or SAE layer), the lens readout's `aggregate`, the SAE
   features, the bindings and `scores`; `per_layer=True` adds
-  `GEOMETRY_TRACE_KEYS` and the readout's `layers`. A row nothing can replay
-  (`session/authored_capture.py`: authored rows carry no `raw_index`) and a
-  row of a call that set `persist_per_layer_scores` keep it with
-  `per_layer=True`. `subspace_coords_per_layer` (the inspector's live trail)
-  is never kept.
+  `GEOMETRY_TRACE_KEYS` and the readout's `layers`. A row of a call that set
+  `persist_per_layer_scores` (generated, or an authored prompt row that call
+  captured) keeps it with `per_layer=True`; every other row, an authored one
+  included, keeps `token_row_measurements` and replays the rest (an authored
+  row through its node's `prompt_capture`). `subspace_coords_per_layer` (the
+  inspector's live trail) is never kept.
 - `aggregate_measurements(envelope)` is what a loom node keeps of its reply's
   aggregate envelope (`LoomNode.aggregate_measurements`, stamped at
   finalize): the summary without traces and without `scores` (the node's

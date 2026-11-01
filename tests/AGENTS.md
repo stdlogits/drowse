@@ -185,6 +185,7 @@ files from it, so their paths are part of its interface:
 | `tests/fixtures/browser_steering_expression.json` | The parity test (accepted cases parse and match `referenced_selectors`; rejected ones raise `SteeringExprError`) and drowse.ai's TypeScript parser test. |
 | `tests/browser_drowse_archive_bridge.py` | drowse.ai's archive round-trip test runs `export\|install FIXTURE HOME ARCHIVE`. It calls `store.manifold_authoring.create_discover_manifold_folder`, `store.archive.export_drowse_archive`, `store.install.install_manifold` and `store.manifold_folder.ManifoldFolder`, so those signatures are seam too. |
 | `tests/fixtures/loom_tree_v2.json` | `webui/scripts/conversation-snapshot.test.mjs` (`npm run check`): a `tree_format` 2 tree save. No Python test reads it; keep it in step with the tree format. |
+| `tests/fixtures/token_rows.json` | `tests/loom/test_loom.py` and `webui/scripts/conversation-snapshot.test.mjs`: the token rows (`accepted`/`refused`) and authored nodes with their `prompt_capture` (`authored`) both readers accept and refuse; a shape change edits it on both sides at once. |
 
 - Never rename, move or reformat these files. The goldens are byte-frozen: a
   diff under `tests/fixtures/browser/` is a seam change, never a side effect of

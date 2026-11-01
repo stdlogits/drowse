@@ -176,9 +176,11 @@ through a bound run. Details: `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md`.
 
 `LoomTree` (`loom/tree.py`) is the session's authoritative conversation graph.
 A node records role and cast label, recipe, raw token ids, token rows with
-their measurements (slim for a generated token, section 7.4), the reply's
-aggregate readings and settled aggregate envelope, committed thinking, notes
-and stars. **Provenance is recipe presence**: a node with a `Recipe` was generated
+their measurements (slim for a generated or a captured prompt token, section
+7.4), the reply's aggregate readings and settled aggregate envelope, committed
+thinking, notes and stars. An authored node's prompt rows arrive once, from the
+first prefill that re-reads them, with their replay anchor (`prompt_capture`,
+section 7.5). **Provenance is recipe presence**: a node with a `Recipe` was generated
 (in either seat, since the model can speak the user seat), and `recipe=None`
 means authored. Rendering, transcripts, authored capture and joint logprobs all
 key on this; never infer provenance from `role`.
@@ -590,15 +592,19 @@ geometry reading's nearest nodes, assignment, residual, membership and depth;
 the lens and SAE readings, readouts and bindings; the unit readings) is the
 token view's, which replays the token (section 7.5) while a model is loaded;
 the lens and SAE replays and the anatomy return the attached probes' readings
-too. The node keeps its reply's settled aggregate once
+too. An authored prompt row is the same projection, replayed through its
+node's anchor (section 7.5). The node keeps its reply's settled aggregate once
 (`aggregate_measurements`: each reading's summary, no traces, no scores), which
-the rack and the probe inspector draw after a reload. A row nothing replays (an
-authored prompt row) and a row of a call with `persist_per_layer_scores` keep
-`summary_measurements(envelope, per_layer=True)`, every reading whole with its
-traces but never the probe inspector's subspace coordinates. A SmolLM2
-generated row's measurements with the 17 default probes are about 1.6 kB
-(about 2 kB a row with its alternatives; a summary row was about 9.7 kB),
-where the whole envelope is about 118 kB.
+the rack and the probe inspector draw after a reload. A row of a call with
+`persist_per_layer_scores` keeps `summary_measurements(envelope,
+per_layer=True)`, every reading whole with its traces but never the probe
+inspector's subspace coordinates. A SmolLM2 generated row's measurements with
+the 17 default probes are about 1.6 kB (about 2 kB a row with its
+alternatives; a summary row was about 9.7 kB), where the whole envelope is
+about 118 kB. A prompt row with those probes, a curved one and a lens pin
+under a live R lens is about 1.8 kB, where it was about 42 kB kept whole: a
+2,513-token paste is a 4.6 MB node and autosave record, where it was a 106 MB
+node past the dashboard's 64 MiB autosave limit.
 Bindings record source and steering context, so a historical row stays
 interpretable after the active lens or SAE changes; the lens binding names a
 source per lens family (`sources.R`, `sources.S`) that produced the row. A
@@ -610,6 +616,23 @@ instruments. The shape is pinned by
 ### 7.5 Replay and token drilldown
 
 Each generated token row stores a `raw_index` into its node's raw token ids.
+An authored turn's rows have none: their node carries a `PromptCapture`
+(`loom/tree.py`) written with them, and `raw_index` addresses its captured
+rows (thinking rows, then visible rows). It records what a replay of the
+capture needs and nothing that a later deletion could take away: the
+capturing call's steering, the render's resolved system prompt, thinking flag
+and flat mode, where each channel starts in that render, and the digest of
+the render before the later channel. The replay renders the path to the node
+with those parameters (no generation prompt), checks the head against the
+digest (an earlier turn edited since refuses, 400; an edit of the node's own
+text keeps reading the original, since its tokens come from the rows), and
+runs the head plus the channel's tokens before the anchored one as one
+prefill under the capture's steering. A prefill fires a term exactly when it
+has a prompt slot and no probe gate, so the expression's prompt-phase
+steering replays exactly and no gate or phase window refuses. The capture
+reads each prompt token cold (`Monitor.cold_reads`), as a replay does, so a
+curved probe's foot never depends on the token before. Unit activity, a whole
+decode record's read, refuses an authored turn.
 `loom/replay.py::TokenReplayer` backs every family's `token_readout`: it
 rebuilds the node's render and raw decode prefix to the producing position,
 runs the capture forward under the recorded recipe steering (or the unsteered
@@ -1014,8 +1037,13 @@ executable statement of why a boundary is strict.
   fits are explicit, expensive workflows.
 - Curved manifolds are slower than flat steering, and overlapping curved spans
   are rejected.
-- Replay reproduces always-active affine steering exactly and a probe-gated
-  history one forward a position, but cannot recreate a thinking-phase history.
+- Replay reproduces always-active affine steering exactly, a probe-gated
+  history one forward a position and a prompt token's capture under any
+  steering, but cannot recreate a thinking-phase history. A generated token's
+  curved-probe reading came from a foot solve warm-started on the token
+  before; its replay solves cold, so the foot-dependent parts of the token
+  view (per-layer coordinates, depth, residual) can sit in another local
+  minimum than the row's own coordinates.
 - Discover coordinates are model-specific, and `fit_mode=auto` can resolve flat
   on one model and curved on another, so a negative `%` coefficient pushes away
   on one and raises on the other.

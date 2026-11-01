@@ -319,13 +319,22 @@ scores attached geometry probes against a `return_hidden=True` capture.
 **Authored capture** (`authored_capture.py`). Authored loom text
 (`recipe is None`) has no token rows of its own; the first generation whose
 prefill renders it measures those positions from the same forward and writes
-them via `LoomTree.set_authored_token_scores`. Nothing is tokenized unless the
+them via `LoomTree.set_authored_capture`, with the node's replay anchor
+(`loom/tree.py::PromptCapture`: this call's recipe steering, the render's
+resolved system prompt, thinking flag and flat mode, each channel's first
+render position and the digest of the render before the later channel). A
+node is captured once, both channels from one render; it stays pending only
+while it has no capture. Each row keeps what a generated row keeps
+(`token_row_measurements`), or every reading whole when the call set
+`persist_per_layer_scores`; the token view replays the rest through the
+anchor (`loom/replay.py`). Nothing is tokenized unless the
 Monitor or a live lens/SAE consumer will record. Matching walks backward,
 bounded before the generation header, and retries whitespace-stripped text
 (Gemma templates trim content). The first suffix token after a prefix-cache hit
-has no producer row and stays unscored. Rows persist on the first step
-callback, before the step sink advances curved feet. Row and envelope shapes
-are the loom token-row contract the browser runtime replays.
+has no producer row and stays unscored (its row replays like any other). Rows
+persist on the first step callback, before the step sink advances curved feet.
+Row and envelope shapes are the loom token-row contract the browser runtime
+replays.
 
 ## Conversation
 

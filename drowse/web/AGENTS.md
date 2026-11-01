@@ -150,8 +150,15 @@ which carries it whole; a generated loom token row keeps only what the thread's 
 rack's trace and the tree filter read (`token_row_measurements`: the `scores` and each geometry
 reading's `fraction` and `coords`, at 6 significant digits; `TokenRowMeasurementsJSON`), so a
 finished reply's token view and hover replay the rest of the token (geometry summaries and
-layers, the lens and SAE readings, chips and features). A row kept whole (an authored row, or a
-call that set `persist_per_layer_scores`, which the dashboard does not) carries every reading
+layers, the lens and SAE readings, chips and features). A captured prompt (authored) row is the
+same projection, replayed through its node's `prompt_capture`: rehydration gives each prompt
+token its place among the node's captured rows (`TokenScore.promptIndex`, thinking rows first,
+`lib/tokenRows.ts::authoredRowIndex`), and the token view, its anatomy and the hover replay at
+`replayIndex(token)` (`rawIndex ?? promptIndex`) under the steering `drawers/token/readings.ts
+::replayAnchor` names (the capture's for a prompt token). A prompt token has no `rawIndex`, so it
+never forks. The snapshot and autosave validators run the loom reader's capture rule
+(`promptCaptureProblem`; `tests/fixtures/token_rows.json`'s `authored` cases). A row kept whole
+(a call that set `persist_per_layer_scores`, which the dashboard does not) carries every reading
 with its traces. The reply's settled reading rides the node (`aggregate_measurements`), which the
 rack and the probe inspector draw after a reload. It is `"aggregate"` on
 `done.result.measurements`, and `"replay"` (with `provenance: "replayed"`) from

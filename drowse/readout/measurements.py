@@ -55,11 +55,11 @@ envelope's own precision (a probability of 3e-05 keeps its value).  The rest
 of a token's reading (a geometry reading's nearest nodes, assignment,
 residual, membership and depth; the lens and SAE readings, readouts and
 bindings; the unit readings) is the token view's, which replays the token
-(``token_readout``, ``token_anatomy``) while a model is loaded.  A row
-nothing can replay (an authored prompt row has no ``raw_index``), and a row
-whose generation set ``persist_per_layer_scores``, keeps
-:func:`summary_measurements` with its traces instead: every reading whole
-but the inspector's live trail.  The node keeps its reply's settled aggregate
+(``token_readout``, ``token_anatomy``) while a model is loaded; an authored
+prompt row is the same projection, replayed through its node's
+``prompt_capture``.  A row whose generation set
+``persist_per_layer_scores`` keeps :func:`summary_measurements` with its
+traces instead: every reading whole but the inspector's live trail.  The node keeps its reply's settled aggregate
 once (:func:`aggregate_measurements`), which the rack and the probe inspector
 read.  The live ``token`` frame carries the whole envelope.
 
@@ -685,9 +685,9 @@ def summary_measurements(
     lens readout's ``layers``.  The probe inspector's
     ``subspace_coords_per_layer`` is a live trail and is never kept.
 
-    A token row nothing can replay (authored capture: no ``raw_index``) and
-    a row of a generation that set ``persist_per_layer_scores`` keep this
-    with ``per_layer=True``; a node keeps its aggregate through
+    A row of a generation that set ``persist_per_layer_scores`` (generated,
+    or an authored prompt row it captured) keeps this with
+    ``per_layer=True``; a node keeps its aggregate through
     :func:`aggregate_measurements`.
     """
     instruments = envelope["instruments"]
@@ -793,7 +793,8 @@ ROW_GEOMETRY_KEYS = ("fraction", "coords")
 
 
 def token_row_measurements(envelope: Measurements) -> TokenRowMeasurements:
-    """A generated loom token row's form of its token envelope.
+    """A loom token row's form of its token envelope (a generated row, and
+    an authored prompt row the first prefill that read it captured).
 
     The row keeps what the transcript's tint, the reply trace and the tree
     filter read per token without a model: the flat ``scores`` (every
@@ -801,8 +802,9 @@ def token_row_measurements(envelope: Measurements) -> TokenRowMeasurements:
     (a curved probe's trace reads its share, a multi-axis probe's tint its
     other coordinates), at ``READING_DIGITS`` significant digits.  Everything
     else is the token view's, which replays the token
-    (``token_readout``, ``token_anatomy``); the reply's settled reading rides
-    the node (:func:`aggregate_measurements`).
+    (``token_readout``, ``token_anatomy``; a prompt token through its node's
+    ``prompt_capture``); the reply's settled reading rides the node
+    (:func:`aggregate_measurements`).
     """
     instruments: dict[str, Any] = {}
     geometry = envelope["instruments"].get("geometry")
