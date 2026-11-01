@@ -5,6 +5,7 @@
   import { onMount } from "svelte";
   import { loomNavigate, loomTree } from "../../lib/stores/loom.svelte";
   import { loomUiState } from "../../lib/stores/loomUi.svelte";
+  import { loomNodeSnippet } from "../../lib/loomSearch";
   import { genStatus } from "../../lib/stores/chat.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
@@ -37,7 +38,7 @@
       out.push({
         node,
         model: node.role === "assistant",
-        snippet: node.text.trim().replace(/\s+/g, " ") || (node.id === loomTree.pendingNodeId ? "Writing…" : "Empty"),
+        snippet: loomNodeSnippet(node, node.id === loomTree.pendingNodeId ? "Writing…" : "Empty"),
         meta: parts.join(" · "),
       });
     }

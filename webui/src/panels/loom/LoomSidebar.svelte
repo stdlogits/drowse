@@ -70,7 +70,7 @@
   } from "./loomViewport";
   import type { LoomNodeJSON } from "../../lib/types";
   import { userFacingError } from "../../lib/runtime/userFacingError";
-  import { loomSearchExcerpt, loomTextMatches } from "../../lib/loomSearch";
+  import { loomNodeSnippet, loomSearchExcerpt, loomTextMatches } from "../../lib/loomSearch";
   
   import {
     pinchMetrics,
@@ -869,7 +869,7 @@
   }
 
   function readableNodeText(node: LoomNodeJSON): string {
-    return (node.text ?? "").replace(/\s+/g, " ").trim() || "Empty turn";
+    return loomNodeSnippet(node);
   }
 
   function nodeRole(node: LoomNodeJSON): string {
@@ -1907,7 +1907,7 @@
 
 {#if menu.open && menu.nodeId}
   {@const menuNode = loomTree.nodes.get(menu.nodeId)}
-  {@const menuPreview = (menuNode?.text ?? "").replace(/\s+/g, " ").trim() || "Empty turn"}
+  {@const menuPreview = menuNode ? loomNodeSnippet(menuNode) : "Empty turn"}
   {@const menuRole = menuNode?.role_label?.trim() || menuNode?.role || "turn"}
   {@const cmpParentId =
     menuNode?.recipe === null && menuNode?.role !== "system"

@@ -293,6 +293,14 @@ try {
   assert.equal(loomSearchExcerpt("x".repeat(200) + " HELLO world", "hello").match, "HELLO");
   assert.ok(loomSearchExcerpt("x".repeat(200) + " HELLO world", "hello").before.startsWith("…"));
 
+  // Regression: a reply that is all thinking read "Empty" in the loom.
+  const { loomNodeSnippet } = await server.ssrLoadModule("/src/lib/loomSearch.ts");
+  assert.equal(loomNodeSnippet({ text: " Hi\n there ", thinking_text: null }), "Hi there");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: "hmm", thinking_tokens: [1, 2, 3] }), "Thinking only · 3 tokens");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: "hmm", thinking_tokens: null }), "Thinking only");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: null }), "Empty turn");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: "" }, "Empty"), "Empty");
+
   const varied = layoutLoom([
     { id: "short", parentId: null, depth: 0, height: 136 },
     { id: "long-a", parentId: "short", depth: 1, height: 236 },
