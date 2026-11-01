@@ -10,7 +10,7 @@ import torch
 
 from drowse.readout.types import ProbeReading, ScalarReading
 from drowse.loom.recipe import Recipe
-from drowse.loom.tree import LoomTree
+from drowse.loom.tree import LoomTree, PromptCapture, prompt_digest
 from drowse.session.authored_capture import (
     AuthoredPromptCapture,
     AuthoredPromptMatch,
@@ -136,7 +136,10 @@ def test_raw_and_targetless_plans_skip_the_content_render() -> None:
     reply = generated.begin_assistant(user, recipe=Recipe())
     generated.finalize_assistant(reply, text="said")
     next_node = generated.begin_assistant(user, recipe=Recipe())
-    generated.nodes[user].tokens = [{"token_id": 1, "text": "typed"}]  # captured
+    generated.set_authored_capture(user, PromptCapture(
+        steering=None, system_prompt=None, thinking=False, raw=False,
+        start=1, thinking_start=None, digest=prompt_digest([0]),
+    ), tokens=[{"token_id": 1, "text": "typed"}], thinking_tokens=None)  # captured
     plan, ends = _plan(generated, tok, next_node, monitor_active=True)
     assert plan is None and ends == []
 
@@ -192,8 +195,11 @@ def _reading(value: float) -> ProbeReading:
     )
 
 
-@pytest.mark.parametrize("matched", [True, False])
-def test_persist_writes_all_measurement_channels(matched: bool) -> None:
+@pytest.mark.parametrize(("matched", "per_layer"), [(True, True), (True, False), (False, False)])
+def test_persist_writes_all_measurement_channels(matched: bool, per_layer: bool) -> None:
+    """An authored row keeps what a generated row keeps (scores, geometry
+    share and coordinates) and the node its replay anchor; a call persisting
+    per-layer scores keeps every channel whole."""
     tree = LoomTree()
     user_id = tree.add_user_turn("x")
     tree.begin_assistant(user_id, recipe=Recipe(steering="0.2 formal"))
@@ -235,6 +241,8 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
         sae_active=True,
         readout_top_k=8,
         steering="0.2 formal",
+        system_prompt="be brief",
+        per_layer=per_layer,
     )
     if matched:
         assert capture.match(
@@ -255,9 +263,17 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
     assert set(row) == {"token_id", "text", "logprob", "perplexity", "measurements"}
     assert row["measurements"]["scores"] == {"formal": 0.25, "jlens/yes": 0.8, "sae/12": 0.5}
     instruments = row["measurements"]["instruments"]
-    assert set(instruments) == {"geometry", "lens", "sae"}
     assert instruments["geometry"]["readings"]["formal"]["coords"] == [0.25]
-    assert instruments["lens"]["readout"]["layers"][0]["tokens"][0]["id"] == 9
-    assert instruments["sae"]["readout"]["features"][0]["id"] == 12
+    if per_layer:
+        assert set(instruments) == {"geometry", "lens", "sae"}
+        assert instruments["lens"]["readout"]["layers"][0]["tokens"][0]["id"] == 9
+        assert instruments["sae"]["readout"]["features"][0]["id"] == 12
+    else:
+        assert set(instruments) == {"geometry"}
+        assert set(instruments["geometry"]["readings"]["formal"]) == {"fraction", "coords"}
     assert seen_top_k == {"lens": 8, "sae": 8}
     assert isinstance(capture.matches[0], AuthoredPromptMatch)
+    assert tree.nodes[user_id].prompt_capture == PromptCapture(
+        steering="0.2 formal", system_prompt="be brief", thinking=False, raw=False,
+        start=1, thinking_start=None, digest=prompt_digest([1]),
+    )

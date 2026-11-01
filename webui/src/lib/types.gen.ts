@@ -493,6 +493,7 @@ export interface LoomNodeDetailJSON {
   tokens: LoomTokenRowJSON[] | null;
   thinking_tokens: LoomTokenRowJSON[] | null;
   raw_token_ids: number[] | null;
+  prompt_capture: PromptCaptureJSON | null;
   children: string[];
 }
 
@@ -528,6 +529,7 @@ export interface LoomNodeJSON {
   tokens: LoomTokenRowJSON[] | null;
   thinking_tokens: LoomTokenRowJSON[] | null;
   raw_token_ids: number[] | null;
+  prompt_capture: PromptCaptureJSON | null;
 }
 
 /** ``LoomTree.to_dict(include_tokens=True)`` + the effective cast roster. */
@@ -837,6 +839,22 @@ export interface ProbeReadingJSON {
 
 export interface ProfileListResponse {
   profiles: VectorInfo[];
+}
+
+/**
+ * ``PromptCapture.to_dict()``: an authored node's prompt rows' replay
+ * anchor (the capturing call's steering, the render's system prompt,
+ * thinking flag and flat mode, where each channel starts, and the digest
+ * of the render before the later channel).
+ */
+export interface PromptCaptureJSON {
+  steering: string | null;
+  system_prompt: string | null;
+  thinking: boolean;
+  raw: boolean;
+  start: number | null;
+  thinking_start: number | null;
+  digest: string;
 }
 
 /** ``Recipe.to_dict()`` — the per-node reproducibility receipt. */

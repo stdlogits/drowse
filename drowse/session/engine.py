@@ -1001,6 +1001,7 @@ class GenerationEngine:
             monitor_active=monitor_active,
             lens_active=plan.lens,
             sae_active=plan.sae,
+            per_layer=plan.persists_layer_scores,
         )
         demand = self._reads.resolve_demand(
             want_hidden=spec.want_hidden,

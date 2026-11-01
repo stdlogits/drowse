@@ -28,6 +28,7 @@ in :mod:`drowse.loom.errors`.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import secrets
@@ -100,7 +101,7 @@ _NODE_FIELDS = frozenset({
     "starred", "notes", "created_at", "edited_at", "edit_count",
     "mean_logprob", "mean_surprise",
 })
-_TOKEN_FIELDS = frozenset({"tokens", "thinking_tokens", "raw_token_ids"})
+_TOKEN_FIELDS = frozenset({"tokens", "thinking_tokens", "raw_token_ids", "prompt_capture"})
 _NODE_FIELDS_WITH_TOKENS = _NODE_FIELDS | _TOKEN_FIELDS
 _TREE_FIELDS = frozenset({
     "tree_format", "drowse_version", "model_id", "session_id", "name", "rev",
@@ -278,6 +279,154 @@ def _check_lens_readout_ids(envelope: dict[str, Any]) -> None:
             )
 
 
+def prompt_digest(ids: Sequence[int]) -> str:
+    """The SHA-256 (hex) of ``ids`` written as decimal ids joined by commas
+    (UTF-8): how a :class:`PromptCapture` pins the render it was measured in."""
+    return hashlib.sha256(",".join(str(int(i)) for i in ids).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PromptCapture:
+    """Where an authored node's prompt rows were measured: their replay anchor.
+
+    A generation that re-reads an uncaptured authored turn measures its
+    tokens once, in the prefill (``session/authored_capture.py``).  The
+    node keeps what a replay needs to run that forward again, so the replay
+    never depends on the capturing reply, which may later be deleted:
+
+    - ``steering``: the capturing call's recipe steering.  A prompt token is
+      a prefill position, where a term fires exactly when it has a prompt
+      slot and no probe gate (:meth:`~drowse.steering.triggers.Trigger.active`),
+      so the whole expression replays the capture's prompt-phase steering.
+    - ``system_prompt``, ``thinking``, ``raw``: the render's resolved system
+      prompt, thinking flag and flat (raw) mode.
+    - ``start`` / ``thinking_start``: the render position of the first
+      visible / thinking row's token, ``None`` for a channel the capture
+      did not find (then the node has no rows for it).
+    - ``digest``: :func:`prompt_digest` of the render before the later
+      channel (the head).  A replay renders the path to the node with these
+      parameters, checks the head against it, and appends the channel's own
+      tokens from its rows (as a generated replay appends its raw decode
+      record), so an edit of the node's text keeps reading the original
+      while an edited earlier turn refuses instead of reading another prompt.
+
+    The node's captured tokens are addressed by one index, thinking rows
+    first, then visible rows (render order); rows carry no ``raw_index``.
+    """
+
+    steering: str | None
+    system_prompt: str | None
+    thinking: bool
+    raw: bool
+    start: int | None
+    thinking_start: int | None
+    digest: str
+
+    @property
+    def head_length(self) -> int:
+        """The positions :attr:`digest` covers: up to the later channel."""
+        return max(p for p in (self.start, self.thinking_start) if p is not None)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "steering": self.steering,
+            "system_prompt": self.system_prompt,
+            "thinking": self.thinking,
+            "raw": self.raw,
+            "start": self.start,
+            "thinking_start": self.thinking_start,
+            "digest": self.digest,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "PromptCapture":
+        if not isinstance(data, dict):
+            raise LoomTreeError("loom node field 'prompt_capture' must be an object or null")
+        require_fields(data, _PROMPT_CAPTURE_FIELDS, "loom prompt capture")
+        for name in ("steering", "system_prompt"):
+            if data[name] is not None and not isinstance(data[name], str):
+                raise LoomTreeError(f"prompt capture field {name!r} must be a string or null")
+        for name in ("thinking", "raw"):
+            if not isinstance(data[name], bool):
+                raise LoomTreeError(f"prompt capture field {name!r} must be a boolean")
+        for name in ("start", "thinking_start"):
+            value = data[name]
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                raise LoomTreeError(
+                    f"prompt capture field {name!r} must be a non-negative integer or null"
+                )
+        if data["start"] is None and data["thinking_start"] is None:
+            raise LoomTreeError("a prompt capture places at least one channel")
+        digest = data["digest"]
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+            c not in "0123456789abcdef" for c in digest
+        ):
+            raise LoomTreeError("prompt capture field 'digest' must be a SHA-256 hex digest")
+        return cls(
+            steering=data["steering"],
+            system_prompt=data["system_prompt"],
+            thinking=data["thinking"],
+            raw=data["raw"],
+            start=data["start"],
+            thinking_start=data["thinking_start"],
+            digest=digest,
+        )
+
+
+_PROMPT_CAPTURE_FIELDS = frozenset({
+    "steering", "system_prompt", "thinking", "raw", "start", "thinking_start", "digest",
+})
+
+
+def _check_prompt_capture(
+    capture: PromptCapture | None,
+    *,
+    recipe: Recipe | None,
+    tokens: list[Any] | None,
+    thinking_tokens: list[Any] | None,
+) -> None:
+    """An authored node's rows and its capture agree: rows exactly where the
+    capture placed a channel, none on a generated node, and no authored row
+    carrying a ``raw_index`` (its index is its place in the capture)."""
+    if recipe is not None:
+        if capture is not None:
+            raise LoomTreeError("a generated loom node has no prompt capture")
+        return
+    for name, rows, start in (
+        ("tokens", tokens, capture.start if capture is not None else None),
+        ("thinking_tokens", thinking_tokens,
+         capture.thinking_start if capture is not None else None),
+    ):
+        # An empty list is no rows (a turn opened by ``begin_assistant``).
+        if bool(rows) != (start is not None):
+            raise LoomTreeError(
+                f"an authored loom node has {name} exactly when its prompt_capture "
+                "places that channel (authored rows written before their replay "
+                "anchor are not read)"
+            )
+        for row in rows or ():
+            if not isinstance(row, dict):
+                continue  # _check_row_measurements refuses it
+            if "raw_index" in row:
+                raise LoomTreeError(
+                    "an authored token row has no raw_index (its index is its place "
+                    "in the node's prompt capture)"
+                )
+            token_id = row.get("token_id")
+            if not isinstance(token_id, int) or isinstance(token_id, bool):
+                raise LoomTreeError(
+                    "an authored token row carries its token_id (the replay appends it)"
+                )
+    if (
+        capture is not None and capture.start is not None
+        and capture.thinking_start is not None
+        and capture.thinking_start + len(thinking_tokens or ()) > capture.start
+    ):
+        raise LoomTreeError("a prompt capture's thinking channel must precede its visible one")
+
+
 @dataclass
 class LoomNode:
     """A single node in the loom tree.
@@ -354,6 +503,11 @@ class LoomNode:
     # ``None`` remains a legitimate current value for transcript-imported
     # turns, and is persisted explicitly rather than inferred from absence.
     raw_token_ids: list[int] | None = None
+    # An authored node's prompt rows' replay anchor (:class:`PromptCapture`),
+    # set with the rows by the one-shot authored capture; ``None`` for a
+    # generated node and an authored one no generation has measured yet.
+    # Persisted in the token sidecar beside the rows it anchors.
+    prompt_capture: PromptCapture | None = None
 
     @property
     def steering_expr(self) -> str | None:
@@ -393,6 +547,9 @@ class LoomNode:
             out["tokens"] = _copy_list(self.tokens)
             out["thinking_tokens"] = _copy_list(self.thinking_tokens)
             out["raw_token_ids"] = _copy_list(self.raw_token_ids)
+            out["prompt_capture"] = (
+                self.prompt_capture.to_dict() if self.prompt_capture is not None else None
+            )
         return out
 
     @classmethod
@@ -448,7 +605,7 @@ class LoomNode:
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a number or null"
                 )
-        for field_name in _TOKEN_FIELDS & data.keys():
+        for field_name in _TOKEN_FIELDS & data.keys() - {"prompt_capture"}:
             value = data[field_name]
             if value is not None and not isinstance(value, list):
                 raise LoomTreeError(
@@ -462,6 +619,15 @@ class LoomNode:
             for token_id in raw_token_ids
         ):
             raise LoomTreeError("loom node raw_token_ids must contain integers")
+        raw_capture = data.get("prompt_capture")
+        prompt_capture = (
+            PromptCapture.from_dict(raw_capture) if raw_capture is not None else None
+        )
+        if "tokens" in data:
+            _check_prompt_capture(
+                prompt_capture, recipe=recipe,
+                tokens=data["tokens"], thinking_tokens=data["thinking_tokens"],
+            )
         return cls(
             id=data["id"],
             parent_id=data["parent_id"],
@@ -484,6 +650,7 @@ class LoomNode:
             mean_logprob=data["mean_logprob"],
             mean_surprise=data["mean_surprise"],
             raw_token_ids=data.get("raw_token_ids"),
+            prompt_capture=prompt_capture,
         )
 
 
@@ -961,21 +1128,25 @@ class LoomTree:
                     node.tokens = []
                 node.tokens.append(score)
 
-    def set_authored_token_scores(
+    def set_authored_capture(
         self,
         node_id: str,
-        scores: list[TokenRow],
+        capture: PromptCapture,
         *,
-        thinking: bool = False,
+        tokens: list[TokenRow] | None,
+        thinking_tokens: list[TokenRow] | None,
     ) -> None:
-        """Attach captured prompt-token measurements to an authored node.
+        """Attach an authored node's captured prompt rows and their anchor.
 
-        Unlike :meth:`append_token`, this is a one-shot tree mutation: prompt
-        rows arrive together after prefill, so the revision advances once and
-        clients receive the updated node through the ordinary loom delta.
-        Existing rows are never merged here; the session calls this only for a
-        previously uncaptured authored channel so its original capture remains
-        immutable across later generations.
+        One-shot per node: the first generation that measures the node's
+        prompt tokens sets both channels at once (``None`` for a channel it
+        did not find) with the :class:`PromptCapture` that replays them, so
+        the capture and the index it defines (thinking rows, then visible
+        rows) stay immutable across later generations.  Unlike
+        :meth:`append_token`, the rows arrive together after the prefill:
+        the revision advances once and clients receive the node through the
+        ordinary loom delta.  Refuses a generated node and a node already
+        captured.
         """
         with self._lock:
             node = self.nodes.get(node_id)
@@ -983,12 +1154,23 @@ class LoomTree:
                 raise UnknownNodeError(node_id)
             if node.recipe is not None:
                 raise InvalidNodeOperationError(
-                    "set_authored_token_scores requires an authored node"
+                    "set_authored_capture requires an authored node"
                 )
-            if thinking:
-                node.thinking_tokens = list(scores)
-            else:
-                node.tokens = list(scores)
+            if node.prompt_capture is not None:
+                raise InvalidNodeOperationError(
+                    f"authored node {node_id!r} was already captured"
+                )
+            new_tokens = list(tokens) if tokens is not None else None
+            new_thinking = list(thinking_tokens) if thinking_tokens is not None else None
+            try:
+                _check_prompt_capture(
+                    capture, recipe=None, tokens=new_tokens, thinking_tokens=new_thinking,
+                )
+            except LoomTreeError as error:
+                raise InvalidNodeOperationError(str(error)) from error
+            node.tokens = new_tokens
+            node.thinking_tokens = new_thinking
+            node.prompt_capture = capture
             self.rev += 1
             self._emit(LoomMutated(
                 op="capture_authored",
@@ -1109,6 +1291,7 @@ class LoomTree:
                 node.thinking_text = (node.thinking_text or "") + thinking_text
             node.tokens = None
             node.thinking_tokens = None
+            node.prompt_capture = None
             node.recipe = None
             node.aggregate_readings = {}
             node.aggregate_measurements = None
@@ -1653,6 +1836,10 @@ class LoomTree:
                         "tokens": node.tokens,
                         "thinking_tokens": node.thinking_tokens,
                         "raw_token_ids": node.raw_token_ids,
+                        "prompt_capture": (
+                            node.prompt_capture.to_dict()
+                            if node.prompt_capture is not None else None
+                        ),
                     }
             token_payload = None
             if token_nodes:
@@ -1766,5 +1953,7 @@ class LoomTree:
 __all__ = [
     "LoomNode",
     "LoomTree",
+    "PromptCapture",
     "TREE_FORMAT_VERSION",
+    "prompt_digest",
 ]

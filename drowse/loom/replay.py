@@ -4,7 +4,11 @@
 ``token_readout`` (geometry, lens, SAE).  It resolves the ``(node_id,
 raw_index)`` anchor, reopens the node's recorded steering, rebuilds the
 node's render (continue-mode, or the flat raw buffer) plus the raw decode
-prefix, and runs one capture forward pooled at the producing position.  The
+prefix, and runs one capture forward pooled at the producing position.  An
+authored turn's captured prompt token replays the same way through the
+node's :class:`~drowse.loom.tree.PromptCapture`: the capture's render up to
+the token's channel (checked against its digest) plus the channel's tokens
+before it, as one prefill under the capturing call's steering.  The
 family's own read runs inside the exclusive-GPU section through ``read``, so
 device work never races a generation.  A token fork addresses tokens through
 the same anchor (:func:`drowse.loom.ops.resolve_token_anchor`).
@@ -29,7 +33,14 @@ import torch.nn as nn
 from drowse.base.exclusive import ExclusiveGuard
 from drowse.errors import SteeringCompositionError
 from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT
-from drowse.loom.ops import TokenAnchor, resolve_token_anchor
+from drowse.loom.ops import (
+    PromptAnchor,
+    TokenAnchor,
+    resolve_prompt_anchor,
+    resolve_token_anchor,
+)
+from drowse.loom.errors import InvalidNodeOperationError
+from drowse.loom.tree import prompt_digest
 from drowse.model.chat import logits_keep_kwarg
 from drowse.readout.replay import ReplayedToken, ReplayLayers
 from drowse.steering.triggers import Trigger, TriggerContext
@@ -53,7 +64,13 @@ class ReplayForward:
     it over: ``ids`` ``[1, T]`` (the node's prompt render, then its raw
     decode record before the anchored token), ``prompt_length`` (the render's
     length, so raw token ``i`` is produced at position ``prompt_length + i −
-    1``), the node's whole raw decode record and the anchored raw index."""
+    1``), the node's whole raw decode record and the anchored raw index.
+
+    An authored turn's prompt token is all prompt: ``ids`` is the capture's
+    render before the token, ``prompt_length`` its whole length (one
+    prefill, no decode position), ``raw_ids`` the node's captured tokens
+    (thinking, then visible) and ``raw_index`` the token's index there.
+    :meth:`producing_position` describes a generated node only."""
 
     ids: torch.Tensor
     prompt_length: int
@@ -123,13 +140,21 @@ def replay_segments(
     refused.  Raises :class:`~drowse.errors.SteeringCompositionError` (422)
     for a probe gate without ``gate`` and, when the family can think
     (``can_think``), for a thinking-phase window (``@after``, ``@thinking``),
-    whose firing follows the decode loop's thinking state.
+    whose firing follows the decode loop's thinking state, both only when
+    there is a decode position to replay (``length > prompt_length``): the
+    prefill fires neither.
     """
     windowed = list(dict.fromkeys(t for t in triggers if t != Trigger.BOTH))
     if not windowed:
         return (ReplaySegment(0, int(length), prefill=False, gen_step=0),)
-    gated = any(t.generated and t.gate is not None for t in windowed)
-    phased = can_think and any(t.generated and t.thinking != t.response for t in windowed)
+    # A replay with no decode position (a prompt token, or raw token 0) is
+    # the prefill alone, where every trigger reads its prompt slot and a
+    # probe gate stays shut (``Trigger.active``): nothing to refuse.
+    decoded = int(length) > int(prompt_length)
+    gated = decoded and any(t.generated and t.gate is not None for t in windowed)
+    phased = decoded and can_think and any(
+        t.generated and t.thinking != t.response for t in windowed
+    )
     if (gated and gate is None) or phased:
         what = " and ".join(
             label for label, present in (
@@ -413,12 +438,52 @@ class TokenReplayer:
         ``apply_steering``), exactly where :meth:`__call__` runs its capture;
         it owns its forward, hooks and reads.  Anchoring a node's last raw
         token gives the forward that covers every token's producing position.
+
+        Provenance is recipe presence: an authored node's ``raw_index``
+        addresses its captured prompt tokens (thinking rows, then visible
+        rows; :func:`~drowse.loom.ops.resolve_prompt_anchor`), replayed in
+        the render and under the steering its capture recorded, so ``raw``
+        (a generated node's render choice, which it does not record) does
+        not apply.
         """
-        anchor = resolve_token_anchor(self._tree(), node_id, raw_index, label=label)
+        tree = self._tree()
+        if tree.get(node_id).recipe is None:
+            prompt = resolve_prompt_anchor(tree, node_id, raw_index, label=label)
+            steering = prompt.capture.steering if apply_steering else None
+            return self._run(
+                steering, label=label, run=run, gated=False,
+                ids=lambda: self._prompt_ids(prompt, label=label),
+                raw_ids=prompt.token_ids, raw_index=prompt.index,
+                token_id=prompt.token_id, node_id=node_id,
+            )
+        anchor = resolve_token_anchor(tree, node_id, raw_index, label=label)
         recipe = anchor.node.recipe
         steering = (
             recipe.steering if (apply_steering and recipe is not None) else None
         )
+        return self._run(
+            steering, label=label, run=run, gated=True,
+            ids=lambda: self._producing_ids(anchor, raw=raw),
+            raw_ids=anchor.raw_ids, raw_index=anchor.raw_index,
+            token_id=anchor.token_id, node_id=node_id,
+        )
+
+    def _run(
+        self,
+        steering: str | None,
+        *,
+        label: str,
+        run: Callable[[ReplayForward], T],
+        gated: bool,
+        ids: Callable[[], torch.Tensor],
+        raw_ids: tuple[int, ...],
+        raw_index: int,
+        token_id: int,
+        node_id: str,
+    ) -> tuple[ReplayedToken, T]:
+        """Open ``steering``, take the exclusive-GPU section, build the
+        producing ids there and hand ``run`` the :class:`ReplayForward`
+        (its last ``raw_index`` positions decoded, the rest prompt)."""
         # The steering scope opens OUTSIDE the exclusive-GPU section: the
         # composer's push/pop take the generation lock blocking, so nesting
         # the scope inside the exclusive guard would self-deadlock.
@@ -431,31 +496,68 @@ class TokenReplayer:
                 # The render uploads the ids to the model's device, which is
                 # device work like the forward's: outside the section it would
                 # share MPS's one command buffer with whatever thread holds it.
-                ids = self._producing_ids(anchor, raw=raw)
+                producing = ids()
+                decoded = raw_index if gated else 0
                 # A probe-gated steering replays one decode position at a
                 # time, its gates scored by a gate-only capture bound here.
-                gated = steering is not None and self._gate_reads is not None and any(
-                    t.generated and t.gate is not None for t in self._open_triggers()
+                stepped = (
+                    decoded > 0 and steering is not None
+                    and self._gate_reads is not None
+                    and any(t.generated and t.gate is not None for t in self._open_triggers())
                 )
-                gates = self._gate_reads() if gated and self._gate_reads else nullcontext(None)
+                gates = self._gate_reads() if stepped and self._gate_reads else nullcontext(None)
                 with gates as gate:
                     result = run(ReplayForward(
-                        ids=ids,
-                        prompt_length=int(ids.shape[1]) - anchor.raw_index,
-                        raw_ids=anchor.raw_ids,
-                        raw_index=anchor.raw_index,
+                        ids=producing,
+                        prompt_length=int(producing.shape[1]) - decoded,
+                        raw_ids=raw_ids,
+                        raw_index=raw_index,
                         gate=gate,
                     ))
         return (
             ReplayedToken(
                 node_id=node_id,
-                raw_index=anchor.raw_index,
-                token_id=anchor.token_id,
-                token_text=str(self._tokenizer.decode([anchor.token_id])),
+                raw_index=raw_index,
+                token_id=token_id,
+                token_text=str(self._tokenizer.decode([token_id])),
                 steering=steering,
             ),
             result,
         )
+
+    def _prompt_ids(self, anchor: PromptAnchor, *, label: str) -> torch.Tensor:
+        """The token stream that produced an authored prompt token: the
+        capture's render of the path to the node (its parameters from the
+        anchor, without a generation prompt) up to the token's channel,
+        checked against the anchor's digest, then the channel's tokens
+        before it from the node's rows.  An earlier turn edited since the
+        capture (or a template that renders the turn otherwise when it is
+        the last) fails the check, and the replay refuses rather than read
+        another prompt."""
+        capture = anchor.capture
+        rendered = self._renderer.prepare_input(
+            None,
+            raw=capture.raw,
+            thinking=capture.thinking,
+            parent_node_id=anchor.node.id,
+            system_prompt=capture.system_prompt,
+            add_generation_prompt=False,
+        )
+        head = capture.head_length
+        if int(rendered.shape[1]) < head or prompt_digest(
+            rendered[0, :head].tolist(),
+        ) != capture.digest:
+            raise InvalidNodeOperationError(
+                f"{label}: the prompt {anchor.node.id!r} was measured in no longer "
+                f"renders the same (an earlier turn changed since), so its tokens "
+                f"cannot be replayed"
+            )
+        ids = rendered[:, :anchor.channel_start]
+        prefix = anchor.channel_prefix
+        if not prefix:
+            return ids
+        tail = torch.tensor([prefix], dtype=ids.dtype, device=ids.device)
+        return torch.cat([ids, tail], dim=1)
 
     def _producing_ids(self, anchor: TokenAnchor, *, raw: bool) -> torch.Tensor:
         """The token stream the producing forward saw: the node's prompt

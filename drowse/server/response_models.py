@@ -294,6 +294,21 @@ class CastMemberJSON(TypedDict):
     origin: NotRequired[str]
 
 
+class PromptCaptureJSON(TypedDict):
+    """``PromptCapture.to_dict()``: an authored node's prompt rows' replay
+    anchor (the capturing call's steering, the render's system prompt,
+    thinking flag and flat mode, where each channel starts, and the digest
+    of the render before the later channel)."""
+
+    steering: str | None
+    system_prompt: str | None
+    thinking: bool
+    raw: bool
+    start: int | None
+    thinking_start: int | None
+    digest: str
+
+
 class LoomNodeJSON(TypedDict):
     """``LoomNode.to_dict(include_tokens=True)``.
 
@@ -326,6 +341,7 @@ class LoomNodeJSON(TypedDict):
     tokens: list[dict[str, Any]] | None
     thinking_tokens: list[dict[str, Any]] | None
     raw_token_ids: list[int] | None
+    prompt_capture: PromptCaptureJSON | None
 
 
 class LoomNodeDetailJSON(LoomNodeJSON):

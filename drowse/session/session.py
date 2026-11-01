@@ -1580,6 +1580,7 @@ class DrowseSession:
         monitor_active: bool,
         lens_active: bool,
         sae_active: bool,
+        per_layer: bool = False,
     ) -> AuthoredPromptCapture | None:
         """This generation's authored-prefill capture policy, or ``None``.
 
@@ -1588,6 +1589,8 @@ class DrowseSession:
         the generation prompt, so a target never matches inside the
         generation header; see
         :func:`drowse.session.authored_capture.plan_authored_capture`.
+        ``per_layer`` (the call's ``persist_per_layer_scores``) keeps the
+        rows whole.
         """
         return plan_authored_capture(
             self.tree, self._tokenizer, assistant_node_id, raw=spec.raw,
@@ -1598,6 +1601,9 @@ class DrowseSession:
             lens_active=lens_active,
             sae_active=sae_active,
             readout_top_k=spec.readout_top_k,
+            system_prompt=self._renderer.resolve_system_prompt(spec.system_prompt),
+            thinking=use_thinking,
+            per_layer=per_layer,
             content_end=lambda: int(self._renderer.prepare_input(
                 spec.input,
                 raw=False,

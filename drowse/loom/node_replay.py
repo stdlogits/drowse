@@ -71,6 +71,7 @@ from typing_extensions import TypedDict
 
 from drowse.errors import RequestError
 from drowse.lens.read import LensRead, VectorRead
+from drowse.loom.errors import InvalidNodeOperationError
 from drowse.loom.ops import resolve_token_anchor
 from drowse.loom.replay import (
     ReplayForward,
@@ -1016,6 +1017,14 @@ class NodeReplayer:
         refs = [self._units.parse(selector) for selector in units]
         if len({ref.qualified for ref in refs}) != len(refs):
             raise RequestError("units names a unit twice")
+        if self._tree().get(node_id).recipe is None:
+            # An authored turn's tokens are prompt positions of whichever
+            # generation captured them, not one decode record: each replays
+            # on its own (the token readouts and the anatomy).
+            raise InvalidNodeOperationError(
+                f"session.unit_activity: {node_id!r} is an authored turn; unit "
+                f"activity reads a generated turn's decode"
+            )
         anchor = resolve_token_anchor(
             self._tree(), node_id, 0 if raw_index is None else int(raw_index),
             label="session.unit_activity",

@@ -72,7 +72,7 @@ class TestTreeGet:
             "/drowse/v1/sessions/default/tree",
             json={"tree": saved},
         )
-        assert restored.status_code == 200
+        assert restored.status_code == 200, restored.json()
         body = restored.json()
         assert body["nodes"] == 3
         assert body["active_node_id"] == assistant_id
@@ -102,7 +102,7 @@ class TestTreeGet:
         lens rows.  The restore now refuses another envelope version."""
         session, client = session_and_client
         user_id = session.tree.add_user_turn("saved branch")
-        assistant_id = session.tree.begin_assistant(user_id)
+        assistant_id = session.tree.begin_assistant(user_id, recipe=Recipe())
         session.tree.finalize_assistant(assistant_id, text="saved reply")
         saved = client.get("/drowse/v1/sessions/default/tree").json()
         node = next(n for n in saved["nodes"] if n["id"] == assistant_id)

@@ -27,7 +27,12 @@ from drowse import (
 )
 from drowse.loom.errors import LoomTreeError
 from drowse.loom.ops import append_turn, check_user_send_target
-from drowse.loom.tree import TOKEN_SIDECAR_FORMAT_VERSION, TREE_FORMAT_VERSION
+from drowse.loom.tree import (
+    TOKEN_SIDECAR_FORMAT_VERSION,
+    TREE_FORMAT_VERSION,
+    PromptCapture,
+    prompt_digest,
+)
 from drowse.readout.measurements import MEASUREMENTS_VERSION
 from drowse.loom import tree as loom
 
@@ -100,7 +105,31 @@ def test_begin_and_finalize_assistant():
     assert t.nodes[aid].finish_reason == "stop"
 
 
-def test_set_authored_token_scores_is_one_tree_mutation():
+def _capture(**overrides: Any) -> PromptCapture:
+    fields: dict[str, Any] = {
+        "steering": None, "system_prompt": None, "thinking": False, "raw": False,
+        "start": 3, "thinking_start": None, "digest": prompt_digest([1, 2, 3]),
+    }
+    fields.update(overrides)
+    return PromptCapture(**fields)
+
+
+_SLIM_ROW: dict[str, Any] = {
+    "token_id": 7,
+    "text": "hello",
+    "measurements": {
+        "version": MEASUREMENTS_VERSION,
+        "scope": "token",
+        "provenance": "captured",
+        "instruments": {
+            "geometry": {"readings": {"formal": {"fraction": 1.0, "coords": [0.25]}}},
+        },
+        "scores": {"formal": 0.25},
+    },
+}
+
+
+def test_set_authored_capture_is_one_tree_mutation():
     bus = EventBus()
     seen: list[LoomMutated] = []
     bus.subscribe(lambda e: seen.append(e) if isinstance(e, LoomMutated) else None)
@@ -108,21 +137,7 @@ def test_set_authored_token_scores_is_one_tree_mutation():
     uid = t.add_user_turn("hello")
     before = t.rev
 
-    t.set_authored_token_scores(uid, [
-        {
-            "token_id": 7,
-            "text": "hello",
-            "measurements": {
-                "version": MEASUREMENTS_VERSION,
-                "scope": "token",
-                "provenance": "captured",
-                "instruments": {
-                    "geometry": {"readings": {"formal": {"coords": [0.25]}}},
-                },
-                "scores": {"formal": 0.25},
-            },
-        },
-    ])
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
 
     assert t.rev == before + 1
     tokens = t.nodes[uid].tokens
@@ -130,8 +145,102 @@ def test_set_authored_token_scores_is_one_tree_mutation():
     assert tokens[0]["measurements"]["scores"] == {
         "formal": 0.25,
     }
+    assert t.nodes[uid].prompt_capture == _capture()
     assert seen[-1].op == "capture_authored"
     assert seen[-1].updated == (uid,)
+
+
+def test_set_authored_capture_is_one_shot_and_authored_only():
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    with pytest.raises(InvalidNodeOperationError, match="already captured"):
+        t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    reply = t.begin_assistant(uid, recipe=Recipe())
+    with pytest.raises(InvalidNodeOperationError, match="requires an authored node"):
+        t.set_authored_capture(reply, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    other = t.add_user_turn("again", parent_id=t.root_id)
+    # Rows exactly where the capture places a channel.
+    with pytest.raises(InvalidNodeOperationError, match="exactly when"):
+        t.set_authored_capture(
+            other, _capture(), tokens=None, thinking_tokens=[dict(_SLIM_ROW)],
+        )
+    with pytest.raises(InvalidNodeOperationError, match="no raw_index"):
+        t.set_authored_capture(
+            other, _capture(), tokens=[{**_SLIM_ROW, "raw_index": 0}], thinking_tokens=None,
+        )
+
+
+def test_append_authored_clears_the_prompt_capture():
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    t.append_authored(uid, " more")
+    node = t.nodes[uid]
+    assert node.tokens is None and node.prompt_capture is None
+
+
+def test_an_authored_node_round_trips_its_capture_through_the_sidecar(tmp_path: Path):
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    capture = _capture(thinking_start=1, start=3, steering="0.3 formal")
+    t.set_authored_capture(
+        uid, capture, tokens=[dict(_SLIM_ROW)], thinking_tokens=[dict(_SLIM_ROW)],
+    )
+    path = tmp_path / "tree.json"
+    t.save(path)
+    loaded = LoomTree.load(path)
+    assert loaded.nodes[uid].prompt_capture == capture
+    assert loaded.nodes[uid].tokens == [_SLIM_ROW]
+
+
+def _authored_node_dict(**overrides: Any) -> dict[str, Any]:
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    data = t.nodes[uid].to_dict(include_tokens=True)
+    data.update(overrides)
+    return data
+
+
+def test_the_reader_refuses_authored_rows_without_their_capture():
+    """Regression: authored prompt rows were stored whole (summary and every
+    trace, ~45 kB a token) because nothing could replay them.  The node now
+    carries their replay anchor; a node with authored rows and no anchor (the
+    old whole rows) is refused."""
+    from drowse.readout.measurements import GEOMETRY_SUMMARY_KEYS, GEOMETRY_TRACE_KEYS
+
+    whole_reading: dict[str, Any] = {key: 0.5 for key in GEOMETRY_SUMMARY_KEYS}
+    whole_reading.update({key: [0.5] for key in GEOMETRY_TRACE_KEYS})
+    old_row = {
+        "token_id": 7, "text": "hello", "logprob": None, "perplexity": None,
+        "measurements": {
+            "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+            "instruments": {"geometry": {"readings": {"formal": whole_reading}}},
+            "scores": {"formal": 0.5},
+        },
+    }
+    with pytest.raises(LoomTreeError, match="replay anchor"):
+        LoomNode.from_dict(_authored_node_dict(tokens=[old_row], prompt_capture=None))
+    # The anchored node reads, slim or (persist_per_layer_scores) whole.
+    assert LoomNode.from_dict(_authored_node_dict()).prompt_capture == _capture()
+    assert LoomNode.from_dict(_authored_node_dict(tokens=[old_row])).tokens == [old_row]
+    for bad in (
+        {"digest": "nope"},
+        {"start": None, "thinking_start": None},
+        {"thinking": 1},
+        {"start": -1},
+    ):
+        capture = {**_capture().to_dict(), **bad}
+        with pytest.raises(LoomTreeError, match="prompt capture"):
+            LoomNode.from_dict(_authored_node_dict(prompt_capture=capture))
+    # A generated node never carries one.
+    t = LoomTree()
+    reply = t.begin_assistant(t.add_user_turn("hi"), recipe=Recipe())
+    generated = t.nodes[reply].to_dict(include_tokens=True)
+    generated["prompt_capture"] = _capture().to_dict()
+    with pytest.raises(LoomTreeError, match="generated loom node has no prompt capture"):
+        LoomNode.from_dict(generated)
 
 
 def test_messages_for_active_path():
@@ -1429,6 +1538,31 @@ def test_shared_token_row_fixture_refuses(case: dict[str, Any]):
     _tree, raw = _row_tree(json.loads(json.dumps(case["row"])))
     with pytest.raises(LoomTreeError):
         LoomTree.from_dict(raw)
+
+
+def _authored_tree(fields: dict[str, Any]) -> dict[str, Any]:
+    tree = LoomTree()
+    uid = tree.add_user_turn("x")
+    raw = tree.to_dict(include_tokens=True)
+    next(n for n in raw["nodes"] if n["id"] == uid).update(fields)
+    return raw
+
+
+@pytest.mark.parametrize(
+    "case", _TOKEN_ROWS["authored"]["accepted"], ids=lambda case: case["name"],
+)
+def test_shared_authored_fixture_loads(case: dict[str, Any]):
+    """``token_rows.json``'s authored nodes, shared with the dashboard's
+    ``promptCaptureProblem``: a captured prompt turn reads with its anchor."""
+    assert LoomTree.from_dict(_authored_tree(json.loads(json.dumps(case["node"]))))
+
+
+@pytest.mark.parametrize(
+    "case", _TOKEN_ROWS["authored"]["refused"], ids=lambda case: case["name"],
+)
+def test_shared_authored_fixture_refuses(case: dict[str, Any]):
+    with pytest.raises(LoomTreeError):
+        LoomTree.from_dict(_authored_tree(json.loads(json.dumps(case["node"]))))
 
 
 def test_sidecar_token_rows_are_type_checked_by_the_node_reader(tmp_path: Path):

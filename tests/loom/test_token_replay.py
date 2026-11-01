@@ -23,7 +23,7 @@ from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
 from drowse.loom.errors import InvalidNodeOperationError, UnknownNodeError
 from drowse.loom.recipe import Recipe
 from drowse.readout.measurements import token_row_measurements
-from tests.support.replay import ReplayRig
+from tests.support.replay import PROMPT_RENDER, ReplayRig
 from tests.support.sessions import TinySessionFactory, register_vectors
 
 _LENS_CORPUS = [
@@ -226,7 +226,7 @@ def test_replay_rebuilds_the_producing_forward() -> None:
         "system_prompt": "Saved pirate instruction",
         "parent_node_id": rig.tree.get(node_id).parent_id,
         "user_role": None, "assistant_role": "guide",
-        "gen_seat": "assistant",
+        "gen_seat": "assistant", "add_generation_prompt": True,
     }]
 
 
@@ -332,11 +332,10 @@ def test_replay_refuses_a_bad_anchor_before_any_work() -> None:
 
     with pytest.raises(UnknownNodeError):
         replay("nope", 0)
-    # A committed user turn is a valid *shape* under the cast model (user-
-    # seat generated nodes are forkable/readable), but this one has no
-    # decode record, so it fails on that instead of its role.
+    # An authored turn addresses its captured prompt tokens, and this one
+    # no generation has measured yet.
     with pytest.raises(
-        InvalidNodeOperationError, match="test replay: .*no raw token record",
+        InvalidNodeOperationError, match="test replay: .*no generation has measured",
     ):
         replay(user_id, 0)
     # The system root stays out of bounds: not a turn at all.
@@ -346,7 +345,7 @@ def test_replay_refuses_a_bad_anchor_before_any_work() -> None:
         with pytest.raises(InvalidNodeOperationError, match="out of range"):
             replay(node_id, index)
     # A finalized turn without raw ids (transcript import).
-    bare = rig.tree.begin_assistant(user_id)
+    bare = rig.tree.begin_assistant(user_id, recipe=Recipe())
     rig.tree.finalize_assistant(bare, text="no raw record", finish_reason="stop")
     with pytest.raises(InvalidNodeOperationError, match="no raw token record"):
         replay(bare, 0)
@@ -384,3 +383,250 @@ def test_a_call_that_persists_the_traces_keeps_every_reading_whole(
     again = LoomTree.from_dict(session.tree.to_dict(include_tokens=True))
     assert again.get(node.id).aggregate_measurements == kept
     assert again.get(node.id).tokens == node.tokens
+
+
+# ---------------------------------------------------------------------------
+# Authored prompt tokens (the node's PromptCapture anchor)
+# ---------------------------------------------------------------------------
+
+
+def _capture_whole(session: Any, text: str, *, steering: str | None) -> tuple[Any, Any]:
+    """Generate after a fresh authored turn with every row kept whole
+    (``persist_per_layer_scores``): the capture's own full record.  Returns
+    the authored node and the reply."""
+    events: list[TokenEvent] = []
+    session.generate(
+        text, steering=steering, on_token=_live_consumer(events),
+        sampling=SamplingConfig(max_tokens=3, persist_per_layer_scores=True),
+    )
+    reply = session.tree.get(session.tree.active_node_id)
+    assert reply.parent_id is not None
+    return session.tree.get(reply.parent_id), reply
+
+
+def _close(got: Any, want: Any, *, path: str = "") -> None:
+    """``got`` is ``want`` up to replay rounding: numbers within 1e-4
+    relative (1e-5 absolute), everything else equal."""
+    if isinstance(want, bool) or want is None or isinstance(want, str):
+        assert got == want, path
+    elif isinstance(want, (int, float)):
+        assert got == pytest.approx(want, rel=1e-4, abs=1e-5), path
+    elif isinstance(want, dict):
+        assert set(got) == set(want), path
+        for key, value in want.items():
+            _close(got[key], value, path=f"{path}.{key}")
+    else:
+        assert len(got) == len(want), path
+        for i, (a, b) in enumerate(zip(got, want, strict=True)):
+            _close(a, b, path=f"{path}[{i}]")
+
+
+def _assert_replays_whole_rows(session: Any, node: Any, *, apply_steering: bool = True) -> None:
+    """Every captured prompt row replays to its whole capture: each family's
+    readings (summary and traces), the SAE features, the lens readout's
+    layers (by vocabulary id) and the bindings."""
+    from drowse.readout.measurements import summary_measurements
+
+    rows = [*(node.thinking_tokens or ()), *(node.tokens or ())]
+    measured = [k for k, row in enumerate(rows) if "measurements" in row]
+    assert measured, "the capture measured the prompt"
+    for k in measured:
+        whole = rows[k]["measurements"]["instruments"]
+        envelope: dict[str, Any] = {
+            "version": 2, "scope": "replay", "provenance": "replayed", "instruments": {},
+        }
+        for family in ("geometry", "lens", "sae"):
+            kw: dict[str, Any] = {"apply_steering": apply_steering}
+            if family != "geometry":
+                kw["top_k"] = 256 if family == "lens" else 32
+            envelope["instruments"][family] = _replay(session, family, node.id, k, **kw)
+        replayed: Any = summary_measurements(cast(Any, envelope), per_layer=True)["instruments"]
+        _close(replayed["geometry"]["readings"], whole["geometry"]["readings"], path=f"[{k}].geometry")
+        steering = node.prompt_capture.steering if apply_steering else None
+        assert replayed["geometry"]["binding"] == {"source": None, "steering": steering}
+        _close(replayed["sae"]["readings"], whole["sae"]["readings"], path=f"[{k}].sae")
+        _close(replayed["lens"]["readings"], whole["lens"]["readings"], path=f"[{k}].lens")
+        assert replayed["lens"]["binding"] == whole["lens"]["binding"]
+        assert replayed["sae"]["binding"] == whole["sae"]["binding"]
+        features = {f["id"]: f["activation"] for f in replayed["sae"]["readout"]["features"]}
+        for feature in whole["sae"]["readout"]["features"]:
+            assert features[feature["id"]] == pytest.approx(
+                feature["activation"], rel=1e-4, abs=1e-6,
+            )
+        layers = {
+            row["layer"]: {t["id"]: t["logprob"] for t in row["tokens"]}
+            for row in replayed["lens"]["readout"]["layers"]
+        }
+        for row in whole["lens"]["readout"]["layers"]:
+            for token in row["tokens"]:
+                assert math.exp(layers[row["layer"]][token["id"]]) == pytest.approx(
+                    math.exp(token["logprob"]), rel=1e-4, abs=1e-7,
+                )
+
+
+def test_an_authored_row_is_stored_slim_with_its_anchor(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: authored prompt rows were kept whole (every reading with
+    its traces, the lens readout's layers, the SAE features: ~45 kB a token
+    on SmolLM2) because no replay could reach them.  They keep what a
+    generated row keeps, and the node carries the replay anchor."""
+    from drowse.readout.measurements import ROW_GEOMETRY_KEYS
+
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    events: list[TokenEvent] = []
+    session.generate(
+        "Say hi.", steering=_STEERING, on_token=_live_consumer(events),
+        sampling=SamplingConfig(max_tokens=3),
+    )
+    reply = session.tree.get(session.tree.active_node_id)
+    node = session.tree.get(cast(str, reply.parent_id))
+    assert node.recipe is None and node.tokens
+    capture = node.prompt_capture
+    assert capture is not None and capture.steering == _STEERING
+    assert capture.thinking_start is None and capture.start is not None
+    for row in node.tokens:
+        assert "raw_index" not in row
+        measurements = row.get("measurements")
+        if measurements is None:
+            continue
+        assert set(measurements["instruments"]) == {"geometry"}
+        reading = measurements["instruments"]["geometry"]["readings"]["mood"]
+        assert tuple(reading) == ROW_GEOMETRY_KEYS
+        assert set(measurements["scores"]) == {"mood", "jlens/a", "sae/1"}
+
+
+def test_an_authored_token_replays_its_whole_capture_steered(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    node, _reply = _capture_whole(session, "Say hi.", steering=_STEERING)
+    assert node.prompt_capture is not None and node.prompt_capture.steering == _STEERING
+    _assert_replays_whole_rows(session, node)
+    # The counterfactual differs: the capture's prompt-phase steering is real.
+    k = len(node.tokens) - 1
+    unsteered = _replay(session, "geometry", node.id, k, apply_steering=False)
+    assert unsteered["binding"]["steering"] is None
+    captured = node.tokens[k]["measurements"]["instruments"]["geometry"]["readings"]["mood"]
+    assert unsteered["readings"]["mood"]["coords"] != pytest.approx(captured["coords"], rel=1e-3)
+
+
+def test_an_authored_token_replays_its_whole_capture_unsteered(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    node, _reply = _capture_whole(session, "Say hi.", steering=None)
+    assert node.prompt_capture is not None and node.prompt_capture.steering is None
+    _assert_replays_whole_rows(session, node)
+    _assert_replays_whole_rows(session, node, apply_steering=False)
+
+
+def test_an_authored_replay_survives_deleting_and_regenerating_other_nodes(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The anchor lives on the authored node: deleting the reply that
+    captured it, and regenerating under it with other steering, leaves its
+    replay on the capture's own render and steering."""
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    node, reply = _capture_whole(session, "Say hi.", steering=_STEERING)
+    capture = node.prompt_capture
+    session.generate(
+        None, parent_node_id=node.id, steering="-0.4 mood",
+        on_token=_live_consumer([]), sampling=SamplingConfig(max_tokens=2),
+    )
+    session.tree.delete_subtree(reply.id)
+    assert reply.id not in session.tree.nodes
+    assert session.tree.get(node.id).prompt_capture == capture  # one-shot
+    _assert_replays_whole_rows(session, session.tree.get(node.id))
+
+
+def test_an_edit_reads_the_original_and_an_edited_earlier_turn_refuses(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    first, _reply = _capture_whole(session, "Say hi.", steering=None)
+    second, _ = _capture_whole(session, "And again, please.", steering=_STEERING)
+    # Editing the node's own text keeps its rows and their render (as an
+    # edited reply keeps its raw decode record).
+    session.tree.edit(second.id, "Something else entirely.")
+    _assert_replays_whole_rows(session, session.tree.get(second.id))
+    # An earlier turn edited since: the capture's prompt no longer renders.
+    session.tree.edit(first.id, "Say hello.")
+    with pytest.raises(InvalidNodeOperationError, match="no longer renders the same"):
+        _replay(session, "geometry", second.id, 0)
+
+
+def test_an_authored_turn_has_no_unit_activity(
+    make_tiny_session: TinySessionFactory, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = _all_families_session(make_tiny_session, monkeypatch)
+    node, _reply = _capture_whole(session, "Say hi.", steering=None)
+    with pytest.raises(InvalidNodeOperationError, match="authored turn"):
+        session.unit_activity(node.id)
+
+
+def _rig_authored(
+    rig: ReplayRig, *, steering: str | None = "0.3 mood", digest: str | None = None,
+) -> tuple[str, list[int]]:
+    """An authored turn with both channels captured inside the rig's render:
+    thinking rows at render positions 5-6, visible rows at 9-11."""
+    from drowse.loom.tree import PromptCapture, prompt_digest
+
+    render = rig.tokenizer.encode(PROMPT_RENDER)
+    user_id = rig.tree.add_user_turn("a user turn", thinking_text="hm")
+    rig.tree.set_authored_capture(
+        user_id,
+        PromptCapture(
+            steering=steering, system_prompt="be brief", thinking=True, raw=False,
+            start=9, thinking_start=5,
+            digest=prompt_digest(render[:9]) if digest is None else digest,
+        ),
+        thinking_tokens=[{"token_id": t, "text": "x"} for t in render[5:7]],
+        tokens=[{"token_id": t, "text": "y"} for t in render[9:12]],
+    )
+    return user_id, render
+
+
+def test_an_authored_index_runs_thinking_then_visible_through_one_prefill() -> None:
+    rig = ReplayRig()
+    user_id, render = _rig_authored(rig)
+    for k in range(5):
+        rig.replay(user_id, k, layers=[0], read=_hidden_keys, label="test replay")
+    # Thinking rows 0-1 at positions 5-6, visible rows 2-4 at 9-11: each
+    # replay is the render before the token, pooled at its producer.
+    assert rig.captures == [(n, n - 1, (0,)) for n in (5, 6, 9, 10, 11)]
+    assert rig.steering_scopes == ["0.3 mood"] * 5
+    assert rig.prepare_calls[0] == {
+        "input": None, "raw": False, "thinking": True, "system_prompt": "be brief",
+        "parent_node_id": user_id, "user_role": None, "assistant_role": None,
+        "gen_seat": "assistant", "add_generation_prompt": False,
+    }
+    token, _ = rig.replay(user_id, 3, layers=[0], read=_hidden_keys, label="t")
+    assert token.raw_index == 3 and token.token_id == render[10]
+    with pytest.raises(InvalidNodeOperationError, match="out of range"):
+        rig.replay(user_id, 5, layers=[0], read=_hidden_keys, label="test replay")
+
+
+def test_an_authored_replay_refuses_a_prompt_that_renders_otherwise() -> None:
+    from drowse.loom.tree import prompt_digest
+
+    rig = ReplayRig()
+    user_id, _render = _rig_authored(rig, digest=prompt_digest([1, 2, 3]))
+    with pytest.raises(InvalidNodeOperationError, match="no longer renders the same"):
+        rig.replay(user_id, 0, layers=[0], read=_hidden_keys, label="test replay")
+    assert rig.captures == []
+
+
+def test_a_prompt_only_replay_fires_gated_and_phased_terms_as_the_prefill_did() -> None:
+    """A prompt token is a prefill position: a probe gate stays shut and a
+    phase window reads its prompt slot there (``Trigger.active``), so a
+    replay with no decode position refuses neither, gate scorer or not."""
+    from drowse.loom.replay import ReplaySegment, replay_segments
+    from drowse.steering.triggers import Trigger
+
+    for trigger in (
+        Trigger.when("x", ">", 0.1), Trigger.AFTER_THINKING, Trigger.THINKING_ONLY,
+    ):
+        assert replay_segments(7, 7, [trigger], can_think=True) == (
+            ReplaySegment(0, 7, True, 0),
+        )

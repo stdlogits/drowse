@@ -31,7 +31,8 @@
         "mean_surprise": null,
         "tokens": null,
         "thinking_tokens": null,
-        "raw_token_ids": null
+        "raw_token_ids": null,
+        "prompt_capture": null
       },
       {
         "id": "user-1",
@@ -54,7 +55,8 @@
         "mean_surprise": null,
         "tokens": null,
         "thinking_tokens": null,
-        "raw_token_ids": null
+        "raw_token_ids": null,
+        "prompt_capture": null
       },
       {
         "id": "assistant-1",
@@ -63,7 +65,7 @@
         "text": "Original answer",
         "role_label": null,
         "thinking_text": null,
-        "recipe": null,
+        "recipe": {"steering": "0.25 calm", "sampling": null, "thinking": null, "seed": null, "probes": [], "probe_hashes": {}},
         "aggregate_readings": {"local/calm.alert": 0.8},
         "aggregate_measurements": {"version": 2, "scope": "aggregate", "provenance": "captured", "instruments": {"geometry": {"readings": {"local/calm.alert": {"fraction": 0.31, "nearest": [["calm", 0.42], ["alert", 1.37]], "coords": [0.8], "residual": 0.0, "assignment": [["calm", 0.88], ["alert", 0.12]], "membership": 1.0, "depth_com": [0.55], "depth_spread": [0.12]}}}}},
         "applied_steering": "0.25 calm",
@@ -93,7 +95,8 @@
           }
         ],
         "thinking_tokens": null,
-        "raw_token_ids": [42]
+        "raw_token_ids": [42],
+        "prompt_capture": null
       }
     ],
     "children_of": {
