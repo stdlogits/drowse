@@ -127,7 +127,11 @@ with a `TokenTap` → `finalize` (records `last_result`), inside `transaction()`
 the single-flight guard. Its teardown is exception-hard: pop a leftover scope
 (swallowing a teardown error while another failure propagates), run the
 session's `_release_generation` (read plane ended, closed and reset, loom
-reservation cleared), then set `IDLE` and release the lock unconditionally.
+reservation cleared), remove the reply node a failure left without a token
+(`txn.provisional_node`, set from node start until `finalize`; a continuation
+node is never removed, and a node holding tokens keeps them), then set `IDLE`
+and release the lock unconditionally. An engine error therefore leaves the
+user turn, never an empty assistant turn with no finish reason.
 
 - **Composition** is `loom/recipe.py::compose_call` (rules documented there):
   cast member < call kwargs < regen anchor < regen modifier, with the call

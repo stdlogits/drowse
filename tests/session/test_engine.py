@@ -135,6 +135,36 @@ def test_transaction_teardown_frees_the_loom_reservation(tiny_session: Any) -> N
     tiny_session._gen_lock.release()
 
 
+@pytest.mark.parametrize("partial", [False, True])
+def test_a_failed_reply_leaves_no_empty_node(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch, partial: bool,
+) -> None:
+    """Regression: a reply the engine failed before any token (a steering
+    install error on MPS, say) left an empty assistant node with no finish
+    reason, which reloaded as a blank turn the next message threaded under.
+    A reply cut after some tokens keeps them."""
+    sess = tiny_session
+    engine = sess._engine
+
+    def failing(spec: Any, input_ids: Any, **kwargs: Any) -> Any:
+        if partial:
+            # A reply whose node already holds a token (as a streamed row).
+            sess.tree.append_token(sess.tree.active_node_id, {"id": 5, "text": "hi"})
+        raise RuntimeError("the install failed")
+
+    monkeypatch.setattr(engine, "decode", failing)
+    with pytest.raises(RuntimeError, match="install failed"):
+        sess.generate("Say hello.", sampling=SamplingConfig(max_tokens=3, seed=0))
+    user = [n for n in sess.tree.nodes.values() if n.role == "user"]
+    assistants = [n for n in sess.tree.nodes.values() if n.role == "assistant"]
+    assert len(user) == 1 and user[0].text == "Say hello."
+    assert sess.tree.reservation is None
+    if partial:
+        assert len(assistants) == 1 and assistants[0].tokens
+    else:
+        assert assistants == [] and sess.tree.active_node_id == user[0].id
+
+
 def test_transaction_release_failure_still_frees_phase_and_lock() -> None:
     def _boom() -> None:
         raise RuntimeError("detach failed")

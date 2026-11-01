@@ -482,7 +482,8 @@ class GenerationEngine:
         ``PREAMBLE`` transition.  On exit, whatever raised: pop any steering
         scope the body left open, run the session's generation release (detach
         capture, close the instrument runs, reset the read plane, free the
-        loom reservation), and release the phase and the lock.
+        loom reservation), drop a reply node a failure left without a token
+        (``txn.provisional_node``), and release the phase and the lock.
 
         The body owns the steering scope through ``txn.steering_cm``: it
         assigns the scope when it enters one and clears the slot if it pops
@@ -513,11 +514,28 @@ class GenerationEngine:
                         self._release()
                     finally:
                         self.compiled_clean_eligible = False
+                        if txn.failed and txn.provisional_node is not None:
+                            self._discard_unanswered(txn.provisional_node)
             finally:
                 # Unconditional: an earlier teardown exception must not leave
                 # the session phase-wedged or the lock held.
                 self.phase = GenState.IDLE
                 self._lock.release()
+
+    def _discard_unanswered(self, node_id: str) -> None:
+        """Remove the reply node a failed generation opened when it holds no
+        token (the reservation is released, so the delete is free).  A reply
+        cut after some tokens keeps them."""
+        tree = self._session.tree
+        if not tree.has(node_id):
+            return
+        node = tree.get(node_id)
+        if node.tokens or node.thinking_tokens or node.text or tree.children(node_id):
+            return
+        try:
+            tree.delete_subtree(node_id)
+        except Exception:  # noqa: BLE001 - never mask the generation's failure
+            _log.exception("could not remove the empty reply node %s", node_id)
 
     def stop(self) -> None:
         """Ask the in-flight decode loop to stop after its current step."""
@@ -851,6 +869,8 @@ class GenerationEngine:
                 system_prompt=spec.system_prompt,
                 continuation_node_id=spec.continuation_node_id,
             )
+            if spec.continuation_node_id is None:
+                txn.provisional_node = assistant_node_id
             if txn.steering_cm is not None:
                 txn.steering_cm.__enter__()
             use_thinking = spec.use_thinking_req and session.chat_traits.supports_thinking
@@ -948,6 +968,7 @@ class GenerationEngine:
                 mean_logprob=mean_logprob,
                 mean_surprise=mean_surprise,
             )
+            txn.provisional_node = None
             session.events.emit(GenerationFinished(result=result))
             return result
 
