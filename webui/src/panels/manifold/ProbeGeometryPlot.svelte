@@ -399,8 +399,6 @@
           <span class="meta"><MorphText text={`${trailPoints.length} trail points`} /></span>
         {:else if !liveTrailAvailability.available}
           <span class="meta" {...{ "aria-description": (liveTrailAvailability.reason ?? undefined) }}>live trail unavailable here</span>
-        {:else}
-          <span class="meta">the trail draws while a reply streams</span>
         {/if}
         {#if canOrbit}
           <span class="plot-controls" role="group" aria-label="Geometry view controls">

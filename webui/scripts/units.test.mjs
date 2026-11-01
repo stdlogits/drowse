@@ -503,9 +503,19 @@ try {
   assert.doesNotMatch(html, />L2 h1</, "neurons list neurons");
   assert.doesNotMatch(html, /−2\.2/, "at the token, not at the peak");
   assert.match(html, />Labelled</, "a bound catalog offers the labelled units");
-  assert.match(html, /Values over each unit&#39;s typical firing in text \(Neuron Lens\)|Values over each unit.s typical firing in text \(Neuron Lens\)/, "the room names the scale source");
+  // W6 review: the provenance caption and the atlas's subset caption moved into tips (Ledger: show,
+  // don't tell), and the list counts its rows at a token too (it had shown the model's whole
+  // population, "81,920 neurons", over a list of 1,280).
+  assert.match(html, /data-tip="[^"]*values over each unit&#39;s typical firing in text \(Neuron Lens\)|data-tip="[^"]*values over each unit.s typical firing in text \(Neuron Lens\)/, "the room names the scale source, in a tip");
+  assert.doesNotMatch(html, />Values over each unit/, "no caption");
   assert.match(html, new RegExp(CREDIT));
-  assert.match(html, /the 40 most active of 8 a layer/);
+  assert.match(html, /data-tip="the 40 most active of 8 a layer"/);
+  assert.doesNotMatch(html, /<span class="meta">the 40 most active/);
+  {
+    const list = html.slice(html.indexOf('aria-label="Results"'));
+    const count = list.match(/<span class="meta[^"]*"[^>]*>([^<]*)<\/span>/)?.[1];
+    assert.match(count ?? "", /^\d[\d,]* units?$/, "the list's count is its rows");
+  }
   assert.match(html, /L3 · 6 of 8 active here/);
   assert.match(html, /Open in workbench/);
   let summary = html.slice(html.indexOf('aria-label="Selected unit"'));

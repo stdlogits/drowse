@@ -224,14 +224,20 @@
     untrack(() => { shown = 8; });
   });
 
+  // The list's count is always its rows; the model's whole population at the token, and the scale
+  // the values are over, ride the tip.
   const heading = $derived.by((): { pre: string; word: string | null; meta: string } => {
-    const units = (n: number) => `${n} ${n === 1 ? "unit" : "units"}`;
+    const units = (n: number) => `${n.toLocaleString()} ${n === 1 ? "unit" : "units"}`;
     if (q.mode === "id") return { pre: "Matches", word: null, meta: units(rows.length) };
     if (word) return { pre: "Writes ", word: word.shown, meta: writers?.value ? units(rows.length) : "" };
     if (filter === "labelled") return { pre: whole ? "Labelled in this reply" : "Labelled here", word: null, meta: units(rows.length) };
-    const totals = pop && nLayers ? `${(nLayers * (kind === "neuron" ? pop.nNeurons : pop.nHeads)).toLocaleString()} ${kind === "neuron" ? "neurons" : "heads"}` : "";
-    return { pre: whole ? "Most active in this reply" : "Most active here", word: null, meta: whole ? units(rows.length) : totals };
+    return { pre: whole ? "Most active in this reply" : "Most active here", word: null, meta: units(rows.length) };
   });
+  const headingTip = $derived([
+    !whole && pop && nLayers ? `of ${(nLayers * (kind === "neuron" ? pop.nNeurons : pop.nHeads)).toLocaleString()} ${kind === "neuron" ? "neurons" : "heads"}` : "",
+    data?.scale && scaleText(data.scale.source) ? `values over each unit's ${scaleText(data.scale.source)}` : "",
+    data?.scale?.detail ?? "",
+  ].filter(Boolean).join(" · "));
 
   // The selected unit: the one chosen, else the first row; choosing a row picks its layer and kind.
   const selected = $derived(sel ?? rows[0]?.id ?? null);
@@ -422,8 +428,7 @@
     <section class="atlas-sec" aria-label="Atlas">
       <div class="dw-sec-head">
         <span class="ah">
-          {#if focusToken && (kind === "head" || every || !word)}<span class="head">At <Token token={focusToken.token} /></span>{:else if word}<span class="head">Writes <Token token={word.shown} /></span>{:else if whole && data}<span class="head">This reply, at each unit's peak</span>{/if}
-          <span class="meta">{subset}</span>
+          {#if focusToken && (kind === "head" || every || !word)}<span class="head" data-tip={subset || undefined}>At <Token token={focusToken.token} /></span>{:else if word}<span class="head" data-tip={subset || undefined}>Writes <Token token={word.shown} /></span>{:else if whole && data}<span class="head" data-tip={subset || undefined}>This reply, at each unit's peak</span>{/if}
         </span>
         <span class="meta"><MorphText text={layerFact} /></span>
       </div>
@@ -435,7 +440,10 @@
       {:else if unreachable}
         <div class="ghost-atlas none"><span class="meta">This token has no replay record.</span></div>
       {:else if !target}
-        <div class="ghost-atlas none"><span class="meta">Units light up here once the model has written a reply.</span></div>
+        <div class="ghost-atlas none">
+          <span class="head">No reply yet</span>
+          <button type="button" class="dw-quiet" onclick={() => goto("workbench")}>Workbench<Icon name="right" /></button>
+        </div>
       {:else}
         <div class="ghost-atlas" aria-hidden="true"></div>
       {/if}
@@ -445,7 +453,7 @@
       <section class="list" aria-label="Results">
         <div class="dw-sec-head">
           <span class="head">{heading.pre}{#if heading.word !== null}<Token token={heading.word} />{/if}</span>
-          <span class="meta">{heading.meta}</span>
+          <span class="meta" data-tip={headingTip || undefined}>{heading.meta}</span>
         </div>
         {#if visible.length > 0}
           <div class="rows">
@@ -472,7 +480,6 @@
         {/if}
         <div class="split">
           {#if rows.length > shown}<button type="button" class="dw-text" onclick={() => (shown += 16)}>{rows.length - shown} more</button>{/if}
-          {#if data?.scale && scaleText(data.scale.source)}<span class="meta" data-tip={data.scale.detail}>Values over each unit's {scaleText(data.scale.source)}</span>{/if}
           {#if credit}<span class="meta credit">{credit}</span>{:else if catalogMissing}
             <button type="button" class="dw-text credit link" onclick={() => goto("artifacts", "units")}>Unit catalog<Icon name="right" /></button>
           {/if}

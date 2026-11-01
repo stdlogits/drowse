@@ -835,9 +835,8 @@
     </Expander></div>
 
     {#if !returnToToken || authoringAvailable}
-    <button type="button" class="build-btn" onclick={gotoLauncher}>
+    <button type="button" class="build-btn" data-tip={launcherHint} onclick={gotoLauncher}>
       <span class="build-label">+ {launcherLabel}</span>
-      <span class="build-hint">{launcherHint}</span>
     </button>
     {/if}
 
@@ -1008,12 +1007,6 @@
   }
   .build-btn:hover { background: var(--wash2); }
   .build-btn:active:not(:disabled) { scale: 0.97; }
-  .build-hint {
-    flex: 1 1 auto;
-    color: var(--ink3);
-    font: var(--type-meta);
-    text-align: end;
-  }
 
   /* ---- section heads and the category groups ---- */
   .section-title { margin: var(--s3) 0 0; }

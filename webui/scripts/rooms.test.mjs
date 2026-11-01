@@ -162,6 +162,15 @@ try {
     sessionState.info = null;
     lensSourceState.sources = [];
   }
+  // W6 review (Ledger: show, don't tell): the readout rooms' explanatory captions are gone; an empty
+  // room leads to the Workbench, and the builder's hint rides its button's tip.
+  assert.doesNotMatch(read("panels/rooms/UnitsRoom.svelte"), /Units light up here|<span class="meta">\{subset\}|>Values over each unit/);
+  assert.match(read("panels/rooms/UnitsRoom.svelte"), />No reply yet<[^]*?goto\("workbench"\)\}>Workbench</);
+  assert.doesNotMatch(read("panels/rooms/LensRoom.svelte"), /The lenses read here once/);
+  assert.match(read("panels/rooms/LensRoom.svelte"), />No reply yet<[^]*?goto\("workbench"\)\}>Workbench</);
+  assert.doesNotMatch(read("panels/manifold/ProbeGeometryPlot.svelte"), /the trail draws while a reply streams/);
+  assert.doesNotMatch(read("drawers/RackDrawer.svelte"), /build-hint/);
+  assert.match(read("drawers/RackDrawer.svelte"), /class="build-btn" data-tip=\{launcherHint\}/);
   // The SAE source picker lives in the Artifacts room's saes section alone (SaeSources); the
   // Inspector's Features keep no copy and no switch for one.
   assert.doesNotMatch(read("panels/SaePanel.svelte"), /@runtime-sae-source|sources/);
