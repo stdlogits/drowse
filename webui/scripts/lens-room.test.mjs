@@ -138,6 +138,13 @@ try {
       const card = render(LensCard, { props: { family: "R", site, row: local, provider: null, n: 4, weights: null, span: null, scale: 0.25 } }).body;
       assert.match(card, new RegExp(`<span class="meta[^"]*" data-tip="${lens.SITE_TIPS[site].replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}">${site}</span>`));
     }
+    // Regression (W6 review): with no lens prepared each card read "None · out · used L0–L10", a
+    // layer range for a lens that does not exist. The range shows only for a source that holds it.
+    const span = { first: 0, last: 10 };
+    const none = render(LensCard, { props: { family: "R", site: "out", row: null, provider: null, n: 4, weights: null, span, scale: null } }).body;
+    assert.doesNotMatch(none, /used L/);
+    const held = render(LensCard, { props: { family: "R", site: "out", row: local, provider: null, n: 4, weights: null, span, scale: 0.25 } }).body;
+    assert.match(held, /used L0–L10/);
     assert.match(lens.SITE_TIPS.out, /neuron outputs and attention inputs/);
     assert.match(lens.SITE_TIPS.mid, /neuron inputs and attention outputs/);
   }
