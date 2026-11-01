@@ -262,8 +262,9 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   | sae | yes | `fetch`, `train` | yes | 409: loading weights is the `fetch` preparation |
   | units | 404 | `fetch` (the neuron-lens catalog) | yes | 404 |
 
-  The lens `sources` answer also carries what the dashboard's lenses
-  (the Lens room and the Artifacts room's Lenses) draw: the fetchable `providers`, the session's crossover `band` (`lo`,
+  The lens `sources` answer also carries what the dashboard's setup draws
+  (the Artifacts room's Lenses, the Model room's lens rows): the fetchable
+  `providers`, the session's crossover `band` (`lo`,
   `hi`, `[w_S, w_R]` per layer) and `fit_documents`, the fit's default
   documents, and each family's active row says whether it matches the
   loaded weights (`compatible`, checked as `jlens_fitted` is). A lens fit's

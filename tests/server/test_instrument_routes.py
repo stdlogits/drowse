@@ -422,7 +422,7 @@ class TestSources:
     def test_lens_sources_carry_the_band_providers_and_fit_default(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
-        """The Lens room's data: the session's crossover band as ``[w_S, w_R]``
+        """The Artifacts room's lenses: the session's crossover band as ``[w_S, w_R]``
         at every layer, the fetchable providers per family, and the server's
         default fit documents (the dashboard takes it from here)."""
         from drowse.lens.depth import LensBand, kind_weights

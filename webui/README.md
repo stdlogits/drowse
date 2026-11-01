@@ -50,9 +50,13 @@ probe, a unit) and, with nothing selected, the instruments; a steering term
 opens under the recipe's chips and leaves the Inspector as it was.
 From 1240 px the regions sit side by side; narrower it is Page | Inspector with
 the thread folded over the page; on a phone it is one column with the
-Inspector as a sheet. A tool a room hosts opens in that room; any other opens
-as a dialog over the page. The command palette is the header's search (⌘K,
-or **Menu → Search everything**).
+Inspector as a sheet. Units, Lens and Probes read the conversation at one
+token cursor (`lib/stores/tokenCursor.svelte.ts`, drawn by
+`panels/rooms/TokenStrip.svelte`), which is the workbench's token selection;
+Artifacts is where what they read with is fitted, fetched, built and
+installed, and every setup link leads to its section. A tool a room hosts
+opens in that room; any other opens as a dialog over the page. The command
+palette is the header's search (⌘K, or **Menu → Search everything**).
 
 The steering recipe is chips over the composer, with the term editor in place
 under them, and it is the one place steering lives: "+ Steer" picks every kind
@@ -69,8 +73,9 @@ src/
   main.ts, App.svelte   runtime install and mount; the shell (header, rooms, dialog host)
   panels/workbench/     the workbench and its thread
   panels/inspector/     the Inspector, the instruments, the unit view
-  panels/rooms/         the Units, Lens, Probes, Artifacts and Model rooms
+  panels/rooms/         the Units, Lens, Probes, Artifacts and Model rooms; the token strip
   panels/               the page (Chat, RawBuffer), the recipe chips, the probe rack, loom/, rack/
+  lib/steerActions.ts   the one way into the recipe
   drawers/              one component per tool; token/ is the token drilldown
   lib/runtime/          the RuntimeClient contract and the HTTP runtime
   lib/stores/           one $state slice per concern

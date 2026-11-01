@@ -193,7 +193,12 @@ population packed as float16 (little-endian, base64). It uses this package's
 statistics' reading scales directly (no tap), skips the sink (position 0:
 value 0, never a peak), and ranks every unit over its soft scale (above), so
 a pole that barely fired on the neutral corpus no longer tops the list on a
-near-zero divisor. `session.token_anatomy` ranks units by their direct
+near-zero divisor. An authored (prompt) node reads its captured rows, thinking
+then visible, in one prefill through its `prompt_capture`; a raw first turn's
+row 0 sits at the sink's position and reads 0 the same way (a population asked
+there refuses, 400). The dashboard's
+Units room reads it at the token cursor (`raw_index`) or over the whole reply.
+`session.token_anatomy` ranks units by their direct
 contribution to one token through the R lens instead. Details:
 `drowse/loom/AGENTS.md`.
 

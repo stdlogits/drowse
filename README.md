@@ -44,8 +44,10 @@ independent of it.
 
 ## The dashboard
 
-The header holds five rooms: **Workbench**, **Manifolds**, **Units**, **Lens**
-and **Model**. The workbench is where you talk to the model: the thread (the
+The header holds six rooms: **Workbench**, **Units**, **Lens**, **Probes**,
+**Artifacts** and **Model**, and its search (⌘K) finds any room, tool or kind
+of steering by what it does ("fit a lens", "steer a neuron"). The workbench is
+where you talk to the model: the thread (the
 path you are on through the conversation, and your earlier chats), the page
 (the conversation, or the loom: every turn as a node in a branching tree you
 can reroll, compare and fork from) and the Inspector. They sit side by side on
@@ -66,12 +68,12 @@ lens and SAE read through.
 - **A probe** opens its fitted geometry, layer by layer.
 - **A unit** (a neuron or head) opens what it writes and fires on, its label
   and its activity over the reply.
-- **A steering term** opens its editor in place under the chips.
 
 **Steering** is built from chips, in one place over the composer. **+ Steer**
 adds a neuron or head (by ID or by a word it writes), a lens token, a concept,
 a manifold position or an SAE feature; the instruments' **Push** and
-**Silence** add one in a click. A chip's editor sets a signed strength, the
+**Silence** add one in a click, and the chip opens under the strip without
+leaving what you were looking at. A chip's editor sets a signed strength, the
 layers it acts at (a depth strip), when it acts (the prompt, the response, the
 first or all-but-the-first N tokens) and "Only while…", a gate on an attached
 probe's reading; a concept can also be kept along, or removed from, another
@@ -85,14 +87,19 @@ A reply cut short by Stop (or a dropped connection) is kept and marked
 one, and catches up from the server's conversation tree. Saved chats live in the browser (saved automatically between
 replies) and as backup files you download; the server keeps no conversations.
 
-The rooms:
+The rooms beside the workbench read the conversation token by token. A strip
+of its tokens, prompt tokens included, sits at the top of each: step with ←
+and →, jump with Home and End, click a token, or read the whole reply. The
+workbench and the rooms share that cursor, so a token chosen in one is the
+token in the other.
 
 | Room | Purpose |
 |---|---|
-| **Manifolds** | Build, install, combine and inspect manifolds and packs; templates; roles |
-| **Units** | The strongest neurons and heads of a reply, or a whole layer at once |
-| **Lens** | Choose, fetch and fit the R and S lenses at both sites, against the depth band |
-| **Model** | The model's layers, neurons and heads, device and versions, prepared lenses, health and API access |
+| **Units** | The neurons and heads strongest at the token (or at their peak over the reply), a whole layer at once, and the chosen unit's activity, writes, Push and Silence |
+| **Lens** | Each layer at the token through both lenses (what the S lens reads, what the R lens says, weighted by depth), steered or not, with the lens probes |
+| **Probes** | The linear probes and vectors (the value at the token, the trace over the conversation), then the manifolds (where the token sits in the fitted geometry), then SAE features |
+| **Artifacts** | Where everything is prepared: the neuron-lens unit catalog, the lenses (fetched or fitted, both families at both sites), probes (built, installed, combined), templates, roles and SAEs |
+| **Model** | The model's layers, neurons and heads, device and versions, what is prepared for it, health and API access |
 
 Chat mode renders the model's chat template as turns, with collapsible
 thinking, any role label a compatible template supports, and a cast that
@@ -569,13 +576,14 @@ The four read families are available as `session.geometry`, `session.lens`,
 `session.lens.read(vector, layer, site, of="residual" | "direction")` reads any
 vector through both lens families at once.
 
-`session.token_anatomy(node_id, raw_index)` replays one generated token and
-reads it layer by layer: what the residual reads as through both lenses, what
+`session.token_anatomy(node_id, raw_index)` replays one token and reads it
+layer by layer: what the residual reads as through both lenses, what
 attention and the MLP (and any steering) added, the neurons and heads that
 pushed the token through the R lens, and where the top heads looked.
 `session.unit_activity(node_id)` reads every neuron and head over a turn's
 tokens: the strongest units with their peak token, per-token traces of named
-units, and one token's whole population. Both are also served at
+units, and one token's whole population. Both read a prompt turn too (its
+tokens replay through the turn's recorded capture). Both are also served at
 `/drowse/v1/sessions/{id}/instruments/token-anatomy` and
 `.../instruments/units/activity`.
 

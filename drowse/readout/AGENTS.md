@@ -257,7 +257,10 @@ fit's `mahalanobis_share`, normalized):
   `share_L · |coord_L[axis]|` at depth `L/(n_layers−1)`.
 - `subspace_coords_per_layer` (inspector trail) is emitted only while
   `set_subspace_coords(True)`; the engine sets it per generation. It rides the
-  live token frame only: a loom row never keeps it.
+  live token frame only: a loom row never keeps it. The geometry token replay
+  scores inside `subspace_coords_emitted()`, so a replayed reading always
+  carries it (the dashboard's Probes room places the token in a manifold's
+  plot with it) and the live flag is restored after.
 
 **Execution.** `_FactorStack` is the single device copy of the whitener's
 Woodbury factors per device, grown rather than duplicated (detach keeps it),

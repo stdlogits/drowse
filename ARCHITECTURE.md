@@ -806,14 +806,20 @@ change together and CI fails on drift. It is drawn in Ledger (the
 the path you are on, its map and weave one step away), the page (the
 conversation, with the steering recipe as chips over the composer) and the
 inspector (whatever is selected: a token's drilldown and anatomy, a probe, a
-unit, a steering term; with nothing selected, the instruments: probes, live
-lens readout, SAE features, sampling). Units, Lens and Probes are rooms
-beside it that read the conversation token by token, Artifacts is where what
-they read with is fitted, fetched, built and installed, and Model is the
-model's facts, each a route. The dashboard writes steering only as chips over
-the structured terms the server returns (`parts`); it never parses or takes
-expression text, while agents (WebMCP), HTTP, the CLI and Python keep the
-grammar (`drowse/web/AGENTS.md`). REST
+unit; with nothing selected, the instruments: unit probes, live lens readout,
+geometry probes, SAE features, sampling). Units, Lens and Probes are rooms
+beside it that read the conversation token by token, at one token cursor that
+is the workbench's token selection (prompt tokens replay through their turn's
+capture), Artifacts is where what they read with is fitted, fetched, built and
+installed, and Model is the model's facts, each a route. Wherever the
+dashboard chooses an order it is neurons and heads, lenses, linear probes and
+vectors, manifolds, SAEs. Steering lives in one place, the chips over the
+composer: "+ Steer" picks every kind and the instruments' Push and Silence add
+a chip, all through `webui/src/lib/steerActions.ts`, and a term's editor opens
+under the chips without changing the selection. The dashboard writes steering
+only as chips over the structured terms the server returns (`parts`); it never
+parses or takes expression text, while agents (WebMCP), HTTP, the CLI and
+Python keep the grammar (`drowse/web/AGENTS.md`). REST
 response types are generated from the server's TypedDicts
 (`scripts/generate_webui_types.py` → `webui/src/lib/types.gen.ts`); request
 bodies and WS/SSE frames are hand-written in `webui/src/lib/types.ts`.

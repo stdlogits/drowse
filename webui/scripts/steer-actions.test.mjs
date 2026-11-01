@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { createServer } from "vite";
 
 // Steering in one place (Wave 6, a9): every term lands as a chip in the composer's strip through
-// lib/steerActions.ts, selected so its editor opens; "+ Steer" picks every kind in the priority
+// lib/steerActions.ts, opened so its editor shows (the selection stays); "+ Steer" picks every kind in the priority
 // order (neurons and heads, lens tokens, concepts, manifold positions, SAE features), the chips sort
 // the same way, the instruments keep only one-click Push and Silence, and the Inspector reads the
 // units first.

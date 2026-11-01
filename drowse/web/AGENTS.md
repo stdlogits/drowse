@@ -174,7 +174,9 @@ with its traces. The reply's settled reading rides the node (`aggregate_measurem
 rack and the probe inspector draw after a reload. It is `"aggregate"` on
 `done.result.measurements`, and `"replay"` (with `provenance: "replayed"`) from
 `.../instruments/{family}/token-readout` and the token anatomy, whose lens channel carries the
-attached lens probes' readings.
+attached lens probes' readings; a geometry replay's readings carry their per-layer whitened
+coordinates (`subspace_coords_per_layer`, which no row keeps), where the Probes room places the
+token in a manifold's plot.
 
 `mergedReadings` folds the three families' readings into one name-keyed map. Branch on a
 reading's shape, never on probe-info flags: `isScalarReading` (the reading has a `value`)
@@ -265,17 +267,24 @@ opportunistically and never blocks the current store. `lib/theme.ts` (the stored
 main.ts / App.svelte  runtime install + mount / the shell: header, rooms, dialog host
 panels/workbench/     Workbench (Thread | Page | Inspector, the phone's sheet), Thread,
                       ConversationFormat (Chat | Raw)
-panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace)
-panels/rooms/         RoomSections (a room's tabs: Artifacts, Model), ModelFacts (the Model room's
-                      depth ramp and what is prepared), LensRoom (lens/: the depth axis, a family
-                      column, a card), UnitsRoom (+ UnitAtlas), ProbesRoom, ArtifactsRoom
-                      (artifacts/: its panel sections, UnitCatalog, LensSources, SaeSources)
+panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTrace), LensAbsent
+                      (a unit read's missing lens, with the way to Artifacts' lenses)
+panels/rooms/         TokenStrip (the token cursor atop Units, Lens and Probes), UnitsRoom
+                      (+ UnitAtlas), LensRoom (lens/LensLayers: one token layer by layer through
+                      both lenses), ProbesRoom, ArtifactsRoom (artifacts/: UnitCatalog,
+                      LensSources, SaeSources; lens/'s LensDepth, LensFamily and LensCard draw the
+                      lenses section's 2x2), RoomSections (a room's tabs: Artifacts, Model),
+                      ModelFacts (the Model room's depth ramp and what is prepared)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
-                      ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, rack/ (the probe
-                      cards; TermEditor and LayerStrip, the term editor under the chips;
-                      SteerPicker, "+ Steer"; SteerButton, a row's Push or Silence)
+                      ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, manifold/
+                      (ProbeGeometryPlot, a probe's fitted geometry: the probe inspector's and
+                      the Probes room's), rack/ (the probe cards; TermEditor and LayerStrip, the
+                      term editor under the chips; SteerPicker, "+ Steer"; SteerButton, a row's
+                      Push or Silence)
 lib/steerActions.ts   the one way into the recipe: pushUnit, silenceUnit, pushLensToken,
                       pushFeature, pushConcept, pushPosition (each adds its chip and opens it)
+lib/commands.ts       the command palette's entries (rooms, Steer, instruments, sections, tools)
+                      and its one filter, searchCommands
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
 lib/api.ts            HTTP + SSE + WS client (imported only by runtime/http-client.ts)
 lib/runtime/          RuntimeClient contract, registry, HTTP impl, errors, capability gating
@@ -329,10 +338,28 @@ Section values are unique across rooms, so an agent's `section` alone names its 
 says what it `does` ("Fit or fetch a lens"), which is how the command palette lists it. The header's
 tabs are the way between rooms; on a phone they are the menu's Rooms, and the shell draws a crumb
 (Workbench › the room) over every room, which therefore draws none of its own.
-`selection.svelte.ts` is what the Inspector shows (none, token, probe, unit), and apart from
-it `termOpen`, the term whose editor is open under the chips.
-`workbench.svelte.ts` is what the Page region shows (the conversation or the loom) and the
-phone's sheet.
+`selection.svelte.ts` is what the Inspector shows (none, token, probe, unit), where the token
+cursor rests while a probe or unit is selected (`tokenRest`, with the node it was made on), and
+apart from both `termOpen`, the term whose editor is open under the chips.
+`workbench.svelte.ts` is what the Page region shows (the conversation or the loom), the
+phone's sheet and the "+ Steer" picker's kind (`openSteerPicker`, which the palette calls).
+
+**The token cursor** (`tokenCursor.svelte.ts`, over `drawers/token/cursor.ts`) is one position
+over the whole conversation's tokens, or the whole reply. The walk is every turn's thinking, then
+its text, prompt turns included (a prompt token reads at its captured row, `replayIndex`), and a
+step rolls across segments and turns. It is the workbench's token selection, not a copy: a
+selected token is the cursor, a probe or unit selection leaves it at `tokenRest`, and a cleared
+token selection reads the whole reply. Moving it selects the token it lands on as a step
+(`select(next, { step: true })`), so the thread marks it and the Inspector keeps its scroll.
+A position holds while its turn still holds the node it was made on:
+`loom.svelte.ts::syncChatLogFromTree` calls `reconcileTokenSelection()` after each projection, so
+Clear chat, another conversation or another branch drops it. `TokenStrip` draws it at the top of
+the Units, Lens and Probes rooms: the conversation's tokens on one line, each turn opened by its
+seat, a track of the whole conversation under it (a click lands on the token at that place), ←/→
+(rolling across turns) and Home/End (the ends of the cursor's segment) from a window keydown that
+skips inputs and ARIA widgets, and Whole reply. A strip click takes no focus. A room asks for a
+replay only where the cursor has rested (`settled`, 140 ms), not at every token a held arrow
+passes. The token drilldown replays nothing while another room shows.
 
 The workbench has three layouts. From 1240 px the three regions sit side by side and each
 scrolls on its own. From the phone up to 1240 px it is Page | Inspector, with the thread
@@ -347,6 +374,26 @@ newest), so choosing an earlier turn keeps the rest one click away. The conversa
 kept per model, not a sampling field) sits by the thread's header, rendered once: under it in the
 thread column, in the row the thread folds into at the other two layouts. A base model has no
 template, so it shows none.
+
+The three readout rooms read the conversation at the token cursor, prompt tokens included, or the
+whole reply, and set nothing up: a missing catalog, lens or probe is one link to its Artifacts
+section. **Units** (`UnitsRoom`) reads `unitActivity(node, { top: 1024, rawIndex })` at a token
+(the population's strongest, or every neuron of a layer in the atlas) and `{ top: 1024 }` whole
+(each unit at its peak over the reply); the chosen unit's summary carries its value, its trace (a
+bar moves the cursor), what it writes (`LensAbsent` where a lens is missing) and its Push and
+Silence. **Lens** (`LensRoom`) replays the token's anatomy (`{ k: 8, units: 1, patterns: 0 }`,
+the token view's cache entry), drawn layer by layer by `LensLayers` (the S lens's read and the R
+lens's say, each faded by its depth-rule weight, the crossover band on a wash), with the lens
+probes' values there and a Steered | Unsteered switch; whole, the lens probes over the reply from
+its node's `aggregate_measurements` (the node keeps no reply-level lens words), or, with none,
+"Watch a word" to the Inspector's Lens. A reading shows only for the request that produced it.
+**Probes** (`ProbesRoom`) lists the linear probes and vectors (one-axis flat fits: the value at
+the token, from its row, and the trace over the conversation), then the manifolds (fits of more
+axes, flat or curved: share, nearest node, a meter per coordinate, and `ProbeGeometryPlot` with
+the token placed by the geometry replay's `subspace_coords_per_layer`), then the SAE features the
+rack pins; whole, the reply's aggregate and the live trail. With nothing attached it offers A
+concept, A manifold and Build one. Units and Probes read as the reply was generated; only the Lens
+room replays without the steering.
 
 The Artifacts room (`#/artifacts`) runs in the dashboard's order of priority: `units` (the
 neuron-lens unit catalog: the model's neurons and heads, the catalog's commit and files once
@@ -475,8 +522,8 @@ drowse.ai too.
   editor's switch and dial), the snapshot validator and WebMCP's rack edit. A unit carries its
   layer, so it never takes a `{…}` clause (the grammar refuses one): `setSteerLayers` skips
   units and the validator refuses a unit row with `layers`.
-- **Units.** The unit view (selection `{ kind: "unit", id }`) and the Units room read
-  through `lib/stores/units.svelte.ts`: plain getters inside `$derived`, the matching
+- **Units.** The unit view (selection `{ kind: "unit", id }`) and the Units room (at the token
+  cursor) read through `lib/stores/units.svelte.ts`: plain getters inside `$derived`, the matching
   `request*` from an `$effect`, nothing asked while a generation runs. Both hide where
   `unitReadsAvailable(runtimeClient)` is false (`shownRooms()` drops the room). A neuron
   reads one side at a time, and both views read the side that fired here (`peakPole`, the
@@ -518,9 +565,10 @@ drowse.ai too.
   Popups, menus and toasts are wash2 fills with no shadow; a dialog and the command palette
   are paper over a wash2 scrim.
 - **Steering in one place.** Every term is made through `lib/steerActions.ts` and lands as a chip
-  in the composer's strip, selected, so its editor opens for the strength; nothing else edits a
-  strength or takes a term out (the chip's Remove does). "+ Steer" (`panels/rack/SteerPicker.svelte`)
-  offers the kinds in the one priority order, each with its picker (a runtime that reads no units
+  in the composer's strip with its editor open for the strength (`openTermEditor`; the selection,
+  and so the Inspector, stays as it was); nothing else edits a strength or takes a term out (the
+  chip's Remove does). "+ Steer" (`panels/rack/SteerPicker.svelte`; the palette's Steer group opens
+  it on a kind) offers the kinds in the one priority order, each with its picker (a runtime that reads no units
   leaves that kind out; a lens token with no lens, or a feature with no SAE, is one link to
   `#/artifacts/lenses` or `#/artifacts/saes`): a neuron or head (`L20 n512` by ID, checked against session info's `architecture`; a
   word, its writers through `unitsForWord`; else, once the picker rests on an empty search, the
@@ -532,8 +580,9 @@ drowse.ai too.
   and Silence on its heads, Push +, Push − and Silence in the unit view and the Units room's summary, the token view's "Steer
   toward it". A neuron is pushed or silenced, a head only silenced; pushing a held push keeps it
   (a strength and its pole), silencing a silenced unit keeps its blend. A unit's term queues behind a
-  running reply like every rack edit: its selection holds while a rack edit is queued
-  (`pending.svelte.ts::rackEditQueued`) and opens when the queue lands it. **The order** wherever
+  running reply like every rack edit, decided against the rack it lands on (`setUnitTerm` takes a
+  function of the held term): the open term holds while a rack edit is queued
+  (`pending.svelte.ts::rackEditQueued`) and its chip shows when the queue lands it. **The order** wherever
   one is chosen: neurons and heads, lens tokens, linear probes and vectors, manifolds, SAEs. The
   chips sort by it (`RecipeBar`'s `ORDER`; a unit chip names its unit by its ID and catalog label);
   the expression keeps its canonical order, which `tests/fixtures/recipe_chips.json` pins. The
@@ -582,7 +631,11 @@ drowse.ai too.
 
 The node suites load modules through Vite SSR (`ssrLoadModule`) with a stub
 `installRuntimeClient`. `saeDescriptions.ts` and `tokens.ts` are also imported by plain
-Node (here or in drowse.ai), so they must not use extensionless value imports.
+Node (here or in drowse.ai), so they must not use extensionless value imports. The shell's
+own suites: `rooms.test.mjs` (the rooms, Artifacts' sections, the palette, every setup link, the
+phone's crumb), `token-cursor.test.mjs` (the walk, its selection and rest), `steer-actions.test.mjs`
+(every way into the recipe) and `units.test.mjs` (the unit view and the Units room, whole and at a
+token).
 `tests/web/test_web.py` covers the mount: files served as files (the marks, `favicon.ico`,
 the theme preflight), the 404 for a missing asset or any file the bundle lacks, the SPA
 fallback, traversal, a public shell under an
