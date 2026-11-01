@@ -245,3 +245,13 @@ export function tokenBackgroundStyle(
     ? twoBlendStyle(scoreA, scoreB, scaleA, scaleB, hueA, hueB)
     : twoStripeStyle(scoreA, scoreB, scaleA, scaleB, hueA, hueB);
 }
+
+/** A token's leading whitespace and the rest. Every surface that boxes a token (the tint, the
+ *  selection, the hover wash) draws the space before a word outside the box, so the box starts at
+ *  the token's first glyph: a token that wraps to the next line leaves no sliver of itself at the
+ *  end of the line before (where pre-wrap hangs that space). The two parts sit side by side, so the
+ *  text copies as it was. A token that is only whitespace keeps it all in its box. */
+export function tokenLead(text: string): { lead: string; body: string } {
+  const lead = /^\s+/.exec(text)?.[0] ?? "";
+  return lead.length === 0 || lead.length === text.length ? { lead: "", body: text } : { lead, body: text.slice(lead.length) };
+}

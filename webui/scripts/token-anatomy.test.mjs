@@ -211,6 +211,43 @@ try {
     assert.match(chat, /\{#if genStatus\.active \|\| stopSlotHeld\}\s*<button type="button" class="dw-quiet stop" class:held=\{!genStatus\.active\} inert=\{!genStatus\.active\}/);
     assert.match(chat, /\.stop\.held \{ visibility: hidden; \}/);
   }
+  // Regression (a9): a selected " to" that wrapped left a sliver of its ink at the end of the line
+  // before (pre-wrap hangs the space there, inside the box). The space before a word sits outside
+  // every token box (tint, selection, hover): generated, prompt and thinking tokens in the chat, and
+  // the raw buffer's tokens and its colour mirror. The text still reads (and copies) as it was.
+  {
+    const { tokenLead } = await server.ssrLoadModule("/src/lib/tokens.ts");
+    assert.deepEqual(tokenLead(" to"), { lead: " ", body: "to" });
+    assert.deepEqual(tokenLead("\n\nThe"), { lead: "\n\n", body: "The" });
+    assert.deepEqual(tokenLead("to "), { lead: "", body: "to " }, "a trailing space stays the token's own");
+    assert.deepEqual(tokenLead("  "), { lead: "", body: "  " }, "a token of whitespace keeps its box");
+    assert.deepEqual(tokenLead(""), { lead: "", body: "" });
+
+    const { render } = await server.ssrLoadModule("svelte/server");
+    const { chatLog } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
+    const { default: Chat } = await server.ssrLoadModule("/src/panels/Chat.svelte");
+    const row = (text, rawIndex) => ({ text, rawIndex, logprob: -0.5, topAlts: [] });
+    const words = ["I", "'ve", " got", " to", " go", "\n\n", "Bye"];
+    chatLog.turns = [
+      { role: "user", text: "Hi there", nodeId: "u1", tokens: [row("Hi", 0), row(" there", 1)] },
+      { role: "assistant", text: words.join(""), generated: true, nodeId: "a1", tokens: words.map(row), thinkingTokens: [row("Let", 0), row(" me", 1)] },
+    ];
+    chatLog.pendingIndex = 1;
+    const html = render(Chat).body;
+    chatLog.pendingIndex = null;
+    const boxes = [...html.matchAll(/<span[^>]*class="tok\b[^"]*"[^>]*>([^<]*)<\/span>/g)].map(m => m[1]);
+    assert.deepEqual(boxes, ["Hi", "there", "Let", "me", "I", "'ve", "got", "to", "go", "\n\n", "Bye"],
+      "every box starts at its first glyph (prompt, thinking and generated tokens)");
+    const said = html.slice(html.indexOf('class="dw-said'));
+    const text = said.slice(said.indexOf(">") + 1, said.indexOf("</div>")).replace(/<!--[^]*?-->/g, "").replace(/<[^>]*>/g, "").replace(/&#39;/g, "'");
+    assert.equal(text, words.join(""), "the reply's text is unchanged");
+    assert.match(said.replace(/<!--[^]*?-->/g, ""), /got<\/span> <span[^>]*class="tok\b[^"]*"[^>]*>to<\/span>/, "the space before \"to\" sits between the boxes");
+    chatLog.turns = [];
+
+    const raw = await source("panels/RawBuffer.svelte");
+    assert.match(raw, /\{@const parts = tokenLead\(v\.text\)\}\s*\{parts\.lead\}<span\s+class="seg tok clickable"[^]*?>\{parts\.body\}<\/span>/, "the raw buffer's inspected tokens");
+    assert.match(raw, /\{@const parts = tokenLead\(token\.text\)\}\{parts\.lead\}<span use:arrivals\.reveal[^>]*>\{parts\.body\}<\/span>/, "and its colour mirror");
+  }
   console.log("token anatomy: ok");
 } finally {
   await server.close();
