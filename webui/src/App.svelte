@@ -14,7 +14,7 @@
   import { attachPersistence } from "./lib/stores/persistence.svelte";
   import { manifoldJobs } from "./lib/stores/manifoldJobs.svelte";
   import { ROOMS, goto, route, shownRooms, startRouting, type Room } from "./lib/stores/rooms.svelte";
-  import { clearSelection, selection } from "./lib/stores/selection.svelte";
+  import { clearSelection, closeTermEditor, selection, termOpen } from "./lib/stores/selection.svelte";
   import { escapeAction } from "./lib/escapeKey";
   import { workbenchUi } from "./lib/stores/workbench.svelte";
   import { paletteState, closePalette, openPalette } from "./lib/stores/palette.svelte";
@@ -132,6 +132,7 @@
     try {
       await bootstrap();
       clearSelection();
+      closeTermEditor();
       savedConversationState.activeId = null;
       savedConversationState.avatarSeed = null;
       savedConversationState.accent = "purple";
@@ -276,12 +277,16 @@
         paletteOpen: paletteState.open,
         modalOpen: loomUiState.modalRequest.kind !== null,
         drawerOpen: drawerState.open !== null,
-        selectionOpen: route.room === "workbench" && selection.current.kind !== "none",
+        selectionOpen: route.room === "workbench" && (selection.current.kind !== "none" || termOpen.name !== null),
         generating: genStatus.active,
       });
       if (action === "palette") closePalette();
       else if (action === "drawer") closeDrawer();
-      else if (action === "selection") clearSelection();
+      else if (action === "selection") {
+        // An open term's editor closes first, then the selection.
+        if (termOpen.name !== null) closeTermEditor();
+        else clearSelection();
+      }
       else if (action === "stop") sendStop();
       if (action !== "modal" && action !== "none") ev.preventDefault();
       return;

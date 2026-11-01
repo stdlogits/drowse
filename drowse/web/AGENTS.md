@@ -273,7 +273,7 @@ panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), 
                       cards; TermEditor and LayerStrip, the term editor under the chips;
                       SteerPicker, "+ Steer"; SteerButton, a row's Push or Silence)
 lib/steerActions.ts   the one way into the recipe: pushUnit, silenceUnit, pushLensToken,
-                      pushFeature, pushConcept, pushPosition (each adds its chip and selects it)
+                      pushFeature, pushConcept, pushPosition (each adds its chip and opens it)
 drawers/              one component per DrawerName; index.ts registry; manifold/, token/
 lib/api.ts            HTTP + SSE + WS client (imported only by runtime/http-client.ts)
 lib/runtime/          RuntimeClient contract, registry, HTTP impl, errors, capability gating
@@ -327,7 +327,8 @@ Section values are unique across rooms, so an agent's `section` alone names its 
 says what it `does` ("Fit or fetch a lens"), which is how the command palette lists it. The header's
 tabs are the way between rooms; on a phone they are the menu's Rooms, and the shell draws a crumb
 (Workbench › the room) over every room, which therefore draws none of its own.
-`selection.svelte.ts` is what the Inspector shows (none, token, probe, term, unit).
+`selection.svelte.ts` is what the Inspector shows (none, token, probe, unit), and apart from
+it `termOpen`, the term whose editor is open under the chips.
 `workbench.svelte.ts` is what the Page region shows (the conversation or the loom) and the
 phone's sheet.
 
@@ -535,7 +536,7 @@ drowse.ai too.
   Instruments read Units (the unit probes, `ProbeRack family="units"`), Lens, Probes (the geometry
   probes, with Live), Features; the full rack lists its unit probes first; the token view leads with
   the units that pushed the token and the heads it read from, then the lens's reads by depth.
-- **The term editor.** A chip selects its term (`{kind: "term"}`) and opens
+- **The term editor.** A chip opens its term (`termOpen`, apart from the selection) and opens
   `panels/rack/TermEditor.svelte` in place under the chips, as the Steering artboard draws it:
   the name and what it is, Push or Without (a rank-one direction or a neuron), On, the
   strength (a readout that scrubs sideways over the term's dial, `terms.ts::strengthDial`.
@@ -559,8 +560,9 @@ drowse.ai too.
   term as the expression writes it. A unit's strip is fixed (`LayerStrip` without
   `onchange`, a `note` in place of the presets): its own layer lit, nothing to paint. A unit's
   facts and chip carry its catalog label (`unitTermLabel`, the pole its term pushes), and the
-  editor opens its unit view. While a term is selected the Inspector shows the
-  instruments, and the phone's sheet stays down. Where a term acts comes from `POST
+  editor opens its unit view. Opening a term leaves the Inspector on what it shows (a Push from
+  a token's view keeps the token), and the phone's sheet stays as it was; Escape closes an open
+  term before the selection. Where a term acts comes from `POST
   .../steering/validate` (`terms`, `n_layers`), asked once per term text at strength 1 and
   `@response`, so a probe never drops the cached prefix (`termLayers.svelte.ts`); a runtime
   that does not report them hides the strip. The probe names the term's position, so a moved

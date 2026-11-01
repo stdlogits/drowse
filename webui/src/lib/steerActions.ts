@@ -1,12 +1,13 @@
 // The one way into the recipe. Every steering term is made here and lands as a chip in the
-// composer's strip, selected, so its editor opens under the chips for its strength: "+ Steer"'s
+// composer's strip, open, so its editor shows under the chips for its strength (the Inspector keeps
+// what it shows, so a Push from a token's view leaves the token in view): "+ Steer"'s
 // pickers (panels/rack/SteerPicker.svelte) and the one-click Push and Silence on the instruments'
 // rows (the lens's words, the SAE's features, a unit's view, the token view's units and heads, the
 // Units room). Nothing else edits a strength.
 //
 // A unit's term queues behind a running reply like every rack edit; its chip opens once it lands
-// (RecipeBar holds a selected term while a rack edit is queued).
-import { select } from "./stores/selection.svelte";
+// (RecipeBar holds an open term while a rack edit is queued).
+import { openTermEditor } from "./stores/selection.svelte";
 import {
   ATOM_DEFAULT_ALPHA,
   addJLensToRack,
@@ -25,9 +26,9 @@ import type { Variant } from "./types";
 import { parseUnit } from "./units";
 import { UNIT_ABLATE_ALPHA, UNIT_PUSH_ALPHA } from "./unitTerms";
 
-/** Select a racked term: its chip opens for its strength. */
+/** Open a racked term's chip for its strength, keeping the selection the Inspector shows. */
 export function openTerm(name: string): void {
-  select({ kind: "term", name });
+  openTermEditor(name);
 }
 
 /** Push a neuron along its write, on ``pole`` (``-``: its − pole, a negative strength). A neuron

@@ -28,10 +28,10 @@ try {
   });
   const actions = await server.ssrLoadModule("/src/lib/steerActions.ts");
   const steering = await server.ssrLoadModule("/src/lib/stores/steering.svelte.ts");
-  const { selection, clearSelection } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
+  const { selection, select, clearSelection, termOpen, closeTermEditor } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
   const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
   const { steerRack, currentSteeringExpression, removeSteerEntry, patchSteerEntry, lensTokenText } = steering;
-  const opened = () => (selection.current.kind === "term" ? selection.current.name : null);
+  const opened = () => termOpen.name;
 
   // ---- the helpers: each adds its term and opens its chip
   assert.equal(actions.pushLensToken({ word: " stars" }, "jlens"), "jlens/stars");
@@ -71,9 +71,22 @@ try {
     "0.5 default/formal.casual%casual + 0.3 jlens/stars + 0.3 slens/#282 + 0.3 sae/17 - 0.2 neuron/L3n7 + !head/L2h1 + 0.5 default/emotions%angry",
     "the expression keeps its canonical order (the chips sort by priority)");
 
+  // ---- a Push or Silence from the Inspector's token or unit view opens the chip and keeps the view
+  // (W6 review: the term had been a selection, so pushing from a token threw the token away).
+  const token = { kind: "token", params: { turnIdx: 1, seg: "response", tokenIdx: 2 } };
+  select(token);
+  actions.pushUnit("neuron/L3n9", "+");
+  assert.deepEqual([selection.current, opened()], [token, "neuron/L3n9"], "the token stays selected, the chip opens");
+  select({ kind: "unit", id: "head/L2h4" });
+  actions.silenceUnit("head/L2h4");
+  assert.deepEqual([selection.current, opened()], [{ kind: "unit", id: "head/L2h4" }, "head/L2h4"]);
+  removeSteerEntry("neuron/L3n9");
+  removeSteerEntry("head/L2h4");
+
   // ---- the strip: units, lens tokens, flat terms, curved terms, SAE features
   const { render } = await server.ssrLoadModule("svelte/server");
   clearSelection();
+  closeTermEditor();
   const { default: RecipeBar } = await server.ssrLoadModule("/src/panels/RecipeBar.svelte");
   const strip = render(RecipeBar, {}).body;
   const names = [...strip.matchAll(/<span class="dw-term-name[^"]*">([^<]*)<\/span>/g)].map((m) => m[1]);

@@ -21,7 +21,7 @@
     manifoldByName,
     lensTokenText,
   } from "../lib/stores/steering.svelte";
-  import { clearSelection, select, selection } from "../lib/stores/selection.svelte";
+  import { closeTermEditor, openTermEditor, termOpen } from "../lib/stores/selection.svelte";
   import { sessionState } from "../lib/stores/session.svelte";
   import { unitTermLabel } from "../lib/stores/units.svelte";
   import { rackEditQueued } from "../lib/stores/pending.svelte";
@@ -69,14 +69,14 @@
     }));
   const recipe = $derived(steerRack.readOnlyRecipe);
   const note = $derived(steerRack.recipeNote);
-  const open = $derived(selection.current.kind === "term" && steerRack.entries.has(selection.current.name) ? selection.current.name : null);
+  const open = $derived(termOpen.name !== null && steerRack.entries.has(termOpen.name) ? termOpen.name : null);
   const openEntry = $derived(open === null ? undefined : steerRack.entries.get(open));
 
   $effect(() => {
     // A term taken off the rack elsewhere (a recipe from an agent, a tool) leaves nothing to edit. A
     // term still queued behind a running reply (a unit pushed from an instrument) opens once it lands.
-    const current = selection.current;
-    if (current.kind === "term" && !steerRack.entries.has(current.name) && !rackEditQueued()) clearSelection();
+    const name = termOpen.name;
+    if (name !== null && !steerRack.entries.has(name) && !rackEditQueued()) closeTermEditor();
   });
 
   let adding = $state(false);
@@ -90,8 +90,8 @@
 
   function toggle(name: string): void {
     removed = null;
-    if (open === name) clearSelection();
-    else select({ kind: "term", name });
+    if (open === name) closeTermEditor();
+    else openTermEditor(name);
   }
 
   function remove(name: string): void {
@@ -99,13 +99,13 @@
     if (!entry) return;
     removed = { name, entry, title: termTitle(name, entry) };
     removeSteerEntry(name);
-    clearSelection();
+    closeTermEditor();
   }
 
   function undo(): void {
     if (!removed || steerRack.readOnlyRecipe !== null) return;
     steerRack.entries.set(removed.name, removed.entry);
-    select({ kind: "term", name: removed.name });
+    openTermEditor(removed.name);
     removed = null;
   }
 
@@ -129,7 +129,7 @@
     recipeOpen = false;
     removed = null;
     // The picker and an open term share the space under the chips: opening one closes the other.
-    if (adding && selection.current.kind === "term") clearSelection();
+    if (adding) closeTermEditor();
   }
   $effect(() => {
     if (open !== null) adding = false;
@@ -167,7 +167,7 @@
   {#if open !== null && openEntry}
     <div class="editor" transition:expand onintroend={(event) => (event.currentTarget as HTMLElement).scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" })}>
       {#key open}
-        <TermEditor name={open} entry={openEntry} onclose={clearSelection} onremove={() => { if (open !== null) remove(open); }} />
+        <TermEditor name={open} entry={openEntry} onclose={closeTermEditor} onremove={() => { if (open !== null) remove(open); }} />
       {/key}
     </div>
   {/if}

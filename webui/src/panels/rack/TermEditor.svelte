@@ -32,7 +32,7 @@
   import { sessionState } from "../../lib/stores/session.svelte";
   import { probeRack } from "../../lib/stores/probes.svelte";
   import { fitGeometry } from "../../lib/manifolds/fitKind";
-  import { select } from "../../lib/stores/selection.svelte";
+  import { openTermEditor, select } from "../../lib/stores/selection.svelte";
   import { setUnitOperation, unitTermLabel, unitsAvailable } from "../../lib/stores/units.svelte";
   import { UnitLabels } from "../../drawers/token/labels.svelte";
   import { formatTerm } from "../../lib/expression";
@@ -246,7 +246,7 @@
   });
   const relatable = $derived(ontoOptions.length > 0 && concepts.includes(base) && (entry.mode === "projection"
     || (entry.mode === "subspace" && !entry.ablate && entry.variant === "raw")));
-  const reselect = (key: string) => select({ kind: "term", name: key });
+  const reselect = (key: string) => openTermEditor(key);
 
   function setPart(value: "all" | "~" | "|"): void {
     if (value === part) return;

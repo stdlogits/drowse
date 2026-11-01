@@ -1,9 +1,9 @@
 <script lang="ts">
   // The Inspector: whatever is selected (lib/stores/selection.svelte.ts). Nothing shows the
   // instruments; a token its drilldown; a probe its trace and geometry; a unit (a neuron or a head)
-  // its view (UnitView). A steering term opens in place under the recipe's chips (TermEditor), so
-  // while one is selected the instruments stay here, reading what it does. The crumbs lead back to
-  // the instruments.
+  // its view (UnitView). A steering term opens in place under the recipe's chips (TermEditor), apart
+  // from the selection, so a Push from a token's or a unit's view leaves that view here. The crumbs
+  // lead back to the instruments.
   import { IconButton, Swap } from "@stdlogits/ledger";
   import DrawerOutlet from "../../drawers/DrawerOutlet.svelte";
   import Instruments from "./Instruments.svelte";
@@ -16,7 +16,7 @@
 
   const current = $derived(selection.current);
   // A selected term shows the instruments, as nothing selected does.
-  const shown = $derived(current.kind === "term" ? "none" : current.kind === "unit" ? `unit:${current.id}` : current.kind);
+  const shown = $derived(current.kind === "unit" ? `unit:${current.id}` : current.kind);
   const here = $derived.by(() => {
     switch (current.kind) {
       case "token": return "Token";

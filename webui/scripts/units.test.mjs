@@ -259,13 +259,13 @@ try {
   const store = await server.ssrLoadModule("/src/lib/stores/units.svelte.ts");
   const steering = await server.ssrLoadModule("/src/lib/stores/steering.svelte.ts");
   const actions = await server.ssrLoadModule("/src/lib/steerActions.ts");
-  const { selection, clearSelection } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
+  const { selection, clearSelection, termOpen, closeTermEditor } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
   const { genStatus } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
   const { drainNextPendingAction, rackEditQueued } = await server.ssrLoadModule("/src/lib/stores/pending.svelte.ts");
   const { serializeExpression } = await server.ssrLoadModule("/src/lib/expression.ts");
   assert.equal(actions.pushUnit("neuron/L31n4410"), "neuron/L31n4410");
   assert.equal(store.unitTerm("neuron/L31n4410"), "plus");
-  assert.deepEqual(selection.current, { kind: "term", name: "neuron/L31n4410" }, "the chip opens");
+  assert.equal(termOpen.name, "neuron/L31n4410", "the chip opens");
   assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L31n4410");
   steering.patchSteerEntry("neuron/L31n4410", { alpha: 0.35 }, ["unit"]);
   actions.pushUnit("L31 n4410", "-");
@@ -273,10 +273,11 @@ try {
   actions.pushUnit("neuron/L31n4410", "-");
   assert.equal(store.unitTerm("neuron/L31n4410"), "minus", "pushing the held push again keeps it (taking it out is the strip's)");
   clearSelection();
+  closeTermEditor();
   assert.equal(actions.pushUnit("head/L28h12"), null, "a head has no push");
-  assert.deepEqual(selection.current, { kind: "none" });
+  assert.deepEqual([selection.current, termOpen.name], [{ kind: "none" }, null]);
   assert.equal(actions.silenceUnit("head/L28h12"), "head/L28h12");
-  assert.deepEqual(selection.current, { kind: "term", name: "head/L28h12" });
+  assert.equal(termOpen.name, "head/L28h12");
   assert.equal(steering.currentSteeringExpression(), "-0.35 neuron/L31n4410 + !head/L28h12");
   steering.patchSteerEntry("head/L28h12", { alpha: 0.5 }, ["unit"]);
   actions.silenceUnit("head/L28h12");
@@ -294,7 +295,7 @@ try {
   actions.silenceUnit("neuron/L5n1");
   assert.equal(steering.steerRack.entries.has("neuron/L5n1"), false);
   assert.equal(rackEditQueued(), true);
-  assert.deepEqual(selection.current, { kind: "term", name: "neuron/L5n1" });
+  assert.equal(termOpen.name, "neuron/L5n1");
   genStatus.active = false;
   await drainNextPendingAction();
   assert.equal(rackEditQueued(), false);

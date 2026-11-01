@@ -27,7 +27,7 @@
   const loomPage = $derived(workbenchUi.page === "loom");
   // The loom page takes the phone's whole column, so the sheet waits until the conversation is back.
   // A steering term opens in place over the composer, not in the sheet.
-  const selecting = $derived(selection.current.kind !== "none" && selection.current.kind !== "term");
+  const selecting = $derived(selection.current.kind !== "none");
   const sheetShown = $derived(!loomPage && (selecting || workbenchUi.sheet));
   const LOOM_VIEWS: Record<string, string> = { weave: "Weave", map: "Map", path: "Path", options: "Next options", saved: "Starred" };
 

@@ -92,7 +92,6 @@ try {
   // A token or unit selection names what it selected (the Inspector reopens at the top on a new one).
   const { selectionIdentity } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
   assert.equal(selectionIdentity({ kind: "none" }), null);
-  assert.equal(selectionIdentity({ kind: "term", name: "honest" }), null);
   assert.notEqual(selectionIdentity({ kind: "token", params: { turnIdx: 1, tokenIdx: 2 } }),
     selectionIdentity({ kind: "token", params: { turnIdx: 1, tokenIdx: 3 } }));
   assert.equal(selectionIdentity({ kind: "unit", id: "neuron/L1n2" }), "unit:neuron/L1n2");

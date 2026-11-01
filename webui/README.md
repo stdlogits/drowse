@@ -46,12 +46,13 @@ The header holds the rooms as routes: Workbench, Units, Lens, Probes, Artifacts
 and Model. The workbench is three regions: the thread (the loom as the path you are
 on, and earlier chats), the page (the conversation or the loom's map) and the
 Inspector, which shows what is selected (a token's drilldown and anatomy, a
-probe, a unit, a steering term) and, with nothing selected, the instruments.
+probe, a unit) and, with nothing selected, the instruments; a steering term
+opens under the recipe's chips and leaves the Inspector as it was.
 From 1240 px the regions sit side by side; narrower it is Page | Inspector with
 the thread folded over the page; on a phone it is one column with the
 Inspector as a sheet. A tool a room hosts opens in that room; any other opens
-as a dialog over the page. The command palette is under **Menu → All tools**;
-it has no global keyboard shortcut.
+as a dialog over the page. The command palette is the header's search (⌘K,
+or **Menu → Search everything**).
 
 The steering recipe is chips over the composer, with the term editor in place
 under them, and it is the one place steering lives: "+ Steer" picks every kind
