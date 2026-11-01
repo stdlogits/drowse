@@ -92,7 +92,7 @@
 .dw-crumbs-end { margin-left: auto; }
 .dw-title { margin: 0; color: var(--ink); font: var(--type-heading); letter-spacing: -0.02em; overflow-wrap: anywhere; }
 .dw-ws { color: var(--ink3); }
-.dw-facts { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+.dw-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s4); color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
 .dw-facts b { color: var(--ink); font-weight: 500; }
 .dw-sec { display: grid; gap: var(--s3); min-width: 0; }
 .dw-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); min-width: 0; }

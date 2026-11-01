@@ -456,6 +456,10 @@ try {
   const room = readFileSync(new URL("../src/panels/rooms/UnitsRoom.svelte", import.meta.url), "utf8");
   assert.match(room, /At <Token token=\{focusToken\.token\} \/>/);
   assert.doesNotMatch(room, /@render ws\(/, "no token is spliced into the prose as bare text");
+  // Wave 5: a facts row with a Token chip ("peak here −64 on [augh]") lifted its plain sibling
+  // ("write norm 5.7") 4px off the baseline; a facts row aligns its items on the baseline.
+  const shared = readFileSync(new URL("../src/lib/style/drowse.css", import.meta.url), "utf8");
+  assert.match(/^\.dw-facts \{([^}]*)\}/m.exec(shared)?.[1] ?? "", /align-items: baseline/);
 
   console.log("units: ids, reads, activity, atlas, search, recipe, probes, WebMCP and both catalog states");
 } finally {
