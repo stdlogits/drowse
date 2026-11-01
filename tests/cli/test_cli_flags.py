@@ -568,6 +568,41 @@ def test_serve_live_sae_prefers_prepared_sources(
     assert session.sae.loaded == expected and session.sae.load_kwargs == load_kwargs
 
 
+def test_serve_live_sae_narrates_a_provider_load_before_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: serve downloaded a multi-GB provider SAE before binding
+    its port with nothing on the console, so it looked hung for minutes."""
+    from drowse.cli.verbs import serve
+
+    events: list[str] = []
+
+    class _Sae:
+        info = None
+
+        def set_live(self, enabled: bool, **_k: Any) -> SaeLiveState:
+            return SaeLiveState(enabled=enabled, layer=22)
+
+        def load(self, release: str, **_kwargs: Any) -> dict[str, Any]:
+            events.append(f"load {release}")
+            return {"release": release}
+
+    class _Session:
+        model_id = "google/gemma-3-4b-it"
+        sae = _Sae()
+
+    monkeypatch.setattr("drowse.sae.sources.list_sae_sources", lambda _m: [])
+    monkeypatch.setattr(
+        "drowse.sae.backend.list_sae_releases",
+        lambda _m: [{"release": "gemma-scope-2-4b-it-res", "source": "saelens",
+                     "repo_id": "google/gemma-scope-2-4b-it", "neuronpedia": True}],
+    )
+    monkeypatch.setattr(serve, "note", lambda text: events.append(f"note {text}"))
+    assert serve.enable_live_sae(_Session())
+    assert events[0].startswith("note Live SAE readout: loading gemma-scope-2-4b-it-res")
+    assert events[1] == "load gemma-scope-2-4b-it-res"
+
+
 # ---------------------------------------------------------------------------
 # -j purity: stdout is exactly one JSON document, narration goes to stderr
 # ---------------------------------------------------------------------------

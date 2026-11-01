@@ -245,6 +245,12 @@ def enable_live_sae(session: Any) -> bool:
             release = best_sae_release(list_sae_releases(session.model_id))
             if release is None:
                 return False
+            # A provider SAE's first load downloads its weights (gigabytes at
+            # 8B) before the port binds; say so, or the server looks hung.
+            note(
+                f"Live SAE readout: loading {release} from its provider; a "
+                f"first load downloads its weights before the server starts"
+            )
             info = session.sae.load(release)
         state = session.sae.set_live(True)
         note(f"Live SAE readout: on ({info.get('release', 'active')} at L{state.layer})")
