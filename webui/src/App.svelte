@@ -13,6 +13,7 @@
   import { manifoldJobs } from "./lib/stores/manifoldJobs.svelte";
   import { ROOMS, goto, route, shownRooms, startRouting, type Room } from "./lib/stores/rooms.svelte";
   import { clearSelection, selection } from "./lib/stores/selection.svelte";
+  import { escapeAction } from "./lib/escapeKey";
   import { workbenchUi } from "./lib/stores/workbench.svelte";
   import { paletteState, closePalette, openPalette } from "./lib/stores/palette.svelte";
   import { runtimeClient } from "./lib/runtime/client";
@@ -242,11 +243,18 @@
       return;
     }
     if (ev.key === "Escape") {
-      if (paletteState.open) { closePalette(); ev.preventDefault(); return; }
-      if (loomUiState.modalRequest.kind !== null) return;
-      if (drawerState.open !== null) { closeDrawer(); ev.preventDefault(); return; }
-      if (genStatus.active) { sendStop(); ev.preventDefault(); return; }
-      if (route.room === "workbench" && selection.current.kind !== "none") { clearSelection(); ev.preventDefault(); }
+      const action = escapeAction({
+        paletteOpen: paletteState.open,
+        modalOpen: loomUiState.modalRequest.kind !== null,
+        drawerOpen: drawerState.open !== null,
+        selectionOpen: route.room === "workbench" && selection.current.kind !== "none",
+        generating: genStatus.active,
+      });
+      if (action === "palette") closePalette();
+      else if (action === "drawer") closeDrawer();
+      else if (action === "selection") clearSelection();
+      else if (action === "stop") sendStop();
+      if (action !== "modal" && action !== "none") ev.preventDefault();
       return;
     }
     if (!mod || ev.shiftKey || route.room !== "workbench") return;

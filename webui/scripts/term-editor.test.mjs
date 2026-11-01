@@ -330,5 +330,16 @@ try {
   ok([{ name: "slens/Paris", ...read }]);
   assert.throws(() => ok([{ name: "jlens/Paris", ...read }]), TypeError, "an slens row names an slens atom");
 
-  console.log("Term editor: the layer clause, unit terms, slens terms, where a term acts, the chips' words and the snapshot rows passed");
+  // Escape closes the open term editor (a selection) before it stops a streaming reply. Regression:
+  // the window's Escape stopped the reply first, so closing the editor mid-reply cut it off.
+  const { escapeAction } = await server.ssrLoadModule("/src/lib/escapeKey.ts");
+  const idle = { paletteOpen: false, modalOpen: false, drawerOpen: false, selectionOpen: false, generating: false };
+  assert.equal(escapeAction({ ...idle, selectionOpen: true, generating: true }), "selection");
+  assert.equal(escapeAction({ ...idle, generating: true }), "stop");
+  assert.equal(escapeAction({ ...idle, drawerOpen: true, selectionOpen: true, generating: true }), "drawer");
+  assert.equal(escapeAction({ ...idle, modalOpen: true, generating: true }), "modal");
+  assert.equal(escapeAction({ ...idle, paletteOpen: true, modalOpen: true }), "palette");
+  assert.equal(escapeAction(idle), "none");
+
+  console.log("Term editor: the layer clause, unit terms, slens terms, where a term acts, the chips' words, the snapshot rows and Escape's order passed");
 } finally { await server.close(); }
