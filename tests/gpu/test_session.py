@@ -112,6 +112,42 @@ class TestSteering:
         )
         assert isinstance(profile, Profile)
 
+class TestMixedSteering:
+    """Affine terms beside a curved ``%`` term on the session device.
+
+    Regression: the affine basis is host-side at install while the curved
+    manifold's basis is resident on the device, so orthogonalizing one against
+    the other raised a device mismatch and every such recipe failed to install.
+    """
+
+    @pytest.fixture(scope="class", autouse=True)
+    def fitted(self, session: DrowseSession) -> None:
+        from drowse.base.paths import manifold_dir
+        from drowse.store.bundled import materialize_bundled_artifacts
+
+        materialize_bundled_artifacts()
+        for name in ("months", "honest.deceptive", "formal.casual"):
+            session.fit(manifold_dir("default", name))
+
+    @pytest.mark.parametrize(
+        "affine",
+        [
+            "0.5 default/honest.deceptive",
+            "0.5 !default/honest.deceptive",
+            "0.5 default/honest.deceptive%honest",
+            "0.5 default/honest.deceptive~default/formal.casual",
+        ],
+    )
+    def test_affine_beside_a_curved_term(self, session: DrowseSession, affine: str) -> None:
+        from drowse.generation.sampling import SamplingConfig
+
+        result = session.generate(
+            "Say hi.", steering=f"{affine} + 0.4 default/months%march",
+            sampling=SamplingConfig(max_tokens=4), stateless=True,
+        ).first
+        assert result.text is not None
+
+
 class TestMonitoring:
     def test_monitor_and_unmonitor(self, session: DrowseSession) -> None:
         # Extract registers the folded direction; ``add_probe`` resolves it

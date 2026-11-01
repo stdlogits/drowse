@@ -167,7 +167,9 @@ def _orthogonalize_affine_against(
     ``None`` when the affine span lies entirely inside the curved span.
     """
     basis = sub.basis.to(torch.float32)              # (R, D)
-    cb = curved_basis.to(torch.float32)              # (Rc, D)
+    # The curved basis is the resident manifold's (on the session device); the
+    # affine synthesis is host-side until AffineOp uploads it.
+    cb = curved_basis.to(device=basis.device, dtype=torch.float32)  # (Rc, D)
     delta = basis.T @ target.to(torch.float32)       # (D,) world push displacement
     residual = basis - (basis @ cb.T) @ cb           # (R, D) rows ⟂ curved span
     new_basis, _kept = _ortho_basis(residual)
