@@ -53,6 +53,19 @@ try {
   client.events.close();
   currentSocket.finishClose();
   assert.deepEqual(states.at(-1), { state: "closed", expected: true, reason: null });
+  // A server connection that drops (not one this page closed) names itself, so the page says the
+  // connection dropped and reads the tree again, rather than "the local model is not ready".
+  {
+    const reopened = client.events.open();
+    const dropped = sockets.at(-1);
+    dropped.connect();
+    await reopened;
+    dropped.finishClose();
+    const last = states.at(-1);
+    assert.equal(last.expected, false);
+    assert.equal(last.code, "RUNTIME_CONNECTION_LOST");
+    assert.match(last.reason, /connection to the drowse server closed/);
+  }
   // Every SSE operation goes through one POST/stream/done helper.
   const { apiManifoldFitStream, apiExtractStream } = await server.ssrLoadModule("/src/lib/api.ts");
   const previousFetch = globalThis.fetch;
