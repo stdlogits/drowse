@@ -116,7 +116,11 @@ projections; a two-value comma run on anything that does not resolve to a `%`
 term (a bare node label does: `0.6,0.3 pirate` is legal); more than two
 values; more than one `@` clause or gate per term. Repeated keys merge: equal
 triggers sum coefficients (`along` and `onto` separately), differing triggers
-raise, and one key used both as a plain term and as a projection raises.
+raise, and one key used both as a plain term and as a projection raises. A
+coordinate `%` key renders its position with `%g`, so two positions that agree
+to six significant digits (`m%0.1234567` and `m%0.1234568`) share a key: they
+raise rather than merge, since summing would move one term onto the other's
+point.
 Projection, ablation and `%` terms default to `Trigger.BOTH`; a plain term
 without `@` stores a bare float that inherits `Steering.trigger`.
 
@@ -169,8 +173,11 @@ attached probe is silently inactive.
 ### Round trip
 
 `format_expr` renders the canonical form: resolved registry keys (`0.5 pirate`
-→ `0.5 default/personas%pirate`), `%g` numbers (six significant digits, so
-lossy beyond that), no tag for `Trigger.BOTH`, canonical preset spellings
+→ `0.5 default/personas%pirate`), `%g` numbers (C's `%g`: six significant
+digits, so lossy beyond that; trailing zeros and a bare point dropped;
+exponent form when the decimal exponent is below −4 or at least 6, written
+`e`, a sign and at least two digits: `1e-05`, `1e+06`, `-1.23457e+06`; the
+same rendering spells a coordinate `%` position in its key), no tag for `Trigger.BOTH`, canonical preset spellings
 (`before`, `response`), `!x` / `-!x` for ±1 ablations, a `%` term's
 `onto` rendered relative to `along`'s sign so mixed-sign terms (the loom
 `inverted` regen negates only `along`) re-parse exactly, and the canonical

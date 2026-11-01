@@ -283,6 +283,24 @@ def test_manifold_coeffs_sum_on_merge():
     assert term.onto == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("expr", [
+    "0.5 m%0.1234567 + 0.25 m%0.1234568",
+    "0.5 m%1000001 + 0.25 m%1000004",
+])
+def test_positions_sharing_a_key_refuse_to_merge(expr: str) -> None:
+    # Regression: the key renders coordinates with %g, so these two distinct
+    # points shared one key and merged silently (along summed, last
+    # position kept).
+    with pytest.raises(SteeringExprError, match="six significant digits"):
+        parse_expr(expr)
+
+
+def test_equal_positions_written_differently_still_merge() -> None:
+    term = _only_term("0.5 m%0.25 + 0.25 m%0.250")
+    assert isinstance(term, ManifoldTerm)
+    assert term.along == pytest.approx(0.75)
+
+
 def test_rejects_three_coeffs():
     with pytest.raises(SteeringExprError):
         parse_expr("0.6,0.3,0.2 circumplex%happy")

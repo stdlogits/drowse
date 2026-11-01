@@ -1289,6 +1289,13 @@ def _fmt_position(position: tuple[float, ...] | str) -> str:
     return ",".join(f"{c:g}" for c in position)
 
 
+def _exact_position(position: tuple[float, ...] | str) -> str:
+    """A position at full precision (``repr``), for error text."""
+    if isinstance(position, str):
+        return position
+    return ",".join(repr(c) for c in position)
+
+
 def _expand_along_onto_coeffs(
     coeffs: tuple[float, ...],
 ) -> tuple[float, float]:
@@ -1348,6 +1355,16 @@ def _merge_manifold(
             f"manifold '{key}' appears with conflicting "
             f"triggers; merge triggers explicitly or split into separate "
             f"Steering entries"
+        )
+    if existing.position != position:
+        # The key renders coordinates with ``%g`` (six significant digits),
+        # so two distinct positions can share it; summing them would move
+        # one term silently onto the other's point.
+        raise SteeringExprError(
+            f"manifold '{key}' names two positions that agree to six "
+            f"significant digits ({_exact_position(existing.position)} and "
+            f"{_exact_position(position)}); round them to one point or move "
+            f"them further apart"
         )
     alphas[key] = ManifoldTerm(
         along=existing.along + along,
