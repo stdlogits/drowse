@@ -15,5 +15,6 @@
 </span>
 
 <style>
-  .absent { display: inline-flex; align-items: center; gap: var(--s2); }
+  .absent { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s2); }
+  .absent > button { display: inline-flex; align-items: center; white-space: nowrap; }
 </style>
