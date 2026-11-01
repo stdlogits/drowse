@@ -21,7 +21,11 @@ try {
   assert.equal(chartValue(0.000001, true), "<0.01%");
 
   // The depth ramp and the trace mark's arithmetic.
-  const { depthTint, layerDepth, peakLayer, traceBars, readingText, bucketed } = await server.ssrLoadModule("/src/lib/charts/depth.ts");
+  const { depthTint, layerDepth, peakLayer, traceBars, readingText, bucketed, aggregateReadingText } = await server.ssrLoadModule("/src/lib/charts/depth.ts");
+  // Regression: the Readings list printed raw values ("0" for a jlens/ probability of 2e-6).
+  assert.equal(aggregateReadingText("jlens/Paris", 2.4e-6), "<0.1%");
+  assert.equal(aggregateReadingText("slens/Paris", 0.0538), "+0.05");
+  assert.equal(aggregateReadingText("default/honest.deceptive", -0.31), "−0.31");
   assert.deepEqual(bucketed([1, -3, null, 2, NaN], 3), { values: [-3, 2, null], size: 2 }, "a folded bar keeps its largest magnitude, sign and all");
   assert.deepEqual(bucketed([1, null], 4), { values: [1, null], size: 1 });
   assert.equal(depthTint(0), "color-mix(in oklch, var(--deep) 100%, var(--late))");

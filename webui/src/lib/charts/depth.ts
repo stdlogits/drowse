@@ -96,3 +96,9 @@ export function readingText(value: number | null | undefined, { signed = false, 
   if (value < 0 && text !== "0.00") return `−${text}`;
   return signed && value > 0 ? `+${text}` : text;
 }
+
+/** A saved reply's flat reading (the Readings list) as the rack writes the same probe: a
+ *  ``jlens/`` word's probability as a percent, anything else signed to two places. */
+export function aggregateReadingText(name: string, value: number): string {
+  return readingText(value, { signed: true, percent: name.startsWith("jlens/") });
+}

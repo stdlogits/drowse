@@ -13,6 +13,7 @@
     arrivals.track(pending?.thinkingTokens ?? [], genStatus.active, "thinking");
   });
   import { MorphText } from "@stdlogits/ledger";
+  import { aggregateReadingText } from "../lib/charts/depth";
   import { createTokenViewCache } from "../lib/runtime/tokenViews";
   import { Icon } from "@stdlogits/ledger";
   import { Expander } from "@stdlogits/ledger";
@@ -1508,7 +1509,7 @@
           <dl>
             {#each Object.entries(turn.aggregateReadings ?? {}) as [name, value] (name)}
               {#if Number.isFinite(value)}
-                <div><dt>{name}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 4 })}</dd></div>
+                <div><dt>{name}</dt><dd>{aggregateReadingText(name, value)}</dd></div>
               {/if}
             {/each}
           </dl>

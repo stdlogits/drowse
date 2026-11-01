@@ -595,7 +595,7 @@
                 class="share"
                 aria-pressed={l.layer === selectedLayer}
                 style:--tint={depthTint(layerDepth(l.layer, geomDeepest))}
-                data-tip={`L${l.layer} · share ${chartValue(l.mahalanobis_share)} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of the largest`}
+                data-tip={`L${l.layer} · share ${l.mahalanobis_share.toFixed(3)} · ${chartValue(maxShare > 0 ? Math.abs(l.mahalanobis_share) / maxShare : 0, true)} of the largest`}
                 aria-label={`Layer ${l.layer}, share ${l.mahalanobis_share.toFixed(3)}`}
                 onclick={() => (selectedLayer = l.layer)}
               ><i style:height={`${Math.max(6, maxShare > 0 ? (Math.abs(l.mahalanobis_share) / maxShare) * 100 : 0)}%`}></i></button>
