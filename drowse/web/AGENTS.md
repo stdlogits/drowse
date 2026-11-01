@@ -305,8 +305,9 @@ lib/style/            drowse.css (the shell's Ledger classes), global.css, curso
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
 ```
 
-The design is Ledger, from the package `@stdlogits/ledger` (pinned as a git dependency at
-`github:stdlogits/ledger#v0.1.1`, with `@sveltejs/vite-plugin-svelte` at 7.3.1; its
+The design is Ledger, from the package `@stdlogits/ledger` (pinned as the v0.1.1 tag's GitHub tarball, not a git dependency:
+Ledger's gallery `build` script makes npm prepare a git dependency, which Node 24's npm
+refuses; with `@sveltejs/vite-plugin-svelte` at 7.3.1; its
 `DESIGN.md` is the design, and it supplies the tokens, the Wix Madefor faces, motion, the tip,
 the theme and the pieces: Segmented, Tabs, Switch, IconButton, Icon, Expander, Meter, Token,
 Context, Swap, MorphText, ThemeButton). Use a piece rather than drawing a look-alike. The

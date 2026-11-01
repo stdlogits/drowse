@@ -32,7 +32,7 @@
   },
   "dependencies": {
     "@noble/hashes": "2.3.0",
-    "@stdlogits/ledger": "github:stdlogits/ledger#v0.1.1",
+    "@stdlogits/ledger": "https://codeload.github.com/stdlogits/ledger/tar.gz/refs/tags/v0.1.1",
     "fflate": "0.8.3"
   }
 }
