@@ -112,7 +112,12 @@ export function onWsMessage(cb: WsListener): () => void {
   return () => wsConn.listeners.delete(cb);
 }
 
-export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
+/** Open the runtime channel (or join the open one). Opening rehydrates: the authoritative tree, then
+ *  the session, profiles, probes and manifolds. Page bootstrap opens it once that way, so a load
+ *  fetches each of them once; ``sessionFresh`` skips the session read bootstrap just made. */
+export function ensureRuntimeChannel(
+  { sessionFresh = false }: { sessionFresh?: boolean } = {},
+): Promise<RuntimeEventChannel> {
   if (wsConn.opening && wsConn.channel && wsConn.ready) {
     return wsConn.ready.then(() => wsConn.channel!);
   }
@@ -342,7 +347,7 @@ export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
         throw new Error("The Drowse runtime connection closed during tree recovery");
       }
       await Promise.allSettled([
-        refreshSession(),
+        ...(sessionFresh ? [] : [refreshSession()]),
         refreshVectorList(),
         refreshProbeList(),
         refreshManifoldList(),

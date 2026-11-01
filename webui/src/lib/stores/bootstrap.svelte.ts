@@ -9,6 +9,7 @@ import { loadPersistedPreferences } from "./persistence.svelte";
 import { refreshProbeList } from "./probes.svelte";
 import { refreshSession, sessionState } from "./session.svelte";
 import { applyRecipe, refreshManifoldList, refreshVectorList, steerRack } from "./steering.svelte";
+import { ensureRuntimeChannel } from "./ws.svelte";
 
 /** Bootstrap the dashboard — call once on App mount.  Resolves only once
  * every parallel fetch settles so the UI's first paint has a real session
@@ -29,14 +30,20 @@ export async function bootstrap(): Promise<void> {
   loadPersistedPreferences();
   // Per-model render-mode override (base vs chat) — also model-scoped.
   loadGenUiMode();
-  await Promise.allSettled([
-    refreshVectorList(),
-    // Unified probe roster — every probe shape.
-    refreshProbeList(),
-    // Current manifold catalog.
-    refreshManifoldList(),
-    // Server tree wins — fetch and reconcile; failures remain visible.
-    refreshLoomTree(),
-  ]);
+  try {
+    // Opening the channel rehydrates: the authoritative tree, then the profiles, the probe roster
+    // and the manifold catalog. Doing it here (rather than fetching them and then opening the
+    // channel, which fetched them all again) reads each once per load.
+    await ensureRuntimeChannel({ sessionFresh: true });
+  } catch {
+    // The channel could not open (its failure is already shown); read everything once so the page
+    // still opens. The send paths reopen the channel on demand.
+    await Promise.allSettled([
+      refreshVectorList(),
+      refreshProbeList(),
+      refreshManifoldList(),
+      refreshLoomTree(),
+    ]);
+  }
   if (defaultRecipe && steerRack.readOnlyRecipe === null && steerRack.entries.size === 0) applyRecipe(defaultRecipe);
 }

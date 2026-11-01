@@ -25,7 +25,6 @@
   import { containTab, tabStops } from "./lib/focusTrap";
   import {
     bootstrap,
-    ensureRuntimeChannel,
     drawerState,
     closeDrawer,
     genStatus,
@@ -171,9 +170,8 @@
           console.warn("The saved workspace for this chat could not be restored", error);
         }
       }
-      // Open the WebSocket now so the first generation doesn't pay connect latency; the send
-      // paths reopen it on demand if this fails.
-      try { await ensureRuntimeChannel(); } catch { /* reopened on send */ }
+      // bootstrap() opened the channel (its rehydrate read the tree); the send paths reopen it on
+      // demand if that failed.
       bootStatus = "ready";
     } catch (e) {
       bootError = userFacingError(e, "Unable to open the workbench. Reopen the model and try again.");
