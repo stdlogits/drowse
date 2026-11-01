@@ -55,7 +55,7 @@ export function removes(name: string, entry: SteerEntry): boolean {
 /** The term's name as its chip and its editor show it. A manifold position off its nodes names
  *  its coordinates by their axes (``month 6.00``, with the manifold's ``info``), else as a point,
  *  so a bare number never reads as a quantity of the manifold's name ("6 months"). */
-export function termTitle(name: string, entry: SteerEntry, info?: ManifoldInfo | null): string {
+export function termTitle(name: string, entry: SteerEntry, info?: ManifoldInfo | null, tokens?: ReadonlyMap<number, string>): string {
   switch (entry.mode) {
     case "subspace": return entry.ablate ? bareName(name) : entry.label ?? bareName(name);
     case "manifold": {
@@ -65,11 +65,21 @@ export function termTitle(name: string, entry: SteerEntry, info?: ManifoldInfo |
         ? `${axes[0].name} ${coefficientText(entry.coords[0], { fixed: true })}`
         : `point ${entry.coords.map(c => coefficientText(c, { fixed: true })).join(", ")}`;
     }
-    case "jlens": return name.slice("jlens/".length);
-    case "slens": return name.slice("slens/".length);
+    case "jlens":
+    case "slens": {
+      const word = name.slice(`${entry.mode}/`.length);
+      const id = lensTokenId(name);
+      return (id !== null ? tokens?.get(id)?.trim() : "") || word;
+    }
     case "sae": return `feature ${name.slice("sae/".length)}`;
     case "unit": return unitTitle(name);
   }
+}
+
+/** A lens atom's vocabulary id when it names one (``jlens/#282``), else null. */
+export function lensTokenId(name: string): number | null {
+  const match = /^[js]lens\/#([0-9]+)$/u.exec(name);
+  return match ? Number(match[1]) : null;
 }
 
 /** Where the term comes from, in a word or two: the manifold it sits on, or the kind of atom. */
@@ -77,8 +87,8 @@ export function termSource(name: string, entry: SteerEntry): string {
   switch (entry.mode) {
     case "subspace": return !entry.ablate && entry.label !== null && entry.label !== bareName(name) ? bareName(name) : "";
     case "manifold": return bareName(name);
-    case "jlens": return "lens token, as said";
-    case "slens": return "lens token, as read";
+    case "jlens": return lensTokenId(name) === null ? "lens token, as said" : `lens token #${lensTokenId(name)}, as said`;
+    case "slens": return lensTokenId(name) === null ? "lens token, as read" : `lens token #${lensTokenId(name)}, as read`;
     case "sae": return "SAE feature";
     case "unit": return name.startsWith("head/") ? "attention head" : "MLP neuron";
   }

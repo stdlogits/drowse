@@ -40,6 +40,7 @@
     sendFork,
     sendTextFork,
     addJLensToRack,
+    lensTokenText,
     addSLensToRack,
     attachProbe,
     refreshLensSources,
@@ -664,6 +665,8 @@
   function steerTowardToken(): void {
     const id = token?.tokenId;
     if (id == null) return;
+    // The atom names the exact id; its chip reads the token's text.
+    lensTokenText.set(id, token?.text ?? "");
     if (lensAs === "jlens") addJLensToRack(`#${id}`);
     else addSLensToRack(`#${id}`);
   }

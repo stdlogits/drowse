@@ -288,6 +288,14 @@ try {
     ["jlens/storm", { mode: "jlens", ablate: false, alpha: 0.3, trigger: "BOTH", enabled: true }],
   ]), 0.5), "0.3 jlens/storm + 0.3 slens/Paris{2-4}@response + 0.3 sae/7", "lens tokens emit together, said before read");
   assert.equal(terms.termTitle("slens/Paris", read), "Paris");
+  // Regression: a term from the token view's Steer toward it (jlens/#282) read "#282" on its chip.
+  const said = { mode: "jlens", ablate: false, alpha: 0.3, trigger: "BOTH", enabled: true };
+  const known = new Map([[282, " of"]]);
+  assert.equal(terms.termTitle("jlens/#282", said, null, known), "of");
+  assert.equal(terms.termTitle("slens/#282", { ...said, mode: "slens" }, null, known), "of");
+  assert.equal(terms.termTitle("jlens/#283", said, null, known), "#283", "an id it was not added for shows the id");
+  assert.equal(terms.termSource("jlens/#282", said), "lens token #282, as said", "the id stays in the meta");
+  assert.equal(terms.termSource("jlens/storm", said), "lens token, as said");
   // Regression: a free months position read "6" beside "months", which reads as a duration.
   const free = { mode: "manifold", blend: 0.5, onto: 0, coords: [6], label: null, variant: "raw", trigger: "BOTH", enabled: true };
   const monthsInfo = { domain: { type: "box", axes: [{ name: "month", lo: 0, hi: 12, periodic: true }] } };

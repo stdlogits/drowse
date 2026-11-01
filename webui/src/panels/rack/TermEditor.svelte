@@ -19,6 +19,7 @@
     setSteerLabel,
     setSteerLayers,
     setSubspaceAlong,
+    lensTokenText,
     steerRack,
   } from "../../lib/stores/steering.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
@@ -51,7 +52,7 @@
 
   const uid = $props.id();
   const info = $derived(entry.mode === "subspace" || entry.mode === "manifold" ? manifoldByName(name) : null);
-  const title = $derived(termTitle(name, entry, entry.mode === "manifold" ? info : null));
+  const title = $derived(termTitle(name, entry, entry.mode === "manifold" ? info : null, lensTokenText));
   const removal = $derived(removes(name, entry));
   const place = $derived(placeOf(name, entry, sessionState.info?.model_id));
   const where = $derived(place.where);

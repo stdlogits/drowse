@@ -15,6 +15,7 @@
     retryRecipe,
     removeSteerEntry,
     manifoldByName,
+    lensTokenText,
   } from "../lib/stores/steering.svelte";
   import { openDrawer } from "../lib/stores/drawers.svelte";
   import { clearSelection, select, selection } from "../lib/stores/selection.svelte";
@@ -40,7 +41,7 @@
         name,
         enabled: entry.enabled,
         strength: chipStrength(name, entry, steerRack.subspaceAlong),
-        title: termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null),
+        title: termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null, lensTokenText),
         source: (entry.mode === "unit" ? unitTermLabel(name, entry) : null) ?? termSource(name, entry),
         span: place.where ? depthSpan(place.selected, place.where.nLayers) : null,
         meta: [layers, triggerWord(entry.trigger)].filter(Boolean).join(" · "),

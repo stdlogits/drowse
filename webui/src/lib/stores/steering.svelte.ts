@@ -451,6 +451,11 @@ function addAtomToRack(mode: AtomMode, id: string): void {
   } as AtomSteerEntry);
 }
 
+/** A lens atom named by vocabulary id (``jlens/#282``, from the token view's Steer toward it) reads
+ *  on its chip as the token's text: the decoded token each id was added for, this page's memory
+ *  only (a chip from elsewhere, or after a reload, shows its id). */
+export const lensTokenText = new SvelteMap<number, string>();
+
 /** Add a J-lens token steering chip (``α jlens/<word>``).  Accepts a bare
  *  word or a full ``jlens/…`` atom; the rack key is the full atom.
  *  Dashboard callers validate through ``apiInstruments.validateLensToken``
