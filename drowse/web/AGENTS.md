@@ -20,8 +20,11 @@ falls back to `index.html`. Because `full_path` is only ever used as a dict key,
 traversal is impossible.
 
 Only split JS chunks are content-hashed. `assets/drowse.js` and all CSS, font and JSON
-assets keep fixed names, so StaticFiles' ETag/Last-Modified revalidation is load-bearing.
-Never add an immutable cache header. `dist_path()` resolves through `importlib.resources`.
+assets keep fixed names, so ETag/Last-Modified revalidation is load-bearing: every
+dashboard response (`index.html`, the top-level files, both mounts) says
+`Cache-Control: no-cache`. Without it a browser may reuse a cached `drowse.js` on
+heuristic freshness and run an old dashboard against an upgraded server. Never add an
+immutable cache header. `dist_path()` resolves through `importlib.resources`.
 If `dist/index.html` is missing, mounting raises `WebUINotBuilt` (500).
 
 The shell is public and holds no data. `server/security.py` authenticates only the API

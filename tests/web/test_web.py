@@ -164,6 +164,22 @@ class TestWebMount:
             # Vite chunk weighs in at hundreds of bytes.
             assert len(r.content) > 0
 
+    def test_every_dashboard_file_revalidates(self, web_client: Any) -> None:
+        """Regression: ``assets/drowse.js`` and the stylesheets keep fixed
+        names and were served with an ETag but no ``Cache-Control``, so after
+        an upgrade a browser could reuse the old dashboard on heuristic
+        freshness instead of revalidating."""
+        _session, client = web_client
+        index = client.get("/")
+        for path in ("/", "/lab", "/theme-preflight.js", *_index_asset_paths(index.content)):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert r.headers.get("cache-control") == "no-cache", path
+        etag = client.get("/assets/drowse.js").headers["etag"]
+        again = client.get("/assets/drowse.js", headers={"If-None-Match": etag})
+        assert again.status_code == 304
+        assert again.headers.get("cache-control") == "no-cache"
+
     def test_unknown_route_falls_back_to_index(self, web_client: Any) -> None:
         _session, client = web_client
         # SPA fallback: /lab is a client-side route the SPA owns; the

@@ -5,8 +5,11 @@ The bundle is a single-page app — every unknown route falls back to
 no data, and the API key is entered client-side and rides each API call
 (only the API prefixes authenticate).  The entry chunks keep fixed names
 (``assets/drowse.js``, ``assets/App.css``) while split chunks are
-content-hashed, so ``/assets/*`` is served by ``StaticFiles`` with its
-default ETag / Last-Modified revalidation.
+content-hashed, so every dashboard response says ``Cache-Control: no-cache``:
+the browser revalidates each file by its ETag / Last-Modified on every load
+(a 304 when nothing changed).  Without the header a browser may reuse a cached
+``drowse.js`` on heuristic freshness and run an old dashboard against an
+upgraded server.
 """
 from __future__ import annotations
 
@@ -14,8 +17,22 @@ from importlib import resources as _resources
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 
 from drowse.errors import DrowseError
+
+_REVALIDATE = {"Cache-Control": "no-cache"}
+
+
+class _RevalidatingFiles(StaticFiles):
+    """``StaticFiles`` whose responses always revalidate (``no-cache``)."""
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers.update(_REVALIDATE)
+        return response
 
 
 class WebUINotBuilt(RuntimeError, DrowseError):
@@ -57,7 +74,6 @@ def register_web_routes(app: FastAPI) -> None:
     """
     from fastapi import HTTPException
     from fastapi.responses import FileResponse
-    from fastapi.staticfiles import StaticFiles
 
     dist = dist_path()
     if not dist.exists() or not (dist / "index.html").is_file():
@@ -73,13 +89,13 @@ def register_web_routes(app: FastAPI) -> None:
         if static_dir.is_dir():
             app.mount(
                 f"/{directory}",
-                StaticFiles(directory=str(static_dir)),
+                _RevalidatingFiles(directory=str(static_dir)),
                 name=f"drowse-web-{directory}",
             )
 
     @app.get("/", include_in_schema=False)
     async def _root() -> FileResponse:
-        return FileResponse(str(dist / "index.html"))
+        return FileResponse(str(dist / "index.html"), headers=_REVALIDATE)
 
     # Catch-all for any other top-level route the SPA needs to handle —
     # e.g. /chat, /lab, /manifolds/<name>. Won't shadow any earlier
@@ -111,5 +127,5 @@ def register_web_routes(app: FastAPI) -> None:
             raise HTTPException(404, "not found")
         direct = top_level_files.get(full_path)
         if direct is not None:
-            return FileResponse(str(direct))
-        return FileResponse(str(index_html))
+            return FileResponse(str(direct), headers=_REVALIDATE)
+        return FileResponse(str(index_html), headers=_REVALIDATE)
