@@ -365,12 +365,18 @@ export function highlightScale(target: string | null): number {
   return probeAxisScale(base, axis);
 }
 
+/** How the name sort reads a probe: as its row is titled, without the namespace
+ *  (``default/months`` sorts as ``months``), the full key breaking a tie. */
+export function probeSortName(name: string): string {
+  return name.split("/").pop() || name;
+}
+
 /** Computed: probe names sorted per the chosen sort mode.  Fresh array each
  *  access; consumers use it as a ``$derived`` read-only view. */
 export function activeProbeNames(): string[] {
   const arr = [...probeRack.active];
   if (probeRack.sortMode === "name") {
-    arr.sort();
+    arr.sort((a, b) => probeSortName(a).localeCompare(probeSortName(b)) || (a < b ? -1 : a > b ? 1 : 0));
   } else if (probeRack.sortMode === "value") {
     arr.sort((a, b) => {
       const av = probeRack.entries.get(a)?.current ?? 0;

@@ -239,5 +239,15 @@ try {
     assert.equal(customComparisonProblem("seed=42"), null);
     autoRegenState.enabled = false;
   }
+  // Regression: the name sort compared raw keys, so ``default/months`` sorted by ``default``.
+  {
+    const { probeRack, activeProbeNames } = await server.ssrLoadModule("/src/lib/stores/probes.svelte.ts");
+    const before = { active: [...probeRack.active], sortMode: probeRack.sortMode };
+    probeRack.active = ["direct.indirect", "default/months", "curious.disinterested", "jlens/Paris", "confident.uncertain"];
+    probeRack.sortMode = "name";
+    assert.deepEqual(activeProbeNames(), ["confident.uncertain", "curious.disinterested", "direct.indirect", "default/months", "jlens/Paris"]);
+    probeRack.active = before.active;
+    probeRack.sortMode = before.sortMode;
+  }
   console.log("Steering rack: one patch path for every term, label binding, mode guards, queued edits, and correlation freshness passed");
 } finally { await server.close(); }

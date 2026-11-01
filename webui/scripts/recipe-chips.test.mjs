@@ -54,6 +54,8 @@ try {
   const { triggerWord, strengthDial, strengthSays, chipStrength, gateProbeKey } = await server.ssrLoadModule("/src/lib/steering/terms.ts");
   assert.equal(triggerWord(gated.get("sae/7")), "first 16 tokens while storm ≤ 0.05");
   assert.equal(triggerWord(gated.get("jlens/storm")), "while honest.deceptive > 1", "a bare gate runs on the response");
+  // Regression: a curved gate's chip showed its ``:fraction`` channel; the expression keeps it.
+  assert.equal(triggerWord({ trigger: "RESPONSE", gate: { probe: "default/months:fraction", op: "<", threshold: 0.3 } }), "while months reads < 0.3");
   assert.equal(triggerWord(gated.get("neuron/L31n4410")), "while L8n344 ≥ −0.5");
   assert.equal(triggerWord(gated.get("slens/tower")), "after 4 tokens");
   // Every dial is signed but a curved term's and a unit removal's.

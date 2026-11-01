@@ -52,7 +52,10 @@ export function gateProbeKey(name: string, info: ProbeInfo): string {
  *  sign, its threshold as the expression writes it, with a true minus). */
 export function gateWord(gate: SteerGate): string {
   const op = GATE_OPS.find(row => row.value === gate.op)?.label ?? gate.op;
-  return `while ${bareName(gate.probe)} ${op} ${formatCoeff(gate.threshold).replace(/^-/u, "−")}`;
+  // A curved probe's gate reads its share (``months:fraction``); the chip says it reads the probe.
+  const [probe, channel] = gate.probe.split(":");
+  const reads = channel === undefined ? bareName(probe) : `${bareName(probe)} reads`;
+  return `while ${reads} ${op} ${formatCoeff(gate.threshold).replace(/^-/u, "−")}`;
 }
 
 /** A term's timing as a chip's meta says it (nothing for the default): its window, then its gate. */

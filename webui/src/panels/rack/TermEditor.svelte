@@ -14,6 +14,7 @@
   import Slider from "../../lib/Slider.svelte";
   import XYPad from "../manifold/XYPad.svelte";
   import LayerStrip from "./LayerStrip.svelte";
+  import { probeTitle } from "./probeRows";
   import {
     ATOM_DEFAULT_ALPHA,
     manifoldByName,
@@ -184,8 +185,11 @@
   /** The probes a gate can read: each attached probe by the key whose number its card shows, with
    *  that number; a gate set elsewhere on a probe not attached (or a channel) stays one. */
   const gateProbes = $derived.by(() => {
+    // Each probe as its card names it, in the rack's name order (the key keeps two apart).
     const rows: { value: string; label: string; now: number | null }[] = [...probeRack.entries]
-      .map(([probe, row]) => ({ value: gateProbeKey(probe, row.info), label: probe, now: row.reading || row.aggregate ? row.current : row.savedAggregate }));
+      .map(([probe, row]) => ({ value: gateProbeKey(probe, row.info), label: probeTitle(row.info, probe).text, key: probe, now: row.reading || row.aggregate ? row.current : row.savedAggregate }))
+      .sort((a, b) => a.label.localeCompare(b.label) || (a.key < b.key ? -1 : a.key > b.key ? 1 : 0))
+      .map(({ key: _key, ...row }) => row);
     const set = entry.gate?.probe;
     if (set !== undefined && !rows.some(row => row.value === set)) rows.unshift({ value: set, label: `${set}, not attached`, now: null });
     return rows;
