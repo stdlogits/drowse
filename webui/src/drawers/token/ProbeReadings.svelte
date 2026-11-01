@@ -11,7 +11,7 @@
   import type { GeometryTokenReadout, ReplayReadout } from "./readout.svelte";
   import ReadingWait from "./ReadingWait.svelte";
   import { depthTint, formatSigned, readingText } from "./layers";
-  import { probeNote } from "./readings";
+  import { layersNote, probeNote } from "./readings";
 
   let { readout, pinned, hasGeometryProbes, hasReplayContext, replayAvailable, returnToToken }: {
     readout: ReplayReadout<GeometryTokenReadout>;
@@ -197,7 +197,7 @@
     <p class="meta" role="alert">{readout.error}</p>
   {/if}
   {#if layersNotSaved}
-    <p class="meta">A saved reply keeps each probe's reading, not its layers. They replay while this model is loaded and the probe is attached.</p>
+    <p class="meta">A saved reply keeps each probe's reading, not its layers. {layersNote(replayAvailable, hasReplayContext, "the probe is attached")}</p>
   {/if}
   {#if rows.length > 0}
     <div class="rows" role="list">

@@ -52,3 +52,12 @@ export function probeNote(name: string, note: string): string {
   const bare = name.slice(name.lastIndexOf("/") + 1);
   return plain(polesOf(bare).positive) === plain(note) ? "" : note;
 }
+
+/** What a saved row's missing layers wait on: a replay where this runtime has one and the token its
+ *  replay record, else why nothing will bring them (a prompt-side row with no record keeps its own
+ *  layers, so this reads only for a row that dropped them). */
+export function layersNote(replayAvailable: boolean, hasReplayContext: boolean, needs: string): string {
+  if (!replayAvailable) return "This runtime does not replay them.";
+  if (!hasReplayContext) return "This token has no replay record to rebuild them from.";
+  return `They replay while this model is loaded and ${needs}.`;
+}

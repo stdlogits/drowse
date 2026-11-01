@@ -11,6 +11,7 @@
   import EmptyState from "./EmptyState.svelte";
   import JLensMissingState from "@runtime-jlens-missing";
   import { chosenByDepth, depthTint, foldedLayers, formatP, lastLayer, leadLayer, type LensCell } from "./layers";
+  import { layersNote } from "./readings";
 
   let { readout, tokenText, jlensFitted, hasReplayContext, modelId, replayAvailable }: {
     readout: ReplayReadout<LensTokenReadoutJSON>;
@@ -68,12 +69,15 @@
   </section>
 {:else if readout.error}
   <section class="dw-sec" aria-label="Lens"><p class="meta" role="alert">{readout.error}</p></section>
-{:else if data && layers.length === 0}
+{/if}
+<!-- A replay of a saved row stands on the row's capture: it shows while the replay loads and stays
+     beside its error, so a failed replay never takes away what the row saved. -->
+{#if data && layers.length === 0}
   <!-- A saved reply keeps the readout's chips, not its layer rows (the token view replays them while
-       the lens is loaded); this is that capture where nothing can replay it. -->
+       the lens is loaded). -->
   <section class="dw-sec" aria-label="Layer by layer">
     <div class="dw-sec-head"><span class="head">Layer by layer</span></div>
-    <p class="meta">A saved reply keeps the lens's reading across layers, not each layer's. They replay while this model's lens is loaded.</p>
+    <p class="meta">A saved reply keeps the lens's reading across layers, not each layer's. {layersNote(replayAvailable, hasReplayContext, "its lens is ready")}</p>
   </section>
 {:else if data}
   <section class="dw-sec" aria-label="By depth">
@@ -141,9 +145,9 @@
       </div>
     </section>
   {/if}
-{:else if !jlensFitted}
+{:else if !readout.loading && !readout.error && !jlensFitted}
   <section class="dw-sec" aria-label="Lens"><JLensMissingState {modelId} /></section>
-{:else if replayAvailable && !hasReplayContext}
+{:else if !readout.loading && !readout.error && replayAvailable && !hasReplayContext}
   <section class="dw-sec" aria-label="Lens"><EmptyState title="No replay record for this token" /></section>
 {/if}
 

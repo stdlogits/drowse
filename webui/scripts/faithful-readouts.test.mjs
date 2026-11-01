@@ -68,6 +68,38 @@ try {
   assert.equal(attempts, 2);
   assert.deepEqual(view.data, { strength: 0.4 });
   assert.equal(view.origin, "replayed");
+  // A replay that completes a saved row stands on the row's capture: the summary shows (as
+  // captured) while it loads and stays beside the error when it fails (a 422 for a gated recipe,
+  // a 409 while busy), rather than leaving only the error.
+  const saved = { strength: 0.2, layers: [] };
+  replay = async () => { throw new Error("422: the recipe is gated on a probe"); };
+  view.replay("lens", "saved-row", 3, { steered: true }, map, { data: saved, source: "row-source" });
+  assert.deepEqual(view.data, saved, "the saved summary shows while the replay loads");
+  assert.equal(view.origin, "captured");
+  assert.equal(view.loading, true);
+  await flush();
+  assert.deepEqual(view.data, saved, "a failed replay keeps the saved summary");
+  assert.equal(view.origin, "captured");
+  assert.equal(view.source, "row-source");
+  assert.match(view.error, /gated on a probe/);
+  replay = async () => envelope;
+  view.replay("lens", "saved-row", 3, { steered: true }, map, { data: saved, source: "row-source" });
+  await flush();
+  assert.deepEqual(view.data, { strength: 0.4 }, "a replay that lands replaces it");
+  assert.equal(view.origin, "replayed");
+  assert.equal(view.error, null);
+  view.replay("lens", "unsaved-row", 3, { steered: false }, map, { data: saved, source: "row-source" });
+  view.clear();
+  replay = async () => { throw new Error("busy"); };
+  view.replay("lens", "unsaved-row", 4, { steered: false }, map);
+  await flush();
+  assert.equal(view.data, null, "a base never outlives the call that set it");
+  assert.equal(view.origin, null);
+  replay = async () => envelope;
+  const { layersNote } = await server.ssrLoadModule("/src/drawers/token/readings.ts");
+  assert.match(layersNote(true, true, "the probe is attached"), /replay while this model is loaded and the probe is attached/);
+  assert.match(layersNote(true, false, "x"), /no replay record/);
+  assert.match(layersNote(false, true, "x"), /does not replay them/);
   view.dispose();
   assert.equal(view.data, null);
   replay = async () => ({ measurements: { ...envelope.measurements, instruments: {} } });

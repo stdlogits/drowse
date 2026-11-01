@@ -472,13 +472,15 @@
     geometryReadout.clear();
     if (!canReplay || !nodeId || rawIndex == null) return;
     const steered = geometrySteered;
+    // Steered, a saved summary shows while the replay brings its layers, and stays if it fails.
+    const base = steered && captured ? { data: captured, source: null } : null;
     geometryReadout.replay("geometry", nodeId, rawIndex, { steered, raw: effectiveRawMode() }, (m) => {
       const geometry = m.instruments.geometry;
       if (!geometry) throw new Error("No probe readings came back. Check that the probes are attached.");
       // Steered, the replay reads the generation again: a probe detached since keeps its capture.
       const kept = steered && captured ? captured.readings : {};
       return { data: { steering: geometry?.binding?.steering ?? null, readings: { ...kept, ...(geometry?.readings ?? {}) } }, source: null };
-    });
+    }, base);
   });
 
   $effect(() => {
@@ -550,6 +552,10 @@
     const replayTokenText = token?.text ?? "";
     // The readout is the R family's: its source, never an active S lens.
     const fallbackSource = lensSourceState.sources.find((source) => source.active && source.family !== "S")?.source ?? null;
+    // Steered, the saved chips show while the replay brings the layer rows, and stay if it fails.
+    const base = lensSteered && captured
+      ? { data: captured, source: token?.measurements?.instruments.lens?.binding.sources.R ?? null }
+      : null;
     lensReadout.replay("lens", nodeId, rawIndex, { topK: readoutTopK, steered: lensSteered, raw: effectiveRawMode(), layers: "all" }, (m) => {
       const lens = m.instruments.lens;
       if (!lens?.readout) throw new Error("No lens reading came back. Check the active lens source.");
@@ -557,7 +563,7 @@
         data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: lens?.binding.steering ?? null, aggregate: lens.readout.aggregate, layers: lens.readout.layers ?? [] },
         source: lens?.binding.sources.R ?? fallbackSource ?? null,
       };
-    });
+    }, base);
   });
 
   /** The model's deepest layer, as the lens readout names it (the SAE layer's place on the ramp). */

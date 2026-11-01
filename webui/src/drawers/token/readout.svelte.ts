@@ -57,12 +57,16 @@ export class ReplayReadout<T> {
   source: string | null = $state(null);
   progress: ReadoutProgress | null = $state(null);
   #selectedKey: string | null = null;
+  /** The saved capture a replay stands on: shown while the replay loads and kept beside its error
+   *  if it fails, so a failed replay never takes away what the row saved. */
+  #base: { data: T; source: string | null } | null = null;
   #entries = new Map<string, ReplayEntry<T>>();
   #disposed = false;
 
   /** Adopt the loom-captured envelope view directly (no fetch). */
   adopt(data: T, source: string | null): void {
     this.#selectedKey = null;
+    this.#base = null;
     this.data = data;
     this.origin = "captured";
     this.source = source;
@@ -74,6 +78,7 @@ export class ReplayReadout<T> {
   /** Drop the current view without cancelling or forgetting other token jobs. */
   clear(): void {
     this.#selectedKey = null;
+    this.#base = null;
     this.data = null;
     this.origin = null;
     this.source = null;
@@ -91,7 +96,9 @@ export class ReplayReadout<T> {
   /** Fetch the family's token-readout replay and map the returned
    *  measurements envelope into the tab's render shape.  ``map`` may
    *  return a null source; the caller-supplied ``fallbackSource`` covers
-   *  bindings from older servers. */
+   *  bindings from older servers. ``base`` is the saved capture the replay
+   *  completes (a row's summary without its layers): it shows, as captured,
+   *  until the replay is ready, and stays beside the error if it fails. */
   replay(
     family: InstrumentFamily,
     nodeId: string,
@@ -101,8 +108,10 @@ export class ReplayReadout<T> {
       data: T;
       source: string | null;
     },
+    base: { data: T; source: string | null } | null = null,
   ): void {
     const key = replayKey(family, nodeId, rawIndex, opts);
+    this.#base = base;
     this.#start(key, rawIndex, (onProgress) => cachedTokenReadout(family, nodeId, rawIndex, opts, onProgress), map);
   }
 
@@ -117,6 +126,7 @@ export class ReplayReadout<T> {
       "anatomy", tokenReadoutCacheEpoch("lens"), nodeId, rawIndex,
       opts.k ?? null, opts.units ?? null, opts.patterns ?? null, opts.steered ?? true, opts.raw ?? false,
     ]);
+    this.#base = null;
     this.#start(key, rawIndex, (onProgress) => cachedTokenAnatomy(nodeId, rawIndex, opts, onProgress), map);
   }
 
@@ -176,11 +186,12 @@ export class ReplayReadout<T> {
 
   #show(key: string, entry: ReplayEntry<T>): void {
     if (this.#disposed || this.#selectedKey !== key) return;
+    const base = entry.state === "ready" ? null : this.#base;
     this.loading = entry.state === "loading";
-    this.data = entry.data;
+    this.data = base ? base.data : entry.data;
     this.error = entry.error;
-    this.origin = entry.state === "ready" ? "replayed" : null;
-    this.source = entry.source;
+    this.origin = entry.state === "ready" ? "replayed" : base ? "captured" : null;
+    this.source = base ? base.source : entry.source;
     this.progress = entry.progress;
   }
 
