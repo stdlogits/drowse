@@ -5,6 +5,7 @@ and nothing said so; the probe looked healthy until a scoped term was refused.
 """
 from __future__ import annotations
 
+import types
 from typing import Any
 
 import pytest
@@ -46,9 +47,10 @@ def test_the_fit_note_names_the_all_fail_fallback() -> None:
 
 
 def test_the_load_note_reads_only_sidecar_metadata() -> None:
-    manifold = type("M", (), {})()
-    manifold.layers = {1: object(), 2: object()}
-    manifold.metadata = {"node_spread_per_layer": {"0": 1.0, "1": 1.0, "2": 1.0, "3": 1.0}}
+    manifold: Any = types.SimpleNamespace(
+        layers={1: object(), 2: object()},
+        metadata={"node_spread_per_layer": {"0": 1.0, "1": 1.0, "2": 1.0, "3": 1.0}},
+    )
     assert dls_load_note("default/x", manifold) == dls_drop_note("default/x", [1, 2], [0, 1, 2, 3])
     manifold.metadata = {}
     assert dls_load_note("default/x", manifold) is None
