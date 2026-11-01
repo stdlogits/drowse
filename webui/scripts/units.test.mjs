@@ -172,13 +172,18 @@ try {
   assert.deepEqual(f.map(t => [t.token, t.agree]), [[" stars", true], [" bright", false]]);
 
   // Facts: the shown pole's typical firing and the catalog's rate; a head's typical write and copy score.
-  // The typical firing is the reading scale's own act_top (the catalog's when bound), named.
+  // The typical firing is the reading scale readings divide by (act_top under the soft floor), named.
   const facts = ({ scale, ...rest }) => ({ ...rest, source: scale?.source ?? null });
-  assert.deepEqual(facts(unitFacts(read, "+")), { typical: 3.4, rate: 0.006, writeNorm: 0.82, copy: null, source: "catalog" });
-  assert.deepEqual(facts(unitFacts(read, "-")), { typical: 2.1, rate: 0.004, writeNorm: 0.82, copy: null, source: "catalog" });
+  assert.deepEqual(facts(unitFacts(read, "+")), { typical: 3.4 * 1.03, rate: 0.006, writeNorm: 0.82, copy: null, source: "catalog" });
+  assert.deepEqual(facts(unitFacts(read, "-")), { typical: 2.1 * 1.03, rate: 0.004, writeNorm: 0.82, copy: null, source: "catalog" });
+  // Regression: it showed act_top, so a pole that never fired on the neutral text read "typical
+  // firing 0" beside a reading of −36 (which divides by the floor, 0.14).
+  const unfired = neuronRead({ catalogued: false });
+  unfired.poles[1].firing.scale = { source: "neutral", detail: "96 neutral statements", top: 0, value: 0.141602 };
+  assert.equal(unitFacts(unfired, "-").typical, 0.141602);
   assert.equal(unitFacts(neuronRead({ catalogued: false }), "+").rate, null, "no catalog, no rate");
   assert.equal(unitFacts(neuronRead({ catalogued: false }), "+").scale.source, "neutral");
-  assert.deepEqual(facts(unitFacts(headRead)), { typical: 1.6, rate: null, writeNorm: null, copy: 0.87, source: "neutral" });
+  assert.deepEqual(facts(unitFacts(headRead)), { typical: 1.6 * 1.03, rate: null, writeNorm: null, copy: 0.87, source: "neutral" });
   assert.equal(scaleText("neutral"), "typical firing on the neutral text");
   assert.equal(scaleText("catalog"), "typical firing in text (Neuron Lens)");
   assert.equal(scaleText(null), null);
@@ -304,7 +309,7 @@ try {
   assert.match(html, /night-sky and starlight words/);
   assert.match(html, new RegExp(CREDIT));
   assert.match(html, /href="https:\/\/neuron-lens\.com\/qwen3-8b\/L31\/n4410"[^>]*>Open in Neuron Lens/);
-  assert.match(html, /typical firing <b[^>]*>3\.4<\/b>/);
+  assert.match(html, /typical firing <b[^>]*>3\.5<\/b>/, "the reading scale (act_top 3.4 under the floor)");
   assert.match(html, /fires on <b[^>]*>0\.6%<\/b> of tokens/);
   assert.match(html, /write norm <b[^>]*>0\.82<\/b>/);
   assert.match(html, />R · out</);
@@ -407,7 +412,7 @@ try {
   assert.doesNotMatch(html, new RegExp(CREDIT));
   assert.doesNotMatch(html, /Neuron Lens/);
   assert.doesNotMatch(html, /fires on <b/, "no catalog, no rate");
-  assert.match(html, /typical firing <b[^>]*>3\.4<\/b>/);
+  assert.match(html, /typical firing <b[^>]*>3\.5<\/b>/);
   html = render(UnitsRoom, {}).body;
   assert.doesNotMatch(html, />Labelled</);
   assert.doesNotMatch(html, new RegExp(CREDIT));

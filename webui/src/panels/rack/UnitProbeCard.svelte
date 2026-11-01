@@ -1,8 +1,10 @@
 <script lang="ts">
   // A unit probe (``neuron/L31n4410``, ``head/L28h12``) as one row of the Instruments: its ID, its
   // catalog label when the model has one, its reading token by token over the latest reply (bars in
-  // its layer's colour) and the latest value, in units of its typical high firing (1 is a firing
-  // as strong as its neutral top; below zero, a neuron's − pole). Choosing the row tints the reply
+  // its layer's colour) and the latest value, in units of its reading scale (1 is a firing as strong
+  // as its typical high firing; below zero, a neuron's − pole). The value's tip names where that
+  // scale comes from: the Neuron Lens catalog, or the neutral text (relative to which a reading
+  // runs several times larger). Choosing the row tints the reply
   // by it and shows the unit in the Inspector, whose Probing button detaches it (as a geometry
   // probe's row leads to its inspector), so the row lines up with every other probe's.
   import LiveText from "../../lib/ui/LiveText.svelte";
@@ -14,7 +16,7 @@
   import { select } from "../../lib/stores/selection.svelte";
   import { unitLabelFor } from "../../lib/stores/units.svelte";
   import { parseProbeTarget } from "../../lib/tokens";
-  import { unitTitle } from "../../lib/units";
+  import { scaleText, unitTitle } from "../../lib/units";
   import InstrumentRow from "./InstrumentRow.svelte";
   import { replyTrace } from "./probeTrace";
 
@@ -27,6 +29,11 @@
   const reading = $derived(latest !== null || sparkline.length > 0 ? entry.current : entry.savedAggregate ?? null);
   const tint = $derived(depthTint(latest?.depth?.center?.[0]));
   const label = $derived(unitLabelFor(info.unit));
+  const scaleSource = $derived.by(() => {
+    const source = (latest?.meta as { scale?: unknown } | undefined)?.scale;
+    return source === "catalog" || source === "neutral" ? source : null;
+  });
+  const scaleTip = $derived(scaleSource === null ? undefined : `Over its ${scaleText(scaleSource)}`);
   const isHighlight = $derived(highlightState.target !== null && parseProbeTarget(highlightState.target).base === name);
 
   function choose(): void {
@@ -47,7 +54,7 @@
     {/if}
   {/snippet}
   {#snippet value()}
-    {#if reading !== null}<LiveText text={readingText(reading, { signed: info.kind === "neuron" })} />{:else}–{/if}
+    {#if reading !== null}<span data-tip={scaleTip}><LiveText text={readingText(reading, { signed: info.kind === "neuron" })} /></span>{:else}–{/if}
   {/snippet}
 </InstrumentRow>
 

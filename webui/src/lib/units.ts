@@ -114,8 +114,9 @@ export function labelText(label: UnitLabelJSON | null | undefined): string | nul
 }
 
 export interface UnitFacts {
-  /** A pole's typical high firing (its ``act_top``), or a head's typical write norm: what its
-   *  readings divide by, before the soft floor. */
+  /** A pole's typical high firing, or a head's typical write norm: the reading scale every one of
+   *  its readings divides by (its ``act_top`` under the soft floor, so a pole that never fired on
+   *  the neutral text still shows the floor its readings use). */
   typical: number | null;
   /** Where ``typical`` comes from: the Neuron Lens catalog, or the neutral statements. */
   scale: UnitScaleJSON | null;
@@ -134,7 +135,7 @@ export function unitFacts(read: NeuronReadJSON | HeadReadJSON, pole: "+" | "-" =
   if (read.kind === "neuron") {
     const p = poleOf(read, pole);
     return {
-      typical: num(p?.firing.scale?.top),
+      typical: num(p?.firing.scale?.value),
       scale: p?.firing.scale ?? null,
       rate: num(p?.firing.rate),
       writeNorm: num(read.scalars.w_norm),
@@ -143,7 +144,7 @@ export function unitFacts(read: NeuronReadJSON | HeadReadJSON, pole: "+" | "-" =
   }
   const { primary } = orderedHalves(read.copies);
   return {
-    typical: num(read.firing.scale?.top),
+    typical: num(read.firing.scale?.value),
     scale: read.firing.scale ?? null,
     rate: num(read.firing.rate),
     writeNorm: null,
