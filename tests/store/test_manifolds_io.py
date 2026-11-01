@@ -3804,6 +3804,37 @@ def test_bootstrap_keeps_non_bundled_folders_under_default(
     assert (kept / "manifold.json").is_file()
 
 
+def test_retire_survives_another_process_retiring_the_same_folder(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: two drowse processes materializing one home both scan the
+    retired folder; the one that loses the race to the lock found the
+    manifest gone and raised ManifoldNotFoundError out of startup."""
+    import warnings as warnings_mod
+
+    from drowse.store import bundled, manifold_lifecycle
+
+    retired = _planted_default(isolated_home, "honest.deceptive", "bundled")
+    real = manifold_lifecycle.remove_manifold_folder
+    calls: list[str] = []
+
+    def racing(namespace: str, name: str) -> dict[str, Any]:
+        if not calls:
+            calls.append(name)
+            real(namespace, name)  # the other process wins the race
+        return real(namespace, name)
+
+    monkeypatch.setattr(manifold_lifecycle, "remove_manifold_folder", racing)
+    with warnings_mod.catch_warnings(record=True) as caught:
+        warnings_mod.simplefilter("always")
+        bundled._retire_unshipped_manifolds()
+    assert calls == ["honest.deceptive"]
+    assert not retired.exists()
+    assert not [w for w in caught if "no longer ships" in str(w.message)], (
+        "the process that retired it says so; this one has nothing to report"
+    )
+
+
 def test_retire_keeps_copy_of_incomplete_package_folder(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

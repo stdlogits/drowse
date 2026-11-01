@@ -245,6 +245,7 @@ def _retire_unshipped_manifolds() -> None:
     ``default/`` is left alone.  A package folder that is still incomplete
     (a regen in progress) counts as shipped, so its copy is kept.
     """
+    from drowse.errors import ManifoldNotFoundError
     from drowse.store.manifold_lifecycle import remove_manifold_folder
 
     default_dir = manifolds_dir() / "default"
@@ -264,7 +265,12 @@ def _retire_unshipped_manifolds() -> None:
             continue
         if not isinstance(payload, dict) or payload.get("source") != "bundled":
             continue
-        remove_manifold_folder("default", folder.name)
+        try:
+            remove_manifold_folder("default", folder.name)
+        except ManifoldNotFoundError:
+            # Another drowse process materializing this home retired it
+            # between the scan and the lock (and said so).
+            continue
         warnings.warn(
             f"removed bundled manifold default/{folder.name}: it no longer "
             f"ships with drowse (its fits went with it)",
