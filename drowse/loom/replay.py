@@ -70,7 +70,8 @@ class ReplayForward:
     render before the token, ``prompt_length`` its whole length (one
     prefill, no decode position), ``raw_ids`` the node's captured tokens
     (thinking, then visible) and ``raw_index`` the token's index there.
-    :meth:`producing_position` describes a generated node only."""
+    ``runs`` places every row of ``raw_ids`` in the token stream either way,
+    so :meth:`spans` and :meth:`producing_position` describe both."""
 
     ids: torch.Tensor
     prompt_length: int
@@ -80,16 +81,38 @@ class ReplayForward:
     #: probe-gated terms (None otherwise); :meth:`TokenReplayer.segments`
     #: then steps the decode positions one forward at a time.
     gate: GateScores | None = None
+    #: Where the rows of ``raw_ids`` sit in the token stream, as
+    #: ``(first_row, position)`` runs in row order, each lasting until the
+    #: next starts: a generated node's one run at ``prompt_length``; an
+    #: authored turn's thinking rows, then its visible rows, each at its
+    #: channel's render position.
+    runs: tuple[tuple[int, int], ...] = ()
 
     @property
     def position(self) -> int:
         """The producing position of the anchored token (the last one)."""
         return int(self.ids.shape[1]) - 1
 
+    def spans(self) -> tuple[tuple[int, int, int], ...]:
+        """Each run as ``(first_row, stop_row, producing position of its
+        first row)``: row ``r`` of a span is produced at that position plus
+        ``r − first_row``.  Rows past the anchored token's producing forward
+        are not in it (a caller anchors the node's last row to cover all)."""
+        runs = self.runs or ((0, self.prompt_length),)
+        stops = [first for first, _ in runs[1:]] + [len(self.raw_ids)]
+        return tuple(
+            (int(first), int(stop), int(at) - 1)
+            for (first, at), stop in zip(runs, stops, strict=True)
+        )
+
     def producing_position(self, raw_index: int) -> int:
-        """Where raw token ``raw_index`` is produced (its input is the token
-        before it)."""
-        return self.prompt_length + int(raw_index) - 1
+        """Where row ``raw_index`` of ``raw_ids`` is produced (its input is
+        the token before it)."""
+        row = int(raw_index)
+        for first, stop, at in self.spans():
+            if first <= row < stop:
+                return at + row - first
+        raise IndexError(f"row {row} is outside the replayed rows")
 
 
 class _ReplayStop(BaseException):
@@ -454,7 +477,7 @@ class TokenReplayer:
                 steering, label=label, run=run, gated=False,
                 ids=lambda: self._prompt_ids(prompt, label=label),
                 raw_ids=prompt.token_ids, raw_index=prompt.index,
-                token_id=prompt.token_id, node_id=node_id,
+                token_id=prompt.token_id, node_id=node_id, runs=prompt.runs,
             )
         anchor = resolve_token_anchor(tree, node_id, raw_index, label=label)
         recipe = anchor.node.recipe
@@ -480,10 +503,13 @@ class TokenReplayer:
         raw_index: int,
         token_id: int,
         node_id: str,
+        runs: tuple[tuple[int, int], ...] | None = None,
     ) -> tuple[ReplayedToken, T]:
         """Open ``steering``, take the exclusive-GPU section, build the
         producing ids there and hand ``run`` the :class:`ReplayForward`
-        (its last ``raw_index`` positions decoded, the rest prompt)."""
+        (its last ``raw_index`` positions decoded, the rest prompt; an
+        authored turn's ``runs`` place its rows, a generated node's one run
+        starts where its prompt ends)."""
         # The steering scope opens OUTSIDE the exclusive-GPU section: the
         # composer's push/pop take the generation lock blocking, so nesting
         # the scope inside the exclusive guard would self-deadlock.
@@ -506,13 +532,15 @@ class TokenReplayer:
                     and any(t.generated and t.gate is not None for t in self._open_triggers())
                 )
                 gates = self._gate_reads() if stepped and self._gate_reads else nullcontext(None)
+                prompt_length = int(producing.shape[1]) - decoded
                 with gates as gate:
                     result = run(ReplayForward(
                         ids=producing,
-                        prompt_length=int(producing.shape[1]) - decoded,
+                        prompt_length=prompt_length,
                         raw_ids=raw_ids,
                         raw_index=raw_index,
                         gate=gate,
+                        runs=runs if runs is not None else ((0, prompt_length),),
                     ))
         return (
             ReplayedToken(

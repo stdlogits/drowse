@@ -631,8 +631,9 @@ prefill under the capture's steering. A prefill fires a term exactly when it
 has a prompt slot and no probe gate, so the expression's prompt-phase
 steering replays exactly and no gate or phase window refuses. The capture
 reads each prompt token cold (`Monitor.cold_reads`), as a replay does, so a
-curved probe's foot never depends on the token before. Unit activity, a whole
-decode record's read, refuses an authored turn.
+curved probe's foot never depends on the token before. Unit activity reads
+an authored turn's rows in one prefill through the same anchor, each channel
+at its render positions (`ReplayForward.spans`).
 `loom/replay.py::TokenReplayer` backs every family's `token_readout`: it
 rebuilds the node's render and raw decode prefix to the producing position,
 runs the capture forward under the recorded recipe steering (or the unsteered
