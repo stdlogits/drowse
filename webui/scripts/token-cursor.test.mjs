@@ -87,12 +87,39 @@ try {
   assert.deepEqual(cursor.cursorAtIndex(0, 1), { turnIdx: 0, seg: "response", tokenIdx: 1 });
   assert.equal(cursor.cursorAtIndex(3, 5), null);
 
-  // A selection past a turn's end (the turn shrank on a branch flip) clamps onto the walk.
+  // A selection past a turn's end (the turn's token list shrank) clamps onto the walk.
   selection.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 9 } });
   assert.deepEqual(at(), { turnIdx: 1, seg: "response", tokenIdx: 1 });
+
+  // Regression (W6 review): the resting place was positional only and outlived the conversation.
+  // After Clear chat and a new reply, the rooms opened at a token of the new reply nobody selected.
+  // The position holds only while its turn holds the node it was made on.
+  selection.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 1 } });
+  selection.select({ kind: "unit", id: "neuron/L1n3" });
+  selection.clearSelection();
+  assert.deepEqual(at(), { turnIdx: 1, seg: "response", tokenIdx: 1 }, "resting on the token while nothing is selected");
   chatLog.turns = [];
+  selection.reconcileTokenSelection();
   assert.equal(tokenCursor.at, null, "no tokens: nothing to rest on");
   assert.equal(tokenCursor.reply, null);
+  assert.deepEqual([selection.tokenRest.params, selection.tokenRest.turnIdx, selection.tokenRest.nodeId], [null, null, null], "Clear chat drops where it rested");
+  const fresh = [
+    { role: "user", text: "new q", nodeId: "u-new" },
+    { role: "assistant", text: "new", generated: true, nodeId: "a-new", tokens: [{ text: "n0", rawIndex: 0 }, { text: "n1", rawIndex: 1 }, { text: "n2", rawIndex: 2 }] },
+  ];
+  chatLog.turns = fresh;
+  assert.equal(tokenCursor.at, null, "a new reply opens whole");
+  assert.equal(tokenCursor.reply.nodeId, "a-new");
+  // Before the projection reconciles (the turns replaced in place), the cursor already reads
+  // another branch's reply whole; the reconcile then drops the stale token selection.
+  selection.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 2 } });
+  assert.equal(selection.tokenRest.nodeId, "a-new");
+  chatLog.turns = [fresh[0], { ...fresh[1], nodeId: "a-sibling" }];
+  assert.equal(tokenCursor.at, null, "another branch's reply: no token nobody selected");
+  assert.equal(tokenCursor.reply.nodeId, "a-sibling");
+  selection.reconcileTokenSelection();
+  assert.equal(selection.selection.current.kind, "none", "the stale token selection drops");
+  chatLog.turns = [];
 
   console.log("token cursor: walk, prompt tokens, whole reply, selection follow, steps and clamping passed");
 } finally {

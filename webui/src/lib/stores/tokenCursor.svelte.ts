@@ -4,15 +4,17 @@
 // prompt tokens included (an authored turn's captured rows replay through its prompt capture), and
 // a step rolls across segments and turns.
 //
-// It follows the workbench's token selection: a selected token is the cursor; while a probe, unit
-// or term is selected it rests on the last token selected; once a token selection is cleared it
-// reads the whole reply (selection.svelte.ts keeps where it rests). Moving it selects the token it
-// lands on, as a step, so the thread marks it and the Inspector shows it without jumping to the top.
+// It follows the workbench's token selection: a selected token is the cursor; while a probe or unit
+// is selected it rests on the last token selected; once a token selection is cleared it reads the
+// whole reply (selection.svelte.ts keeps where it rests, and the node it was made on: a position
+// whose turn no longer holds that node reads the latest reply whole). Moving it selects the token
+// it lands on, as a step, so the thread marks it and the Inspector shows it without jumping to the
+// top.
 
 import type { ChatTurn, TokenScore } from "../types";
 import { chatLog } from "./chat.svelte";
 import { loomTree } from "./loom.svelte";
-import { clearSelection, select, selection, tokenRest } from "./selection.svelte";
+import { clearSelection, select, selection, tokenRest, tokenTurnHolds } from "./selection.svelte";
 import { replayIndex } from "../tokenRows";
 import {
   clampCursor,
@@ -103,7 +105,8 @@ class TokenCursorStore {
   /** The position asked for: the selected token, else where the cursor rests (null: the whole reply). */
   readonly requested = $derived.by((): TokenCursor | null => {
     const current = selection.current;
-    return paramsCursor(current.kind === "token" ? current.params : tokenRest.params);
+    const at = paramsCursor(current.kind === "token" ? current.params : tokenRest.params);
+    return at && tokenTurnHolds(at.turnIdx) ? at : null;
   });
   /** The position, clamped onto the walk (token lists grow while streaming and change with a
    *  branch); null reads the whole reply. */
@@ -125,7 +128,8 @@ class TokenCursorStore {
   });
   /** The reply the whole view reads: the cursor's turn's (or, whole, the cleared token's turn's). */
   readonly reply = $derived.by((): WholeReply | null => {
-    const from = this.at ? this.at.turnIdx : tokenRest.turnIdx;
+    const from = this.at ? this.at.turnIdx
+      : tokenRest.turnIdx !== null && tokenTurnHolds(tokenRest.turnIdx) ? tokenRest.turnIdx : null;
     const turnIdx = replyTurnFor(from);
     if (turnIdx === null) return null;
     return { turnIdx, turn: chatLog.turns[turnIdx], nodeId: turnNodeId(turnIdx) };

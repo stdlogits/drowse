@@ -17,6 +17,7 @@ import type { LoomNodeJSON, LoomTreeJSON } from "../types";
 import type { CastMemberJSON, ChatTurn, TokenScore } from "../types";
 import { pushToast } from "./toasts.svelte";
 import { chatLog, genStatus } from "./chat.svelte";
+import { reconcileTokenSelection } from "./selection.svelte";
 import { authoredRowIndex, rowGeometry } from "../tokenRows";
 import { invalidateEdgeLabels } from "./loomUi.svelte";
 import { hydrateProbeRackFromActiveNode } from "./probes.svelte";
@@ -273,6 +274,7 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
     chatLog.turns = [];
     chatLog.pendingIndex = null;
     hydratedFrom = new Map();
+    reconcileTokenSelection();
     return;
   }
   const out: ChatTurn[] = [];
@@ -331,6 +333,7 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
   hydratedFrom = nextHydratedFrom;
   chatLog.turns = out;
   chatLog.pendingIndex = pendingIdx;
+  reconcileTokenSelection();
 }
 
 function invalidateChangedEdgeLabels(nextNodes: readonly LoomNodeJSON[], removed: readonly string[]): void {
