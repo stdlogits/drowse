@@ -75,7 +75,11 @@ export function workspaceRevision(): string {
     mode: genUiMode.mode,
     composer: getComposerController()?.read(), raw_buffer: getRawBufferController()?.read(),
     forms: [getSystemPromptController()?.read(), getCastController()?.read(), Object.entries(readWorkspaceInterfaces()).map(([id, state]) => [id, "values" in state ? state.values : state, "dirty" in state ? state.dirty : null, "busy" in state ? state.busy : null])],
-    saved: [conversationLibrary.revision, savedConversationState], selection: selection.current.kind, navigation: getWorkspaceController()?.read(),
+    // Which saved chat is open, not its autosave: a save's status and the library write it makes
+    // change on their own after a load or a send, and must not make a steering edit go stale.
+    // Saved-chat tools check their own metadata versions.
+    saved: [savedConversationState.activeId, savedConversationState.avatarSeed, savedConversationState.accent],
+    selection: selection.current.kind, navigation: getWorkspaceController()?.read(),
   });
   let hash = 2166136261;
   for (let i = 0; i < value.length; i++) hash = Math.imul(hash ^ value.charCodeAt(i), 16777619);
