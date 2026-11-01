@@ -10,15 +10,16 @@
 // Every case overlays the fading trajectory trail (oldest faint -> newest
 // bright) and the current hidden-state point.
 //
-// **Camera (rank >= 3).**  The scale is derived ONCE from the static framing
-// set (nodes + neutral + overlay) and is rotation-invariant — the orbit is a
-// rigid rotation about the neutral anchor (the whitened origin), so neutral
-// sits at the plot center and the cloud's radius never changes as you drag.
-// This is what fixes the old "zooms while I rotate" bug: the
-// previous code rescaled every frame from the 2D silhouette of the rotated
-// cloud (smaller edge-on, larger broadside), and it also let a moving live
-// point rescale the whole scatter.  Zoom is now an explicit user control
-// (``orbit.zoom``, driven by the scroll wheel), never an artifact of rotation.
+// **Camera (rank >= 3).**  The orbit is a rigid rotation about the centre of
+// everything drawn (the 3-D bounding box of the nodes, neutral, the overlay,
+// the current reading and its trail), and the scale is the radius of the
+// sphere about that centre, so it is rotation-invariant: the cloud's radius
+// never changes as you drag.  This is what fixes the old "zooms while I
+// rotate" bug: the previous code rescaled every frame from the 2D silhouette
+// of the rotated cloud (smaller edge-on, larger broadside).  A reading inside
+// the box moves nothing; one outside it widens the frame rather than leaving
+// the plot.  Zoom is an explicit user control (``orbit.zoom``, driven by the
+// scroll wheel), never an artifact of rotation.
 
 import type { ProbeLayerGeometry } from "../types";
 
@@ -105,7 +106,7 @@ const PAD = 28;
 /** The rank-3 reference triad's reach past the farthest framed point; the base scale fits it in
  *  the PAD box, so a node label (11px above its dot) and a triad name stay on the canvas. */
 const AXIS_REACH = 1.1;
-/** The rank-3 view's opening zoom: fit, with neutral at the centre and every node inside. */
+/** The rank-3 view's opening zoom: fit, with everything drawn centred and inside. */
 export const DEFAULT_ORBIT_ZOOM = 1;
 
 /** Reset transform, size for devicePixelRatio, clear. */
@@ -518,6 +519,20 @@ interface Projected {
   z: number;
 }
 
+/** The centre of the axis-aligned box around ``points`` (the origin when there are none). */
+function boxCentre(points: Vec3[]): Vec3 {
+  if (points.length === 0) return [0, 0, 0];
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) {
+    for (let k = 0; k < 3; k++) {
+      if (p[k] < lo[k]) lo[k] = p[k];
+      if (p[k] > hi[k]) hi[k] = p[k];
+    }
+  }
+  return [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+}
+
 function drawRank3(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -533,24 +548,26 @@ function drawRank3(
   const q = orbit.q;
   const zoom = orbit.zoom || 1;
 
-  // Static PCA-3D coords (independent of the orbit) for the framing set.
+  // PCA-3D coords (independent of the orbit) of everything drawn.
   const nodePca = geom.node_white.map((p) => projectPca3(p, rot));
   const neutralPca = projectPca3(geom.neutral_white, rot);
   const overlayPca = (geom.overlay?.points ?? []).map((p) => projectPca3(p, rot));
+  const trailPca = trail.map((p) => projectPca3(p, rot));
+  const livePca = live ? projectPca3(live, rot) : null;
+  const drawn = [...nodePca, neutralPca, ...overlayPca, ...trailPca, ...(livePca ? [livePca] : [])];
 
-  // Pivot = the neutral anchor (the whitened origin), so neutral sits at the
-  // plot center and the cloud shows its real displacement from neutral.  Still
-  // a fixed pivot, so the rotation-invariant base scale below is preserved (the
-  // backend's ``node_coords`` layout is neutral-anchored to match — both
-  // surfaces share neutral as their origin).
-  const C: Vec3 = neutralPca;
+  // Pivot = the centre of the box around everything drawn (a ring off to one side of neutral, the
+  // months, sat in one corner when the pivot was neutral).  The box's centre rather than the
+  // centroid: a reading inside the box moves nothing, so the cloud holds still while a reply
+  // streams.
+  const C = boxCentre(drawn);
 
-  // Rotation-invariant radius over the static framing set → fixed base scale.
-  // At zoom 1 (``DEFAULT_ORBIT_ZOOM``) the reference triad's ends (``AXIS_REACH``
-  // past the farthest point) land on the PAD box, so every node — the farthest
-  // one too, in any orientation — sits inside it with PAD left for its label.
+  // Rotation-invariant radius about the pivot → fixed base scale.  At zoom 1
+  // (``DEFAULT_ORBIT_ZOOM``) the reference triad's ends (``AXIS_REACH`` past the
+  // farthest point) land on the PAD box, so every point — the farthest one too, in
+  // any orientation — sits inside it with PAD left for its label.
   let rho = 0;
-  for (const p of [...nodePca, neutralPca, ...overlayPca]) {
+  for (const p of drawn) {
     const d = Math.hypot(p[0] - C[0], p[1] - C[1], p[2] - C[2]);
     if (d > rho) rho = d;
   }
@@ -570,8 +587,8 @@ function drawRank3(
   const neutral3 = project(neutralPca);
   hits.push({ screen: neutral3.s, label: "neutral", point: geom.neutral_white });
   const overlay3 = overlayPca.map(project);
-  const trail3 = trail.map((p) => project(projectPca3(p, rot)));
-  const live3 = live ? project(projectPca3(live, rot)) : null;
+  const trail3 = trailPca.map(project);
+  const live3 = livePca ? project(livePca) : null;
 
   // depth normalization for size/alpha cueing (from the node cloud)
   let zmin = Infinity;
@@ -583,7 +600,7 @@ function drawRank3(
   const zspan = zmax - zmin || 1;
   const depth01 = (z: number): number => (z - zmin) / zspan;
 
-  // PC1/PC2/PC3 reference triad through neutral (behind everything),
+  // PC1/PC2/PC3 reference triad through the pivot (behind everything),
   // rotating rigidly with the cloud so orientation is always readable.
   {
     const axLen = rho * AXIS_REACH;
