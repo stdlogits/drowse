@@ -48,15 +48,15 @@ try {
     node_count: labels.length, node_labels: labels, node_coords: labels.map((_, i) => [i === 0 ? 1 : -1]),
   });
   const catalog = [
-    concept("honest.deceptive", "pca", true, ["honest", "deceptive"]),
+    concept("verbose.concise", "pca", true, ["verbose", "concise"]),
     concept("emotions", "spectral", true, ["wonder", "dread"]),
     concept("calm.anxious", "pca", false, ["calm", "anxious"]),
     concept("tone", "auto", true, ["warm", "cold"]),
   ];
-  assert.deepEqual(fanoutConcepts(catalog).map((row) => row.name), ["honest.deceptive"], "fitted flat concepts only");
-  assert.equal(fanoutRecipe(catalog[0], "deceptive", -0.5), "steering=-0.5 default/honest.deceptive%deceptive");
-  assert.equal(fanoutRecipe(catalog[0], "honest", 0.1 + 0.2), "steering=0.3 default/honest.deceptive%honest", "the strength as %g");
-  assert.equal(fanoutRecipe(catalog[0], "0.3 jlens/x + honest", 0.3), null, "only one of its nodes");
+  assert.deepEqual(fanoutConcepts(catalog).map((row) => row.name), ["verbose.concise"], "fitted flat concepts only");
+  assert.equal(fanoutRecipe(catalog[0], "concise", -0.5), "steering=-0.5 default/verbose.concise%concise");
+  assert.equal(fanoutRecipe(catalog[0], "verbose", 0.1 + 0.2), "steering=0.3 default/verbose.concise%verbose", "the strength as %g");
+  assert.equal(fanoutRecipe(catalog[0], "0.3 jlens/x + verbose", 0.3), null, "only one of its nodes");
   // A variation's sampling is the call's (the composer's), which outranks the anchor it composes
   // onto (compose_call; tests/fixtures/browser/recipe-compose-v1.json), so the partial recipe
   // carries the steering alone.

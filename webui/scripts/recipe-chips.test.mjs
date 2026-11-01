@@ -53,7 +53,7 @@ try {
   for (const [name, entry] of byName(relations)) assert.deepEqual(related.get(name), entry, `${name} as a chip`);
   const { triggerWord, strengthDial, strengthSays, chipStrength, gateProbeKey } = await server.ssrLoadModule("/src/lib/steering/terms.ts");
   assert.equal(triggerWord(gated.get("sae/7")), "first 16 tokens while storm ≤ 0.05");
-  assert.equal(triggerWord(gated.get("jlens/storm")), "while honest.deceptive > 1", "a bare gate runs on the response");
+  assert.equal(triggerWord(gated.get("jlens/storm")), "while verbose.concise > 1", "a bare gate runs on the response");
   // Regression: a curved gate's chip showed its ``:fraction`` channel; the expression keeps it.
   assert.equal(triggerWord({ trigger: "RESPONSE", gate: { probe: "default/months:fraction", op: "<", threshold: 0.3 } }), "while months reads < 0.3");
   assert.equal(triggerWord(gated.get("neuron/L31n4410")), "while L8n344 ≥ −0.5");
@@ -61,14 +61,14 @@ try {
   // Every dial is signed but a curved term's and a unit removal's.
   const signed = fixture.cases.find(c => c.name.startsWith("a signed strength"));
   const away = byName(signed);
-  assert.deepEqual([strengthDial("default/honest.deceptive", away.get("default/honest.deceptive"), -0.5).min, strengthDial("x", related.values().next().value, 0.5).min], [-2, -2]);
+  assert.deepEqual([strengthDial("default/verbose.concise", away.get("default/verbose.concise"), -0.5).min, strengthDial("x", related.values().next().value, 0.5).min], [-2, -2]);
   assert.equal(strengthDial("jlens/storm", away.get("jlens/storm"), 0.5).min, -1, "an atom's removal adds below zero");
   assert.equal(strengthDial("head/L20h3", gated.get("head/L20h3"), 0.5).min, 0, "a unit's removal never goes negative");
   assert.equal(strengthDial("default/emotions", gated.get("default/emotions"), 0.5).min, 0, "a curved position has no opposite");
-  assert.equal(strengthSays("default/honest.deceptive", away.get("default/honest.deceptive"), -0.5), "Away from honest");
+  assert.equal(strengthSays("default/verbose.concise", away.get("default/verbose.concise"), -0.5), "Away from verbose");
   assert.equal(strengthSays("slens/tower", away.get("slens/tower"), -0.5), "50% more of it");
   const poles = fixture.catalog.find(row => row.name === "calm.anxious");
-  const projection = related.get("default/calm.anxious|default/honest.deceptive");
+  const projection = related.get("default/calm.anxious|default/verbose.concise");
   assert.deepEqual([0.6, -0.6, 0].map(v => strengthSays("x", projection, v, poles)), ["Toward calm", "Toward anxious", "Off"], "a projection pushes toward a pole");
   assert.equal(chipStrength("slens/tower", away.get("slens/tower"), 0.5), "+50%");
   assert.equal(chipStrength("default/calm.anxious", away.get("default/calm.anxious"), -0.5), "+50%", "a flat removal on a negative shared strength");
@@ -77,7 +77,7 @@ try {
   assert.deepEqual([1, 0.5, 1.5, 0].map(v => chipStrength("default/calm.anxious", removal, v)), ["without", "without 50%", "without 150%", "off"]);
   // A gate reads the number a probe's card shows: a curved probe's share, any other's value.
   assert.equal(gateProbeKey("default/emotions", { family: "geometry", is_affine: false }), "default/emotions:fraction");
-  assert.equal(gateProbeKey("default/honest.deceptive", { family: "geometry", is_affine: true }), "default/honest.deceptive");
+  assert.equal(gateProbeKey("default/verbose.concise", { family: "geometry", is_affine: true }), "default/verbose.concise");
   assert.equal(gateProbeKey("local/a.b", { family: "geometry", is_affine: false }), "local/a.b", "a dotted name takes only the axis forms");
   assert.equal(gateProbeKey("jlens/storm", { family: "jlens" }), "jlens/storm");
 

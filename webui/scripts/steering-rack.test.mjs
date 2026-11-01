@@ -28,7 +28,7 @@ try {
     namespace: "default", name: "formal.casual", node_count: 2, node_labels: ["formal", "casual"],
     node_coords: [[1], [-1]], intrinsic_dim: 1, domain: { type: "custom" },
   }, {
-    namespace: "default", name: "honest.deceptive", node_count: 2, node_labels: ["honest", "deceptive"],
+    namespace: "default", name: "verbose.concise", node_count: 2, node_labels: ["verbose", "concise"],
     node_coords: [[1], [-1]], intrinsic_dim: 1, domain: { type: "custom" },
   }];
   addSubspaceToRack("default/formal.casual");
@@ -92,38 +92,38 @@ try {
   // A relation re-keys a flat concept as a projection at its own signed strength (its pole's sign
   // on the shared one), keeping its timing, layers and switch; all of it again puts it back on the
   // shared strength at the pole its sign points to. The new key reaches the caller to select.
-  addSubspaceToRack("default/honest.deceptive");
-  setSteerLabel("default/honest.deceptive", "deceptive");
-  steering.setSteerLayers("default/honest.deceptive", [3, 4]);
-  setSteerTiming("default/honest.deceptive", { trigger: "THINKING" });
+  addSubspaceToRack("default/verbose.concise");
+  setSteerLabel("default/verbose.concise", "concise");
+  steering.setSteerLayers("default/verbose.concise", [3, 4]);
+  setSteerTiming("default/verbose.concise", { trigger: "THINKING" });
   const selected = [];
-  relateSteerEntry("default/honest.deceptive", { operator: "~", onto: "default/formal.casual" }, (key) => selected.push(key));
-  assert.deepEqual(selected, ["default/honest.deceptive~default/formal.casual"]);
-  assert.equal(steerRack.entries.has("default/honest.deceptive"), false);
-  assert.deepEqual(steerRack.entries.get("default/honest.deceptive~default/formal.casual"), {
-    mode: "projection", base: "default/honest.deceptive", operator: "~", onto: "default/formal.casual",
+  relateSteerEntry("default/verbose.concise", { operator: "~", onto: "default/formal.casual" }, (key) => selected.push(key));
+  assert.deepEqual(selected, ["default/verbose.concise~default/formal.casual"]);
+  assert.equal(steerRack.entries.has("default/verbose.concise"), false);
+  assert.deepEqual(steerRack.entries.get("default/verbose.concise~default/formal.casual"), {
+    mode: "projection", base: "default/verbose.concise", operator: "~", onto: "default/formal.casual",
     alpha: -0.5, trigger: "THINKING", layers: [3, 4], enabled: true,
   });
-  assert.match(currentSteeringExpression(), / - 0\.5 default\/honest\.deceptive~default\/formal\.casual\{3-4\}@thinking/);
-  relateSteerEntry("default/honest.deceptive~default/formal.casual", { operator: "|", onto: "default/formal.casual" }, (key) => selected.push(key));
-  assert.equal(selected.at(-1), "default/honest.deceptive|default/formal.casual");
-  addSubspaceToRack("default/honest.deceptive");
-  relateSteerEntry("default/honest.deceptive|default/formal.casual", null, (key) => selected.push(key));
+  assert.match(currentSteeringExpression(), / - 0\.5 default\/verbose\.concise~default\/formal\.casual\{3-4\}@thinking/);
+  relateSteerEntry("default/verbose.concise~default/formal.casual", { operator: "|", onto: "default/formal.casual" }, (key) => selected.push(key));
+  assert.equal(selected.at(-1), "default/verbose.concise|default/formal.casual");
+  addSubspaceToRack("default/verbose.concise");
+  relateSteerEntry("default/verbose.concise|default/formal.casual", null, (key) => selected.push(key));
   assert.equal(selected.length, 2, "a relation that would land on a chip already there changes nothing");
-  removeSteerEntry("default/honest.deceptive");
-  relateSteerEntry("default/honest.deceptive|default/formal.casual", null, (key) => selected.push(key));
-  assert.deepEqual(steerRack.entries.get("default/honest.deceptive"), {
-    mode: "subspace", ablate: false, coords: [-1], label: "deceptive", variant: "raw", trigger: "THINKING", layers: [3, 4], enabled: true,
+  removeSteerEntry("default/verbose.concise");
+  relateSteerEntry("default/verbose.concise|default/formal.casual", null, (key) => selected.push(key));
+  assert.deepEqual(steerRack.entries.get("default/verbose.concise"), {
+    mode: "subspace", ablate: false, coords: [-1], label: "concise", variant: "raw", trigger: "THINKING", layers: [3, 4], enabled: true,
   });
-  removeSteerEntry("default/honest.deceptive");
+  removeSteerEntry("default/verbose.concise");
   // An agent may write the concepts bare; all of it again keys the chip by its catalog name.
-  steerRack.entries.set("honest.deceptive~formal.casual", {
-    mode: "projection", base: "honest.deceptive", operator: "~", onto: "formal.casual", alpha: 0.3, trigger: "BOTH", enabled: true,
+  steerRack.entries.set("verbose.concise~formal.casual", {
+    mode: "projection", base: "verbose.concise", operator: "~", onto: "formal.casual", alpha: 0.3, trigger: "BOTH", enabled: true,
   });
-  relateSteerEntry("honest.deceptive~formal.casual", null, (key) => selected.push(key));
-  assert.equal(selected.at(-1), "default/honest.deceptive");
-  assert.equal(steerRack.entries.get("default/honest.deceptive").label, "honest");
-  removeSteerEntry("default/honest.deceptive");
+  relateSteerEntry("verbose.concise~formal.casual", null, (key) => selected.push(key));
+  assert.equal(selected.at(-1), "default/verbose.concise");
+  assert.equal(steerRack.entries.get("default/verbose.concise").label, "verbose");
+  removeSteerEntry("default/verbose.concise");
 
   // Regression: a one-node concept (the bundled ``deceptive``, ``refusing``, ``manipulative``) was
   // added at the middle of its nodes, ``default/deceptive%0``: the neutral end, no push. It starts at its node, and a
@@ -178,25 +178,25 @@ try {
   const sharedAlong = steerRack.subspaceAlong;
   const roundTrip = (along, place) => {
     steerRack.subspaceAlong = along;
-    addSubspaceToRack("default/honest.deceptive");
+    addSubspaceToRack("default/verbose.concise");
     place();
     const before = currentSteeringExpression();
-    relateSteerEntry("default/honest.deceptive", { operator: "~", onto: "default/formal.casual" });
-    const related = steerRack.entries.get("default/honest.deceptive~default/formal.casual").alpha;
-    relateSteerEntry("default/honest.deceptive~default/formal.casual", null);
-    const after = steerRack.entries.get("default/honest.deceptive");
-    removeSteerEntry("default/honest.deceptive");
+    relateSteerEntry("default/verbose.concise", { operator: "~", onto: "default/formal.casual" });
+    const related = steerRack.entries.get("default/verbose.concise~default/formal.casual").alpha;
+    relateSteerEntry("default/verbose.concise~default/formal.casual", null);
+    const after = steerRack.entries.get("default/verbose.concise");
+    removeSteerEntry("default/verbose.concise");
     return { before, related, label: after.label };
   };
   for (const along of [0.5, -0.5]) {
-    for (const [pole, side] of [["honest", 1], ["deceptive", -1]]) {
-      const trip = roundTrip(along, () => setSteerLabel("default/honest.deceptive", pole));
-      assert.equal(trip.related, side * along, `${pole} at ${along}: strength toward honest`);
+    for (const [pole, side] of [["verbose", 1], ["concise", -1]]) {
+      const trip = roundTrip(along, () => setSteerLabel("default/verbose.concise", pole));
+      assert.equal(trip.related, side * along, `${pole} at ${along}: strength toward verbose`);
       assert.equal(trip.label, pole, `${pole} at ${along}: the round trip keeps the pole`);
     }
-    const free = roundTrip(along, () => setSteerCoords("default/honest.deceptive", [-0.8]));
-    assert.equal(free.related, -along, `a free coordinate on deceptive's side at ${along}`);
-    assert.equal(free.label, "deceptive");
+    const free = roundTrip(along, () => setSteerCoords("default/verbose.concise", [-0.8]));
+    assert.equal(free.related, -along, `a free coordinate on concise's side at ${along}`);
+    assert.equal(free.label, "concise");
   }
   steerRack.subspaceAlong = sharedAlong;
 

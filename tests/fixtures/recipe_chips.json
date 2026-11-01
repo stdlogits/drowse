@@ -3,13 +3,13 @@
   "catalog": [
     {
       "namespace": "default",
-      "name": "honest.deceptive",
+      "name": "verbose.concise",
       "fit_mode": "pca",
       "resolved_fit_mode": "pca",
       "node_count": 2,
       "node_labels": [
-        "honest",
-        "deceptive"
+        "verbose",
+        "concise"
       ],
       "node_coords": [
         [
@@ -76,7 +76,7 @@
       "subspaceAlong": 1,
       "rack": [
         {
-          "name": "default/honest.deceptive",
+          "name": "default/verbose.concise",
           "mode": "subspace",
           "ablate": true,
           "coords": [],
@@ -139,12 +139,12 @@
           "enabled": true
         }
       ],
-      "expression": "!default/honest.deceptive + !jlens/storm{20-30} + !slens/#12 + !sae/7@response + !neuron/L8n344 + !head/L20h3",
+      "expression": "!default/verbose.concise + !jlens/storm{20-30} + !slens/#12 + !sae/7@response + !neuron/L8n344 + !head/L20h3",
       "parts": [
         {
-          "text": "!default/honest.deceptive",
+          "text": "!default/verbose.concise",
           "op": "ablate",
-          "target": "default/honest.deceptive",
+          "target": "default/verbose.concise",
           "coeff": 1.0,
           "onto": 0.0,
           "position": null,
@@ -250,7 +250,7 @@
       "subspaceAlong": 0.5,
       "rack": [
         {
-          "name": "default/honest.deceptive",
+          "name": "default/verbose.concise",
           "mode": "subspace",
           "ablate": true,
           "coords": [],
@@ -298,12 +298,12 @@
           "enabled": true
         }
       ],
-      "expression": "0.5 !default/honest.deceptive{3-5}@before + 0.25 !jlens/storm{workspace} + 0.5 !slens/tower + 0.75 !sae/7 + 0.5 !head/L20h3@response",
+      "expression": "0.5 !default/verbose.concise{3-5}@before + 0.25 !jlens/storm{workspace} + 0.5 !slens/tower + 0.75 !sae/7 + 0.5 !head/L20h3@response",
       "parts": [
         {
-          "text": "0.5 !default/honest.deceptive{3-5}@before",
+          "text": "0.5 !default/verbose.concise{3-5}@before",
           "op": "ablate",
-          "target": "default/honest.deceptive",
+          "target": "default/verbose.concise",
           "coeff": 0.5,
           "onto": 0.0,
           "position": null,
@@ -386,13 +386,13 @@
       "subspaceAlong": 0.5,
       "rack": [
         {
-          "name": "default/honest.deceptive",
+          "name": "default/verbose.concise",
           "mode": "subspace",
           "ablate": false,
           "coords": [
             1
           ],
-          "label": "honest",
+          "label": "verbose",
           "variant": "raw",
           "trigger": "BOTH",
           "enabled": true
@@ -475,15 +475,15 @@
           "enabled": true
         }
       ],
-      "expression": "0.5 default/honest.deceptive%honest + 0.3 jlens/storm{20-22} - 0.2 slens/tower + 0.4 sae/7@response - 0.35 neuron/L31n4410 + 0.35 default/emotions%wonder{14-24}@response + 0.5,0.2 default/months_loop%6",
+      "expression": "0.5 default/verbose.concise%verbose + 0.3 jlens/storm{20-22} - 0.2 slens/tower + 0.4 sae/7@response - 0.35 neuron/L31n4410 + 0.35 default/emotions%wonder{14-24}@response + 0.5,0.2 default/months_loop%6",
       "parts": [
         {
-          "text": "0.5 default/honest.deceptive%honest",
+          "text": "0.5 default/verbose.concise%verbose",
           "op": "position",
-          "target": "default/honest.deceptive",
+          "target": "default/verbose.concise",
           "coeff": 0.5,
           "onto": 0.0,
-          "position": "honest",
+          "position": "verbose",
           "layers": null,
           "trigger": null,
           "phase": "both",
@@ -806,13 +806,13 @@
       "subspaceAlong": -0.5,
       "rack": [
         {
-          "name": "default/honest.deceptive",
+          "name": "default/verbose.concise",
           "mode": "subspace",
           "ablate": false,
           "coords": [
             1
           ],
-          "label": "honest",
+          "label": "verbose",
           "variant": "raw",
           "trigger": "BOTH",
           "enabled": true
@@ -852,15 +852,15 @@
           "enabled": true
         }
       ],
-      "expression": "-0.5 default/honest.deceptive%honest - 0.5 !default/calm.anxious - !jlens/storm - 0.5 !slens/tower@response - 0.4 sae/7",
+      "expression": "-0.5 default/verbose.concise%verbose - 0.5 !default/calm.anxious - !jlens/storm - 0.5 !slens/tower@response - 0.4 sae/7",
       "parts": [
         {
-          "text": "-0.5 default/honest.deceptive%honest",
+          "text": "-0.5 default/verbose.concise%verbose",
           "op": "position",
-          "target": "default/honest.deceptive",
+          "target": "default/verbose.concise",
           "coeff": -0.5,
           "onto": 0.0,
-          "position": "honest",
+          "position": "verbose",
           "layers": null,
           "trigger": null,
           "phase": "both",
@@ -964,7 +964,7 @@
           "alpha": 0.3,
           "trigger": "RESPONSE",
           "gate": {
-            "probe": "default/honest.deceptive",
+            "probe": "default/verbose.concise",
             "op": ">",
             "threshold": 1
           },
@@ -1040,7 +1040,7 @@
           "enabled": true
         }
       ],
-      "expression": "0.5 default/calm.anxious%calm{3-5}@when:default/calm.anxious<0 + 0.3 jlens/storm@when:default/honest.deceptive>1 + 0.2 slens/tower@after:4 + 0.4 sae/7@first:16&when:jlens/storm<=0.05 + 0.2 neuron/L31n4410@both&when:neuron/L8n344>=-0.5 + !head/L20h3@thinking&when:default/emotions:fraction>0.3 + 0.35 default/emotions%wonder@after:2&when:default/emotions@wonder>-1",
+      "expression": "0.5 default/calm.anxious%calm{3-5}@when:default/calm.anxious<0 + 0.3 jlens/storm@when:default/verbose.concise>1 + 0.2 slens/tower@after:4 + 0.4 sae/7@first:16&when:jlens/storm<=0.05 + 0.2 neuron/L31n4410@both&when:neuron/L8n344>=-0.5 + !head/L20h3@thinking&when:default/emotions:fraction>0.3 + 0.35 default/emotions%wonder@after:2&when:default/emotions@wonder>-1",
       "parts": [
         {
           "text": "0.5 default/calm.anxious%calm{3-5}@when:default/calm.anxious<0",
@@ -1066,19 +1066,19 @@
           "projection": null
         },
         {
-          "text": "0.3 jlens/storm@when:default/honest.deceptive>1",
+          "text": "0.3 jlens/storm@when:default/verbose.concise>1",
           "op": "push",
           "target": "jlens/storm",
           "coeff": 0.3,
           "onto": 0.0,
           "position": null,
           "layers": null,
-          "trigger": "when:default/honest.deceptive>1",
+          "trigger": "when:default/verbose.concise>1",
           "phase": "response",
           "first_n": null,
           "after_n": null,
           "gate": {
-            "probe": "default/honest.deceptive",
+            "probe": "default/verbose.concise",
             "op": ">",
             "threshold": 1.0
           },
@@ -1182,9 +1182,9 @@
       "subspaceAlong": 0.5,
       "rack": [
         {
-          "name": "default/honest.deceptive~default/calm.anxious",
+          "name": "default/verbose.concise~default/calm.anxious",
           "mode": "projection",
-          "base": "default/honest.deceptive",
+          "base": "default/verbose.concise",
           "operator": "~",
           "onto": "default/calm.anxious",
           "alpha": 0.4,
@@ -1192,11 +1192,11 @@
           "enabled": true
         },
         {
-          "name": "default/calm.anxious|default/honest.deceptive",
+          "name": "default/calm.anxious|default/verbose.concise",
           "mode": "projection",
           "base": "default/calm.anxious",
           "operator": "|",
-          "onto": "default/honest.deceptive",
+          "onto": "default/verbose.concise",
           "alpha": -0.6,
           "trigger": "AFTER_N",
           "tokens": 4,
@@ -1213,12 +1213,12 @@
           "enabled": true
         }
       ],
-      "expression": "0.4 default/honest.deceptive~default/calm.anxious - 0.6 default/calm.anxious|default/honest.deceptive{3-5}@after:4&when:jlens/storm>0.1",
+      "expression": "0.4 default/verbose.concise~default/calm.anxious - 0.6 default/calm.anxious|default/verbose.concise{3-5}@after:4&when:jlens/storm>0.1",
       "parts": [
         {
-          "text": "0.4 default/honest.deceptive~default/calm.anxious",
+          "text": "0.4 default/verbose.concise~default/calm.anxious",
           "op": "project",
-          "target": "default/honest.deceptive~default/calm.anxious",
+          "target": "default/verbose.concise~default/calm.anxious",
           "coeff": 0.4,
           "onto": 0.0,
           "position": null,
@@ -1229,15 +1229,15 @@
           "after_n": null,
           "gate": null,
           "projection": {
-            "base": "default/honest.deceptive",
+            "base": "default/verbose.concise",
             "operator": "~",
             "onto": "default/calm.anxious"
           }
         },
         {
-          "text": "-0.6 default/calm.anxious|default/honest.deceptive{3-5}@after:4&when:jlens/storm>0.1",
+          "text": "-0.6 default/calm.anxious|default/verbose.concise{3-5}@after:4&when:jlens/storm>0.1",
           "op": "project",
-          "target": "default/calm.anxious|default/honest.deceptive",
+          "target": "default/calm.anxious|default/verbose.concise",
           "coeff": -0.6,
           "onto": 0.0,
           "position": null,
@@ -1258,7 +1258,7 @@
           "projection": {
             "base": "default/calm.anxious",
             "operator": "|",
-            "onto": "default/honest.deceptive"
+            "onto": "default/verbose.concise"
           }
         }
       ]
@@ -1266,16 +1266,16 @@
   ],
   "readOnly": [
     {
-      "expression": "0.5 default/honest.deceptive%honest + 0.25 default/calm.anxious%calm",
+      "expression": "0.5 default/verbose.concise%verbose + 0.25 default/calm.anxious%calm",
       "problem": "different strengths",
       "parts": [
         {
-          "text": "0.5 default/honest.deceptive%honest",
+          "text": "0.5 default/verbose.concise%verbose",
           "op": "position",
-          "target": "default/honest.deceptive",
+          "target": "default/verbose.concise",
           "coeff": 0.5,
           "onto": 0.0,
-          "position": "honest",
+          "position": "verbose",
           "layers": null,
           "trigger": null,
           "phase": "both",

@@ -3,11 +3,11 @@
   "registry": [
     {
       "namespace": "default",
-      "name": "honest.deceptive",
+      "name": "verbose.concise",
       "fitMode": "pca",
       "labels": [
-        "honest",
-        "deceptive"
+        "verbose",
+        "concise"
       ]
     },
     {
@@ -469,16 +469,16 @@
       ]
     },
     {
-      "expression": "honest",
+      "expression": "verbose",
       "note": "a bipolar pole is a node label too",
-      "canonical": "0.5 default/honest.deceptive%honest",
+      "canonical": "0.5 default/verbose.concise%verbose",
       "terms": [
         {
-          "key": "default/honest.deceptive%honest",
-          "text": "0.5 default/honest.deceptive%honest",
+          "key": "default/verbose.concise%verbose",
+          "text": "0.5 default/verbose.concise%verbose",
           "kind": "manifold",
-          "manifold": "default/honest.deceptive",
-          "position": "honest",
+          "manifold": "default/verbose.concise",
+          "position": "verbose",
           "along": 0.5,
           "onto": 0.0,
           "layers": null,
@@ -542,19 +542,19 @@
       ]
     },
     {
-      "expression": "0.5 honest",
+      "expression": "0.5 verbose",
       "profileNames": [
         "formal.casual"
       ],
-      "note": "profileNames is an exact-key override only; 'honest' is not in it, so the label tier still resolves",
-      "canonical": "0.5 default/honest.deceptive%honest",
+      "note": "profileNames is an exact-key override only; 'verbose' is not in it, so the label tier still resolves",
+      "canonical": "0.5 default/verbose.concise%verbose",
       "terms": [
         {
-          "key": "default/honest.deceptive%honest",
-          "text": "0.5 default/honest.deceptive%honest",
+          "key": "default/verbose.concise%verbose",
+          "text": "0.5 default/verbose.concise%verbose",
           "kind": "manifold",
-          "manifold": "default/honest.deceptive",
-          "position": "honest",
+          "manifold": "default/verbose.concise",
+          "position": "verbose",
           "along": 0.5,
           "onto": 0.0,
           "layers": null,
@@ -931,15 +931,15 @@
       ]
     },
     {
-      "expression": "0.3 honest~formal{8,10,12}",
+      "expression": "0.3 verbose~formal{8,10,12}",
       "note": "projection operands skip the manifold tiers",
-      "canonical": "0.3 honest~formal{8,10,12}",
+      "canonical": "0.3 verbose~formal{8,10,12}",
       "terms": [
         {
-          "key": "honest~formal{8,10,12}",
-          "text": "0.3 honest~formal{8,10,12}",
+          "key": "verbose~formal{8,10,12}",
+          "text": "0.3 verbose~formal{8,10,12}",
           "kind": "projection",
-          "base": "honest",
+          "base": "verbose",
           "operator": "~",
           "onto": "formal",
           "coeff": 0.3,
@@ -953,14 +953,14 @@
       ]
     },
     {
-      "expression": "0.3 honest|formal.casual",
-      "canonical": "0.3 honest|formal.casual",
+      "expression": "0.3 verbose|formal.casual",
+      "canonical": "0.3 verbose|formal.casual",
       "terms": [
         {
-          "key": "honest|formal.casual",
-          "text": "0.3 honest|formal.casual",
+          "key": "verbose|formal.casual",
+          "text": "0.3 verbose|formal.casual",
           "kind": "projection",
-          "base": "honest",
+          "base": "verbose",
           "operator": "|",
           "onto": "formal.casual",
           "coeff": 0.3,
@@ -1674,16 +1674,16 @@
       ]
     },
     {
-      "expression": "-0.2 deceptive{Workspace}",
+      "expression": "-0.2 concise{Workspace}",
       "note": "and the resolved label-tier key",
-      "canonical": "-0.2 default/honest.deceptive%deceptive{workspace}",
+      "canonical": "-0.2 default/verbose.concise%concise{workspace}",
       "terms": [
         {
-          "key": "default/honest.deceptive%deceptive{workspace}",
-          "text": "-0.2 default/honest.deceptive%deceptive{workspace}",
+          "key": "default/verbose.concise%concise{workspace}",
+          "text": "-0.2 default/verbose.concise%concise{workspace}",
           "kind": "manifold",
-          "manifold": "default/honest.deceptive",
-          "position": "deceptive",
+          "manifold": "default/verbose.concise",
+          "position": "concise",
           "along": -0.2,
           "onto": 0.0,
           "layers": "workspace",
@@ -2763,7 +2763,7 @@
       "error": "SteeringExprError"
     },
     {
-      "expression": "honest + honest@response",
+      "expression": "verbose + verbose@response",
       "error": "SteeringExprError"
     },
     {

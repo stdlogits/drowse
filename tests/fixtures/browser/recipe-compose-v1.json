@@ -58,7 +58,7 @@
         "sampling": null
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -101,7 +101,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -116,7 +116,7 @@
       },
       "modifier": "cool",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 0.3,
@@ -146,7 +146,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -188,7 +188,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -203,7 +203,7 @@
       },
       "modifier": "temperature=1.5, max_tokens=64",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 1.5,
@@ -227,7 +227,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -242,7 +242,7 @@
       },
       "modifier": "hot",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 1.2,
@@ -266,7 +266,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -281,7 +281,7 @@
       },
       "modifier": "cool",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 0.3,
@@ -305,7 +305,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -320,7 +320,7 @@
       },
       "modifier": "seed=42",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 0.7,
@@ -344,7 +344,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -361,7 +361,7 @@
       },
       "modifier": "cool",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 0.3,
@@ -394,7 +394,7 @@
         }
       },
       "anchor": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "system_prompt": "Anchor prompt",
         "sampling": {
@@ -409,7 +409,7 @@
       },
       "modifier": "top_p=0.8",
       "expected": {
-        "steering": "0.3 honest",
+        "steering": "-0.3 deceptive",
         "thinking": false,
         "sampling": {
           "temperature": 0.7,
