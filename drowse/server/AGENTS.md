@@ -403,9 +403,14 @@ Outbound frames:
   `request_complete` still says `cancelled`. A commit-only `submit` sends one
   `started` and one `done` (`{role, text, node_id, ...}`), no tokens.
 - `tree_mutated {op, rev, added, removed, updated, active_node_id, cast}`
-  forwards every `LoomMutated`, from any source. `done` waits until its node's
-  `finalize_assistant` delta is sent, so a client never sees a finished but
-  empty node.
+  forwards every `LoomMutated`, from any source. Every frame rides one ordered
+  buffer, so a reply's `finalize_assistant` delta precedes its `done` and a
+  client never sees a finished but empty node.
+- `resync {dropped}`: the client read slower than the connection produced, and
+  `dropped` token and `tree_mutated` frames were never sent. Frames after it are
+  live; the client rebuilds the rest from `GET /tree` (the streaming node's rows
+  past its last `raw_index`, and any tree delta it missed). It always precedes a
+  `done` whose reply it affects.
 - `error {message, code, status, node_id, sibling_index}` on a connection that
   stays open: FastAPI's handlers don't reach WebSockets, so the handler
   classifies with `describe_error`. Schema failures, bad JSON, and unknown
@@ -429,9 +434,18 @@ Concurrency and limits:
   frame (close 1009; the CLI passes the same `ws_max_size`) and 16 pending
   frames / 4 MiB (close 1013). `stop` is a coalesced control outside that
   budget. Turns run one at a time per connection.
-- Sends share one lock with a 30 s timeout. Token and tree queues each bound
-  256 outstanding events, counting callbacks still pending on the loop;
-  overflow closes 1013.
+- One sender task writes one ordered outbound buffer (`_OutboundQueue`);
+  producers (the worker's token callback, EventBus callbacks on any thread,
+  the turn's control frames) never wait on it. `token` and `tree_mutated`
+  frames bound at 256 queued (`MAX_WS_OUTBOUND_EVENTS`, counting callbacks
+  still pending on the loop); past it the buffer lags, drops them until the
+  sender has taken what it holds, then sends one `resync`. Control frames
+  (`started`, `done`, `error`, `request_complete`) are never dropped, and a
+  turn ends only once its frames are written, so a stalled reader holds at
+  most 256 droppable frames plus one turn's controls. A slow reader never
+  slows or cancels generation, and the session lock is released when the last
+  sibling's worker ends, not when its frames are written. A send the peer
+  accepts nothing of for 30 s closes 1013, which is a disconnect.
 - A turn runs in a worker thread under
   `session.generation_state.cancellation_scope`. `n > 1` fans siblings
   serially under seeds from `loom.recipe.derive_seed_schedule`, holding the

@@ -136,6 +136,35 @@ export function tokenRowToScore(row: NonNullable<LoomNodeJSON["tokens"]>[number]
   return out;
 }
 
+/** Append to a streaming turn the rows its node holds past the live arrays.
+ *
+ * The server stops sending a reader that lags its token frames and tells it to
+ * resync; the tree has every row, and each row's ``raw_index`` orders it.  Live
+ * rows are kept as they are (no re-render), each channel gains the rows after
+ * its last raw index, and the reply text gains their text, so the token frames
+ * that follow dedupe against the merged arrays.  Returns how many were added. */
+export function catchUpStreamingRows(turn: ChatTurn, node: LoomNodeJSON): number {
+  let added = 0;
+  for (const thinking of [true, false]) {
+    const rows = thinking ? node.thinking_tokens : node.tokens;
+    if (!rows?.length) continue;
+    const live = thinking ? (turn.thinkingTokens ??= []) : (turn.tokens ??= []);
+    const last = live.findLast((token) => token.rawIndex != null)?.rawIndex;
+    const fresh = last === undefined || last === null
+      ? rows.slice(live.length)
+      : rows.filter((row) => row.raw_index !== undefined && row.raw_index !== null && row.raw_index > last);
+    for (const row of fresh) {
+      const score = tokenRowToScore(row);
+      score.thinking = thinking;
+      live.push(score);
+      if (thinking) turn.thinking = true;
+      else turn.text = (turn.text ?? "") + row.text;
+    }
+    added += fresh.length;
+  }
+  return added;
+}
+
 /** Project a LoomNodeJSON to a ChatTurn for Chat.svelte consumption.
  *  Hydrates ``tokens`` / ``thinkingTokens`` from the server-serialized
  *  per-token rows when the server included them (tree GET / tree_mutated
@@ -276,8 +305,12 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
         // A settled node's rollup (an edit clears it); a streaming one keeps the live value.
         if (node.finish_reason !== null) prev.meanLogprob = node.mean_logprob ?? null;
         // Server-shipped node tokens are authoritative. Preserve the live
-        // arrays only until the finalized node snapshot carries them.
-        if (node.finish_reason !== null || (prev.tokens?.length ?? 0) === 0) {
+        // arrays only until the finalized node snapshot carries them; while
+        // the node streams, a snapshot only adds the rows the live stream
+        // never delivered (a lagging client's dropped frames).
+        if (loomTree.pendingNodeId === nid && genStatus.active && node.finish_reason === null) {
+          genStatus.tokensSoFar += catchUpStreamingRows(prev, node);
+        } else if (node.finish_reason !== null || (prev.tokens?.length ?? 0) === 0) {
           const fromNode = nodeToTurn(node);
           if (fromNode.tokens || fromNode.thinkingTokens) {
             prev.tokens = fromNode.tokens;
