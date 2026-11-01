@@ -1196,33 +1196,23 @@
         <span class="dw-mark">{modelShort}</span>
         <p class="meta">{sessionState.info?.is_base_model ? "Write the opening text below" : "Write the first message below"}</p>
       </div>
-    {:else if twoColumns}
-      <!-- Two columns: the right is a pinned branch path or a stateless automatic comparison.
-           Comparisons never alter the loom. -->
-      <div class="ab-grid">
-        <div class="ab-col">
-          {#each chatLog.turns as turn, turnIdx (turnIdx)}
-            {@render bubble(turn, turnIdx, false)}
-          {/each}
+    {:else if twoColumns && !pinnedActive}
+      <!-- An automatic comparison, one row a turn so each comparison sits beside the reply it
+           compares: a prompt spans both columns, a reply pairs with its comparison. Comparisons
+           are stateless and never alter the loom. -->
+      <div class="ab-grid ab-rows">
+        <span aria-hidden="true"></span>
+        <div class="pin-head">
+          <span class="head">Comparison</span>
+          <button type="button" class="dw-text" onclick={hideComparison}>Hide</button>
         </div>
-        <div class="ab-col">
-          {#if pinnedActive}
-            <div class="pin-head">
-              <span class="head">Pinned branch</span>
-              <button type="button" class="dw-text" onclick={unpinComparison}>Unpin</button>
-            </div>
-            {#each pinnedPath as turn, idx (idx)}
-              {@render bubble(turn, idx, true)}
-            {/each}
+        {#each chatLog.turns as turn, turnIdx (turnIdx)}
+          {#if !turn.generated || turn.role === "system"}
+            <div class="ab-span">{@render bubble(turn, turnIdx, false)}</div>
           {:else}
-            <div class="pin-head">
-              <span class="head">Comparison</span>
-              <button type="button" class="dw-text" onclick={hideComparison}>Hide</button>
-            </div>
-            {#each chatLog.turns as turn, turnIdx (turnIdx)}
-              {#if !turn.generated || turn.role === "system"}
-                {@render bubble(turn, turnIdx, false)}
-              {:else if turn.abPair}
+            <div class="ab-cell">{@render bubble(turn, turnIdx, false)}</div>
+            <div class="ab-cell">
+              {#if turn.abPair}
                 {@render bubble(turn.abPair, turnIdx, true)}
               {:else}
                 <div class="dw-turn" aria-hidden="true">
@@ -1230,8 +1220,26 @@
                   <span class="meta">{abState.pendingTurnIdx === turnIdx ? "Writing the comparison…" : "Not compared"}</span>
                 </div>
               {/if}
-            {/each}
+            </div>
           {/if}
+        {/each}
+      </div>
+    {:else if twoColumns}
+      <!-- Two columns: the right is a pinned branch path, which runs its own length. -->
+      <div class="ab-grid">
+        <div class="ab-col">
+          {#each chatLog.turns as turn, turnIdx (turnIdx)}
+            {@render bubble(turn, turnIdx, false)}
+          {/each}
+        </div>
+        <div class="ab-col">
+          <div class="pin-head">
+            <span class="head">Pinned branch</span>
+            <button type="button" class="dw-text" onclick={unpinComparison}>Unpin</button>
+          </div>
+          {#each pinnedPath as turn, idx (idx)}
+            {@render bubble(turn, idx, true)}
+          {/each}
         </div>
       </div>
     {:else}
@@ -1548,6 +1556,9 @@
 
   .ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); min-width: 0; }
   .ab-col { display: grid; align-content: start; gap: var(--s6); min-width: 0; }
+  .ab-rows { row-gap: var(--s6); align-items: start; }
+  .ab-span { grid-column: 1 / -1; min-width: 0; }
+  .ab-cell { min-width: 0; }
   .pin-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
 
   .dock { display: grid; gap: var(--s2); flex: none; min-width: 0; padding-top: var(--s2); }
