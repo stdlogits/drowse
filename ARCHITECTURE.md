@@ -176,8 +176,9 @@ through a bound run. Details: `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md`.
 
 `LoomTree` (`loom/tree.py`) is the session's authoritative conversation graph.
 A node records role and cast label, recipe, raw token ids, token rows with
-their measurement envelopes, aggregate readings, committed thinking, notes and
-stars. **Provenance is recipe presence**: a node with a `Recipe` was generated
+their measurements (slim for a generated token, section 7.4), the reply's
+aggregate readings and settled aggregate envelope, committed thinking, notes
+and stars. **Provenance is recipe presence**: a node with a `Recipe` was generated
 (in either seat, since the model can speak the user seat), and `recipe=None`
 means authored. Rendering, transcripts, authored capture and joint logprobs all
 key on this; never infer provenance from `role`.
@@ -751,6 +752,14 @@ then 503); lens fits and SAE training hold the exclusive-GPU section outside
 that lock, so a generation arriving mid-fit gets an immediate 409 instead of
 queueing behind a long job.
 
+Generation never waits on a WebSocket reader. Each connection writes one
+ordered outbound buffer; a reader that falls 256 droppable frames (`token`,
+`tree_mutated`) behind lags, misses frames, then gets one `resync` and
+rebuilds what it missed from `GET /tree`, while the reply keeps generating
+into the loom. Only Stop, a real disconnect or a send the peer accepts nothing
+of for 30 s ends a reply `cancelled`; keepalive pings carry no pong timeout,
+since a slow reader answers them only after its backlog.
+
 `server/errors.py::describe_error` is the one error classifier for every HTTP,
 SSE, polled and WebSocket surface. Typed `DrowseError`s keep their status and
 text, a bare `ValueError` is a logged and scrubbed 500, and the wire `code` is
@@ -769,7 +778,7 @@ concerns. Details: `drowse/server/AGENTS.md`.
 The Svelte 5 dashboard lives in `webui/` and builds into the committed
 `drowse/web/dist/`, which is exactly what wheel users run; source and bundle
 change together and CI fails on drift. It is drawn in Ledger (the
-`@stdlogits/ledger` package). Its home is the workbench: the thread (the loom as
+`@stdlogits/ledger` package, pinned at v0.1.1). Its home is the workbench: the thread (the loom as
 the path you are on, its map and weave one step away), the page (the
 conversation, with the steering recipe as chips over the composer) and the
 inspector (whatever is selected: a token's drilldown and anatomy, a probe, a
@@ -802,7 +811,7 @@ references are:
 | Fisher fit, DLS, topology and RBF | `geometry/subspace.py`, `fit/capture.py::compute_dls_axes`, `geometry/topology.py`, `geometry/rbf.py` | `affine-fisher-fit-v1.json`, `dls-axes-v1.json`, `topology-rbf-parity-v1.json`, `topology-adversarial-v1.csv` |
 | measurement envelope | `readout/measurements.py` | `measurement-envelope-v2.json` |
 | loom ops and events | `loom/tree.py`, `loom/ops.py` | `loom-operation-transcript-v1.json` |
-| generation-settings composition | `loom/recipe.py::compose_call` | (ported, no golden) |
+| generation-settings composition | `loom/recipe.py::compose_call` | `recipe-compose-v1.json` |
 | tree filter | `loom/filter.py` | (ported, no golden) |
 | `.drowse` archive and install | `store/archive.py`, `store/install.py` | `tests/browser_drowse_archive_bridge.py` |
 

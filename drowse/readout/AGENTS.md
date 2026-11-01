@@ -376,7 +376,8 @@ is often below 1e-4 and is read on a log scale, so fixed places would zero it.
   the token: the geometry `token_readout`, the lens and SAE `token_readout`s
   (each also returns the attached probes' readings from the same capture) and
   the token anatomy (its lens channel carries the lens probes' readings).
-  About 1 kB a SmolLM2 token with the 17 default probes.
+  About 1.6 kB a SmolLM2 token with the 17 default probes (geometry about
+  1.1 kB, `scores` 0.5 kB), where the whole envelope is about 118 kB.
 - `summary_measurements(envelope, per_layer=)` is every reading whole but its
   traces: each geometry reading's summary (`GEOMETRY_SUMMARY_KEYS`: fraction,
   nearest, coords, residual, assignment, membership, depth_com,

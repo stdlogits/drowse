@@ -162,8 +162,9 @@ checked against the sidecar, and only a 2-node affine fit folds.
 Bind check → `effective_config(yaml_vectors=True)` → model check → parse `-S` →
 `open_session(roster=True)` → `enable_live_lens` → `select_s_lens` → `preflight_steering` →
 `create_app` → `warm_up` (`--compile` only) → `enable_live_sae` (not with
-`--no-web`) → `uvicorn.run`. Lens, SAE and warm-up failures are narrated and
-never block startup.
+`--no-web`) → `uvicorn.run` (with `server/ws_stream.py`'s `ws_max_size` and
+keepalive: pings every 20 s, no pong timeout). Lens, SAE and warm-up failures
+are narrated and never block startup.
 
 - The lens sources precede the preflight because `jlens/<word>` and
   `slens/<word>` atoms resolve against the selected sources. `preflight_steering` enters and leaves

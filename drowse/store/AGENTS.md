@@ -245,7 +245,8 @@ manifest, changed manifest (`payload_drift_sha256`, canonical JSON with
 (hard-linked into staging) and `nodes_sha256` decides whether they stay current.
 A `default/<name>` whose manifest says `source: "bundled"` but which no longer
 ships (no package folder of that name, complete or not) is removed with its fits
-and a warning, so a dropped bundled manifold stops resolving and leaves the
+and a warning (one process says it; a second retiring the same folder skips
+it), so a dropped bundled manifold stops resolving and leaves the
 probe roster (`_retire_unshipped_manifolds`; 6.0 retired `honest.deceptive`,
 `refusing.compliant` and `sincere.manipulative`). Any other folder under
 `default/` is left alone.

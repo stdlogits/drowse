@@ -76,7 +76,8 @@ API) shows as one read-only chip and is sent as written. Agents, the HTTP APIs,
 the CLI and Python keep the full expression language below.
 
 A reply cut short by Stop (or a dropped connection) is kept and marked
-"stopped early". Saved chats live in the browser (saved automatically between
+"stopped early"; a browser that reads slower than the model writes never cuts
+one, and catches up from the server's conversation tree. Saved chats live in the browser (saved automatically between
 replies) and as backup files you download; the server keeps no conversations.
 
 The rooms:

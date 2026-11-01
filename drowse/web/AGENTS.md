@@ -127,7 +127,11 @@ own checkout, so in a worktree run it from the repo root with `PYTHONPATH=.`.
   the tree): `stores/ws.svelte.ts` holds later frames, reads the tree through the same
   recovery barrier a revision gap uses, and `loom.svelte.ts::catchUpStreamingRows` appends
   the streaming node's rows past the live arrays' last `raw_index`, so the drawn rows stay
-  and the frames that follow dedupe; a stateless reply takes its text from `done`. The A/B
+  and the frames that follow dedupe; a stateless reply takes its text from `done`. The
+  status line's rate and time come from `done.result.tok_per_sec`/`elapsed`, the engine's
+  own, not from frame arrivals. An unexpected socket close reports the channel `closed` with
+  `code: "RUNTIME_CONNECTION_LOST"`: the page says the connection dropped and reconnects,
+  which reads the tree. The A/B
   comparison sends only the composer's observation knobs
   (`sampling.svelte.ts::buildObservationSampling`): it is the compared turn as it was, and
   a generation field the call set would outrank the turn's own. The shared types also
@@ -156,10 +160,16 @@ reading's shape, never on probe-info flags: `isScalarReading` (the reading has a
 means a lens or SAE reading, and geometry readings are `ProbeReadingJSON`.
 `SessionInfo.instruments` is the only representation of instrument state.
 
-Hover and the drilldown read the envelopes the loom owns, so they survive refresh and
-save/load. A channel that was off during the generation is replayed through
-`runtime/tokenReadoutCache.ts` (keyed, deduplicated). Replayed values are never written
-back and never relabelled as captured.
+Hover and the drilldown start from the rows the loom owns, so they survive refresh and
+save/load: a generated row's `scores` and geometry share and coordinates
+(`tokenRows.ts::rowGeometry`) are kept, and everything else (geometry summaries and layers,
+the lens, SAE and unit probe readings, chips and features) is replayed through
+`runtime/tokenReadoutCache.ts` (keyed, deduplicated; the hover's
+`tokenHoverState.replayedReadings`, the token view's `drawers/token/readings.ts::tokenPins`).
+A steered view keeps the row's own values and replays the rest. A steered replay the runtime
+refuses with a 422 (`drowse serve` refuses only a thinking-phase window on a family that
+thinks; a probe-gated reply replays) sets `ReplayReadout.refused`, and the drawer switches
+every family to Unsteered once per node with one line saying why. Replayed values are never written back and never relabelled as captured.
 
 ## The drowse.ai seam
 
@@ -177,7 +187,9 @@ moving or renaming any of these, grep drowse.ai's `webui/{src,hosted,scripts,e2e
 
 **RuntimeClient.** The contract lives in `lib/runtime/contracts.ts`. It has a `mode`
 (`http` | `browser` | `fake`); seven services (`sessions`, `profiles`, `probes`,
-`manifolds`, `templates`, `tree`, `instruments`); an `events` channel; and `dispose()`.
+`manifolds`, `templates`, `tree`, `instruments`); an `events` channel, whose `closed` state
+may carry `code` (`RUNTIME_CHANNEL_CLOSED`, the default, or `RUNTIME_CONNECTION_LOST`, which
+only the HTTP client sets); and `dispose()`.
 `RUNTIME_SERVICE_METHODS` is compile-checked against the interfaces. A member a runtime may
 lack is optional (`?`) with an entry there and a check the UI tests before showing it:
 `instruments.tokenAnatomy?` and `instruments.unitActivity?` (the node replay), reported by
@@ -256,12 +268,17 @@ lib/style/            drowse.css (the shell's Ledger classes), global.css, curso
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
 ```
 
-The design is Ledger, from the package `@stdlogits/ledger` (pinned as a git dependency at a
-tag; its `DESIGN.md` is the design, and it supplies the tokens, the Wix Madefor faces, motion,
-the tip, the theme and the pieces: Segmented, Tabs, Switch, IconButton, Icon, Expander, Meter,
-Token, Context, Swap, MorphText, ThemeButton). Use a piece rather than drawing a look-alike;
-the dev server leaves the package out of dependency optimization (`optimizeDeps.exclude`)
-because it ships TypeScript sources.
+The design is Ledger, from the package `@stdlogits/ledger` (pinned as a git dependency at
+`github:stdlogits/ledger#v0.1.1`, with `@sveltejs/vite-plugin-svelte` at 7.3.1; its
+`DESIGN.md` is the design, and it supplies the tokens, the Wix Madefor faces, motion, the tip,
+the theme and the pieces: Segmented, Tabs, Switch, IconButton, Icon, Expander, Meter, Token,
+Context, Swap, MorphText, ThemeButton). Use a piece rather than drawing a look-alike. The
+shell relies on 0.1.1: the header menu's `menu` icon (`lib/ui/HeaderMenu.svelte`), the glide
+thumb under an inert page (the rooms host is `inert` until boot is ready), and MorphText
+showing a value that changes faster than its morph as plain text until it settles, so the
+streamed counts and probe readings use MorphText directly. drowse.ai's own package moves to
+the same tag with its submodule bump. The dev server leaves the package out of dependency
+optimization (`optimizeDeps.exclude`) because it ships TypeScript sources.
 
 ## State
 
@@ -452,7 +469,9 @@ drowse.ai too.
   it. A gate never reads the prompt, so adding one moves Always or Prompt to Response, and a
   gated term is not offered those two), Which part (a raw one- or two-node flat concept, pushed: All
   of it, Along or Not along a second fitted concept; a relation re-keys the chip as a
-  projection, `relateSteerEntry`, at its own strength with its pole's sign), the position on
+  projection, `relateSteerEntry`, at its own strength with its pole's sign: node 0 is `+`,
+  as the engine orients every fitted axis, and a free position's display coordinate counts
+  against node 0's, never by the layout's own sign), the position on
   its fit, Where (`LayerStrip.svelte`: one cell per layer, a bar on the ramp
   as tall as the term's share, painted by dragging; All fitted, Workspace, Clear) and the
   term as the expression writes it. A unit's strip is fixed (`LayerStrip` without

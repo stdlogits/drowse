@@ -398,8 +398,10 @@ Outbound frames:
   (`summary_measurements`). The consumer opts into every live channel; each family's live
   toggle decides what appears.
 - `done {result: {text, tokens, finish_reason, applied_steering, usage,
-  measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,
-  sibling_count}`, with the engine's aggregate-scope envelope. A client
+  tok_per_sec, elapsed, measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,
+  sibling_count}`, with the engine's aggregate-scope envelope and its own
+  decode rate and seconds (a page that read slower than the model wrote, and
+  resynced, cannot measure the rate from frame arrivals). A client
   `stop` or a disconnect that cuts the reply ends it `finish_reason:
   "cancelled"`, which the engine reports and the loom node records; a stop
   that races the reply's own end keeps its natural reason, and the request's
@@ -448,7 +450,12 @@ Concurrency and limits:
   most 256 droppable frames plus one turn's controls. A slow reader never
   slows or cancels generation, and the session lock is released when the last
   sibling's worker ends, not when its frames are written. A send the peer
-  accepts nothing of for 30 s closes 1013, which is a disconnect.
+  accepts nothing of for 30 s closes 1013, which is a disconnect, and that is
+  the one dead-peer rule: `drowse serve` pings every 20 s with no pong timeout
+  (`WS_PING_INTERVAL_SECONDS`, `WS_PING_TIMEOUT_SECONDS = None`), because a
+  slow reader answers a ping only after the backlog queued ahead of it, and
+  uvicorn's default 20 s timeout closed such a page (1011) about 40 s into a
+  long reply and recorded it `cancelled`.
 - A turn runs in a worker thread under
   `session.generation_state.cancellation_scope`. `n > 1` fans siblings
   serially under seeds from `loom.recipe.derive_seed_schedule`, holding the

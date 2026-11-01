@@ -111,7 +111,8 @@ route inventory into this file.
 ## Visual system
 
 The dashboard is drawn in Ledger, the Standard Logits design language, from the
-`@stdlogits/ledger` package (its `DESIGN.md` is the design): white paper, two
+`@stdlogits/ledger` package, pinned at `github:stdlogits/ledger#v0.1.1` (its
+`DESIGN.md` is the design): white paper, two
 washes, three inks, one accent, no lines. The theme is auto (the system's look),
 light or dark, behind one theme button. The accent is depth, the ramp from
 `--deep` to `--late`, and it only fills. Wix Madefor is the only face, with

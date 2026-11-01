@@ -231,6 +231,12 @@ the capture-mode table (including each mode's finalize read) are in
   exact keys the row omits), or from the latest slices; lens/SAE keys through
   their bound runs, which stash the row for the display step. An empty capture
   scores nothing, so gates read inactive, never stale.
+- `gate_run()` is the one gate capture of a forced replay (joint logprobs, the
+  loom token and node replays of a probe-gated reply): it binds the runs with
+  a demand that captures only what the open gates read, yields
+  `gate_score_callback()` for the replay to call after each forward as the
+  decode loop does, and ends and closes the runs on exit, even when a detach
+  raises.
 - `aggregate_index` / `pooled_slice` is the one finalize pooling for all three
   families: the loop's visible endpoint when set; `None` for a stop-sequence finish
   without one; else `model/tokens.py::last_content_index` over `generated_ids`

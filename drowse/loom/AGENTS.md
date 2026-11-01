@@ -274,8 +274,9 @@ lock-free device read for MPS's one command buffer and aborted the server. `appl
 the unsteered counterfactual. The forward fires the open terms as generation
 fired them (`TokenReplayer.segments`, the **Triggers** rule below, shared with
 the node replay), so a family's token readout, the token anatomy and the unit
-activity read one number for one token; a gated or thinking-phase term
-refuses (422) in every replay.
+activity read one number for one token; a probe-gated term replays one decode
+position at a time, and a thinking-phase window on a family that thinks
+refuses (422) in every steered replay.
 `raw=True` picks the flat render, which the node does not record.
 
 `TokenReplayer.forward(node_id, raw_index, run=…)` is the same rebuild

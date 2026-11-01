@@ -643,7 +643,12 @@ the per-layer softmax probability `p_l(v)`.
   `authored_capture` does the same for authored-prefill rows.
 - `token_readout(node_id, raw_index, top_k=None, …)` replays the producing
   forward through `TokenReplay` (`apply_steering=False` reads the unsteered
-  counterfactual). It returns the `scope="replay"` measurement envelope.
+  counterfactual). It returns the `scope="replay"` measurement envelope with
+  the attached `jlens/` and `slens/` probes' readings scored from the same
+  capture by `score_probes`, the live scorer (a loom row keeps only their
+  values, so the token view's lens pins come from here); the replay captures
+  the requested layers plus `probe_layers()`, and its binding names every
+  family that produced data (`measurement_sources()`).
   `top_k=None` means 8; valid values are 1 to 256.
 - `decompose(selector, k=16, dictionary="tokens-out")` is greedy pursuit
   against a dictionary never materialized, with chunked and cached atom norms:
