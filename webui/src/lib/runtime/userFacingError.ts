@@ -32,7 +32,9 @@ const MESSAGES: Array<[RegExp, ErrorMessage]> = [
     "This browser is missing a feature Drowse needs. Update the browser and run the device check again. If it still fails, use another supported browser."],
   [/OPFS_|INDEXEDDB_|CONTENT_STORE|CORRUPT_RECORD|INVALID_PERSISTED_SETTINGS/u,
     "Drowse could not use its private storage on this device. Check that site storage is allowed, reload the page, and try again."],
-  [/QUOTA|STORAGE_(?:FULL|INSUFFICIENT|LIMIT)|NOT_ENOUGH_SPACE|DOWNLOAD_QUOTA_INSUFFICIENT/u,
+  [/^STORAGE_LIMIT$/u,
+    "This conversation is past the 64 MiB autosave limit, so it is no longer saved here. Back it up to a file to keep it, or start a new chat."],
+  [/QUOTA|STORAGE_(?:FULL|INSUFFICIENT)|NOT_ENOUGH_SPACE|DOWNLOAD_QUOTA_INSUFFICIENT/u,
     "There is not enough free space on this device. Free some storage or choose a smaller model, then try again."],
   [/STORAGE_(?:UNKNOWN|ESTIMATE_TIMEOUT|PERSIST)|DOWNLOAD_QUOTA_CHECK_FAILED/u,
     "Drowse could not confirm enough free storage. Check that site storage is allowed, then run the device check again."],
@@ -103,8 +105,22 @@ export function userFacingError(
   for (const [pattern, message] of MESSAGES) {
     if (pattern.test(code)) return typeof message === "function" ? message(raw) : message;
   }
+  // A request the server refused (its text is written for the person who sent it: a bad steering
+  // term, a busy model) reads as the server said it.
+  if (raw && !raw.includes("\n") && REQUEST_STATUSES.has(errorStatus(error))) return raw;
   if (code || !raw || raw.includes("\n") || looksInternal(raw)) return fallback;
   return raw;
+}
+
+/** The statuses whose server text is addressed to the user (``RequestError`` 400, a missing
+ *  artifact 404, a busy model 409, a composition refusal 422). */
+const REQUEST_STATUSES = new Set([400, 404, 409, 422]);
+
+function errorStatus(error: unknown): number {
+  if (!error || typeof error !== "object") return 0;
+  const record = error as { status?: unknown; body?: { status?: unknown } };
+  const value = typeof record.status === "number" ? record.status : record.body?.status;
+  return typeof value === "number" ? value : 0;
 }
 
 function gpuRecoveryMessage(message: string): string {

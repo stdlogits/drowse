@@ -25,6 +25,20 @@ export function clearSelection(): void {
   selection.current = { kind: "none" };
 }
 
+/** What a token, probe or unit selection names (``null`` for none or a steering term), so a view
+ *  can tell a new thing selected from the same one re-selected. Plain-data params only. */
+export function selectionIdentity(current: Selection): string | null {
+  switch (current.kind) {
+    case "token":
+    case "probe":
+      return `${current.kind}:${JSON.stringify(current.params ?? null)}`;
+    case "unit":
+      return `unit:${current.id}`;
+    default:
+      return null;
+  }
+}
+
 /** The selection's params when it is of ``kind``, else null. */
 export function selectedParams(kind: "token" | "probe"): unknown {
   const current = selection.current;

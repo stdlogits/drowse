@@ -572,10 +572,14 @@ def test_unit_activity_equals_the_unit_probes_at_the_same_tokens(tiny_session: A
     for raw_index, readings in rows.items():
         for name in traces:
             assert traces[name][raw_index] == pytest.approx(readings[name]["value"], abs=1e-4)
-    # Peaks: each is its unit's largest |value| over the node, at its token.
+    # Peaks: each is its unit's largest |value| over the node, at its token;
+    # the top neurons, then the top heads, each kind ranked on its own (a
+    # neuron's and a head's values are different quantities).
     top = activity["top"]
-    assert len(top) == 6
-    assert [abs(p["peak"]) for p in top] == sorted((abs(p["peak"]) for p in top), reverse=True)
+    assert [p["kind"] for p in top] == ["neuron"] * 6 + ["head"] * 6
+    for kind in ("neuron", "head"):
+        mine = [abs(p["peak"]) for p in top if p["kind"] == kind]
+        assert mine == sorted(mine, reverse=True)
     population = activity["population"]
     assert population is not None and population["encoding"] == POPULATION_ENCODING
     spec = model_spec(session.model)
@@ -592,14 +596,16 @@ def test_unit_activity_equals_the_unit_probes_at_the_same_tokens(tiny_session: A
         if peak["raw_index"] == 2:
             values = full[peak["layer"]][0 if peak["kind"] == "neuron" else 1]
             assert float(values[peak["index"]]) == pytest.approx(peak["peak"], rel=2e-3, abs=2e-3)
-    # A unit off the list never fires harder at token 2 than the list's last
+    # A unit off the list never fires harder at token 2 than its kind's last
     # peak (its own peak is no larger).
-    smallest = abs(top[-1]["peak"])
+    smallest = {
+        kind: min(abs(p["peak"]) for p in top if p["kind"] == kind) for kind in ("neuron", "head")
+    }
     for layer, (neurons, heads) in full.items():
         for kind, values in (("neuron", neurons), ("head", heads)):
             for index, value in enumerate(values.tolist()):
                 if (kind, layer, index) not in listed:
-                    assert abs(value) <= smallest * (1 + 2e-3) + 2e-3
+                    assert abs(value) <= smallest[kind] * (1 + 2e-3) + 2e-3
 
 
 def test_unit_activity_population_layers_and_refusals(tiny_session: Any) -> None:
@@ -611,7 +617,7 @@ def test_unit_activity_population_layers_and_refusals(tiny_session: Any) -> None
     activity = session.unit_activity(node.id, top=3, raw_index=1, layers="0,2")
     population = cast(Any, activity["population"])
     assert [layer["layer"] for layer in population["layers"]] == [0, 2]
-    assert activity["traces"] == {} and len(activity["top"]) == 3
+    assert activity["traces"] == {} and len(activity["top"]) == 6
     assert session.unit_activity(node.id, top=2)["population"] is None
     with pytest.raises(RequestError, match="raw_index"):
         session.unit_activity(node.id, layers="0")

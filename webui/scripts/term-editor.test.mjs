@@ -158,6 +158,12 @@ try {
   placeOf("jlens/sky", other, "m");
   await tick(); await tick();
   assert.equal(placeOf("jlens/sky", other, "m").status, "invalid");
+  // Regression: a 409 (the model busy with a reply or a fit) was cached as the term's refusal.
+  const { ApiError } = await server.ssrLoadModule("/src/lib/runtime/errors.ts");
+  answers.set(layersProbe("jlens/sun", other, false), new ApiError(409, "/steering/validate", "", { detail: "a model operation is in flight; retry shortly" }));
+  placeOf("jlens/sun", other, "m");
+  await tick(); await tick();
+  assert.equal(placeOf("jlens/sun", other, "m").status, "loading", "busy is not a refusal");
   forgetTermLayers();
   place = placeOf("default/emotions", entry, "m");
   assert.equal(place.status, "loading", "a catalog change forgets every answer");

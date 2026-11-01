@@ -132,8 +132,9 @@ export function columnRead(layer: AnatomyLayer, column: AnatomyColumn): LensRead
 }
 
 /** The chosen token's R probability over depth, from what each layer's residual reads as; null
- *  where it fell below the read's top k. A last layer the R lens does not reach reads as the
- *  model's own output, so it takes the token's probability (`final`). */
+ *  where it fell below the read's top k. The last layer reads as the model's own output, so where
+ *  its read does not hold the token (a sampled token outside the top k) it takes the token's
+ *  probability (`final`): the chart always ends where the token was chosen. */
 export function anatomyByDepth(
   layers: readonly AnatomyLayer[],
   tokenId: number,
@@ -142,8 +143,8 @@ export function anatomyByDepth(
   const last = layers.length - 1;
   return layers.map((row, i) => {
     const r = row.reads_as.r;
-    if (!present(r) && i === last) return { layer: row.layer, p: probability, final: true };
-    const hit = r.tokens.find(score => score.token_id === tokenId);
+    const hit = present(r) ? r.tokens.find(score => score.token_id === tokenId) : undefined;
+    if (!hit && i === last) return { layer: row.layer, p: probability, final: true };
     return { layer: row.layer, p: hit ? hit.value : null, final: false };
   });
 }

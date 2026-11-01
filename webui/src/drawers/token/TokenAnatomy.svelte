@@ -156,7 +156,7 @@
   <section class="dw-sec" aria-label="By depth">
     <div class="dw-sec-head">
       <span class="head"><span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text} by depth</span>
-      {#if lead !== null}<span class="meta">leads from L{lead}</span>{/if}
+      <span class="meta" data-tip="The model's own probability of the token, before the sampler's temperature and top-k/top-p">model p {formatP(data.token.probability)}{lead !== null ? ` · leads from L${lead}` : ""}</span>
     </div>
     <div class="depth">
       <div class="bars" role="img" aria-label={`Probability of ${named.text || "the token"} by layer`}>

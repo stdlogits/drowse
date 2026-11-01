@@ -68,15 +68,28 @@ export function mergeInstrumentProbeRows<T extends InstrumentProbeRow>(
 
 /** A lens aggregate chip as a found row, before its per-layer cells: keyed by its vocabulary id,
  *  since two ids can decode to the same text (byte pieces that both render as U+FFFD) and a keyed
- *  each throws on a repeated key. A word with a pinned row of its own is left out. */
+ *  each throws on a repeated key. A token with a pinned row of its own (the same id) is left out. */
 export function foundLensRows(
   aggregate: readonly (readonly [string, number, number, number, number])[],
-  pinnedTokens: readonly string[],
-): { key: string; sortName: string; token: string; strength: number; com: number; spread: number }[] {
-  const pinned = new Set(pinnedTokens);
+  pinnedIds: readonly (number | null | undefined)[],
+): { key: string; id: number; sortName: string; token: string; strength: number; com: number; spread: number }[] {
+  const pinned = new Set(pinnedIds.filter((id): id is number => typeof id === "number"));
   return aggregate
-    .filter(([token]) => !pinned.has(token))
+    .filter(([, , , , id]) => !pinned.has(id))
     .map(([token, strength, com, spread, id]) => ({
-      key: `aggregate:${id}`, sortName: token.trim(), token, strength, com, spread,
+      key: `aggregate:${id}`, id, sortName: token.trim(), token, strength, com, spread,
     }));
+}
+
+/** A found token's probability at each layer, joined by its vocabulary id (two ids can share a
+ *  text); ``null`` where it is below that layer's top-k. */
+export function lensReadoutCells(
+  readout: Readonly<Record<string, readonly (readonly [string, number, number])[]>> | null | undefined,
+  layers: readonly number[],
+  id: number,
+): { layer: number; p: number | null }[] {
+  return layers.map((layer) => {
+    const hit = readout?.[String(layer)]?.find(([, , pid]) => pid === id);
+    return { layer, p: hit ? hit[1] : null };
+  });
 }

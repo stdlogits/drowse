@@ -16,6 +16,8 @@
     removeSteerEntry,
   } from "../lib/stores/steering.svelte";
   import { openDrawer } from "../lib/stores/drawers.svelte";
+  import { apiSessions } from "../lib/runtime/services";
+  import { ApiError, describeError } from "../lib/runtime/errors";
   import { pushToast } from "../lib/stores/toasts.svelte";
   import { clearSelection, select, selection } from "../lib/stores/selection.svelte";
   import { sessionState } from "../lib/stores/session.svelte";
@@ -60,6 +62,9 @@
   let adding = $state(false);
   let editing = $state(false);
   let draft = $state("");
+  /** Why the server refused the drafted recipe, shown under the text. */
+  let draftError: string | null = $state(null);
+  let checking = $state(false);
   let field: HTMLTextAreaElement | null = $state(null);
   /** The term just removed, until the next change: the row offers it back. */
   let removed: { name: string; entry: SteerEntry; title: string } | null = $state(null);
@@ -91,14 +96,47 @@
     removed = null;
     if (!editing) return;
     if (open !== null) clearSelection();
+    draftError = null;
     draft = expression;
     await tick();
     field?.focus();
   }
 
-  function apply(): void {
-    applyCustomSteeringExpression(draft.trim());
-    editing = false;
+  /** Use the drafted recipe once the server accepts it (its parser is the only parser): a refusal
+   *  stays under the text. The chips' own recipe, unchanged, keeps the chips (and their switched-off
+   *  terms); anything else becomes the text recipe. */
+  async function apply(): Promise<void> {
+    const text = draft.trim();
+    if (checking) return;
+    draftError = null;
+    if (!text) {
+      applyCustomSteeringExpression("");
+      editing = false;
+      return;
+    }
+    checking = true;
+    try {
+      const result = await apiSessions.validateSteering(text);
+      if (!result.valid) {
+        draftError = result.error ?? "This recipe does not resolve.";
+        return;
+      }
+      if (!custom && expression && (result.expression === expression
+        || result.expression === (await apiSessions.validateSteering(expression)).expression)) {
+        editing = false;
+        return;
+      }
+      applyCustomSteeringExpression(result.expression || text);
+      editing = false;
+    } catch (error) {
+      // A busy model cannot check it now: use it, and the reply says if it does not resolve.
+      if (error instanceof ApiError && error.status === 409) {
+        applyCustomSteeringExpression(text);
+        editing = false;
+      } else draftError = describeError(error);
+    } finally {
+      checking = false;
+    }
   }
 
   async function copy(): Promise<void> {
@@ -156,13 +194,16 @@
   {/if}
 
   {#if editing}
-    <form class="text" transition:expand onsubmit={(event) => { event.preventDefault(); apply(); }}>
+    <form class="text" transition:expand onsubmit={(event) => { event.preventDefault(); void apply(); }}>
       <label class="sr-only" for="recipe-text">Steering expression</label>
       <textarea id="recipe-text" bind:this={field} bind:value={draft} rows="2" spellcheck="false"
         placeholder="0.4 honest + 0.2 emotions%wonder{'{'}14-24{'}'}@response"
-        onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); apply(); } }}></textarea>
+        aria-invalid={draftError !== null} aria-describedby={draftError !== null ? "recipe-text-error" : undefined}
+        oninput={() => { draftError = null; }}
+        onkeydown={(event) => { if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) { event.preventDefault(); void apply(); } }}></textarea>
+      {#if draftError !== null}<p class="meta problem" id="recipe-text-error" role="alert">{draftError}</p>{/if}
       <div class="dw-row">
-        <button type="submit" class="dw-quiet">Use this recipe</button>
+        <button type="submit" class="dw-quiet" disabled={checking}>Use this recipe</button>
         <button type="button" class="dw-text" disabled={!expression} onclick={() => void copy()}>Copy</button>
         {#if custom}<button type="button" class="dw-text" onclick={() => { applyCustomSteeringExpression(""); editing = false; }}>Clear</button>{/if}
       </div>
@@ -180,6 +221,7 @@
   .editor { min-width: 0; padding-top: var(--s2); }
   .more { padding: var(--s1) 0; }
   .text { display: grid; gap: var(--s2); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .problem { margin: 0; color: var(--ink2); }
   .text textarea { width: 100%; min-height: 48px; padding: 0; border: 0; outline: 0; resize: vertical; background: transparent; color: var(--ink); font: var(--type-body); font-variant-numeric: tabular-nums; }
   @media (max-width: 720px) {
     .dw-recipe { flex-wrap: nowrap; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; margin: 0 calc(-1 * var(--s4)); padding: 0 var(--s4); }

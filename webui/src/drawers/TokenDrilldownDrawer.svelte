@@ -39,7 +39,10 @@
     genStatus,
     sendFork,
     sendTextFork,
+    addJLensToRack,
+    attachProbe,
   } from "../lib/stores.svelte";
+  import { pushToast } from "../lib/stores/toasts.svelte";
   import type {
     ChatTurn,
     LensTokenReadoutJSON,
@@ -440,6 +443,7 @@
   $effect(() => {
     if (!active) return;
     void token;
+    void genStatus.active;
     void loomNodeId;
     const captured = capturedGeometryData;
     if (!geometryTokenReplayAvailable && !geometrySteered) geometrySteered = true;
@@ -463,6 +467,7 @@
   $effect(() => {
     if (!active) return;
     void token;
+    void genStatus.active;
     void loomNodeId;
     const captured = capturedSaeData;
     if (!saeTokenReplayAvailable && !saeSteered) saeSteered = true;
@@ -492,6 +497,9 @@
   $effect(() => {
     if (!active || !anatomyAvailable) return;
     void token;
+    // A reply ending changes the conversation the replay reads (and drops a replay that was
+    // refused or cut short while it streamed): read the selected token again then.
+    void genStatus.active;
     const nodeId = loomNodeId;
     const rawIndex = token?.rawIndex;
     if (!anatomyShown || !nodeId || rawIndex == null) { anatomyReadout.clear(); return; }
@@ -508,6 +516,7 @@
     if (!active) return;
     if (anatomyShown) { lensReadout.clear(); return; }
     void token;
+    void genStatus.active;
     void loomNodeId;
     const captured = capturedLensData;
     if (!lensReplayAvailable && !lensSteered) lensSteered = true;
@@ -599,6 +608,34 @@
       },
     });
   });
+
+  // ---- the canvas's token actions: a lens probe on it, a lens term toward it ----------------
+  // Addressed by id (``jlens/#<id>``): the text may not name the token (a leading space, a byte
+  // piece), and the id always does.
+  let probing = $state(false);
+  const tokenProbed = $derived(token?.tokenId != null && probeRack.active.some((name) => {
+    const info = probeRack.entries.get(name)?.info;
+    return info?.family === "lens" && info.token_id === token?.tokenId;
+  }));
+  async function probeToken(): Promise<void> {
+    const id = token?.tokenId;
+    if (id == null || probing) return;
+    probing = true;
+    const selector = `jlens/#${id}`;
+    try {
+      await attachProbe(selector);
+      pushToast(`Probing ${named.empty ? "∅" : named.text.trim() || JSON.stringify(named.text)}`, { kind: "info" });
+    } catch (e) {
+      pushToast(`Couldn't probe ${selector}: ${userFacingError(e)}`, { kind: "error" });
+    } finally {
+      probing = false;
+    }
+  }
+  function steerTowardToken(): void {
+    const id = token?.tokenId;
+    if (id == null) return;
+    addJLensToRack(`#${id}`);
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
@@ -617,7 +654,7 @@
       </div>
       <div class="dw-facts">
         <span>token <b><MorphText text={String(effCursor.tokenIdx + 1)} /></b> of {tokenList.length}</span>
-        {#if chosenP !== null}<span data-tip={`log p ${token.logprob?.toFixed(3)} · after the sampler's temperature and top-k/top-p, not the model's raw probability`}>p <b><MorphText text={formatP(chosenP)} {identity} /></b></span>{/if}
+        {#if chosenP !== null}<span data-tip={`sampled p · log p ${token.logprob?.toFixed(3)} · after the sampler's temperature and top-k/top-p, not the model's own probability`}>p <b><MorphText text={formatP(chosenP)} {identity} /></b></span>{/if}
         {#if chosenRank !== null}<span>rank <b>{chosenRank}</b></span>{/if}
         {#if otherSeg}
           <button type="button" class="fact" onclick={toggleSeg} aria-label={`Show the ${otherSeg}`}>{effCursor.seg}</button>
@@ -662,7 +699,7 @@
         replayAvailable={saeTokenReplayAvailable} lastLayer={deepest} />
     </div>
 
-    <section class="dw-sec" aria-label="Branch">
+    <section class="dw-sec" aria-label="Act on this token">
       {#if branchOpen}
         <form class="branch" transition:expand onsubmit={(event) => { event.preventDefault(); void startBranch(); }}>
           <label class="sr-only" for="token-branch-text">Branch with</label>
@@ -674,6 +711,13 @@
         </form>
       {:else}
         <div class="dw-row">
+          {#if lensGate.ready && token.tokenId != null}
+            <button type="button" class="dw-quiet" disabled={probing || tokenProbed}
+              data-tip={tokenProbed ? "Already a lens probe" : "Read this token's lens probability at every layer, every token from now on"}
+              onclick={() => void probeToken()}>Probe <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</button>
+            <button type="button" class="dw-quiet" data-tip="Add a lens term that pushes toward saying this token"
+              onclick={steerTowardToken}>Steer toward it</button>
+          {/if}
           <button type="button" class="dw-quiet" disabled={!canBranch || branching}
             data-tip={canBranch ? "Keep the text up to here and write a new ending; the original stays" : genStatus.active ? "Finish or stop the generation first" : "This token has no replay boundary"}
             onclick={() => void openBranch()}>Branch here</button>

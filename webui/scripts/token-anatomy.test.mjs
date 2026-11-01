@@ -75,6 +75,21 @@ try {
   assert.deepEqual(depth.map(d => d.final), [false, false, false, true]);
   assert.equal(a.anatomyLead(layers, stars), 2);
   assert.equal(a.anatomyLead(layers.slice(0, 2), stars), null);
+  // Regression: a sampled token outside the top-k R read at a present last layer drew an empty
+  // chart; the last layer is the model's output, so it plots the token's probability.
+  const sampled = [layers[0], layer(1, read(1, 0, [], [score(9, " the", 0.7)]))];
+  assert.deepEqual(a.anatomyByDepth(sampled, stars, 0.02).map(d => [d.p, d.final]), [[null, false], [0.02, true]]);
+  // A last read that holds the token keeps its own value.
+  const held = [layers[0], layer(1, read(1, 0, [], [score(stars, " stars", 0.4)]))];
+  assert.deepEqual(a.anatomyByDepth(held, stars, 0.41).map(d => d.p), [null, 0.4]);
+
+  // A token or unit selection names what it selected (the Inspector reopens at the top on a new one).
+  const { selectionIdentity } = await server.ssrLoadModule("/src/lib/stores/selection.svelte.ts");
+  assert.equal(selectionIdentity({ kind: "none" }), null);
+  assert.equal(selectionIdentity({ kind: "term", name: "honest" }), null);
+  assert.notEqual(selectionIdentity({ kind: "token", params: { turnIdx: 1, tokenIdx: 2 } }),
+    selectionIdentity({ kind: "token", params: { turnIdx: 1, tokenIdx: 3 } }));
+  assert.equal(selectionIdentity({ kind: "unit", id: "neuron/L1n2" }), "unit:neuron/L1n2");
 
   // An absent cell's tip says where the family reads instead of the engine's layer list.
   const raw = "layer 3 not in fitted R:out lens layers [0, 1, 2]..[0, 1, 2]";

@@ -69,7 +69,7 @@ def test_unit_activity_route_parses_units_and_layers(
     assert body["node_id"] == node.id and body["unit"] == "activation_over_scale"
     assert set(body["traces"]) == {"neuron/L1n3", "head/L2h1"}
     assert len(body["traces"]["neuron/L1n3"]) == len(body["tokens"]) == len(node.raw_token_ids)
-    assert len(body["top"]) == 4
+    assert [p["kind"] for p in body["top"]] == ["neuron"] * 4 + ["head"] * 4
     population = body["population"]
     assert [layer["layer"] for layer in population["layers"]] == [1, 2]
     first = population["layers"][0]

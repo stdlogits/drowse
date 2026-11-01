@@ -329,14 +329,24 @@ try {
   chatLog.turns = [];
 
   // A probe's title is its ID as its row writes it.
-  const { probeTitle, foundLensRows } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
+  const { probeTitle, foundLensRows, lensReadoutCells } = await server.ssrLoadModule("/src/panels/rack/probeRows.ts");
   // Regression: two byte pieces that both decode to U+FFFD are two found rows with two keys (keyed
   // by text they collided and the keyed each threw each_key_duplicate mid-reply).
-  const found = foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5], ["\uFFFD", 0.2, 0.6, 0.1, 6], [" Paris", 0.1, 0.9, 0.1, 7]], [" Paris"]);
-  assert.deepEqual(found.map(row => row.key), ["aggregate:5", "aggregate:6"], "keyed by id; a pinned word keeps its own row");
+  const found = foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5], ["\uFFFD", 0.2, 0.6, 0.1, 6], [" Paris", 0.1, 0.9, 0.1, 7]], [7]);
+  assert.deepEqual(found.map(row => row.key), ["aggregate:5", "aggregate:6"], "keyed by id; a pinned id keeps its own row");
+  assert.deepEqual(found.map(row => row.id), [5, 6]);
+  assert.equal(foundLensRows([["\uFFFD", 0.3, 0.5, 0.1, 5]], [6]).length, 1, "a pinned id hides only itself, not its text");
   const { lensReadoutSnapshot } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
-  assert.deepEqual(lensReadoutSnapshot({ layers: [], aggregate: [{ token: "\uFFFD", id: 5, strength: 0.3, com: 0.5, spread: 0.1 }] }).aggregate,
-    [["\uFFFD", 0.3, 0.5, 0.1, 5]], "the snapshot keeps the wire's id");
+  const lensSnap = lensReadoutSnapshot({
+    layers: [{ layer: 0, tokens: [{ token: "\uFFFD", id: 5, logprob: Math.log(0.8) }, { token: "\uFFFD", id: 6, logprob: Math.log(0.1) }] }],
+    aggregate: [{ token: "\uFFFD", id: 5, strength: 0.3, com: 0.5, spread: 0.1 }],
+  });
+  assert.deepEqual(lensSnap.aggregate, [["\uFFFD", 0.3, 0.5, 0.1, 5]], "the snapshot keeps the wire's id");
+  assert.deepEqual(lensSnap.readout["0"].map(([, , id]) => id), [5, 6], "per-layer reads keep their ids");
+  // Regression: cells were joined by text, so id 6 showed id 5's probability.
+  const cells = (id) => lensReadoutCells(lensSnap.readout, [0, 1], id).map(cell => cell.p === null ? null : Number(cell.p.toFixed(3)));
+  assert.deepEqual(cells(5), [0.8, null]);
+  assert.deepEqual(cells(6), [0.1, null]);
   assert.deepEqual(probeTitle({ family: "sae", feature_id: 7 }, "sae/7", 20), { lead: false, text: "L20 f7" });
   assert.deepEqual(probeTitle({ family: "sae", feature_id: 7 }, "sae/7"), { lead: false, text: "f7" }, "no resident layer, no L");
   assert.deepEqual(probeTitle({ family: "lens", word: "sea" }, "jlens/sea"), { lead: false, text: "sea" });

@@ -12,7 +12,7 @@
   import Thread from "./Thread.svelte";
   import Inspector from "../inspector/Inspector.svelte";
   import { workbenchUi, showConversation } from "../../lib/stores/workbench.svelte";
-  import { clearSelection, selection } from "../../lib/stores/selection.svelte";
+  import { clearSelection, selection, selectionIdentity } from "../../lib/stores/selection.svelte";
   import { loomUiState } from "../../lib/stores/loomUi.svelte";
 
   let { phone = false, active = true }: { phone?: boolean; active?: boolean } = $props();
@@ -29,6 +29,19 @@
     // A fresh selection on the phone rises at the peek height. Clearing the selection to show the
     // instruments in the sheet (the sampling line, the crumb) keeps the sheet where it was asked.
     if (!selecting && !untrack(() => workbenchUi.sheet)) workbenchUi.sheetOpen = false;
+  });
+
+  // A new token or unit opens its view at the top (its header, p and alternatives), not at the
+  // scroll the Inspector last had for something else.
+  let inspector: HTMLElement | null = $state(null);
+  let sheetBody: HTMLElement | null = $state(null);
+  const selectionKey = $derived(selectionIdentity(selection.current));
+  $effect(() => {
+    if (selectionKey === null) return;
+    untrack(() => {
+      if (inspector) inspector.scrollTop = 0;
+      if (sheetBody) sheetBody.scrollTop = 0;
+    });
   });
 
   function closeSheet(): void {
@@ -66,14 +79,14 @@
     </section>
 
     {#if !phone}
-      <aside class="dw-insp" aria-label="Inspector">
+      <aside class="dw-insp" aria-label="Inspector" bind:this={inspector}>
         <Inspector />
       </aside>
     {:else if sheetShown}
       <section class="sheet" class:open={workbenchUi.sheetOpen} aria-label="Inspector">
         <button type="button" class="grab" aria-label={workbenchUi.sheetOpen ? "Collapse the inspector" : "Expand the inspector"}
           aria-expanded={workbenchUi.sheetOpen} onclick={() => (workbenchUi.sheetOpen = !workbenchUi.sheetOpen)}><i></i></button>
-        <div class="sheet-body">
+        <div class="sheet-body" bind:this={sheetBody}>
           <Inspector sheet onclose={closeSheet} />
         </div>
       </section>
@@ -150,7 +163,7 @@
     min-height: 0;
     display: flex;
     flex-direction: column;
-    height: min(380px, 40dvh);
+    height: min(380px, 50dvh);
     border-radius: var(--r-row) var(--r-row) 0 0;
     background: var(--wash);
     transition: height var(--glide) var(--ease);

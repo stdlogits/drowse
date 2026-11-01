@@ -967,8 +967,9 @@ class NodeReplayer:
         Each token is read at its producing forward, in the units family's
         unit (``activation_over_scale``: a neuron's activation over its
         pole's soft neutral scale, signed; a head's write norm over its
-        own), from one replay forward.  Returns the ``top`` units
-        across the node by peak ``|value|`` with their peak token, the
+        own), from one replay forward.  Returns the ``top`` neurons
+        and the ``top`` heads across the node, each kind ranked by its own
+        peak ``|value|``, with their peak token, the
         per-token trace of each unit in ``units``, and, with ``raw_index``,
         that token's whole population at ``layers`` (default every layer),
         packed (:data:`POPULATION_ENCODING`).  The forward runs as generation's triggers ran it
@@ -1120,7 +1121,22 @@ class NodeReplayer:
             signed = torch.cat([peaks[key][0] for key in order])
             at = torch.cat([peaks[key][1] for key in order])
             rank = torch.cat([peaks[key][2] for key in order])
-            best = rank.topk(min(top, int(rank.numel()))).indices
+            # Each kind ranks on its own: a neuron's activation over its pole's
+            # scale and a head's write norm over its own are different
+            # quantities, and on a model whose neurons run hotter one list
+            # would hold no head at all.
+            is_head = torch.cat([
+                torch.full((int(peaks[key][0].numel()),), kind == "head", dtype=torch.bool, device=device)
+                for key in order for kind in (key[0],)
+            ])
+            best = torch.cat([
+                masked.topk(min(top, int(count_kind))).indices
+                for masked, count_kind in (
+                    (rank.masked_fill(is_head, -2.0), int((~is_head).sum())),
+                    (rank.masked_fill(~is_head, -2.0), int(is_head.sum())),
+                )
+                if count_kind
+            ])
             pack = _Pack(device)
             top_slots = (
                 pack.add(signed[best]), pack.add(best), pack.add(at[best]), pack.add(rank[best]),

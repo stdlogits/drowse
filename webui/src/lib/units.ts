@@ -178,29 +178,6 @@ export function peakPole(trace: readonly (number | null)[]): "+" | "-" {
   return at >= 0 && (trace[at] ?? 0) < 0 ? "-" : "+";
 }
 
-export interface HeadRank {
-  unit: string;
-  layer: number;
-  index: number;
-  value: number;
-}
-
-/** Every head of a token's population (``heads[i][h]``, its write over its typical high write, at
- *  layer ``layers[i]``, else ``i``) that wrote anything, the strongest first. A head's value is never
- *  ranked among the neurons' peaks: on a model whose neurons run hotter, the top of the node holds
- *  no head at all. */
-export function rankHeads(heads: readonly ArrayLike<number>[], layers?: readonly number[]): HeadRank[] {
-  const out: HeadRank[] = [];
-  heads.forEach((values, i) => {
-    const layer = layers?.[i] ?? i;
-    for (let index = 0; index < values.length; index++) {
-      const value = values[index];
-      if (Number.isFinite(value) && value !== 0) out.push({ unit: `head/L${layer}h${index}`, layer, index, value });
-    }
-  });
-  return out.sort((a, b) => Math.abs(b.value) - Math.abs(a.value) || a.layer - b.layer || a.index - b.index);
-}
-
 /** A float16 little-endian base64 array (``float16-le-base64``) as numbers. */
 export function decodeFloat16(text: string): Float32Array {
   const bytes = Uint8Array.from(atob(text), c => c.charCodeAt(0));

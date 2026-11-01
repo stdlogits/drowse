@@ -163,8 +163,10 @@ every family's roster).
 `session.unit_activity(node_id, …)` replays a loom node once and reads every
 neuron and head at every token in the same unit (`activation_over_scale`,
 each token at its producing forward, as its loom row's live readings and
-`token_readout` are), reduced on the device: the top units by peak `|value|`
-with their peak token, per-token traces of named units, and one token's whole
+`token_readout` are), reduced on the device: the top neurons and the top heads
+by peak `|value|`, each kind ranked on its own (their values are different
+quantities, and one list would hold no head where neurons run hotter), with
+their peak token, per-token traces of named units, and one token's whole
 population packed as float16 (little-endian, base64). It uses this package's
 statistics' reading scales directly (no tap), skips the sink (position 0:
 value 0, never a peak), and ranks every unit over its soft scale (above), so

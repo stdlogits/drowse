@@ -138,7 +138,7 @@ try {
   const {
     parseUnit, unitTitle, lensText, orderedHalves, mergedTokens, withAgreement, unitFacts, labelText,
     firesOn, peakIndex, decodeFloat16, decileCuts, shadeOf, strongestColumns, fieldGeometry, parseQuery,
-    peakPole, rankHeads,
+    peakPole,
   } = units;
   const { unitTermProblem } = await server.ssrLoadModule("/src/lib/unitTerms.ts");
 
@@ -186,11 +186,6 @@ try {
   assert.equal(peakPole([0.1, 4, -3.9]), "+");
   assert.equal(peakPole([0, null]), "+", "a silent trace reads its + side");
 
-  // Heads rank by their own write at the token, never against the neurons' peaks; a silent head drops.
-  assert.deepEqual(rankHeads([Float32Array.from([0.5, 0]), Float32Array.from([0.25, -0.75, NaN])], [3, 5]).map(h => [h.unit, h.layer, h.index, h.value]), [
-    ["head/L5h1", 5, 1, -0.75], ["head/L3h0", 3, 0, 0.5], ["head/L5h0", 5, 0, 0.25],
-  ]);
-  assert.deepEqual(rankHeads([[1, 1]]).map(h => h.unit), ["head/L0h0", "head/L0h1"], "ties keep layer then head order");
   assert.deepEqual([...decodeFloat16(f16([1, -2, 0.5, 0, 65504, 3.5]))], [1, -2, 0.5, 0, 65504, 3.5]);
   assert.ok(Math.abs(decodeFloat16(f16([0.1]))[0] - 0.1) < 1e-3);
   const cuts = decileCuts(Float32Array.from({ length: 100 }, (_, i) => i - 50));

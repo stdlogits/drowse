@@ -42,7 +42,6 @@
     peakIndex,
     peakPole,
     poleOf,
-    rankHeads,
     strongestColumns,
     unitTitle,
     type AtlasBar,
@@ -166,24 +165,15 @@
     const pole = h.pole === "-" ? "-" : "+";
     return { id: h.unit, layer: h.layer, kind: "neuron", value: h.score, label: labelOf(h.unit, pole, h.label), pole };
   }));
-  /** The heads by their write at the token the atlas reads, from its population: the node's top
-   *  ranks every unit by peak, and where neurons run hotter (SmolLM2) it holds no head at all. */
-  const headRows = $derived.by((): Row[] => {
-    if (!pop) return [];
-    const labels = new Map((data?.top ?? []).map(t => [t.unit, t.label] as const));
-    return rankHeads(pop.heads, pop.layers).map(h => ({
-      id: h.unit, layer: h.layer, kind: "head", value: h.value, label: labelOf(h.unit, "+", labels.get(h.unit)), pole: "+",
-    }));
-  });
   const rows = $derived.by((): Row[] => {
     if (q.mode === "id") {
       if (!q.ref) return [];
       const id = q.ref.id;
-      const hit = activeRows.find(r => r.id === id) ?? headRows.find(r => r.id === id);
+      const hit = activeRows.find(r => r.id === id);
       return [hit ?? { id, layer: q.ref.layer, kind: q.ref.kind, value: null, label: unitLabelFor(id), pole: "+" }];
     }
     if (word) return kind === "neuron" ? writerRows : [];
-    const mine = kind === "head" ? headRows : activeRows.filter(r => r.kind === "neuron");
+    const mine = activeRows.filter(r => r.kind === kind);
     return filter === "labelled" ? mine.filter(r => r.label) : mine;
   });
   const rowsLoading = $derived(word ? writers?.status === "loading" || writers === null : loading?.status === "loading" && !data);
@@ -219,8 +209,7 @@
   const columns = $derived.by((): AtlasBar[][] => {
     if (!nLayers) return [];
     if (kind === "head") {
-      const heads = pop?.heads ?? [];
-      return strongestColumns(heads.flatMap((values, L) => Array.from(values, (v, h) => ({ unit: `head/L${L}h${h}`, layer: L, index: h, peak: v }))), nLayers, pop?.nHeads ?? 0);
+      return strongestColumns((data?.top ?? []).filter(t => t.kind === "head"), nLayers, pop?.nHeads ?? 0);
     }
     const source = word && q.mode !== "id"
       ? writerRows.map(r => ({ unit: r.id, layer: r.layer, index: parseUnit(r.id)?.index ?? 0, peak: r.value ?? 0 }))

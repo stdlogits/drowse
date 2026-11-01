@@ -9,7 +9,7 @@
   import { flip } from "svelte/animate";
   import { GLIDE, MorphText, Switch, Token, ease, reducedMotion } from "@stdlogits/ledger";
   import JLensProbeCard from "./rack/JLensProbeCard.svelte";
-  import { foundLensRows, mergeInstrumentProbeRows } from "./rack/probeRows";
+  import { foundLensRows, lensReadoutCells, mergeInstrumentProbeRows } from "./rack/probeRows";
   import type { InstrumentProbeRow } from "./rack/probeRows";
   import { depthTint, layerDepth } from "../lib/charts/depth";
   import { apiInstruments, apiSessions, describeError } from "../lib/runtime/services";
@@ -70,6 +70,8 @@
     measured: boolean;
     cells: { layer: number; p: number | null }[];
     pinned: boolean;
+    /** The vocabulary id (a pinned probe's, when the server named one). */
+    id: number | null;
   }
 
   /** A pinned probe's per-layer readings (the store's axis-0 map). */
@@ -81,14 +83,6 @@
       .map((layer) => ({ layer: Number(layer), p: perLayer[layer] ?? null }));
   }
 
-  /** A found word's probability at each streamed layer; null = below that layer's top-k. */
-  function readoutCells(token: string): { layer: number; p: number | null }[] {
-    return displayLayers.map((layer) => {
-      const pairs = displayReadout?.[String(layer)];
-      const hit = pairs?.find(([text]) => text === token);
-      return { layer, p: hit ? hit[1] : null };
-    });
-  }
 
   const pinnedRows = $derived.by((): WorkspaceRow[] => {
     const rows: WorkspaceRow[] = [];
@@ -107,6 +101,7 @@
         spread: latest?.depth?.spread?.[0] ?? null,
         cells: pinnedCells(entry),
         pinned: true,
+        id: typeof entry.info.token_id === "number" ? entry.info.token_id : null,
       });
     }
     return rows;
@@ -115,11 +110,12 @@
   const foundRows = $derived.by((): WorkspaceRow[] => {
     const rows = displayAggregate;
     if (!rows || rows.length === 0) return [];
-    // A pinned word already has its row; the rest key by vocabulary id (foundLensRows).
-    return foundLensRows(rows, pinnedRows.map((row) => row.token)).map((row) => ({
+    // A pinned token already has its row; the rest key by vocabulary id (foundLensRows), and their
+    // cells join the per-layer reads by id too.
+    return foundLensRows(rows, pinnedRows.map((row) => row.id)).map((row) => ({
       ...row,
       measured: true,
-      cells: readoutCells(row.token),
+      cells: lensReadoutCells(displayReadout, displayLayers, row.id),
       pinned: false,
     }));
   });
@@ -139,6 +135,11 @@
     return value.trim().replace(/^jlens\//, "");
   }
 
+  /** Whether a lens probe on vocabulary id ``id`` is already attached. */
+  function pinnedId(id: number): boolean {
+    return pinnedRows.some((row) => row.id === id);
+  }
+
   async function pinWord(raw: string): Promise<boolean> {
     const bare = bareWord(raw);
     if (!bare || busy) return false;
@@ -147,6 +148,7 @@
     busy = true;
     try {
       const validated = await apiInstruments.validateLensToken(bare);
+      if (pinnedId(validated.token_id)) return true;
       const validatedSelector = `jlens/${validated.word}`;
       await attachProbe(validatedSelector);
       pushToast(`pinned ${validatedSelector}`, { kind: "info" });
@@ -154,6 +156,22 @@
     } catch (e) {
       pushToast(`Couldn't pin ${selector}: ${describeError(e)}`, { kind: "error" });
       return false;
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** Pin a found token by its vocabulary id (``jlens/#<id>``): its text may not name it (two ids
+   *  can decode to one text, as byte pieces do). */
+  async function pinFound(id: number): Promise<void> {
+    if (busy || pinnedId(id)) return;
+    busy = true;
+    const selector = `jlens/#${id}`;
+    try {
+      await attachProbe(selector);
+      pushToast(`pinned ${selector}`, { kind: "info" });
+    } catch (e) {
+      pushToast(`Couldn't pin ${selector}: ${describeError(e)}`, { kind: "error" });
     } finally {
       busy = false;
     }
@@ -230,7 +248,7 @@
               cells={row.cells}
               pinned={row.pinned}
               {busy}
-              onpin={pinWord}
+              onpin={row.pinned || row.id === null ? pinWord : () => void pinFound(row.id as number)}
             />
           </div>
         {/each}

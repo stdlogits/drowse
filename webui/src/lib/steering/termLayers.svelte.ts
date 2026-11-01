@@ -12,7 +12,7 @@
 
 import { SvelteMap } from "svelte/reactivity";
 import { apiSessions } from "../runtime/services";
-import { describeError } from "../runtime/errors";
+import { ApiError, describeError } from "../runtime/errors";
 import { formatTerm } from "../expression";
 import { layerClause } from "./layers";
 import type { SteerEntry } from "../types";
@@ -39,6 +39,10 @@ const LIMIT = 64;
 
 /** How long a moved term's position rests before its new probe is asked. */
 export const SETTLE_MS = 150;
+
+/** How long a probe waits to be asked again after the server was busy (409: a reply, a fit or a
+ *  training holds the model; the server refuses rather than wait). */
+export const BUSY_RETRY_MS = 2000;
 
 const LOADING: TermLayersState = { status: "loading" };
 
@@ -128,6 +132,13 @@ async function ask(key: string, probe: string): Promise<void> {
       where: { fitted: [...row.fitted], share: [...row.share], layers: [...row.layers], nLayers: result.n_layers },
     });
   } catch (error) {
+    if (error instanceof ApiError && error.status === 409) {
+      // Busy is not an answer: keep loading (the term keeps the place it showed) and ask again.
+      setTimeout(() => {
+        if (cache.get(key) === LOADING) cache.delete(key);
+      }, BUSY_RETRY_MS);
+      return;
+    }
     cache.set(key, { status: "invalid", error: describeError(error) });
   }
 }

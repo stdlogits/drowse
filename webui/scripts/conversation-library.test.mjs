@@ -303,6 +303,17 @@ try {
   assert.deepEqual([...copyStore.rows], beforeFailure, "failed copies never alter stored chats");
   await assert.rejects(copies.duplicate("missing-chat"), /no longer exists/);
 
+  // Regression: the per-conversation autosave limit read as a full disk ("not enough free space …
+  // choose a smaller model"), and a refused steering term read as a generic stopped reply.
+  const { userFacingError } = await server.ssrLoadModule("/src/lib/runtime/userFacingError.ts");
+  const limit = userFacingError(new ConversationLibraryError("STORAGE_LIMIT", "This conversation is larger than the 64 MiB save limit"));
+  assert.match(limit, /64 MiB autosave limit/);
+  assert.doesNotMatch(limit, /free space|smaller model/);
+  assert.match(userFacingError({ code: "QUOTA_EXCEEDED" }), /not enough free space/, "a full disk still says so");
+  const refused = { type: "error", code: "SteeringExprError", status: 400, message: "a head has no single write direction; silence it with !head/L20h3" };
+  assert.equal(userFacingError(refused, "Generation stopped."), refused.message, "a request error reads as the server wrote it");
+  assert.equal(userFacingError({ code: "InternalError", status: 500, message: "boom" }, "Generation stopped."), "Generation stopped.");
+
   process.stdout.write("conversation library tests passed\n");
 } finally {
   await server.close();

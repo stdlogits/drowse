@@ -54,10 +54,11 @@ export interface LensState {
    * a local boolean, so reloads and multi-tab stay honest. */
   layers: number[] | null;
   /** Latest decode step's readout: layer-index string → descending
-   * ``[token, p]`` top-k (per-layer softmax probability — the one
-   * strength unit every lens surface reports).  Overwritten per token
-   * frame; kept after ``done`` so the settled matrix stays readable. */
-  readout: Record<string, [string, number][]> | null;
+   * ``[token, p, id]`` top-k (per-layer softmax probability — the one
+   * strength unit every lens surface reports — and the vocabulary id).
+   * Overwritten per token frame; kept after ``done`` so the settled matrix
+   * stays readable. */
+  readout: Record<string, LensReadoutPair[]> | null;
   /** Layer-aggregated chip list riding the same step — ``[token,
    * strength, com, spread]`` strength-descending (mean fitted-layer probability
    * + probability-mass-weighted depth center of mass).  Same lifecycle as
@@ -203,7 +204,7 @@ export interface TokenHoverState {
   probes: Record<string, number> | null;
   coordsByProbe: Record<string, number[]> | null;
   perLayerScores: Record<string, Record<string, number>> | null;
-  lensReadout: Record<string, [string, number][]> | null;
+  lensReadout: Record<string, LensReadoutPair[]> | null;
   lensAggregate: LensAggregateChip[] | null;
   saeReadout: SaeFeatureJSON[] | null;
   lensLoading: boolean;
@@ -230,7 +231,7 @@ export const tokenHoverState: TokenHoverState = $state({
 });
 
 interface LensHoverSnapshot {
-  readout: Record<string, [string, number][]>;
+  readout: Record<string, LensReadoutPair[]>;
   aggregate: LensAggregateChip[];
 }
 
@@ -247,6 +248,9 @@ function _hoverTokenKey(nodeId: string, rawIndex: number, raw: boolean): string 
  *  keys it: two ids can decode to the same text (byte pieces that both render as U+FFFD). */
 export type LensAggregateChip = [string, number, number, number, number];
 
+/** One per-layer lens read: ``[token, p, id]``. Joined to a chip by its id, never its text. */
+export type LensReadoutPair = [string, number, number];
+
 /** The lens native readout block → the display shape the workspace cards and
  *  hover consume: per-layer ``[token, probability]`` (the wire carries
  *  logprob — ``exp()`` restores the displayed per-layer softmax probability)
@@ -258,7 +262,7 @@ export function lensReadoutSnapshot(
   return {
     readout: Object.fromEntries(block.layers.map((row) => [
       String(row.layer),
-      row.tokens.map((token) => [token.token, Math.exp(token.logprob)]),
+      row.tokens.map((token): LensReadoutPair => [token.token, Math.exp(token.logprob), token.id]),
     ])),
     aggregate: block.aggregate.map((token) => [
       token.token,
@@ -431,7 +435,7 @@ export function endTokenHover(): void {
   }, 45);
 }
 
-export function lensReadoutForDisplay(): Record<string, [string, number][]> | null {
+export function lensReadoutForDisplay(): Record<string, LensReadoutPair[]> | null {
   return tokenHoverState.active ? tokenHoverState.lensReadout : lensState.readout;
 }
 
