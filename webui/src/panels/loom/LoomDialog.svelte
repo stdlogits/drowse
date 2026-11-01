@@ -34,6 +34,7 @@
   } from "../../lib/stores.svelte";
   import { fanoutConcepts as flatConcepts, fanoutRecipe, parseStrengthList, resolveNodeIdPrefix } from "./loomCommands";
   import { steerRack } from "../../lib/stores/steering.svelte";
+  import { goto } from "../../lib/stores/rooms.svelte";
 
   let {
     background = null,
@@ -453,7 +454,8 @@
         />
       {:else if modal.kind === "fanout"}
         {#if fanoutConcepts.length === 0}
-          <p class="meta">No concept is fitted for this model yet. Fit one from + Steer, A concept.</p>
+          <p class="meta">No concept for this model</p>
+          <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => { closeModal(); goto("artifacts", "build"); }}>Build a probe</button></div>
         {:else}
           <label>
             <span class="meta">Concept</span>

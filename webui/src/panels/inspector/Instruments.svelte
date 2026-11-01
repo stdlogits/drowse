@@ -1,7 +1,7 @@
 <script lang="ts">
   // The Inspector with nothing selected: the instruments (the Instruments canvas). Probes as rows,
   // the lens live, the SAE's features, sampling, and the sources the lens and SAE read through,
-  // one line each (they are chosen in the Lens room).
+  // one line each (they are chosen in the Artifacts room).
   //
   // Sampling is the canvas's three range rows (temperature, top-p, max tokens; each moves the local
   // value as it slides and patches the session default when it settles), the thinking switch when
@@ -146,7 +146,7 @@
     {#if saeOn}
       <SaePanel sources={false} />
     {:else}
-      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose an SAE</button></div>
+      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "saes")}>Choose an SAE</button></div>
     {/if}
   </section>
 
@@ -192,7 +192,7 @@
         </div>
       {/each}
     </div>
-    <button type="button" class="dw-text room" onclick={() => goto("lens")}>Lens room</button>
+    <button type="button" class="dw-text room" onclick={() => goto("artifacts", "lenses")}>Artifacts</button>
   </section>
 </div>
 

@@ -128,7 +128,7 @@ export const RUNTIME_SERVICE_CATALOGUE = {
     unitRead: internal("The unit view reads a unit when one is opened; no agent tool yet."),
     unitTop: internal("The Units room ranks the writers of a token; no agent tool yet."),
     unitFind: internal("The Units room splits a direction over neurons; no agent tool yet."),
-    unitCatalog: internal("Unit views show the catalog binding with their labels; no agent tool yet."),
+    unitCatalog: internal("The Artifacts room's Units section (drowse_navigate section units) shows the catalog binding and fetches its labels; no agent tool yet."),
     unitLabels: internal("The token anatomy labels the units that pushed a token; no agent tool yet."),
   },
 } satisfies ServiceCoverage;

@@ -1,15 +1,13 @@
 <script lang="ts">
-  // Search everything (⌘K, the header's search): the rooms, the instruments and every tool, in one
-  // filterable list, drawn as Ledger's search (a field on a wash, the chosen option under a wash2
+  // Search everything (⌘K, the header's search): the rooms, the instruments, every room's sections
+  // (by what they do) and every other tool, in one filterable list, drawn as Ledger's search (a field on a wash, the chosen option under a wash2
   // thumb that glides as the arrow keys move).
   import { tick } from "svelte";
   import { Icon, fadeIn, fadeOut, glide, rise } from "@stdlogits/ledger";
   import { paletteState, closePalette } from "../lib/stores/palette.svelte";
-  import { paletteCommands, type PaletteCommand } from "../lib/commands";
-  import { openDrawer, setInspectorTab } from "../lib/stores.svelte";
+  import { paletteCommands, searchCommands, showInstrument, type PaletteCommand } from "../lib/commands";
+  import { openDrawer } from "../lib/stores.svelte";
   import { goto } from "../lib/stores/rooms.svelte";
-  import { clearSelection } from "../lib/stores/selection.svelte";
-  import { showConversation } from "../lib/stores/workbench.svelte";
   import { containTab } from "../lib/focusTrap";
 
   const COMMANDS = paletteCommands();
@@ -20,22 +18,7 @@
   let listEl: HTMLElement | null = $state(null);
   let paletteEl: HTMLElement | null = $state(null);
 
-  const filtered = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return COMMANDS;
-    const terms = q.split(/\s+/);
-    const rank = (command: PaletteCommand): number => {
-      const label = command.label.toLowerCase();
-      if (label === q) return 0;
-      if (label.startsWith(q)) return 1;
-      if (label.includes(q)) return 2;
-      if ((command.keywords ?? "").toLowerCase().includes(q)) return 3;
-      return 4;
-    };
-    return COMMANDS
-      .filter((c) => terms.every((t) => `${c.label} ${c.group} ${c.keywords ?? ""}`.toLowerCase().includes(t)))
-      .sort((a, b) => rank(a) - rank(b));
-  });
+  const filtered = $derived(searchCommands(COMMANDS, query));
 
   // Reset and focus on every open; keep the selection inside the list as it narrows.
   $effect(() => {
@@ -58,6 +41,9 @@
       case "room":
         goto(cmd.action.room);
         break;
+      case "section":
+        goto(cmd.action.room, cmd.action.section);
+        break;
       case "drawer": {
         // The palette returns focus to its opener first; opening in the next microtask lets the
         // tool remember that opener and return there when it closes.
@@ -65,15 +51,9 @@
         queueMicrotask(() => openDrawer(drawer));
         break;
       }
-      case "instrument": {
-        const id = cmd.action.tab === "lens" ? "instrument-lens" : cmd.action.tab === "sae" ? "instrument-sae" : "instrument-probes";
-        setInspectorTab(cmd.action.tab);
-        clearSelection();
-        goto("workbench");
-        showConversation();
-        void tick().then(() => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" }));
+      case "instrument":
+        showInstrument(cmd.action.tab);
         break;
-      }
     }
   }
 
@@ -114,7 +94,7 @@
         aria-controls="command-palette-listbox"
         aria-expanded="true"
         aria-activedescendant={filtered.length > 0 ? `command-palette-option-${selected}` : undefined}
-        placeholder="Search rooms, instruments and tools"
+        placeholder="Search rooms, tools and what they do"
         aria-label="Search everything"
         onkeydown={onKey}
       />

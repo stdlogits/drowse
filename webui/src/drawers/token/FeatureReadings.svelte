@@ -164,7 +164,7 @@
     {:else if availability === "context-unavailable"}
       <p class="meta">None for this length</p>
     {:else}
-      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("lens")}>Choose an SAE</button></div>
+      <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => goto("artifacts", "saes")}>Choose an SAE</button></div>
     {/if}
   {:else if replayAvailable && !hasReplayContext}
     <p class="meta">No replay record for this token</p>

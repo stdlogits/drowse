@@ -806,8 +806,10 @@ the path you are on, its map and weave one step away), the page (the
 conversation, with the steering recipe as chips over the composer) and the
 inspector (whatever is selected: a token's drilldown and anatomy, a probe, a
 unit, a steering term; with nothing selected, the instruments: probes, live
-lens readout, SAE features, sampling). Units, Lens, Probes, Artifacts and
-Model are rooms beside it, as routes. The dashboard writes steering only as chips over
+lens readout, SAE features, sampling). Units, Lens and Probes are rooms
+beside it that read the conversation token by token, Artifacts is where what
+they read with is fitted, fetched, built and installed, and Model is the
+model's facts, each a route. The dashboard writes steering only as chips over
 the structured terms the server returns (`parts`); it never parses or takes
 expression text, while agents (WebMCP), HTTP, the CLI and Python keep the
 grammar (`drowse/web/AGENTS.md`). REST

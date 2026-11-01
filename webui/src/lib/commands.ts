@@ -1,20 +1,26 @@
-// The command palette's index (⌘K, the header's search): the rooms, the instruments, then every
-// tool in the drawer registry.
+// The command palette's index (⌘K, the header's search): the rooms, the instruments, every room's
+// sections (findable by what they do: "fit a lens", "fetch the unit catalog", "build a probe"),
+// then every other tool in the drawer registry.
 //
 // The tool categories are NOT declared here: they are derived from the drawer registry
 // (``drawers/index.ts``), the one place a drawer's component, sizing and reachability are written
-// down. A tool a room hosts opens its room (``openDrawer`` routes it, lib/stores/rooms.svelte.ts).
+// down. A tool a room hosts is listed once, as its room's section (``ROOM_SECTIONS``), and opening
+// it goes to that section (lib/stores/rooms.svelte.ts).
 
+import { tick } from "svelte";
 import { RAIL_CATEGORIES } from "../drawers";
-import { shownRooms, type Room } from "./stores/rooms.svelte";
+import { ROOMS, goto, roomFor, shownRooms, shownSections, type Room } from "./stores/rooms.svelte";
 import type { DrawerName } from "./types";
-import type { InspectorTab } from "./stores.svelte";
+import { setInspectorTab, type InspectorTab } from "./stores.svelte";
+import { clearSelection } from "./stores/selection.svelte";
+import { showConversation } from "./stores/workbench.svelte";
 
 export type { RailCategory, RailTool } from "../drawers";
 export { RAIL_CATEGORIES } from "../drawers";
 
 export type PaletteAction =
   | { kind: "room"; room: Room }
+  | { kind: "section"; room: Room; section: string }
   | { kind: "drawer"; drawer: DrawerName }
   | { kind: "instrument"; tab: InspectorTab };
 
@@ -26,15 +32,17 @@ export interface PaletteCommand {
 }
 
 const ROOM_KEYWORDS: Record<Room, string> = {
-  workbench: "home conversation chat thread page inspector",
-  units: "neurons heads atlas",
-  lens: "jacobian j-lens r-lens s-lens sources fit fetch",
-  probes: "readings vectors concepts scales manifolds",
-  artifacts: "catalog lenses saes concepts scales manifolds packs build combine templates roles fit fetch install",
-  model: "health device runtime api access key",
+  workbench: "home conversation chat thread page inspector steer steering",
+  units: "neurons heads atlas activations read token by token",
+  lens: "jacobian j-lens r-lens s-lens layer by layer predictions read token by token",
+  probes: "readings vectors concepts scales manifolds read token by token",
+  artifacts: "setup fit fetch install build download catalog lenses saes packs templates roles",
+  model: "health device runtime api access key layers neurons heads shape",
 };
 
-/** The flattened index: the rooms first, then the instruments, then every registry tool. */
+/** The flattened index: the rooms first, then the instruments (in the dashboard's order of
+ *  priority: the lens, the probes, the SAE's features), then the rooms' sections, then every other
+ *  registry tool. */
 export function paletteCommands(): PaletteCommand[] {
   const cmds: PaletteCommand[] = shownRooms().map(room => ({
     label: room.label,
@@ -43,12 +51,23 @@ export function paletteCommands(): PaletteCommand[] {
     keywords: ROOM_KEYWORDS[room.value],
   }));
   cmds.push(
-    { label: "Probes", group: "Instruments", action: { kind: "instrument", tab: "subspace" }, keywords: "concepts readings flat affine subspace curved manifold moods scales" },
     { label: "Live lens readout", group: "Instruments", action: { kind: "instrument", tab: "lens" }, keywords: "layer predictions jacobian jlens workspace token" },
+    { label: "Probes", group: "Instruments", action: { kind: "instrument", tab: "subspace" }, keywords: "concepts readings flat affine subspace curved manifold moods scales" },
     { label: "Features", group: "Instruments", action: { kind: "instrument", tab: "sae" }, keywords: "sparse autoencoder sae features" },
   );
+  for (const room of ROOMS) {
+    for (const section of shownSections(room.value)) {
+      cmds.push({
+        label: section.does,
+        group: room.label,
+        action: { kind: "section", room: room.value, section: section.value },
+        keywords: `${section.label} ${section.keywords}`,
+      });
+    }
+  }
   for (const cat of RAIL_CATEGORIES) {
     for (const tool of cat.tools) {
+      if (roomFor(tool.drawer)) continue;
       cmds.push({
         label: tool.label.replace(/…$/, ""),
         group: cat.label,
@@ -58,4 +77,35 @@ export function paletteCommands(): PaletteCommand[] {
     }
   }
   return cmds;
+}
+
+/** The commands a query finds, best first: every word of the query in the label, group or keywords,
+ *  ranked by the label (the query itself, its start, inside it), then the keywords holding the
+ *  whole query, then the label holding every word. */
+export function searchCommands(commands: readonly PaletteCommand[], query: string): PaletteCommand[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [...commands];
+  const terms = q.split(/\s+/);
+  const rank = (command: PaletteCommand): number => {
+    const label = command.label.toLowerCase();
+    if (label === q) return 0;
+    if (label.startsWith(q)) return 1;
+    if (label.includes(q)) return 2;
+    if ((command.keywords ?? "").toLowerCase().includes(q)) return 3;
+    if (terms.every(term => label.includes(term))) return 4;
+    return 5;
+  };
+  return commands
+    .filter(command => terms.every(term => `${command.label} ${command.group} ${command.keywords ?? ""}`.toLowerCase().includes(term)))
+    .sort((a, b) => rank(a) - rank(b));
+}
+
+/** Shows the workbench's instruments at one of them (the Inspector with nothing selected). */
+export function showInstrument(tab: InspectorTab): void {
+  const id = tab === "lens" ? "instrument-lens" : tab === "sae" ? "instrument-sae" : "instrument-probes";
+  setInspectorTab(tab);
+  clearSelection();
+  goto("workbench");
+  showConversation();
+  void tick().then(() => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" }));
 }

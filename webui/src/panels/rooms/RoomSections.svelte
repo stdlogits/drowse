@@ -1,29 +1,23 @@
 <script lang="ts">
   // A room of tools: Artifacts (the unit catalog, lenses, build, packs, combine, templates, roles,
-  // SAEs) and Model (its shape, depth and lenses, then health or the local runtime, API access). Its
-  // sections are tabs. A drawer section is a tool that used to open as a drawer, shown in place
-  // (``openDrawer`` of one of these lands here); a panel section (``drawer: null``) is the component
-  // the room passes in ``panels`` under the section's value (lib/stores/rooms.svelte.ts).
+  // SAEs) and Model (its shape, depth and what is prepared for it, then health or the local runtime,
+  // API access). Its sections are tabs. A drawer section is a tool that used to open as a drawer,
+  // shown in place (``openDrawer`` of one of these lands here); a panel section (``drawer: null``) is
+  // the component the room passes in ``panels`` under the section's value
+  // (lib/stores/rooms.svelte.ts). The way back is the header's tabs (on a phone, the shell's crumb).
   import type { Component } from "svelte";
   import { Swap, Tabs } from "@stdlogits/ledger";
   import DrawerOutlet from "../../drawers/DrawerOutlet.svelte";
   import ModelFacts from "./ModelFacts.svelte";
   import { drawerParams } from "../../drawers";
-  import { ROOMS, ROOM_SECTIONS, goto, route, type Room } from "../../lib/stores/rooms.svelte";
-  import { runtimeClient } from "../../lib/runtime/client";
-  import { drawerAvailability } from "../../lib/runtime/ui-capabilities";
+  import { ROOMS, goto, route, shownSections, type Room } from "../../lib/stores/rooms.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
   import { loomTree } from "../../lib/stores/loom.svelte";
   import { DROWSE_UI_VERSION } from "../../lib/version";
 
   let { room, panels = {} }: { room: Room; panels?: Readonly<Record<string, Component>> } = $props();
 
-  const sections = $derived((ROOM_SECTIONS[room] ?? []).filter(row => {
-    if (row.drawer === null) return row.value in panels;
-    if (runtimeClient.mode === "http" && row.drawer === "local_runtime") return false;
-    if (runtimeClient.mode !== "http" && (row.drawer === "health" || row.drawer === "session_admin")) return false;
-    return drawerAvailability(row.drawer).available;
-  }));
+  const sections = $derived(shownSections(room).filter(row => row.drawer !== null || row.value in panels));
   const section = $derived(sections.find(row => row.value === route.section) ?? sections[0]);
   const title = $derived(room === "model"
     ? (sessionState.info?.model_id.split("/").at(-1) ?? "Model")
@@ -34,10 +28,6 @@
 
 <div class="dw-room">
   <div class="head-block">
-    <div class="dw-crumbs">
-      <button type="button" onclick={() => goto("workbench")}>Workbench</button><span aria-hidden="true">›</span>
-      <span class="dw-here">{ROOMS.find(row => row.value === room)?.label}</span>
-    </div>
     <h2 class="dw-title">{title}</h2>
     {#if room === "model" && sessionState.info}
       {@const shape = sessionState.info.architecture}
@@ -77,7 +67,10 @@
       <Panel />
     </Swap>
   {:else}
-    <div class="dw-empty"><p>Nothing here is available in this runtime.</p></div>
+    <div class="dw-empty">
+      <p>Nothing here in this runtime</p>
+      <button type="button" class="dw-quiet" onclick={() => goto("workbench")}>Workbench</button>
+    </div>
   {/if}
 </div>
 

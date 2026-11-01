@@ -1,7 +1,9 @@
 <script lang="ts">
   // The dashboard shell, drawn in Ledger: the header (the drowse mark, the rooms as tabs, the model
   // pill, search and the theme), then the room you are in. The workbench is home (Thread | Page |
-  // Inspector); Units, Lens, Probes, Artifacts and Model are rooms beside it, as routes (#/lens).
+  // Inspector); Units, Lens and Probes read the conversation, Artifacts prepares what they read
+  // with, and Model is the model's facts: rooms beside it, as routes (#/lens, #/artifacts/lenses).
+  // On a phone the rooms are in the menu, and a crumb over each room leads back to the workbench.
   // Tools that are neither a room nor a selection open as a dialog over the page.
   import { onMount, tick } from "svelte";
   import { IconButton, Tabs, ThemeButton, fadeIn, fadeOut, rise, tips } from "@stdlogits/ledger";
@@ -393,6 +395,12 @@
 
     <main id="main" class="rooms-host" class:waiting={bootStatus !== "ready"} inert={dialogOpen || paletteState.open || bootStatus !== "ready"} aria-busy={bootStatus === "loading"}>
       <h1 class="sr-only">{ROOMS.find(room => room.value === route.room)?.label}</h1>
+      {#if phone && route.room !== "workbench"}
+        <nav class="dw-crumbs room-crumbs" aria-label="Breadcrumb">
+          <button type="button" onclick={() => pickRoom("workbench")}>Workbench</button><span aria-hidden="true">›</span>
+          <span class="dw-here" aria-current="page">{ROOMS.find(room => room.value === route.room)?.label}</span>
+        </nav>
+      {/if}
       <div class="room" hidden={route.room !== "workbench"}>
         <Workbench {phone} active={route.room === "workbench"} />
       </div>
@@ -441,6 +449,7 @@
   .rooms { min-width: 0; }
   .notices { max-height: 25dvh; overflow-y: auto; overscroll-behavior: contain; }
   .rooms-host { min-width: 0; }
+  .room-crumbs { padding: var(--s2) var(--s4) 0; }
   /* Inert and hidden while booting (it still lays out, so a gliding thumb measures, and Ledger places
      a thumb under an inert page): the boot skeleton is fixed over the room, and a room drawn under it
      showed its controls through the blocks (the Units room's tools at 375). Laid out all along, the
