@@ -43,17 +43,45 @@ export const FINISH_REASONS: readonly FinishReason[] = ["stop", "length", "stop_
 
 // ---------------------------------------------------------- triggers --
 
-/** Per-term trigger keyword from the steering-expression grammar.
+/** Per-term trigger window from the steering-expression grammar.
  *
- * Wire/UI form mirrors the canonical presets of ``_TRIGGER_PRESETS`` in
- * steering/grammar.py (``both``/``before``/``after``/``thinking``/``response``).
- * The grammar's ``prompt``/``generated`` aliases are not UI values. */
+ * The five presets mirror the canonical names of ``_TRIGGER_CANONICAL`` in
+ * steering/grammar.py (``both``/``before``/``after``/``thinking``/``response``);
+ * the grammar's ``prompt``/``generated`` aliases are not UI values. The two
+ * counted windows are ``@first:N`` (``FIRST_N``) and ``@after:N`` (``AFTER_N``),
+ * their count on the term's ``tokens``. A term's probe gate (``&when:…``) is
+ * its own field, ``gate``. */
 export type Trigger =
   | "BOTH"
   | "BEFORE" // prompt prefill only
   | "AFTER" // reply after thinking
   | "THINKING"
-  | "RESPONSE"; // every generated token
+  | "RESPONSE" // every generated token
+  | "FIRST_N" // the first ``tokens`` generated tokens
+  | "AFTER_N"; // every generated token after the first ``tokens``
+
+/** A probe gate's comparison. */
+export type GateOp = ">" | ">=" | "<" | "<=";
+
+/** A term's probe gate (``@when:<probe><op><threshold>``, or ``@<phase>&when:…``): the term acts
+ *  only on generated tokens where the probe's last reading passes. ``probe`` is the scalar key
+ *  verbatim: an attached probe's name (its main reading) or one of its channels. A gate never
+ *  reads the prompt (there is no reading yet), so a gated term never acts there. */
+export interface SteerGate {
+  probe: string;
+  op: GateOp;
+  threshold: number;
+}
+
+/** When a term acts: its window, the count a counted window takes, and its probe gate. Every
+ *  rack entry carries it. */
+export interface SteerTiming {
+  trigger: Trigger;
+  /** The count of a ``FIRST_N`` or ``AFTER_N`` window (a whole number); absent otherwise. */
+  tokens?: number;
+  /** Its probe gate; absent or ``null`` for none. */
+  gate?: SteerGate | null;
+}
 
 /** Tensor variant suffix from the shared steering grammar. */
 export type Variant =
@@ -845,7 +873,7 @@ export interface ChatTurn {
  *  subspace term — the merged affine subspace slides once), so this entry
  *  carries no per-card coefficient; relative weight between subspace terms is
  *  expressed by how far each position sits from neutral. */
-export interface SubspaceSteerEntry {
+export interface SubspaceSteerEntry extends SteerTiming {
   mode: "subspace";
   /** Mean-ablate a rank-one concept instead of steering toward a position. */
   ablate: boolean;
@@ -868,7 +896,7 @@ export interface SubspaceSteerEntry {
 
 /** Manifold (curved) steering term — a placement on a curved fit with its own
  *  per-card ``along`` + ``onto`` (each curved term is its own injection). */
-export interface ManifoldSteerEntry {
+export interface ManifoldSteerEntry extends SteerTiming {
   mode: "manifold";
   /** ``along`` blend fraction in [0, 1] — how far to slide the in-subspace
    *  foot toward the position.  Serializes as the first value of the ``%``
@@ -896,7 +924,7 @@ export interface ManifoldSteerEntry {
  *  shared ``subspaceAlong`` master): lens atoms run hotter than concept
  *  vectors — α≈0.3 is the coherent sweet spot, α≥0.5 over-steers into
  *  repetition — so each token needs its own dial. */
-export interface JLensSteerEntry {
+export interface JLensSteerEntry extends SteerTiming {
   mode: "jlens";
   /** Mean-ablate the token direction instead of pushing along it. */
   ablate: boolean;
@@ -911,7 +939,7 @@ export interface JLensSteerEntry {
 /** S-lens token steering term (``α slens/<word>``): pushes along the input-side lens direction
  *  for the token, toward having read it (``jlens/`` pushes toward saying it), over the S lens's
  *  fitted layers.  The same shape and dial as a ``jlens/`` term; the rack key is the full atom. */
-export interface SLensSteerEntry {
+export interface SLensSteerEntry extends SteerTiming {
   mode: "slens";
   /** Mean-ablate the token direction instead of pushing along it. */
   ablate: boolean;
@@ -923,7 +951,7 @@ export interface SLensSteerEntry {
 }
 
 /** Resident SAE decoder-row steering term (``α sae/<id>``). */
-export interface SaeSteerEntry {
+export interface SaeSteerEntry extends SteerTiming {
   mode: "sae";
   /** Mean-ablate the decoder-row direction instead of pushing along it. */
   ablate: boolean;
@@ -939,13 +967,32 @@ export interface SaeSteerEntry {
  *  sign of ``alpha`` picks the pole) or is silenced; a head has no single write direction and is
  *  only ever silenced (``ablate`` is always true).  Silencing replaces the unit's activation by
  *  its neutral mean, blended by ``alpha`` (1 = fully). */
-export interface UnitSteerEntry {
+export interface UnitSteerEntry extends SteerTiming {
   mode: "unit";
   ablate: boolean;
   /** Signed push strength (a neuron's − pole below zero); an ablation's blend, never negative
    *  (1 is exact mean-ablation; lib/unitTerms.ts holds the rule). */
   alpha: number;
   trigger: Trigger;
+  enabled: boolean;
+}
+
+/** A projection (``α base~onto``, ``α base|onto``): a flat concept pushed by only the part of it
+ *  that lies along a second concept (``~``), or by all of it but that part (``|``). The rack key is
+ *  the selector ``base~onto``; its own signed ``alpha``, since a projection is a plain push and not
+ *  a position on the shared flat slide. */
+export interface ProjectionSteerEntry extends SteerTiming {
+  mode: "projection";
+  /** The concept pushed (a flat concept's name, ``ns/name``). */
+  base: string;
+  /** ``~`` keeps the part along ``onto``; ``|`` removes it. */
+  operator: "~" | "|";
+  /** The second concept. */
+  onto: string;
+  /** Signed push strength (below zero, toward the base's second pole). */
+  alpha: number;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
@@ -963,6 +1010,7 @@ export type AtomSteerEntry = JLensSteerEntry | SLensSteerEntry | SaeSteerEntry;
 export type SteerEntry =
   | SubspaceSteerEntry
   | ManifoldSteerEntry
+  | ProjectionSteerEntry
   | JLensSteerEntry
   | SLensSteerEntry
   | SaeSteerEntry

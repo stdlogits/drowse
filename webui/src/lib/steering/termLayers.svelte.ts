@@ -66,18 +66,22 @@ function remember<V>(map: Map<string, V>, key: string, value: V): void {
 /** The text a term's layers are asked with: the term at strength 1, ``@response``, with its clause
  *  when ``scoped`` and without one otherwise (every fitted layer, the strip's extent). */
 export function layersProbe(name: string, entry: SteerEntry, scoped: boolean): string {
+  // The window and gate are not the term's place: a probe drops them.
   const trigger = "RESPONSE" as const;
+  const timing = { trigger, tokens: undefined, gate: null };
   switch (entry.mode) {
     case "subspace":
-      return formatTerm(name, { ...entry, trigger, layers: scoped ? entry.layers : null }, 1);
+      return formatTerm(name, { ...entry, ...timing, layers: scoped ? entry.layers : null }, 1);
+    case "projection":
+      return formatTerm(name, { ...entry, ...timing, alpha: 1, layers: scoped ? entry.layers : null }, 1);
     case "manifold":
-      return formatTerm(name, { ...entry, trigger, blend: 1, onto: 0, layers: scoped ? entry.layers : null }, 1);
+      return formatTerm(name, { ...entry, ...timing, blend: 1, onto: 0, layers: scoped ? entry.layers : null }, 1);
     case "jlens":
     case "slens":
     case "sae":
-      return formatTerm(name, { ...entry, trigger, alpha: 1, layers: scoped ? entry.layers : null }, 1);
+      return formatTerm(name, { ...entry, ...timing, alpha: 1, layers: scoped ? entry.layers : null }, 1);
     case "unit":
-      return formatTerm(name, { ...entry, trigger, alpha: 1 }, 1);
+      return formatTerm(name, { ...entry, ...timing, alpha: 1 }, 1);
   }
 }
 

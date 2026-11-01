@@ -27,7 +27,7 @@
   import type { SteerEntry } from "../lib/types";
 
   /** The order families show in: flat terms, curved terms, then atoms and units. */
-  const ORDER: Record<SteerEntry["mode"], number> = { subspace: 0, manifold: 1, jlens: 2, slens: 2, sae: 2, unit: 3 };
+  const ORDER: Record<SteerEntry["mode"], number> = { subspace: 0, projection: 0, manifold: 1, jlens: 2, slens: 2, sae: 2, unit: 3 };
 
   const model = $derived(sessionState.info?.model_id);
   const chips = $derived([...steerRack.entries.entries()]
@@ -44,7 +44,7 @@
         title: termTitle(name, entry, entry.mode === "manifold" ? manifoldByName(name) : null, lensTokenText),
         source: (entry.mode === "unit" ? unitTermLabel(name, entry) : null) ?? termSource(name, entry),
         span: place.where ? depthSpan(place.selected, place.where.nLayers) : null,
-        meta: [layers, triggerWord(entry.trigger)].filter(Boolean).join(" · "),
+        meta: [layers, triggerWord(entry)].filter(Boolean).join(" · "),
       };
     }));
   const recipe = $derived(steerRack.readOnlyRecipe);

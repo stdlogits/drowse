@@ -221,13 +221,20 @@ try {
   assert.equal(terms.chipStrength("default/honest", { mode: "subspace", ablate: false }, 0.5), "0.5", "a flat term shows the shared strength");
   assert.equal(terms.termTitle("neuron/L31n4410", { mode: "unit" }), "L31 n4410");
   assert.equal(terms.unitLayer("head/L28h12"), 28);
-  assert.equal(terms.triggerWord("AFTER"), "after thinking");
-  assert.equal(terms.triggerWord("BOTH"), "");
+  assert.equal(terms.triggerWord({ trigger: "AFTER" }), "after thinking");
+  assert.equal(terms.triggerWord({ trigger: "BOTH" }), "");
+  assert.equal(terms.triggerWord({ trigger: "FIRST_N", tokens: 8 }), "first 8 tokens");
+  assert.equal(terms.triggerWord({ trigger: "RESPONSE", gate: { probe: "default/calm.anxious", op: "<=", threshold: -1.5 } }), "while calm.anxious ≤ −1.5",
+    "a bare gate is the response's own window, so the chip says only the gate");
+  assert.equal(terms.triggerWord({ trigger: "THINKING", gate: { probe: "jlens/storm", op: ">", threshold: 0.1 } }), "thinking while storm > 0.1");
+  assert.deepEqual([terms.whenChoice("AFTER_N"), terms.whenChoice("FIRST_N"), terms.whenChoice("AFTER")], ["TOKENS", "TOKENS", "AFTER"]);
   assert.deepEqual(terms.strengthDial("default/emotions", entry, 0.5), { value: 0.35, min: 0, max: 1, step: 0.05, shared: false },
     "a curved term slides toward its position only: composition refuses a negative along");
   assert.deepEqual(terms.strengthDial("jlens/storm", { mode: "jlens", ablate: false, alpha: 0.3 }, 0.5), { value: 0.3, min: -1, max: 1, step: 0.05, shared: false });
   assert.equal(terms.strengthDial("default/honest", { mode: "subspace" }, 0.7).shared, true);
-  assert.deepEqual([terms.strengthDial("jlens/storm", { mode: "jlens", ablate: true, alpha: 0.4 }, 0.5).min, terms.strengthSays("jlens/storm", { mode: "jlens", ablate: true, alpha: 0.4 }, 0.4)], [0, "40% of it"]);
+  assert.deepEqual([terms.strengthDial("jlens/storm", { mode: "jlens", ablate: true, alpha: 0.4 }, 0.5).min, terms.strengthSays("jlens/storm", { mode: "jlens", ablate: true, alpha: 0.4 }, 0.4)], [-1, "40% of it"],
+    "an atom's removal is signed: below zero it adds to the component");
+  assert.equal(terms.strengthDial("default/honest", { mode: "subspace" }, -0.7).min, -2, "the shared flat strength pushes away below zero");
   const without = { mode: "subspace", ablate: true, coords: [1], label: "confident", variant: "raw", trigger: "BOTH", enabled: true };
   assert.equal(terms.strengthDial("default/confident.uncertain", without, 1.5).max, 2, "a removed flat term rides the shared dial");
   assert.deepEqual([1, 1.5, 2].map(v => terms.strengthSays("default/confident.uncertain", without, v)), ["All of it", "150% of it", "200% of it"],

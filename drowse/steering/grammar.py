@@ -151,7 +151,7 @@ from drowse.model.layers import (
     parse_layer_selector,
 )
 from drowse.naming import RESERVED_NAMESPACES, UNIT_NAMESPACES, UnitRef, parse_unit_ref
-from drowse.steering.triggers import Trigger
+from drowse.steering.triggers import ProbeGate, Trigger
 
 if TYPE_CHECKING:
     from drowse.steering.terms import AlphaEntry, Steering
@@ -208,7 +208,10 @@ _TRIGGER_PRESETS: dict[str, Trigger] = {
 # Preferred render string per preset.  Multiple grammar tokens alias onto
 # the same Trigger (``@before`` == ``@prompt``); we pick one canonical form
 # so round-tripping is deterministic.
-_TRIGGER_CANONICAL: dict[Trigger, str] = {
+# A trigger window's preset name (``TermPart.phase``).
+TriggerPhase = Literal["both", "before", "response", "after", "thinking"]
+
+_TRIGGER_CANONICAL: dict[Trigger, TriggerPhase] = {
     Trigger.BOTH: "both",
     Trigger.AFTER_THINKING: "after",
     Trigger.PROMPT_ONLY: "before",
@@ -1587,7 +1590,13 @@ class TermPart:
     - ``position``: a position's node label or coordinates, else ``None``;
     - ``layers``: the ``{…}`` clause as a :data:`LayerScope`;
     - ``trigger``: the ``@`` clause without the ``@`` (``response``,
-      ``when:slens/owl>3``), ``None`` for :data:`Trigger.BOTH`.
+      ``when:slens/owl>3``), ``None`` for :data:`Trigger.BOTH`;
+    - the same trigger in fields: ``phase``, its window's preset name
+      (``both``, ``before``, ``response``, ``after``, ``thinking``; ``None``
+      for a counted window), ``first_n`` / ``after_n`` (``@first:N`` /
+      ``@after:N``) and ``gate``, its probe gate (``@…&when:…``; a bare
+      ``@when:`` is phase ``response`` with a gate);
+    - ``projection``: a projection's ``(base, operator, onto)``, else ``None``.
     """
 
     text: str
@@ -1598,6 +1607,25 @@ class TermPart:
     position: str | tuple[float, ...] | None
     layers: LayerScope
     trigger: str | None
+    phase: TriggerPhase | None
+    first_n: int | None
+    after_n: int | None
+    gate: ProbeGate | None
+    projection: tuple[str, Literal["~", "|"], str] | None
+
+
+def _term_part(
+    text: str, op: TermOp, target: str, coeff: float, onto: float,
+    position: str | tuple[float, ...] | None, layers: LayerScope, trig: Trigger,
+    projection: tuple[str, Literal["~", "|"], str] | None = None,
+) -> TermPart:
+    """A :class:`TermPart`, its trigger spelled both as its clause and in fields."""
+    window = replace(trig, gate=None)
+    return TermPart(
+        text, op, target, coeff, onto, position, layers, _trigger_text(trig),
+        _TRIGGER_CANONICAL.get(window), window.first_n, window.after_n,
+        trig.gate, projection,
+    )
 
 
 def term_parts(steering: "Steering") -> list[TermPart]:
@@ -1606,26 +1634,25 @@ def term_parts(steering: "Steering") -> list[TermPart]:
     out: list[TermPart] = []
     for name, val in steering.alphas.items():
         if isinstance(val, AblationTerm):
-            out.append(TermPart(
+            out.append(_term_part(
                 _fmt_ablation(val), "ablate", val.target, val.coeff, 0.0, None,
-                val.layers, _trigger_text(val.trigger),
+                val.layers, val.trigger,
             ))
         elif isinstance(val, UnitAblationTerm):
-            out.append(TermPart(
+            out.append(_term_part(
                 _fmt_bang(val.unit.qualified, val.coeff, val.trigger), "ablate",
-                val.unit.qualified, val.coeff, 0.0, None, None,
-                _trigger_text(val.trigger),
+                val.unit.qualified, val.coeff, 0.0, None, None, val.trigger,
             ))
         elif isinstance(val, ProjectedTerm):
-            out.append(TermPart(
+            out.append(_term_part(
                 _fmt_projected(val), "project",
                 f"{val.base}{val.operator}{val.onto}", val.coeff, 0.0, None,
-                val.layers, _trigger_text(val.trigger),
+                val.layers, val.trigger, (val.base, val.operator, val.onto),
             ))
         elif isinstance(val, ManifoldTerm):
-            out.append(TermPart(
+            out.append(_term_part(
                 _fmt_manifold(val), "position", val.manifold, val.along,
-                val.onto, val.position, val.layers, _trigger_text(val.trigger),
+                val.onto, val.position, val.layers, val.trigger,
             ))
         else:
             if isinstance(val, tuple):
@@ -1633,9 +1660,9 @@ def term_parts(steering: "Steering") -> list[TermPart]:
             else:
                 coeff, trig = float(val), default_trig
             target, layers = split_layer_clause(name)
-            out.append(TermPart(
+            out.append(_term_part(
                 _fmt_plain(name, coeff, trig), "push", target, coeff, 0.0,
-                None, layers, _trigger_text(trig),
+                None, layers, trig,
             ))
     return out
 
@@ -1807,6 +1834,7 @@ __all__ = [
     "ProjectedTerm",
     "SteeringExprError",
     "TermOp",
+    "TriggerPhase",
     "TermPart",
     "UnitAblationTerm",
     "format_layer_clause",

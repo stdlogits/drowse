@@ -32,7 +32,8 @@
     pushToast,
     refreshLoomTree,
   } from "../../lib/stores.svelte";
-  import { parseStrengthList, resolveNodeIdPrefix } from "./loomCommands";
+  import { fanoutConcepts as flatConcepts, fanoutRecipe, parseStrengthList, resolveNodeIdPrefix } from "./loomCommands";
+  import { steerRack } from "../../lib/stores/steering.svelte";
 
   let {
     background = null,
@@ -65,8 +66,10 @@
     nodeId: string | null;
     text: string;
     n: number;
-    /** Steering selector for the fan-out modal. */
-    vector?: string;
+    /** The fan-out's concept (a fitted flat fit, ``ns/name``) and the node it steers toward: picked,
+     *  never typed (people write recipes with the chips, not as text). */
+    concept?: string;
+    toward?: string;
     /** Mode for the regen-with-modifier modal. */
     mode?: string;
     /** Inline validation error.  Non-empty means commit failed; the
@@ -78,10 +81,32 @@
     nodeId: null,
     text: "",
     n: 1,
-    vector: "",
+    concept: "",
+    toward: "",
     mode: "unsteered",
     error: "",
   });
+
+  /** The concepts a fan-out sweeps (loomCommands.ts::fanoutConcepts). */
+  const fanoutConcepts = $derived(flatConcepts(steerRack.catalog));
+
+  function fanoutNodes(concept: string): string[] {
+    return fanoutConcepts.find((row) => `${row.namespace}/${row.name}` === concept)?.node_labels ?? [];
+  }
+
+  /** The fan-out's opening pick: the rack's first flat concept chip (toward its node), else the
+   *  first fitted concept toward its first node. */
+  function fanoutDefault(): { concept: string; toward: string } {
+    const names = new Set(fanoutConcepts.map((row) => `${row.namespace}/${row.name}`));
+    for (const [name, entry] of steerRack.entries) {
+      if (entry.mode === "subspace" && !entry.ablate && names.has(name)) {
+        const nodes = fanoutNodes(name);
+        return { concept: name, toward: entry.label !== null && nodes.includes(entry.label) ? entry.label : nodes[0] ?? "" };
+      }
+    }
+    const first = fanoutConcepts[0];
+    return first ? { concept: `${first.namespace}/${first.name}`, toward: first.node_labels[0] ?? "" } : { concept: "", toward: "" };
+  }
   /** Focusable ref shared by every modal input variant — the regenerate
    *  / regen_mode number-of-siblings field swaps in a themed
    *  ``NumberInput`` which exposes a structurally-matching
@@ -157,7 +182,7 @@
       nodeId,
       text: initialText,
       n: initialN,
-      vector: "",
+      ...(kind === "fanout" ? fanoutDefault() : { concept: "", toward: "" }),
       mode: "unsteered",
       error: "",
     };
@@ -178,7 +203,8 @@
       nodeId: null,
       text: "",
       n: 1,
-      vector: "",
+      concept: "",
+      toward: "",
       mode: "unsteered",
       error: "",
     };
@@ -289,15 +315,12 @@
         return;
       }
       case "fanout": {
-        // Fan-out: anchor on the user node, send one regen per alpha as a
-        // sibling.  We use a sequential dispatch
-        // rather than the engine's ``generate_sweep`` because the
-        // active rack already carries the rest of the steering
-        // context — we only need to overlay the swept vector's α
-        // per call.
-        const vector = (m.vector ?? "").trim();
-        if (!vector) {
-          setModalError("vector name required");
+        // Fan-out: anchor on the user node, send one regen per strength as a sibling, each steered
+        // by the picked concept alone at that strength (a partial recipe's ``steering`` replaces
+        // the steering), written as the chips write it.
+        const info = fanoutConcepts.find((row) => `${row.namespace}/${row.name}` === m.concept);
+        if (!info || fanoutRecipe(info, m.toward ?? "", 0) === null) {
+          setModalError("Pick a concept and the node to steer toward.");
           return;
         }
         const alphas = parseStrengthList(m.text);
@@ -310,12 +333,9 @@
         }
         const userId = m.nodeId;
         for (const alpha of alphas) {
-          // Recipe override carries the per-row alpha for the swept
-          // vector.  The engine's modifier resolver accepts a partial
-          // recipe expression on the ``steering`` axis.
           await loomContinueFromCommitted(userId, {
             n: 1,
-            recipe_override: `steering=${alpha} ${vector}`,
+            recipe_override: fanoutRecipe(info, m.toward ?? "", alpha),
           });
         }
         break;
@@ -432,19 +452,32 @@
           onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
         />
       {:else if modal.kind === "fanout"}
-        <label>
-          <span class="meta">Steering direction</span>
-          <input
-            bind:this={modalInput as HTMLInputElement}
-            bind:value={modal.vector}
-            type="text"
-            placeholder="e.g. honest, calm, deer.wolf"
-            onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
-          />
-        </label>
+        {#if fanoutConcepts.length === 0}
+          <p class="meta">No concept is fitted for this model yet. Fit one from + Steer, A concept.</p>
+        {:else}
+          <label>
+            <span class="meta">Concept</span>
+            <Select
+              value={modal.concept ?? ""}
+              options={fanoutConcepts.map((row) => ({ value: `${row.namespace}/${row.name}`, label: `${row.namespace}/${row.name}` }))}
+              ariaLabel="The concept each variation steers with"
+              onchange={(value) => { modal.concept = value; modal.toward = fanoutNodes(value)[0] ?? ""; }}
+            />
+          </label>
+          <label>
+            <span class="meta">Toward</span>
+            <Select
+              value={modal.toward ?? ""}
+              options={fanoutNodes(modal.concept ?? "").map((node) => ({ value: node, label: node }))}
+              ariaLabel="The node each variation steers toward"
+              onchange={(value) => { modal.toward = value; }}
+            />
+          </label>
+        {/if}
         <label>
           <span class="meta">Strengths</span>
           <input
+            bind:this={modalInput as HTMLInputElement}
             bind:value={modal.text}
             type="text"
             placeholder="0.0, 0.3, 0.6 · linspace(-1, 1, 5) · 0:1:0.25"

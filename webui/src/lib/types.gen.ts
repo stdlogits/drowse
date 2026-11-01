@@ -1079,6 +1079,16 @@ export interface SourcesResponse {
 }
 
 /**
+ * A term's probe gate (``@when:<probe><op><threshold>``): ``probe`` the
+ * scalar key verbatim, the comparison and its threshold.
+ */
+export interface SteeringGateJSON {
+  probe: string;
+  op: ">" | ">=" | "<" | "<=";
+  threshold: number;
+}
+
+/**
  * One term of a validated expression, in order (``grammar.TermPart``).
  *
  * ``text`` is the term alone as ``format_expr`` writes it (``expression``
@@ -1088,7 +1098,12 @@ export interface SourcesResponse {
  * coefficient (a position's along) and ``onto`` a position's collapse (0
  * otherwise); ``position`` a position's node label or coordinates;
  * ``layers`` the ``{…}`` clause (``null`` for none); ``trigger`` the ``@``
- * clause without the ``@`` (``null`` for both phases).
+ * clause without the ``@`` (``null`` for both phases), and the same trigger
+ * in fields: ``phase`` its window's preset name (``null`` for a counted
+ * window), ``first_n`` / ``after_n`` the counted windows (``@first:N`` /
+ * ``@after:N``), ``gate`` its probe gate (a bare ``@when:`` is phase
+ * ``response`` with a gate); ``projection`` a projection's base, operator
+ * and second concept (``null`` otherwise).
  */
 export interface SteeringPartJSON {
   text: string;
@@ -1099,6 +1114,21 @@ export interface SteeringPartJSON {
   position: string | number[] | null;
   layers: "workspace" | number[] | null;
   trigger: string | null;
+  phase: "both" | "before" | "response" | "after" | "thinking" | null;
+  first_n: number | null;
+  after_n: number | null;
+  gate: SteeringGateJSON | null;
+  projection: SteeringProjectionJSON | null;
+}
+
+/**
+ * A projection term's parts: ``base~onto`` keeps the part of ``base``
+ * along ``onto``, ``base|onto`` removes it.
+ */
+export interface SteeringProjectionJSON {
+  base: string;
+  operator: "~" | "|";
+  onto: string;
 }
 
 /**

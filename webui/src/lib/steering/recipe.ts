@@ -5,7 +5,7 @@
 // server's ``text``) and sit inside its dial; otherwise the recipe stays one read-only chip, with
 // the reason. Store-free, so the node suites load it.
 
-import type { ManifoldInfo, SteerEntry, SteeringPartJSON, Trigger, Variant } from "../types";
+import type { ManifoldInfo, SteerEntry, SteerTiming, SteeringPartJSON, Trigger, Variant } from "../types";
 import { formatTerm } from "../expression";
 import { fitGeometry } from "../manifolds/fitKind";
 import { unitTermProblem } from "../unitTerms";
@@ -19,12 +19,24 @@ export interface RecipeChips {
 
 export type RecipeAsChips = { chips: RecipeChips } | { problem: string };
 
-const TRIGGERS: Record<string, Trigger> = {
+const PHASES: Record<string, Trigger> = {
+  both: "BOTH",
   before: "BEFORE",
   response: "RESPONSE",
   thinking: "THINKING",
   after: "AFTER",
 };
+
+/** A term's timing from its fields (the server's: ``phase``, ``first_n``/``after_n``, ``gate``),
+ *  or why a chip cannot hold it. ``tokens`` and ``gate`` are set only when the term has them. */
+function timingOf(part: SteeringPartJSON): SteerTiming | string {
+  const gate = part.gate === null ? {} : { gate: { probe: part.gate.probe, op: part.gate.op, threshold: part.gate.threshold } };
+  if (part.first_n !== null) return { trigger: "FIRST_N", tokens: part.first_n, ...gate };
+  if (part.after_n !== null) return { trigger: "AFTER_N", tokens: part.after_n, ...gate };
+  const trigger = part.phase === null ? undefined : PHASES[part.phase];
+  if (trigger === undefined) return `it runs @${part.trigger}, which a chip cannot hold`;
+  return { trigger, ...gate };
+}
 
 const ATOMS = { "jlens/": "jlens", "slens/": "slens", "sae/": "sae" } as const;
 
@@ -52,11 +64,15 @@ function splitVariant(target: string): [string, Variant] {
 
 /** One term as a rack entry, or why it cannot be one. */
 function entryOf(part: SteeringPartJSON, catalog: readonly ManifoldInfo[]): { name: string; entry: SteerEntry } | string {
-  const trigger: Trigger | undefined = part.trigger === null ? "BOTH" : TRIGGERS[part.trigger];
-  if (trigger === undefined) return `it runs @${part.trigger}, which a chip cannot hold`;
+  const timing = timingOf(part);
+  if (typeof timing === "string") return timing;
   const scope = part.layers === null ? {} : { layers: part.layers };
-  const common = { trigger, enabled: true };
-  if (part.op === "project") return `${part.target} is a projection, which a chip cannot hold`;
+  const common = { ...timing, enabled: true };
+  if (part.op === "project") {
+    if (part.projection === null) return `${part.target} is a projection without its parts`;
+    const { base, operator, onto } = part.projection;
+    return { name: part.target, entry: { mode: "projection", base, operator, onto, alpha: part.coeff, ...scope, ...common } };
+  }
   const atom = atomMode(part.target);
   if (atom !== null && (part.op === "push" || part.op === "ablate")) {
     return { name: part.target, entry: { mode: atom, ablate: part.op === "ablate", alpha: part.coeff, ...scope, ...common } as SteerEntry };

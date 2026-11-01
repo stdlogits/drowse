@@ -20,12 +20,15 @@ try {
   const steering = await server.ssrLoadModule("/src/lib/stores/steering.svelte.ts");
   const { genStatus } = await server.ssrLoadModule("/src/lib/stores/chat.svelte.ts");
   const { pendingActions, drainNextPendingAction } = await server.ssrLoadModule("/src/lib/stores/pending.svelte.ts");
-  const { steerRack, patchSteerEntry, setSteerCoords, setSteerLabel, removeSteerEntry, addSubspaceToRack, addManifoldToRack, addSaeToRack, currentSteeringExpression } = steering;
+  const { steerRack, patchSteerEntry, setSteerCoords, setSteerLabel, setSteerTiming, relateSteerEntry, removeSteerEntry, addSubspaceToRack, addManifoldToRack, addSaeToRack, setUnitTerm, currentSteeringExpression } = steering;
   steerRack.catalog = [{
     namespace: "default", name: "emotions", node_count: 3, node_labels: ["calm", "angry", "glad"],
     node_coords: [[0, 0], [1, 0], [0, 1]], intrinsic_dim: 2, domain: { type: "custom" },
   }, {
     namespace: "default", name: "formal.casual", node_count: 2, node_labels: ["formal", "casual"],
+    node_coords: [[1], [-1]], intrinsic_dim: 1, domain: { type: "custom" },
+  }, {
+    namespace: "default", name: "honest.deceptive", node_count: 2, node_labels: ["honest", "deceptive"],
     node_coords: [[1], [-1]], intrinsic_dim: 1, domain: { type: "custom" },
   }];
   addSubspaceToRack("default/formal.casual");
@@ -49,7 +52,7 @@ try {
   assert.equal(steerRack.entries.get("default/formal.casual").blend, undefined);
   patchSteerEntry("default/emotions", { blend: 0.8, onto: 0.2 }, ["manifold"]);
   patchSteerEntry("sae/17", { alpha: 0.4, ablate: true }, ["sae"]);
-  patchSteerEntry("default/formal.casual", { trigger: "BEFORE" });
+  setSteerTiming("default/formal.casual", { trigger: "BEFORE" });
   assert.equal(currentSteeringExpression(),
     "0.5 default/formal.casual%formal@before + 0.4 !sae/17 + 0.8,0.2 default/emotions%0.5,0.25");
 
@@ -64,6 +67,59 @@ try {
   assert.deepEqual([steerRack.entries.get("sae/17").enabled, steerRack.entries.get("sae/17").alpha], [false, 0.6]);
   removeSteerEntry("sae/17");
   assert.equal(steerRack.entries.has("sae/17"), false);
+
+  // Timing has one path: a window, its count only while it counts, and a gate, each replacing the
+  // last; a unit's push and ablation keep the term's timing.
+  setSteerTiming("default/formal.casual", { trigger: "AFTER_N", tokens: 6, gate: { probe: "default/formal.casual", op: "<", threshold: -0.5 } });
+  assert.equal(currentSteeringExpression(), "0.5 default/formal.casual%formal@after:6&when:default/formal.casual<-0.5 + 0.8,0.2 default/emotions%0.5,0.25");
+  setSteerTiming("default/formal.casual", { trigger: "RESPONSE", gate: steerRack.entries.get("default/formal.casual").gate });
+  assert.equal(steerRack.entries.get("default/formal.casual").tokens, undefined, "a phase drops the count");
+  assert.ok(!("tokens" in steerRack.entries.get("default/formal.casual")));
+  assert.match(currentSteeringExpression(), /^0\.5 default\/formal\.casual%formal@when:default\/formal\.casual<-0\.5 \+/);
+  setSteerTiming("default/formal.casual", { trigger: "BOTH", gate: null });
+  assert.ok(!("gate" in steerRack.entries.get("default/formal.casual")), "no gate leaves no field");
+  setUnitTerm("neuron/L3n4", { ablate: false, alpha: 0.2 });
+  setSteerTiming("neuron/L3n4", { trigger: "FIRST_N", tokens: 3, gate: { probe: "neuron/L3n4", op: ">", threshold: 1 } });
+  setUnitTerm("neuron/L3n4", { ablate: true, alpha: 1 });
+  assert.deepEqual(steerRack.entries.get("neuron/L3n4"),
+    { mode: "unit", ablate: true, alpha: 1, trigger: "FIRST_N", tokens: 3, gate: { probe: "neuron/L3n4", op: ">", threshold: 1 }, enabled: true });
+  removeSteerEntry("neuron/L3n4");
+
+  // A relation re-keys a flat concept as a projection at its own signed strength (its pole's sign
+  // on the shared one), keeping its timing, layers and switch; all of it again puts it back on the
+  // shared strength at the pole its sign points to. The new key reaches the caller to select.
+  addSubspaceToRack("default/honest.deceptive");
+  setSteerLabel("default/honest.deceptive", "deceptive");
+  steering.setSteerLayers("default/honest.deceptive", [3, 4]);
+  setSteerTiming("default/honest.deceptive", { trigger: "THINKING" });
+  const selected = [];
+  relateSteerEntry("default/honest.deceptive", { operator: "~", onto: "default/formal.casual" }, (key) => selected.push(key));
+  assert.deepEqual(selected, ["default/honest.deceptive~default/formal.casual"]);
+  assert.equal(steerRack.entries.has("default/honest.deceptive"), false);
+  assert.deepEqual(steerRack.entries.get("default/honest.deceptive~default/formal.casual"), {
+    mode: "projection", base: "default/honest.deceptive", operator: "~", onto: "default/formal.casual",
+    alpha: -0.5, trigger: "THINKING", layers: [3, 4], enabled: true,
+  });
+  assert.match(currentSteeringExpression(), / - 0\.5 default\/honest\.deceptive~default\/formal\.casual\{3-4\}@thinking/);
+  relateSteerEntry("default/honest.deceptive~default/formal.casual", { operator: "|", onto: "default/formal.casual" }, (key) => selected.push(key));
+  assert.equal(selected.at(-1), "default/honest.deceptive|default/formal.casual");
+  addSubspaceToRack("default/honest.deceptive");
+  relateSteerEntry("default/honest.deceptive|default/formal.casual", null, (key) => selected.push(key));
+  assert.equal(selected.length, 2, "a relation that would land on a chip already there changes nothing");
+  removeSteerEntry("default/honest.deceptive");
+  relateSteerEntry("default/honest.deceptive|default/formal.casual", null, (key) => selected.push(key));
+  assert.deepEqual(steerRack.entries.get("default/honest.deceptive"), {
+    mode: "subspace", ablate: false, coords: [-1], label: "deceptive", variant: "raw", trigger: "THINKING", layers: [3, 4], enabled: true,
+  });
+  removeSteerEntry("default/honest.deceptive");
+  // An agent may write the concepts bare; all of it again keys the chip by its catalog name.
+  steerRack.entries.set("honest.deceptive~formal.casual", {
+    mode: "projection", base: "honest.deceptive", operator: "~", onto: "formal.casual", alpha: 0.3, trigger: "BOTH", enabled: true,
+  });
+  relateSteerEntry("honest.deceptive~formal.casual", null, (key) => selected.push(key));
+  assert.equal(selected.at(-1), "default/honest.deceptive");
+  assert.equal(steerRack.entries.get("default/honest.deceptive").label, "honest");
+  removeSteerEntry("default/honest.deceptive");
 
   // Correlation freshness: nothing fetches per generation, but a generation
   // (which can register vectors and fill null cells) or a vector-roster change

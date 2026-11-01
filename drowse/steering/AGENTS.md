@@ -9,7 +9,7 @@ injected, where, when, and how strongly.
 
 | Module | Owns |
 |---|---|
-| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr` (the joined `term_parts` texts; `TermPart` is one term with its fields, for `POST .../steering/validate`), `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
+| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr` (the joined `term_parts` texts; `TermPart` is one term with its fields, for `POST .../steering/validate`: its trigger both as the clause text and as `phase`, `first_n`, `after_n` and `gate`, a projection's `(base, operator, onto)`, so a client shows it as a chip without a parser), `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
 | `terms.py` | `Steering` (frozen IR), `AlphaEntry`, `SteeringStackEntry`, `term_entry` / `entry_trigger` / `entry_coeff` |
 | `triggers.py` | `Trigger` + presets, `ProbeGate`, `TriggerContext` |
 | `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries, `term_layers`), `SteeringScope`, `TermLayers`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |

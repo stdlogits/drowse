@@ -21,7 +21,9 @@ import type {
   AtomSteerEntry,
   LayerScope,
   ManifoldSteerEntry,
+  ProjectionSteerEntry,
   SteerEntry,
+  SteerTiming,
   SteeringPartJSON,
   SubspaceSteerEntry,
   UnitSteerEntry,
@@ -174,10 +176,10 @@ function defaultSubspaceEntry(
 // rack edit reassigns its entry with a fresh spread through ``patchSteerEntry``.
 
 type EntryOf<M extends SteerEntry["mode"]> = Extract<SteerEntry, { mode: M }>;
-type SteerPatch = { [K in keyof SteerEntry]?: SteerEntry[K] }
+type SteerPatch = { [K in Exclude<keyof SteerEntry, keyof SteerTiming>]?: SteerEntry[K] }
   & Partial<Pick<SubspaceSteerEntry, "ablate" | "coords" | "label" | "layers">>
   & Partial<Pick<ManifoldSteerEntry, "blend" | "onto">>
-  & Partial<Pick<AtomSteerEntry | UnitSteerEntry, "alpha">>;
+  & Partial<Pick<AtomSteerEntry | UnitSteerEntry | ProjectionSteerEntry, "alpha">>;
 
 /** Describe a rack edit for the pending-queue bubble. */
 function describePatch(name: string, patch: SteerPatch): string {
@@ -196,7 +198,7 @@ function describePatch(name: string, patch: SteerPatch): string {
  *  of another mode is left alone. */
 export function patchSteerEntry<M extends SteerEntry["mode"]>(
   name: string,
-  patch: Partial<EntryOf<M>> & SteerPatch,
+  patch: Omit<Partial<EntryOf<M>>, keyof SteerTiming> & SteerPatch,
   modes?: readonly M[],
 ): void {
   enqueueOrApply(describePatch(name, patch), () => {
@@ -206,6 +208,74 @@ export function patchSteerEntry<M extends SteerEntry["mode"]>(
     // A unit's edit keeps to the one rule (a head is not pushed, an ablation not negative).
     if (next.mode === "unit" && unitTermProblem(name, next) !== null) return;
     steerRack.entries.set(name, next);
+  });
+}
+
+/** A term's timing alone (its window, its count and its gate), each key only when it is set. */
+export function timingOf(entry: SteerTiming): SteerTiming {
+  const counted = entry.trigger === "FIRST_N" || entry.trigger === "AFTER_N";
+  return {
+    trigger: entry.trigger,
+    ...(counted ? { tokens: entry.tokens ?? 0 } : {}),
+    ...(entry.gate ? { gate: { ...entry.gate } } : {}),
+  };
+}
+
+/** Set when a term acts: its window (a preset, or a counted one with its count) and its probe
+ *  gate, replacing the ones it had (queued behind a running generation like every rack edit). */
+export function setSteerTiming(name: string, timing: SteerTiming): void {
+  const next = timingOf(timing);
+  enqueueOrApply(`when ${name}`, () => {
+    const entry = steerRack.entries.get(name);
+    if (!entry) return;
+    const { tokens: _tokens, gate: _gate, ...rest } = entry;
+    steerRack.entries.set(name, { ...rest, ...next } as SteerEntry);
+  });
+}
+
+/** A flat concept's relation to a second one: push only the part of it along ``onto``
+ *  (``operator`` ``~``), or all but that part (``|``); ``null`` pushes all of it again. The term's
+ *  key is its selector, so a relation re-keys it (``base~onto``): ``onselect`` gets the new key
+ *  once the change has applied (queued behind a running generation like every rack edit). A
+ *  projection keeps its own signed strength, from the shared flat one with the sign of the pole
+ *  it pushed toward; all of it again rejoins the shared strength at the pole its sign points to.
+ *  Nothing changes when the new key is already a chip. */
+export function relateSteerEntry(
+  name: string,
+  relation: { operator: "~" | "|"; onto: string } | null,
+  onselect?: (key: string) => void,
+): void {
+  enqueueOrApply(relation === null ? `all of ${name}` : `${name} ${relation.operator === "~" ? "along" : "not along"} ${relation.onto}`, () => {
+    const entry = steerRack.entries.get(name);
+    if (!entry || (entry.mode !== "subspace" && entry.mode !== "projection")) return;
+    const layers = entry.layers === undefined ? {} : { layers: entry.layers };
+    const common = { ...timingOf(entry), ...layers, enabled: entry.enabled };
+    let key: string;
+    let next: SteerEntry;
+    if (relation === null) {
+      if (entry.mode !== "projection") return;
+      const info = manifoldByName(entry.base);
+      const pole = entry.alpha < 0 && (info?.node_labels.length ?? 0) > 1 ? 1 : 0;
+      const label = info?.node_labels[pole] ?? null;
+      const coords = info?.node_coords[pole] ? [...info.node_coords[pole]] : [];
+      // The rack keys a concept by its catalog name (an agent may have written it bare).
+      key = info ? `${info.namespace}/${info.name}` : entry.base;
+      next = { mode: "subspace", ablate: false, coords, label, variant: "raw", ...common };
+    } else {
+      const base = entry.mode === "projection" ? entry.base : name;
+      let alpha: number;
+      if (entry.mode === "projection") alpha = entry.alpha;
+      else {
+        const info = manifoldByName(name);
+        alpha = entry.label !== null && info?.node_labels.indexOf(entry.label) === 1 ? -steerRack.subspaceAlong : steerRack.subspaceAlong;
+      }
+      key = `${base}${relation.operator}${relation.onto}`;
+      next = { mode: "projection", base, operator: relation.operator, onto: relation.onto, alpha: alpha || 0, ...common };
+    }
+    if (key !== name && steerRack.entries.has(key)) return;
+    steerRack.entries.delete(name);
+    steerRack.entries.set(key, next);
+    onselect?.(key);
   });
 }
 
@@ -263,7 +333,7 @@ export function addSubspaceToRack(name: string, variant: Variant = "raw"): void 
  *  their own layer and take no clause. */
 export function setSteerLayers(name: string, layers: LayerScope): void {
   const scope = Array.isArray(layers) ? [...layers] : layers;
-  patchSteerEntry(name, { layers: scope }, ["subspace", "manifold", "jlens", "slens", "sae"]);
+  patchSteerEntry(name, { layers: scope }, ["subspace", "manifold", "projection", "jlens", "slens", "sae"]);
 }
 
 /** Take any term off the rack.  Never deletes the server-side artifact. */
@@ -342,7 +412,7 @@ function settleRecipe(text: string, parts: readonly SteeringPartJSON[], ticket: 
   if (ticket !== recipeTicket || steerRack.readOnlyRecipe !== text) return;
   const made = recipeAsChips(parts, steerRack.catalog, steerRack.subspaceAlong);
   if ("problem" in made) {
-    steerRack.recipeNote = { text: `Chips cannot hold it: ${made.problem}.`, retry: false };
+    steerRack.recipeNote = { text: `Chips cannot hold it, so only an agent can write it: ${made.problem}.`, retry: false };
     return;
   }
   steerRack.entries.clear();
@@ -506,7 +576,7 @@ export function setUnitTerm(id: string, term: { ablate: boolean; alpha: number }
       mode: "unit",
       ablate: term.ablate,
       alpha: term.alpha,
-      trigger: prev?.mode === "unit" ? prev.trigger : "BOTH",
+      ...(prev?.mode === "unit" ? timingOf(prev) : { trigger: "BOTH" as const }),
       enabled: prev?.mode === "unit" ? prev.enabled : true,
     });
   });

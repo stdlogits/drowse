@@ -35,8 +35,46 @@ try {
   assert.deepEqual(pushes.chips.entries.get("default/emotions").coords, [0.3, 0.8]);
   assert.equal(pushes.chips.entries.get("default/emotions").label, "wonder");
   assert.equal(recipeAsChips(fixture.cases[0].parts.slice(1), fixture.catalog, 0.7).chips.subspaceAlong, 0.7);
-  const headPush = { text: "0.2 head/L20h3", op: "push", target: "head/L20h3", coeff: 0.2, onto: 0, position: null, layers: null, trigger: null };
+  const headPush = {
+    text: "0.2 head/L20h3", op: "push", target: "head/L20h3", coeff: 0.2, onto: 0, position: null, layers: null,
+    trigger: null, phase: "both", first_n: null, after_n: null, gate: null, projection: null,
+  };
   assert.ok("problem" in recipeAsChips([headPush], fixture.catalog, 0.5), "a head is never pushed");
+
+  // A term's timing and a projection's parts come from the server's fields, never from parsing its
+  // text: a gated, counted term keeps its window, count and gate as fields; a projection its base,
+  // relation and second concept, at its own signed strength.
+  const byName = (c) => new Map(c.rack.map(({ name, ...entry }) => [name, entry]));
+  const gates = fixture.cases.find(c => c.name === "gates and counted windows");
+  const gated = recipeAsChips(gates.parts, fixture.catalog, 0.5).chips.entries;
+  for (const [name, entry] of byName(gates)) assert.deepEqual(gated.get(name), entry, `${name} as a chip`);
+  const relations = fixture.cases.find(c => c.name === "projections relate a concept to a second one");
+  const related = recipeAsChips(relations.parts, fixture.catalog, 0.5).chips.entries;
+  for (const [name, entry] of byName(relations)) assert.deepEqual(related.get(name), entry, `${name} as a chip`);
+  const { triggerWord, strengthDial, strengthSays, chipStrength, gateProbeKey } = await server.ssrLoadModule("/src/lib/steering/terms.ts");
+  assert.equal(triggerWord(gated.get("sae/7")), "first 16 tokens while storm ≤ 0.05");
+  assert.equal(triggerWord(gated.get("jlens/storm")), "while honest.deceptive > 1", "a bare gate runs on the response");
+  assert.equal(triggerWord(gated.get("neuron/L31n4410")), "while L8n344 ≥ −0.5");
+  assert.equal(triggerWord(gated.get("slens/tower")), "after 4 tokens");
+  // Every dial is signed but a curved term's and a unit removal's.
+  const signed = fixture.cases.find(c => c.name.startsWith("a signed strength"));
+  const away = byName(signed);
+  assert.deepEqual([strengthDial("default/honest.deceptive", away.get("default/honest.deceptive"), -0.5).min, strengthDial("x", related.values().next().value, 0.5).min], [-2, -2]);
+  assert.equal(strengthDial("jlens/storm", away.get("jlens/storm"), 0.5).min, -1, "an atom's removal adds below zero");
+  assert.equal(strengthDial("head/L20h3", gated.get("head/L20h3"), 0.5).min, 0, "a unit's removal never goes negative");
+  assert.equal(strengthDial("default/emotions", gated.get("default/emotions"), 0.5).min, 0, "a curved position has no opposite");
+  assert.equal(strengthSays("default/honest.deceptive", away.get("default/honest.deceptive"), -0.5), "Away from honest");
+  assert.equal(strengthSays("slens/tower", away.get("slens/tower"), -0.5), "50% more of it");
+  const poles = fixture.catalog.find(row => row.name === "calm.anxious");
+  const projection = related.get("default/calm.anxious|default/honest.deceptive");
+  assert.deepEqual([0.6, -0.6, 0].map(v => strengthSays("x", projection, v, poles)), ["Toward calm", "Toward anxious", "Off"], "a projection pushes toward a pole");
+  assert.equal(chipStrength("slens/tower", away.get("slens/tower"), 0.5), "more");
+  assert.equal(chipStrength("default/calm.anxious", away.get("default/calm.anxious"), -0.5), "more", "a flat removal on a negative shared strength");
+  // A gate reads the number a probe's card shows: a curved probe's share, any other's value.
+  assert.equal(gateProbeKey("default/emotions", { family: "geometry", is_affine: false }), "default/emotions:fraction");
+  assert.equal(gateProbeKey("default/honest.deceptive", { family: "geometry", is_affine: true }), "default/honest.deceptive");
+  assert.equal(gateProbeKey("local/a.b", { family: "geometry", is_affine: false }), "local/a.b", "a dotted name takes only the axis forms");
+  assert.equal(gateProbeKey("jlens/storm", { family: "jlens" }), "jlens/storm");
 
   // The store: a recipe from elsewhere becomes chips when they hold it, else stays one read-only
   // chip with the reason; a late answer never overwrites a newer rack; a chip replaces it.
@@ -73,7 +111,7 @@ try {
   await settle();
   assert.equal(steerRack.readOnlyRecipe, fixture.readOnly[0].expression);
   assert.equal(steerRack.entries.size, 0);
-  assert.match(steerRack.recipeNote.text, /projection/);
+  assert.match(steerRack.recipeNote.text, /different strengths/);
   assert.equal(steerRack.recipeNote.retry, false);
   assert.equal(currentSteeringExpression(), fixture.readOnly[0].expression, "sent as written");
 
