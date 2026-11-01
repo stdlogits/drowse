@@ -281,7 +281,7 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
   `token_mask`), `use` the family it selected.
 - `counts MODEL` never loads the model: it streams the S lens's recorded
   corpus (else the default lens corpus; `--corpus FILE` or `--hf-corpus`
-  instead) through the tokenizer alone, `--documents` 16384 by default, and
+  instead) through the tokenizer alone, `--documents` 32768 by default, and
   writes the model's corpus counts (`lens/token_counts.py`; under 1M tokens
   exits 2). A current count is kept without `-f`; `--remove` drops it. The
   S mask uses it when no neuron-lens catalog is bound.

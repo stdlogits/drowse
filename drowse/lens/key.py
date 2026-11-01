@@ -51,12 +51,12 @@ FITTABLE_KINDS = LENS_KINDS
 DEFAULT_FIT_DOCUMENTS = 64
 
 #: Documents ``lens counts`` streams by default (:mod:`drowse.lens.token_counts`):
-#: at the lens corpus's 4,000 characters a document, about 16M tokens, where
-#: the S mask keeps a token seen once (neuron-lens's rate of 5 per 88M) and
-#: agrees with neuron-lens's 88M-token count on 97.5% of its kept tokens
-#: (binomial thinning of its Qwen3-8B counts; 95.6% of what it keeps are
-#: neuron-lens's).
-DEFAULT_COUNT_DOCUMENTS = 16384
+#: FineWeb-Edu averaged 585 tokens a document (2,048 documents, SmolLM2's
+#: tokenizer, sliced at 4,000 characters), so about 19M tokens, where the S mask
+#: keeps a token seen twice (neuron-lens's rate of 5 per 88M).  Binomial
+#: thinning of neuron-lens's Qwen3-8B counts to 16M tokens at that threshold
+#: keeps 92.7% of its kept set, 99.3% of what it keeps being in it.
+DEFAULT_COUNT_DOCUMENTS = 32768
 
 #: A local lens directory: the kind's letter, optionally ``-<tag>``
 #: (``r``, ``j``, ``r-chat``).  The name carries the kind, so ``local:r`` is

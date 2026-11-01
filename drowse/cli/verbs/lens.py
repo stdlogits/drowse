@@ -646,7 +646,7 @@ GROUP = Verb(
                 arg("--documents", type=positive_int, default=DEFAULT_COUNT_DOCUMENTS,
                     metavar="N",
                     help=f"Documents to count (default {DEFAULT_COUNT_DOCUMENTS}, "
-                         "about 16M tokens; at least 1M tokens are needed)"),
+                         "about 19M tokens of FineWeb-Edu; at least 1M tokens are needed)"),
                 arg("--remove", action="store_true",
                     help="Drop the model's corpus counts (S reads mask by the tokenizer)"),
                 FORCE.but(help="Count again over existing counts"),

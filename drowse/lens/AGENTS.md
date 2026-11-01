@@ -148,14 +148,15 @@ view, which reopens when either source changes on disk):
    vocabulary size; another format, model or size is not read). It streams
    the S lens's recorded `corpus_spec` (a local fit's or a fetched lens's;
    else the default lens corpus; `--corpus FILE` / `--hf-corpus` override)
-   through the tokenizer alone, `DEFAULT_COUNT_DOCUMENTS = 16384` documents
-   (about 16M tokens), and keeps neuron-lens's rate, `count_threshold(tokens)
-   = max(1, ceil(5 · tokens / 87,884,610))`; under 1M tokens it refuses. A
+   through the tokenizer alone, `DEFAULT_COUNT_DOCUMENTS = 32768` documents
+   (about 19M tokens of FineWeb-Edu, 585 a document), and keeps neuron-lens's
+   rate, `count_threshold(tokens) = max(1, ceil(5 · tokens / 87,884,610))`;
+   under 1M tokens it refuses. A
    lens fit's own documents are too few to count (64 by default), and a fetched
    lens's pack holds no counts, so the counts live with the model, never in a
    lens pack (lens format v7 is unchanged). Binomial thinning of neuron-lens's
-   Qwen3-8B counts: a 16M-token count keeps 97.5% of its kept set, 95.6% of
-   what it keeps being in it;
+   Qwen3-8B counts: a 16M-token count at threshold 2 keeps 92.7% of its kept
+   set, 99.3% of what it keeps being in it (at threshold 1, 97.5% and 95.6%);
 3. none: the tokenizer part alone. Surfaced, never silent:
    `TokenEmbeddings.describe()`/`LensInstrument.token_mask_info()` give
    `{"source": "catalog" | "corpus" | "tokenizer", "detail", "kept"}`, shown
