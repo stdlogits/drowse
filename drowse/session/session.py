@@ -1500,7 +1500,6 @@ class DrowseSession:
         monitor_active: bool,
         lens_active: bool,
         sae_active: bool,
-        persist_per_layer_scores: bool,
     ) -> AuthoredPromptCapture | None:
         """This generation's authored-prefill capture policy, or ``None``.
 
@@ -1519,7 +1518,6 @@ class DrowseSession:
             lens_active=lens_active,
             sae_active=sae_active,
             readout_top_k=spec.readout_top_k,
-            persist_per_layer_scores=persist_per_layer_scores,
             content_end=lambda: int(self._renderer.prepare_input(
                 spec.input,
                 raw=False,

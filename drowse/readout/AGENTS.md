@@ -359,7 +359,9 @@ decimal places: a `jlens/` probability is often below 1e-4 and is read on a
 log scale, so fixed places would zero it. `per_layer=True` (the
 call's `persist_per_layer_scores`) adds `GEOMETRY_TRACE_KEYS` and the
 readout's `layers`. `subspace_coords_per_layer` (the inspector's live trail)
-is never kept. That is why the geometry per-layer keys and
+is never kept. Authored-prompt rows (`session/authored_capture.py`) always
+pass `per_layer=True`: they carry no `raw_index`, so nothing could replay
+their layers, and a prompt's rows are few. That is why the geometry per-layer keys and
 `LensReadout.layers` are `NotRequired` in the TypedDicts. The loom reader
 refuses rows of the earlier unreleased shapes (`loom/tree.py`). `envelope_sources` is the one builder of
 `lens_sources`/`sae_source`/`sae_layer`, from the lens instrument's

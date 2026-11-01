@@ -89,7 +89,6 @@ def _plan(tree: LoomTree, tok: Any, node: str, **overrides: Any) -> Any:
         "lens_active": False,
         "sae_active": False,
         "readout_top_k": 8,
-        "persist_per_layer_scores": False,
         "content_end": content_end,
     }
     kwargs.update(overrides)
@@ -235,7 +234,6 @@ def test_persist_writes_all_measurement_channels(matched: bool) -> None:
         lens_active=True,
         sae_active=True,
         readout_top_k=8,
-        persist_per_layer_scores=True,
         steering="0.2 formal",
     )
     if matched:

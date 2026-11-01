@@ -291,7 +291,6 @@ class AuthoredPromptCapture:
     lens_active: bool
     sae_active: bool
     readout_top_k: int
-    persist_per_layer_scores: bool
     steering: str | None
     search_end: int | None = None
     matches: list[AuthoredPromptMatch] = field(default_factory=list)
@@ -386,9 +385,10 @@ class AuthoredPromptCapture:
             if not measurements:
                 continue
             row = output_rows[match_index][token_index]
-            row["measurements"] = token_row_measurements(
-                measurements, per_layer=self.persist_per_layer_scores,
-            )
+            # An authored row keeps its per-layer traces whatever the call
+            # persists: it has no raw_index, so no replay can bring them
+            # back, and a prompt's rows are few.
+            row["measurements"] = token_row_measurements(measurements, per_layer=True)
             populated_matches.add(match_index)
 
         for match_index in sorted(populated_matches):
@@ -413,7 +413,6 @@ def plan_authored_capture(
     lens_active: bool,
     sae_active: bool,
     readout_top_k: int,
-    persist_per_layer_scores: bool,
     content_end: Callable[[], int],
 ) -> AuthoredPromptCapture | None:
     """The authored-prompt capture this generation needs, or None.
@@ -443,7 +442,6 @@ def plan_authored_capture(
         lens_active=lens_active,
         sae_active=sae_active,
         readout_top_k=readout_top_k,
-        persist_per_layer_scores=persist_per_layer_scores,
         steering=recipe.steering if recipe is not None else None,
         search_end=None if raw else int(content_end()),
     )

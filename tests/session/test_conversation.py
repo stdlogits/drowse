@@ -143,3 +143,33 @@ def test_authored_turns_gain_rows_only_when_a_channel_measures_them(
     assert rows, "the authored turn was not captured"
     assert "".join(row["text"] for row in rows) == "plain words"
     assert all("measurements" in row for row in rows)
+
+
+def test_authored_rows_keep_their_layers_without_persisted_layer_scores(
+    make_tiny_session: TinySessionFactory,
+) -> None:
+    """Regression: with ``persist_per_layer_scores`` off (the dashboard's
+    default), authored rows dropped their geometry traces, and an authored
+    row has no ``raw_index``, so no replay could bring them back. Authored
+    rows keep their per-layer traces whatever the call persists; generated
+    rows keep only the summary (they replay)."""
+    from drowse.readout.measurements import GEOMETRY_TRACE_KEYS
+    from tests.support.sessions import register_vectors
+
+    session, _script = make_tiny_session.scripted("ok")
+    register_vectors(session, "probe_axis")
+    session.add_probe("probe_axis")
+    user = session.append_turn(None, "plain words", role="user")
+    session.generate(None, on_token=lambda *_a, **_k: None, sampling=SamplingConfig(max_tokens=3))
+
+    authored = session.tree.nodes[user].tokens
+    assert authored
+    for row in authored:
+        assert "raw_index" not in row
+        reading = row["measurements"]["instruments"]["geometry"]["readings"]["probe_axis"]
+        assert set(GEOMETRY_TRACE_KEYS) <= set(reading), "an authored row keeps its layers"
+        assert reading["coords_per_layer"]
+    generated = session.tree.nodes[session.tree.active_node_id].tokens
+    assert generated
+    reading = generated[0]["measurements"]["instruments"]["geometry"]["readings"]["probe_axis"]
+    assert not set(GEOMETRY_TRACE_KEYS) & set(reading), "a generated row replays its layers"
