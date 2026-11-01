@@ -693,8 +693,13 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       const turn = _currentWriteTurn();
       if (turn) {
         // A stateless reply (a comparison) has no node to resync from; its
-        // text is whole on ``done`` even when the stream dropped frames.
-        if (streamGap && !turn.nodeId && typeof msg.result?.text === "string") turn.text = msg.result.text;
+        // text is whole on ``done`` even when the stream dropped frames. The
+        // bubble draws the token rows whenever it has any, and those have the
+        // gap, so a gapped reply drops them and draws the whole text.
+        if (streamGap && !turn.nodeId && typeof msg.result?.text === "string") {
+          turn.text = msg.result.text;
+          turn.tokens = [];
+        }
         turn.finishReason = msg.result?.finish_reason ?? "stop";
         if (msg.result?.applied_steering !== undefined) {
           turn.appliedSteering = msg.result.applied_steering;

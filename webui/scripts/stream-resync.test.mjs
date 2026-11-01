@@ -134,6 +134,35 @@ try {
   assert.equal(turn().finishReason, "length");
   assert.equal(genStatus.active, false);
   assert.equal(loomTree.rev, 3);
+
+  // A stateless reply (the A/B comparison) has no node to catch up from: its gapped token rows
+  // give way to the whole text on ``done``, so the bubble (which draws rows whenever it has any)
+  // never shows a reply with words missing.
+  const { sendShadowGenerate, abState } = await server.ssrLoadModule("/src/lib/stores/ab.svelte.ts");
+  turn().generated = true;
+  const steeredIdx = chatLog.turns.indexOf(turn());
+  await sendShadowGenerate(steeredIdx);
+  assert.equal(abState.processingAb, true);
+  const shadowToken = (index) => ({ ...token(index), node_id: null, raw_index: index });
+  emit({ type: "started", generation_id: "s", node_id: null, sibling_index: 0, sibling_count: 1 });
+  emit(shadowToken(0));
+  snapshot = tree(3, [root, ask, final], "reply");
+  pendingRead = null;
+  emit({ type: "resync", dropped: 1 });
+  assert.equal(typeof pendingRead, "function");
+  pendingRead();
+  await tick();
+  await tick();
+  emit(shadowToken(2));
+  const shadow = () => chatLog.turns[steeredIdx].abPair;
+  assert.deepEqual(shadow().tokens.map((score) => score.text), [words[0], words[2]], "the stream has the gap");
+  emit({ type: "done", node_id: null, sibling_index: 0, sibling_count: 1, result: {
+    text: words.slice(0, 3).join(""), tokens: 3, finish_reason: "length", applied_steering: null, usage: {},
+  } });
+  await tick();
+  const compared = chatLog.turns[steeredIdx].abPair;
+  assert.equal(compared.text, words.slice(0, 3).join(""), "the comparison's text is whole");
+  assert.equal(compared.tokens?.length ?? 0, 0, "its gapped rows give way to the text");
   console.log("stream resync: a lagging reader rebuilds its reply from the tree, no token lost or doubled");
 } finally {
   await server.close();
