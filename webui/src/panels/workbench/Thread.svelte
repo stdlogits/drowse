@@ -9,6 +9,7 @@
   import { loomUiState } from "../../lib/stores/loomUi.svelte";
   import { loomNodeSnippet } from "../../lib/loomSearch";
   import { rememberWay, wayDown } from "../../lib/threadPath";
+  import ConversationFormat from "./ConversationFormat.svelte";
   import { genStatus } from "../../lib/stores/chat.svelte";
   import { sessionState } from "../../lib/stores/session.svelte";
   import { pushToast } from "../../lib/stores/toasts.svelte";
@@ -19,6 +20,10 @@
   import { userFacingError } from "../../lib/runtime/userFacingError";
   import type { SavedConversationSummary } from "../../lib/conversationLibrary";
   import type { LoomNodeJSON } from "../../lib/types";
+
+  /** Whether the conversation's format sits under the header (the workbench's widest layout; the
+   *  others carry it in the row the thread folds into). */
+  let { format = false }: { format?: boolean } = $props();
 
   interface Row {
     node: LoomNodeJSON;
@@ -122,6 +127,7 @@
   <span class="dw-thread-name">{name}</span>
   <span class="meta">{branches} {branches === 1 ? "branch" : "branches"}</span>
 </div>
+{#if format}<ConversationFormat />{/if}
 
 {#if rows.length}
   <div class="dw-nodes" aria-label="The path you are on">

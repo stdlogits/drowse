@@ -4,12 +4,15 @@
   // own. Narrower, the thread folds into a row over the page and the Inspector keeps its column
   // beside the page, so a selection always shows. On a phone it is one column (Phone): the thread
   // folds into a row over the conversation, the inspector rises as a sheet between the conversation
-  // and the composer, and the composer folds away while the sheet is pulled up.
+  // and the composer, and the composer folds away while the sheet is pulled up. The conversation's
+  // format sits by the thread's header: under it in the thread column, else in the folded row.
   import { untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
   import { Icon, IconButton } from "@stdlogits/ledger";
   import Chat from "../Chat.svelte";
   import LoomSidebar from "../loom/LoomSidebar.svelte";
   import Thread from "./Thread.svelte";
+  import ConversationFormat from "./ConversationFormat.svelte";
   import Inspector from "../inspector/Inspector.svelte";
   import { workbenchUi, showConversation } from "../../lib/stores/workbench.svelte";
   import { clearSelection, selection, selectionIdentity } from "../../lib/stores/selection.svelte";
@@ -18,6 +21,9 @@
   let { phone = false, active = true }: { phone?: boolean; active?: boolean } = $props();
 
   let threadOpen = $state(false);
+  /** The three regions side by side, the thread a column of its own. */
+  const wideQuery = new MediaQuery("min-width: 1240px");
+  const threadColumn = $derived(!phone && wideQuery.current);
   const loomPage = $derived(workbenchUi.page === "loom");
   // The loom page takes the phone's whole column, so the sheet waits until the conversation is back.
   // A steering term opens in place over the composer, not in the sheet.
@@ -57,9 +63,10 @@
       <button type="button" class="fold" aria-expanded={threadOpen} aria-controls="workbench-thread" onclick={() => (threadOpen = !threadOpen)}>
         <span>Thread</span><span class="chev" class:open={threadOpen}><Icon name="down" /></span>
       </button>
+      {#if !threadColumn}<ConversationFormat />{/if}
     </div>
     <aside class="dw-thread" class:folded={!threadOpen} id="workbench-thread" aria-label="Thread">
-      <Thread />
+      <Thread format={threadColumn} />
     </aside>
 
     <section class="dw-page" aria-label={loomPage ? "Loom" : "Conversation"}>
@@ -150,6 +157,7 @@
   .phone.sheet-up :global(.chat .dock) { display: none; }
   /* While the sheet is up, the dock keeps the recipe and the composer and drops the status line. */
   .phone.sheet-shown :global(.chat .dock .status-footer) { display: none; }
+  .thread-fold { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s1) var(--s3); min-width: 0; }
   .fold { display: inline-flex; align-items: center; gap: var(--s2); height: 44px; padding: 0; border: 0; background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease); }
   .fold:hover, .fold[aria-expanded="true"] { color: var(--ink); }
   .chev { display: grid; transition: rotate var(--glide) var(--ease); }

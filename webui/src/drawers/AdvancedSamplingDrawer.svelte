@@ -1,15 +1,12 @@
 <script lang="ts">
   // Sampling settings (a dialog, from the sampling section's "More settings"): the filters and
   // penalties, capture and seed as label-over-field pairs, and the rarer knobs folded under More.
-  import { Expander, IconButton, Segmented } from "@stdlogits/ledger";
+  import { Expander, IconButton } from "@stdlogits/ledger";
   import {
     closeDrawer,
     samplingState,
     setSampling,
     patchSessionDefaults,
-    genUiMode,
-    setGenUiMode,
-    sessionState,
   } from "../lib/stores.svelte";
   import NumberInput from "../lib/NumberInput.svelte";
   import { getRuntimeClient } from "../lib/runtime/registry";
@@ -23,16 +20,6 @@
     tokenAlternativeLimit,
   } from "../lib/runtime/samplingCapabilities";
 
-  // Render mode — two-state: chat renders turns and roles, raw renders a
-  // single flat completion buffer.  The mode is seeded from the model's
-  // ``is_base_model`` flag the first time the model is seen, then it's a
-  // plain user toggle (a base model stays raw).  Toggling never mutates the
-  // loom tree.
-  const RENDER_MODES: { value: "chat" | "raw"; label: string }[] = [
-    { value: "chat", label: "Chat template" },
-    { value: "raw", label: "Raw completion" },
-  ];
-  const isBaseModel = $derived(sessionState.info?.is_base_model === true);
   const runtimeMode = getRuntimeClient().mode;
   const alternativesMax = tokenAlternativeLimit(runtimeMode);
   const alternativesAvailable = alternativesMax > 0;
@@ -185,17 +172,6 @@
 
     <Expander bind:open={technicalOpen} label="More">
       <div class="more">
-        <div class="field" role="group" aria-labelledby="sampling-format-head">
-          <span class="label" id="sampling-format-head">Format</span>
-          {#if isBaseModel}
-            <span class="fixed" data-tip="A base model continues the text as written, without chat roles or a system prompt">Raw completion</span>
-          {:else}
-            <div class="dw-row">
-              <Segmented label="Conversation format" value={genUiMode.mode} onchange={setGenUiMode} options={RENDER_MODES} />
-            </div>
-          {/if}
-        </div>
-
         <label class="field">
           <span class="label">Stop sequences</span>
           <textarea
@@ -255,7 +231,6 @@
   .field { display: grid; gap: var(--s2); min-width: 0; }
   .label { justify-self: start; color: var(--ink2); font: var(--type-control); }
   .more { display: grid; gap: var(--s5); }
-  .fixed { justify-self: start; color: var(--ink); font: var(--type-control); }
 
   textarea {
     width: 100%;
@@ -281,11 +256,9 @@
     .dlg-head { padding: var(--s4) var(--s4) 0; }
     .body { padding: var(--s4); }
   }
-  /* Phones and touch screens: every target 44 px, Ledger's close, fold toggle and format switch
-   * included (Segmented's thumb follows its option's box). */
+  /* Phones and touch screens: every target 44 px, Ledger's close and fold toggle included. */
   @media (max-width: 720px), (pointer: coarse) {
     .dlg-head :global(.icon) { width: 44px; height: 44px; }
     .body :global(.expander > .toggle) { height: 44px; }
-    .dw-row :global(.seg > button) { height: 44px; }
   }
 </style>
