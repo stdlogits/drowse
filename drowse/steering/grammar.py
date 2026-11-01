@@ -139,6 +139,7 @@ the composer loads the manifold artifact and lowers it into the steering plan.
 """
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass, replace
 from typing import Literal, Optional, TYPE_CHECKING, cast
@@ -1661,11 +1662,13 @@ def _fmt_manifold(m: ManifoldTerm) -> str:
     # ``onto`` *relative to* ``along``'s sign: literal = onto·sign(along), which
     # the parser then re-multiplies by sign(along) back to ``onto``.  For the
     # parser's own output (where the whole run shares one sign) this is a no-op.
+    # The sign is the sign bit, not ``< 0``: ``%g`` renders a negative zero as
+    # ``-0``, whose leading sign the parser applies to ``onto`` too.
     pos = _fmt_position(m.position)
     if m.onto == 0.0:
         coeff_str = f"{m.along:g}"
     else:
-        onto_lit = -m.onto if m.along < 0 else m.onto
+        onto_lit = -m.onto if math.copysign(1.0, m.along) < 0 else m.onto
         coeff_str = f"{m.along:g},{onto_lit:g}"
     body = f"{coeff_str} {m.manifold}%{pos}{format_layer_clause(m.layers)}"
     if m.trigger != Trigger.BOTH:

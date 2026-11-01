@@ -254,8 +254,9 @@ class Recipe:
             elif isinstance(val, ManifoldTerm):
                 # Flip the directional ``along`` (the representative coeff);
                 # ``onto`` is a collapse fraction in [0, 1], not a signed
-                # push, so it carries through unchanged.
-                flipped[name] = replace(val, along=-val.along)
+                # push, so it carries through unchanged.  A zero ``along``
+                # stays +0.0 rather than becoming a negative zero.
+                flipped[name] = replace(val, along=-val.along or 0.0)
             elif isinstance(val, tuple):
                 flipped[name] = (-float(val[0]), val[1])
             else:

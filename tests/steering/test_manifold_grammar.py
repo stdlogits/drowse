@@ -307,6 +307,20 @@ def test_mixed_sign_manifold_term_round_trips():
     assert reparsed.onto == pytest.approx(0.3)
 
 
+@pytest.mark.parametrize("expr", ["-0,0.3 m%a", "0,0.3 m%a", "-0,-0.3 m%a"])
+def test_zero_along_keeps_onto_through_a_round_trip(expr: str) -> None:
+    # ``%g`` renders a negative zero ``along`` as ``-0``, and the parser
+    # applies that leading sign to ``onto`` as well, so the formatter reads
+    # the sign bit, not ``along < 0``.
+    import math
+
+    before = _only_term(expr)
+    after = _only_term(format_expr(parse_expr(expr)))
+    assert isinstance(before, ManifoldTerm) and isinstance(after, ManifoldTerm)
+    assert after.onto == before.onto
+    assert math.copysign(1.0, after.along) == math.copysign(1.0, before.along)
+
+
 @pytest.mark.parametrize("expr", [
     "0.6,0.3 honest",          # plain vector term
     "0.6,0.3 angry~calm",      # projection term

@@ -440,6 +440,16 @@ def test_invert_manifold_term():
     assert term.onto == pytest.approx(0.3)
 
 
+def test_invert_manifold_term_with_zero_along_keeps_onto():
+    # Regression: negating a zero ``along`` gave -0.0, rendered ``-0``, and
+    # the re-parse applied that sign to ``onto`` (0.5 became -0.5).
+    inv = Recipe(steering="0,0.5 m%x").invert_steering()
+    assert inv.steering == "0,0.5 m%x"
+    (term,) = parse_expr(inv.steering).alphas.values()
+    assert isinstance(term, ManifoldTerm)
+    assert term.onto == 0.5
+
+
 def test_inverted_regen_of_a_curved_term_is_refused_at_composition():
     """The ``inverted`` modifier negates a ``%`` term's ``along``; on a
     curved fit that has no opposite, so composing the inverted recipe raises
