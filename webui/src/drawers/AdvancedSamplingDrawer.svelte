@@ -183,21 +183,18 @@
       </div>
     </section>
 
-    <!-- Outside the fold: Segmented's gliding thumb is placed only while no ancestor is inert,
-         and a closed Expander's body is. -->
-    <section class="dw-sec" aria-labelledby="sampling-format-head">
-      <span class="head" id="sampling-format-head">Format</span>
-      {#if isBaseModel}
-        <span class="fixed" data-tip="A base model continues the text as written, without chat roles or a system prompt">Raw completion</span>
-      {:else}
-        <div class="dw-row">
-          <Segmented label="Conversation format" value={genUiMode.mode} onchange={setGenUiMode} options={RENDER_MODES} />
-        </div>
-      {/if}
-    </section>
-
     <Expander bind:open={technicalOpen} label="More">
       <div class="more">
+        <div class="field" role="group" aria-labelledby="sampling-format-head">
+          <span class="label" id="sampling-format-head">Format</span>
+          {#if isBaseModel}
+            <span class="fixed" data-tip="A base model continues the text as written, without chat roles or a system prompt">Raw completion</span>
+          {:else}
+            <div class="dw-row">
+              <Segmented label="Conversation format" value={genUiMode.mode} onchange={setGenUiMode} options={RENDER_MODES} />
+            </div>
+          {/if}
+        </div>
 
         <label class="field">
           <span class="label">Stop sequences</span>

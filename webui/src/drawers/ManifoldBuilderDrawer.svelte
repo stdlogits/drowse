@@ -96,8 +96,7 @@
   {/if}
 
   <div class="mb-form">
-    <!-- Held while a job runs: the fieldset disables its buttons, and form.css dims it (not inert: the
-         gliding thumb hides inside an inert subtree). -->
+    <!-- Held while a job runs: the fieldset disables its buttons, and form.css dims it. -->
     <fieldset class="mode" disabled={busy}><Segmented
       value={authoringMode}
       onchange={(mode) => { if (!busy) authoringMode = mode; }}

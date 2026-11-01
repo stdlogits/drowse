@@ -2,6 +2,7 @@
 // queue: the depth-picked cell, the chosen token over depth, the pushed units' poles, the heads'
 // heat rows, the label text, and an anatomy that waits behind a running readout.
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
@@ -195,6 +196,14 @@ try {
   void cache.cachedTokenAnatomy("n1", 3, { k: 8, steered: false });
   await flush();
   assert.equal(calls.length, 4, "a lens change drops the kept anatomy");
+  // Regression: the selected token's ink chip spread 2px on every side and painted over the glyph
+  // before it (the t of "export", the n of "Ocean"). The wash and the ink grow only up and down.
+  const source = (path) => readFile(new URL(`../src/${path}`, import.meta.url), "utf8");
+  for (const [path, selector] of [["panels/Chat.svelte", /\.tok\.sel, \.tok\.sel:hover \{([^}]*)\}/], ["panels/RawBuffer.svelte", /\.clickable\[aria-expanded="true"\][^{]*\{([^}]*)\}/]]) {
+    const rule = selector.exec(await source(path))?.[1] ?? "";
+    assert.match(rule, /padding-block: 2px/, `${path}: the chip grows up and down`);
+    assert.doesNotMatch(rule, /box-shadow|padding-inline|margin/, `${path}: and never sideways`);
+  }
   console.log("token anatomy: ok");
 } finally {
   await server.close();

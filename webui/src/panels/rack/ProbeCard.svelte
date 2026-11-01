@@ -9,7 +9,7 @@
   import Bar from "../../lib/charts/Bar.svelte";
   import Trace from "../../lib/charts/Trace.svelte";
   import { depthTint, readingText } from "../../lib/charts/depth";
-  import LiveText from "../../lib/ui/LiveText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   import { nodeCoordExtent, parseProbeTarget } from "../../lib/tokens";
   import { highlightState, openDrawer, setHighlightTarget } from "../../lib/stores.svelte";
   import InstrumentRow from "./InstrumentRow.svelte";
@@ -71,6 +71,6 @@
     {/if}
   {/snippet}
   {#snippet value()}
-    {#if reading !== null}<LiveText text={readingText(reading, { signed: affine })} />{:else}–{/if}
+    {#if reading !== null}<MorphText text={readingText(reading, { signed: affine })} />{:else}–{/if}
   {/snippet}
 </InstrumentRow>

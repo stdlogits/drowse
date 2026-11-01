@@ -8,7 +8,6 @@
 
   import { savedConversationState } from "../lib/stores/savedConversations.svelte";
   import Bar from "../lib/charts/Bar.svelte";
-  import LiveText from "../lib/ui/LiveText.svelte";
   import {
     genStatus,
     geometricMeanPpl,
@@ -72,15 +71,15 @@
   <div class="status-details">
     <span class="text lifecycle" class:done-label={!genStatus.active} role="status"><MorphText text={savedEdit ? "Edit saved" : !hasRun && !genStatus.active ? "Ready" : preparingContinuation ? "Preparing continuation…" : genStatus.active ? genStatus.replay ? "Continuing" : "Writing" : finishLabel ?? (genStatus.finishReason === "stop" ? "Complete" : "Ended")} numbers={false} /></span>
     {#if !savedEdit && (hasRun || genStatus.active)}
-      <span class="text token-count"><LiveText text={genStatus.tokensSoFar} />{#if genStatus.active} / {genStatus.maxTokens || "?"}{/if} tokens</span>
+      <span class="text token-count"><MorphText text={genStatus.tokensSoFar} />{#if genStatus.active} / {genStatus.maxTokens || "?"}{/if} tokens</span>
       {#if genStatus.active}
         <span class="bar-wrap" aria-label={preparingContinuation ? "Preparing saved context" : "progress"}>
           <Bar value={preparingContinuation ? genStatus.replay!.completed : genStatus.tokensSoFar} max={preparingContinuation ? genStatus.replay!.total : genStatus.maxTokens || Math.max(genStatus.tokensSoFar, 1)} width={120} height={4} color="var(--tint)" />
         </span>
       {/if}
-      {#if !preparingContinuation}<span class="text speed"><LiveText text={tokPerSec.toFixed(1)} /> tokens/s</span>{/if}
-      <span class="text elapsed"><LiveText text={elapsedSec.toFixed(1)} />s</span>
-      {#if ppl !== null && Number.isFinite(ppl)}<span class="text uncertainty" {...{ "aria-description": "entropy perplexity" }}>uncertainty <LiveText text={ppl.toFixed(2)} /></span>{/if}
+      {#if !preparingContinuation}<span class="text speed"><MorphText text={tokPerSec.toFixed(1)} /> tokens/s</span>{/if}
+      <span class="text elapsed"><MorphText text={elapsedSec.toFixed(1)} />s</span>
+      {#if ppl !== null && Number.isFinite(ppl)}<span class="text uncertainty" {...{ "aria-description": "entropy perplexity" }}>uncertainty <MorphText text={ppl.toFixed(2)} /></span>{/if}
     {/if}
 
     {#if pendingCount > 0}

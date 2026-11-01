@@ -383,7 +383,7 @@
     </div>
     </div>
 
-    <main id="main" class="rooms-host" class:waiting={bootStatus !== "ready"} inert={dialogOpen || paletteState.open} aria-busy={bootStatus === "loading"}>
+    <main id="main" class="rooms-host" class:waiting={bootStatus !== "ready"} inert={dialogOpen || paletteState.open || bootStatus !== "ready"} aria-busy={bootStatus === "loading"}>
       <h1 class="sr-only">{ROOMS.find(room => room.value === route.room)?.label}</h1>
       <div class="room" hidden={route.room !== "workbench"}>
         <Workbench {phone} active={route.room === "workbench"} />
@@ -398,7 +398,8 @@
     </main>
 
     {#if bootStatus === "loading"}
-      <div class="booting" role="status" aria-live="polite" in:fadeIn out:fadeOut>
+      <!-- No outro: the skeleton leaves on the frame the room arrives, never over it. -->
+      <div class="booting" role="status" aria-live="polite" in:fadeIn>
         <span class="sr-only">Opening the workbench</span>
         <div class="dw-blocks" aria-hidden="true"><i></i><i></i><i></i></div>
       </div>
@@ -428,11 +429,13 @@
   .rooms { min-width: 0; }
   .notices { max-height: 25dvh; overflow-y: auto; overscroll-behavior: contain; }
   .rooms-host { min-width: 0; }
-  /* Not inert while booting: a piece that measures itself on mount (a gliding thumb) must see it.
-     Hidden, though (it still lays out and measures): the boot skeleton is fixed over the room, and a
-     room drawn under it showed its controls through the blocks (the Units room's tools at 375). */
-  .rooms-host.waiting { pointer-events: none; }
-  .rooms-host.waiting > .room { visibility: hidden; }
+  /* Inert and hidden while booting (it still lays out, so a gliding thumb measures, and Ledger places
+     a thumb under an inert page): the boot skeleton is fixed over the room, and a room drawn under it
+     showed its controls through the blocks (the Units room's tools at 375). Laid out all along, the
+     room takes its place without a jump, and fades in as the skeleton leaves (it once faded out over
+     the Model room's content). */
+  .rooms-host > .room { transition: opacity var(--in) var(--ease); }
+  .rooms-host.waiting > .room { visibility: hidden; opacity: 0; }
   .room[hidden] { display: none; }
   .booting { position: fixed; inset: 96px var(--s6) auto; z-index: 30; max-width: 720px; margin: 0 auto; pointer-events: none; }
   .scrim { position: fixed; inset: 0; z-index: 50; background: color-mix(in oklab, var(--wash2) 88%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }

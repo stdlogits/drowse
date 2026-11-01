@@ -131,8 +131,9 @@ try {
     }
 
     // Wave 3 finding 20: a ring off to one side of neutral (the months manifold) opened zoomed past
-    // the fit, so its farthest nodes and their labels fell off the canvas. At the opening zoom,
-    // neutral stays at the centre and, in any orientation, every node and every drawn label fits.
+    // the fit, so its farthest nodes and their labels fell off the canvas. At the opening zoom, in
+    // any orientation, every node and every drawn label fits. Wave 5 (a9's decision 5): the plot
+    // pivots on the centre of everything drawn, not on neutral, where the ring sat in one corner.
     const months = ["january", "february", "march", "april", "may", "june", "july", "august",
       "september", "october", "november", "december"];
     const ring = months.map((_, i) => [3 + Math.cos((2 * Math.PI * i) / 12), Math.sin((2 * Math.PI * i) / 12), 0.4 * Math.cos((4 * Math.PI * i) / 12)]);
@@ -146,8 +147,12 @@ try {
       for (const q of turns) {
         textCalls.length = 0;
         const hits = renderProbeGeometry(canvas, { ...ringInput, orbit: { q, zoom: DEFAULT_ORBIT_ZOOM } });
-        const neutral = hits.find((hit) => hit.label === "neutral");
-        assert.ok(Math.abs(neutral.screen[0] - width / 2) < 1e-9 && Math.abs(neutral.screen[1] - height / 2) < 1e-9, "neutral stays at the centre");
+        const live = { ...ringInput, live: [8, 0.5, 0], trail: [[6, 0, 0], [7, 0.2, 0]], orbit: { q, zoom: DEFAULT_ORBIT_ZOOM } };
+        for (const hit of renderProbeGeometry(canvas, live)) {
+          assert.ok(hit.screen[0] >= 6 && hit.screen[0] <= width - 6 && hit.screen[1] >= 6 && hit.screen[1] <= height - 6,
+            `with a reading past the ring, ${hit.label} is still inside the ${width}x${height} plot`);
+        }
+        textCalls.length = 0;
         for (const hit of hits) {
           assert.ok(hit.screen[0] >= 6 && hit.screen[0] <= width - 6 && hit.screen[1] >= 6 && hit.screen[1] <= height - 6,
             `${hit.label} is drawn inside the ${width}x${height} plot`);
@@ -163,6 +168,17 @@ try {
           assert.ok(apart, `the labels ${a.text} and ${b.text} do not overlap`);
         }
       }
+      // Seen face on, the box's centre (the midpoint of neutral and january, x = 4) is the plot's
+      // centre, and the cloud fills the plot (neutral at the centre gave it under half).
+      const face = renderProbeGeometry(canvas, { ...ringInput, orbit: { q: [1, 0, 0, 0], zoom: DEFAULT_ORBIT_ZOOM } });
+      const neutral = face.find((hit) => hit.label === "neutral");
+      const january = face.find((hit) => hit.label === "january");
+      assert.ok(Math.abs((neutral.screen[0] + january.screen[0]) / 2 - width / 2) < 1e-9 && Math.abs((neutral.screen[1] + january.screen[1]) / 2 - height / 2) < 1e-9,
+        "the pivot is the centre of everything drawn");
+      assert.ok(january.screen[0] - neutral.screen[0] > 0.8 * (Math.min(width, height) - 56), "the ring and neutral fill the plot");
+      // A reading inside the box moves nothing.
+      const inside = renderProbeGeometry(canvas, { ...ringInput, live: [3, 0.5, 0], trail: [[2, 0, 0]], orbit: { q: [1, 0, 0, 0], zoom: DEFAULT_ORBIT_ZOOM } });
+      assert.deepEqual(inside.find((hit) => hit.label === "january").screen, january.screen, "a reading inside the box leaves the cloud still");
     }
   } finally {
     if (oldWindow === undefined) delete globalThis.window; else globalThis.window = oldWindow;
