@@ -71,10 +71,9 @@ _MLP_CHILDREN = frozenset({"gate_proj", "up_proj", "down_proj", "act_fn"})
 _MOE_NAMES = frozenset({"experts", "router", "shared_expert", "shared_experts", "gate"})
 
 _GELU_C = math.sqrt(2.0 / math.pi)
-#: Probe-match tolerances.  Wide enough for bf16 modules, far below the O(1)
-#: gap between the shapes being told apart.
+#: Probe-match tolerance, relative to the expected value.  Wide enough for
+#: bf16 modules, far below the O(1) gap between the shapes being told apart.
 _MATCH_RTOL = 3e-2
-_OFFSET_GAP = 0.25
 
 
 # -- activations -------------------------------------------------------------
@@ -435,21 +434,26 @@ def _norm_spec(
     r = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + float(eps))
     implied = y / (x * r)  # the per-channel multiplier the module applied
     w = None if weight is None else weight.detach().float().cpu()
-    candidates = (0.0, 1.0) if w is not None else (0.0,)
-    for offset in candidates:
+    # Each convention's error is judged relative to its own gain: a bf16
+    # module rounds a gain of ~1,000 by a few units, so an absolute gap would
+    # refuse the right convention on large gains (gemma-3-270m's MLP output
+    # norms).  When both conventions fit, the closer one wins.
+    best: tuple[float, float] | None = None
+    for offset in (0.0, 1.0) if w is not None else (0.0,):
         gain = torch.ones(dim) if w is None else w + offset
-        error = (implied - gain).abs()
-        if (
-            float(error.median()) < _OFFSET_GAP
-            and bool((error <= _MATCH_RTOL * gain.abs().clamp_min(1.0)).all())
-        ):
-            return NormSpec(
-                module=module, dim=dim, eps=float(eps), offset=offset,
-                weighted=w is not None,
-            )
-    raise UnsupportedBlockError(
-        f"{where} ({kind}) is not an RMSNorm with a plain or 1+w weight",
-        layer=layer,
+        error = (implied - gain).abs() / gain.abs().clamp_min(1.0)
+        if bool((error <= _MATCH_RTOL).all()):
+            median = float(error.median())
+            if best is None or median < best[0]:
+                best = (median, offset)
+    if best is None:
+        raise UnsupportedBlockError(
+            f"{where} ({kind}) is not an RMSNorm with a plain or 1+w weight",
+            layer=layer,
+        )
+    return NormSpec(
+        module=module, dim=dim, eps=float(eps), offset=best[1],
+        weighted=w is not None,
     )
 
 
