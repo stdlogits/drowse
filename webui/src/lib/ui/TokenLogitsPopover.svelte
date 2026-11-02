@@ -6,7 +6,7 @@
   import { samplingState } from "../stores/sampling.svelte";
   import { getRuntimeClient } from "../runtime/registry";
   import { tokenAlternativeDefault } from "../runtime/samplingCapabilities";
-  import { currentViewport, placePopover, popoverBounds } from "../popoverPlacement";
+  import { applyPopoverPlacement, currentViewport } from "../popoverPlacement";
 
   let { token, anchor, isCurrent, source = "Model token", contextChanged = false, onclose, ondetails }: {
     token: TokenScore;
@@ -38,14 +38,7 @@
 
   function place() {
     if (closing) return;
-    const view = currentViewport();
-    const bounds = popoverBounds(view);
-    panel.style.maxWidth = `${bounds.maxWidth}px`;
-    panel.style.maxHeight = `${bounds.maxHeight}px`;
-    const at = placePopover(trigger.getBoundingClientRect(), panel.getBoundingClientRect(), view);
-    panel.style.left = `${at.left}px`;
-    panel.style.top = `${at.top}px`;
-    panel.style.maxHeight = `${at.maxHeight}px`;
+    applyPopoverPlacement(panel, trigger, currentViewport());
   }
 
   onMount(() => {

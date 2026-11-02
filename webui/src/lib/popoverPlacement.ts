@@ -1,5 +1,5 @@
 // Where a popover opens beside its anchor (the token probabilities, TokenLogitsPopover), store-free
-// so a script test can check it fits. It keeps 8 px inside the visual viewport (a pinch-zoomed page
+// so a script test can check it fits, styles written included. It keeps 8 px inside the visual viewport (a pinch-zoomed page
 // included), starts at the anchor's left edge, and opens 6 px below the anchor, or above it when the
 // panel fits better there; it never covers the anchor, and a panel taller than its side scrolls.
 
@@ -59,4 +59,26 @@ export function placePopover(
     Math.min(opensBelow ? anchor.bottom + GAP : anchor.top - height - GAP, view.top + view.height - height - MARGIN),
   );
   return { left, top, maxHeight };
+}
+
+/**
+ * Size ``panel`` to ``view``, measure it, and put it beside ``anchor``: TokenLogitsPopover's place().
+ * The max size goes on before the measure, so a long panel is measured as the box it will be.
+ */
+export function applyPopoverPlacement(
+  panel: {
+    style: Pick<CSSStyleDeclaration, "left" | "top" | "maxWidth" | "maxHeight">;
+    getBoundingClientRect(): { width: number; height: number };
+  },
+  anchor: { getBoundingClientRect(): { left: number; top: number; bottom: number } },
+  view: Viewport,
+): Placement {
+  const bounds = popoverBounds(view);
+  panel.style.maxWidth = `${bounds.maxWidth}px`;
+  panel.style.maxHeight = `${bounds.maxHeight}px`;
+  const at = placePopover(anchor.getBoundingClientRect(), panel.getBoundingClientRect(), view);
+  panel.style.left = `${at.left}px`;
+  panel.style.top = `${at.top}px`;
+  panel.style.maxHeight = `${at.maxHeight}px`;
+  return at;
 }

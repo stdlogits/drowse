@@ -4,16 +4,18 @@ import { createServer } from "vite";
 
 // The dialog host and the token popover, the surfaces drowse.ai's browser checks used to cover:
 // - an open drawer makes the page behind it inert, and a leaving one takes no input while it fades;
-// - the drawer dialog (Sampling settings) and the token probabilities stay inside the viewport at
-//   phone, landscape and desktop sizes, the close button in view and the fields inside the body.
+// - the drawer dialog (Sampling settings, and DrawerOutlet loading it) and the token probabilities
+//   stay inside the viewport at phone, landscape and desktop sizes, the close button in view and the
+//   fields inside the body.
 // Rendered on the server, read from the components' styles, and placed by lib/popoverPlacement.ts.
 const src = new URL("../src/", import.meta.url);
 const read = (path) => readFileSync(new URL(path, src), "utf8");
 const VIEWPORTS = [[320, 780], [390, 844], [667, 375], [900, 900], [1440, 900]];
 
-// ---- a component's <style>, as rules with their media ---------------------------------------
-function styleRules(source) {
-  const css = source.slice(source.indexOf("<style>") + 7, source.indexOf("</style>")).replace(/\/\*[^]*?\*\//g, "");
+// ---- a stylesheet or a component's <style>, as rules with their media -----------------------
+const styleRules = (source) => cssRules(source.slice(source.indexOf("<style>") + 7, source.indexOf("</style>")));
+function cssRules(text) {
+  const css = text.replace(/\/\*[^]*?\*\//g, "");
   const rules = [];
   (function walk(text, media) {
     let i = 0;
@@ -95,15 +97,54 @@ function length(text, { vw, vh, percent }) {
 }
 const splitTop = (value) => value.match(/(?:[^\s(]+|\([^)]*\))+/g);
 
-/** A fixed box from its insets and width, the way the dialog lays out. */
+/**
+ * A fixed box in a ``vw`` x ``vh`` viewport, laid out as CSS lays out a fixed, non-replaced box with
+ * no margins: per axis from its insets, size and min/max size. A box the model cannot place (sized
+ * by its content, at its static position, or styled with a property it does not read) fails.
+ */
 function fixedBox(decls, vw, vh) {
-  const sides = splitTop(decls.inset);
-  const [top, right, bottom, left] = [sides[0], sides[1] ?? sides[0], sides[2] ?? sides[0], sides[3] ?? sides[1] ?? sides[0]];
-  const at = (side, extent) => side === "auto" ? null : length(side, { vw, vh, percent: extent });
-  const width = length(decls.width, { vw, vh, percent: vw });
-  const r = at(right, vw);
-  const l = at(left, vw) ?? vw - r - width;
-  return { left: l, right: l + width, top: at(top, vh), bottom: vh - at(bottom, vh), width };
+  const unread = Object.keys(decls).filter(name => /^(margin|transform|translate|scale|rotate|inset-|block-size|inline-size|(min|max)-(block|inline)-size|aspect-ratio)/.test(name));
+  assert.deepEqual(unread, [], "a fixed box styled with properties the fit model does not read");
+  const sides = splitTop(decls.inset ?? "auto");
+  const inset = { top: sides[0], right: sides[1] ?? sides[0], bottom: sides[2] ?? sides[0], left: sides[3] ?? sides[1] ?? sides[0] };
+  for (const side of Object.keys(inset)) {
+    if (decls[side] === undefined) continue;
+    assert.equal(decls.inset, undefined, `both inset and ${side}: which one wins depends on rule order`);
+    inset[side] = decls[side];
+  }
+  // CSS 2.1 10.3.7 and 10.6.4: an auto size spans the insets; min/max clamp it; when both insets and
+  // the size are set the end inset gives way (left-to-right, top-to-bottom).
+  function axis(start, end, size, min, max, extent, name) {
+    const at = (value) => value === undefined || value === "auto" ? null : length(value, { vw, vh, percent: extent });
+    const [s, e] = [at(start), at(end)];
+    let span = at(size);
+    if (span === null) {
+      assert.ok(s !== null && e !== null, `${name} is sized by its content`);
+      span = extent - s - e;
+    }
+    if (max !== undefined && max !== "none") span = Math.min(span, at(max));
+    if (min !== undefined) span = Math.max(span, at(min) ?? 0);
+    assert.ok(s !== null || e !== null, `${name} sits at its static position`);
+    const from = s ?? extent - e - span;
+    return [from, from + span];
+  }
+  const [left, right] = axis(inset.left, inset.right, decls.width, decls["min-width"], decls["max-width"], vw, "width");
+  const [top, bottom] = axis(inset.top, inset.bottom, decls.height, decls["min-height"], decls["max-height"], vh, "height");
+  return { left, right, top, bottom, width: right - left };
+}
+
+// The model, on boxes it must place and must refuse.
+{
+  const box = (decls) => fixedBox(decls, 400, 800);
+  assert.deepEqual(box({ inset: "16px 0 0", width: "100%" }), { left: 0, right: 400, top: 16, bottom: 800, width: 400 });
+  assert.deepEqual(box({ inset: "auto 0 0", width: "100%", height: "50vh" }), { left: 0, right: 400, top: 400, bottom: 800, width: 400 });
+  assert.equal(box({ inset: "0 0 0 auto", width: "200px", height: "120vh" }).bottom, 960, "a set height outgrows the viewport");
+  assert.equal(box({ inset: "0 0 0 auto", width: "200px", "min-height": "1000px" }).bottom, 1000, "min-height outgrows it");
+  assert.equal(box({ inset: "0", width: "200px", "max-height": "100px" }).bottom, 100);
+  assert.deepEqual(box({ inset: "0 0 0 auto", width: "200px" }), { left: 200, right: 400, top: 0, bottom: 800, width: 200 });
+  assert.throws(() => box({ inset: "auto 0 0", width: "100%" }), /sized by its content/);
+  assert.throws(() => box({ inset: "0", width: "100%", margin: "auto" }), /does not read/);
+  assert.throws(() => box({ inset: "0", top: "auto", width: "100%" }), /rule order/);
 }
 
 const server = await createServer({
@@ -168,6 +209,7 @@ try {
   // ---- the drawer dialog fits the viewport ------------------------------------------------------
   {
     const appRules = styleRules(appSource);
+    let shortest = Infinity;
     for (const [vw, vh] of VIEWPORTS) {
       for (const classes of [["dialog"], ["dialog", "narrow"]]) {
         const decls = computed(appRules, classes, vw);
@@ -177,8 +219,25 @@ try {
         assert.ok(box.left >= 0 && box.right <= vw, `${where}: ${box.left}..${box.right} wide`);
         assert.ok(box.top >= 0 && box.bottom <= vh && box.bottom - box.top >= vh / 2, `${where}: ${box.top}..${box.bottom} tall`);
         if (vw <= 720) assert.equal(box.width, vw, `${where}: a sheet across the phone`);
+        shortest = Math.min(shortest, box.bottom - box.top);
       }
     }
+    // DrawerOutlet's loading state, wash bars in the dialog's padding until the drawer's chunk
+    // arrives, takes the dialog's width and fits its shortest height.
+    const outlet = read("drawers/DrawerOutlet.svelte");
+    const loadingTag = outlet.match(/<div class="drawer-loading dw-blocks"[^>]*>((?:<i><\/i>)+)<\/div>/);
+    assert.ok(loadingTag, "DrawerOutlet's loading blocks");
+    const bars = loadingTag[1].length / "<i></i>".length;
+    const loading = computed(styleRules(outlet), ["drawer-loading", "dw-blocks"], 320);
+    const shared = cssRules(readFileSync(new URL("lib/style/drowse.css", src), "utf8"));
+    const blocks = Object.assign({}, ...shared.filter(rule => rule.media === null && rule.selectors.includes(".dw-blocks")).map(rule => rule.decls));
+    const bar = Object.assign({}, ...shared.filter(rule => rule.media === null && rule.selectors.includes(".dw-blocks > i")).map(rule => rule.decls));
+    for (const decls of [loading, blocks, bar]) {
+      assert.deepEqual(Object.keys(decls).filter(name => /width|^position$|^inset|^margin/.test(name)), [], "the loading blocks take the dialog's width");
+    }
+    const lengthOf = (text) => length(text, { vw: 320, vh: 780, percent: 0 });
+    const loadingHeight = 2 * lengthOf(loading.padding) + bars * lengthOf(bar.height) + (bars - 1) * lengthOf(blocks.gap);
+    assert.ok(loadingHeight <= shortest, `DrawerOutlet's loading state (${loadingHeight}px) fits the shortest dialog (${shortest}px)`);
     // The dialog clips and stacks its drawer; Sampling settings fills it, its head (Close) holds
     // still while its body scrolls, and its fields share the body's width rather than overflow it.
     const dialog = computed(appRules, ["dialog"], 1440);
@@ -198,30 +257,49 @@ try {
 
   // ---- the token popover fits the viewport ------------------------------------------------------
   {
-    const { placePopover, popoverBounds } = await server.ssrLoadModule("/src/lib/popoverPlacement.ts");
+    // TokenLogitsPopover places itself on open and on every resize or scroll through
+    // applyPopoverPlacement; here it runs over a panel that measures as a border-box element does
+    // (its natural size, clamped by the max-width and max-height written on it).
+    const popover = read("lib/ui/TokenLogitsPopover.svelte");
+    assert.match(popover, /function place\(\) \{\s*if \(closing\) return;\s*applyPopoverPlacement\(panel, trigger, currentViewport\(\)\);\s*\}/);
+    assert.match(popover, /onMount\(\(\) => \{\s*panel\.showPopover\(\);\s*place\(\);/, "placed as it opens");
+    for (const listener of [/window\.addEventListener\("resize", place\)/, /window\.visualViewport\?\.addEventListener\("resize", place\)/,
+      /window\.visualViewport\?\.addEventListener\("scroll", place\)/, /const scroll = [^]*?\n\s*place\(\);\n\s*\};/]) {
+      assert.match(popover, listener, "placed again when the viewport moves");
+    }
+    const { applyPopoverPlacement } = await server.ssrLoadModule("/src/lib/popoverPlacement.ts");
+    const px = (value) => {
+      if (value === undefined) return Infinity;
+      assert.match(value, /^-?\d+(\.\d+)?(e-?\d+)?px$/);
+      return Number.parseFloat(value);
+    };
+    const panelOf = (natural) => {
+      const style = {};
+      return { style, getBoundingClientRect: () => ({ width: Math.min(natural.width, px(style.maxWidth)), height: Math.min(natural.height, px(style.maxHeight)) }) };
+    };
     const views = [
       ...VIEWPORTS.map(([width, height]) => ({ left: 0, top: 0, width, height })),
       { left: 140, top: 260, width: 180, height: 300 }, // pinch-zoomed into a phone
     ];
     const sizes = [{ width: 320, height: 160 }, { width: 320, height: 640 }, { width: 2000, height: 2000 }];
     for (const view of views) {
-      const bounds = popoverBounds(view);
       for (const fx of [0, 0.5, 0.97]) {
         for (const fy of [0, 0.3, 0.5, 0.9]) {
           const left = view.left + fx * (view.width - 24);
           const top = view.top + fy * (view.height - 20);
           const anchor = { left, top, bottom: top + 20 };
           for (const natural of sizes) {
-            const size = { width: Math.min(natural.width, bounds.maxWidth), height: Math.min(natural.height, bounds.maxHeight) };
-            const at = placePopover(anchor, size, view);
-            const height = Math.min(size.height, at.maxHeight);
-            const where = `${size.width}x${size.height} at (${left}, ${top}) in ${JSON.stringify(view)}`;
-            assert.ok(at.left >= view.left + 8 && at.left + size.width <= view.left + view.width - 8 + 1e-9, `${where}: across`);
+            const panel = panelOf(natural);
+            applyPopoverPlacement(panel, { getBoundingClientRect: () => anchor }, view);
+            const at = { left: px(panel.style.left), top: px(panel.style.top) };
+            const { width, height } = panel.getBoundingClientRect();
+            const where = `${natural.width}x${natural.height} at (${left}, ${top}) in ${JSON.stringify(view)}`;
+            assert.ok(at.left >= view.left + 8 && at.left + width <= view.left + view.width - 8 + 1e-9, `${where}: across`);
             assert.ok(at.top >= view.top + 8 && at.top + height <= view.top + view.height - 8 + 1e-9, `${where}: down`);
             assert.ok(height > 0, `${where}: some room`);
             assert.ok(at.top >= anchor.bottom || at.top + height <= anchor.top, `${where}: the token stays visible`);
             const below = view.top + view.height - anchor.bottom - 14;
-            if (size.height <= below) assert.equal(at.top, anchor.bottom + 6, `${where}: opens below when it fits`);
+            if (Math.min(natural.height, view.height - 16) <= below) assert.equal(at.top, anchor.bottom + 6, `${where}: opens below when it fits`);
           }
         }
       }
