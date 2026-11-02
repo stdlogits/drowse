@@ -429,7 +429,8 @@ still to fetch among them) and a local fit whose documents start at the server's
 provider's offers Fetch again), and a failed fit offers Replace only when the status is
 `replaceable`. The fit is its own column component (`LensFit`: LensFamily with the fit's progress,
 error and form passed as its `fit` snippet and its running flag as `fitRunning`), which only drowse's
-section passes as LensQuad's `column`; drowse.ai's hosted section renders LensQuad's plain
+section passes as LensQuad's `column` (with the fit's status check as `check`, which LensQuad runs
+on mount before the fetch's and the sources refresh); drowse.ai's hosted section renders LensQuad's plain
 LensFamily columns, so nothing LensQuad imports reaches `lib/stores/instrumentAuthoring` or carries
 the fit's words (`scripts/lens-room.test.mjs`). The room's fit always covers every layer, since each family reads its own span of
 the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is

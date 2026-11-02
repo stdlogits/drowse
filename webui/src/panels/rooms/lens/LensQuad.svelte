@@ -2,22 +2,26 @@
   // The Lens room's four lenses (the Lens canvas's 2x2): the S family beside the R family, each a
   // column with its selected source at the out and mid sites beside the row labels, then its sources.
   // Both runtimes' source sections render it (the @runtime-jlens-source alias): drowse's own passes
-  // `column` (LensFit, a family with the local fit); drowse.ai's hosted one renders the plain
-  // LensFamily columns, since its runtime fits nothing. Neither this module nor LensFamily imports
-  // the fit job (lib/stores/instrumentAuthoring) or carries the fit's markup.
+  // `column` (LensFit, a family with the local fit) and `check` (the fit's status check); drowse.ai's
+  // hosted one renders the plain LensFamily columns with no props, since its runtime fits nothing.
+  // Neither this module nor LensFamily imports the fit job (lib/stores/instrumentAuthoring) or
+  // carries the fit's markup.
   import { onMount, type Component } from "svelte";
   import LensFamily from "./LensFamily.svelte";
   import { layerCount, sharedScale, type LensFamily as Family } from "../../../lib/lensRoom";
   import { instrumentFamily, lensFetch, lensSourceState, refreshLensSources } from "../../../lib/stores.svelte";
 
   type Column = Component<{ family: Family; n: number; scale: number | null }>;
-  let { column: FamilyColumn = LensFamily }: { column?: Column } = $props();
+  /** `check` is the caller's own mount-time status check, run first: the fit's status, then the
+   *  fetch's, then the sources. */
+  let { column: FamilyColumn = LensFamily, check }: { column?: Column; check?: () => void } = $props();
 
   const n = $derived(layerCount(lensSourceState.band, lensSourceState.sources));
   /** One scale for every card: the largest split-half difference among the selected sources. */
   const scale = $derived(sharedScale(lensSourceState.sources.filter(row => row.active === true)));
 
   onMount(() => {
+    check?.();
     if (instrumentFamily("lens")?.capabilities.preparations.includes("fetch") === true) void lensFetch.check();
     void refreshLensSources();
   });
