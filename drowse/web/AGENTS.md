@@ -250,6 +250,9 @@ when the two builds need different components at one import site.
 | `@runtime-session-drawer` | `drawers/SessionAdminDrawer.svelte` | this repo's `UnavailableRuntimeDrawer.svelte` |
 | `@runtime-local-drawer` | `drawers/UnavailableRuntimeDrawer.svelte` | `src/drawers/LocalRuntimeDrawer.svelte` |
 
+drowse.ai's hosted lens section renders the shared 2x2, `panels/rooms/lens/LensQuad.svelte`, by
+path and without `column`, so the local fit (`LensFit`) stays out of its bundle.
+
 **Hosted-only code** lives in drowse.ai's `webui/src/hosted/`: the WebGPU runtime and
 workers, the catalog and downloads, the PWA, the hosted shell and onboarding, and its own
 steering parser and archive mirror. This tree carries only the contracts, so never import
@@ -276,8 +279,9 @@ panels/inspector/     Inspector (by selection), Instruments, UnitView (+ UnitTra
 panels/rooms/         TokenStrip (the token cursor atop Units, Lens and Probes), UnitsRoom
                       (+ UnitAtlas), LensRoom (lens/LensLayers: one token layer by layer through
                       both lenses), ProbesRoom, ArtifactsRoom (artifacts/: UnitCatalog,
-                      LensSources, SaeSources; lens/'s LensDepth, LensFamily and LensCard draw the
-                      lenses section's 2x2), RoomSections (a room's tabs: Artifacts, Model),
+                      LensSources, SaeSources; lens/'s LensQuad, LensFamily and LensCard draw the
+                      lenses section's 2x2, LensFit the local fit in it, LensDepth the depth axis),
+                      RoomSections (a room's tabs: Artifacts, Model),
                       ModelFacts (the Model room's depth ramp and what is prepared)
 panels/               Chat (the Page), RawBuffer, RecipeBar (the recipe chips), SamplingStrip,
                       ProbeRack, JLensPanel, SaePanel, CommandPalette; loom/, manifold/
@@ -417,13 +421,17 @@ neuron-lens unit catalog: the model's neurons and heads, the catalog's commit an
 fetched, "Fetch labels" while it is not, then the Units room), `lenses`, the probe tools (`build`,
 `packs`, `combine`, `templates`, `roles`, the hosted drawers) and `saes` (`@runtime-sae-source`
 under the SAE in use). Each panel section opens on what is prepared and leads on to its readout.
-The `lenses` section's 2x2 (`panels/JLensSourceSection.svelte`, the `@runtime-jlens-source`
-alias, so drowse.ai shows its hosted section there instead) holds the S and R families, each with its selected source at the
+The `lenses` section's 2x2 (`panels/rooms/lens/LensQuad.svelte`, inside the runtime's source section
+at the `@runtime-jlens-source` alias) holds the S and R families, each with its selected source at the
 out and mid sites (layers held and split-half difference per layer), its sources (providers
 still to fetch among them) and a local fit whose documents start at the server's
 `fit_documents`. A selected source the server marks not `compatible` says it is not loaded (a
 provider's offers Fetch again), and a failed fit offers Replace only when the status is
-`replaceable`. The room's fit always covers every layer, since each family reads its own span of
+`replaceable`. The fit is its own column component (`LensFit`: LensFamily with the fit's progress,
+error and form passed as its `fit` snippet and its running flag as `fitRunning`), which only drowse's
+section passes as LensQuad's `column`; drowse.ai's hosted section renders LensQuad's plain
+LensFamily columns, so nothing LensQuad imports reaches `lib/stores/instrumentAuthoring` or carries
+the fit's words (`scripts/lens-room.test.mjs`). The room's fit always covers every layer, since each family reads its own span of
 the band; a layer subset (`layers`) stays with the CLI and the API. The Inspector's Sources is
 one line per family and the SAE, with a link to `#/artifacts/lenses`; its Features shows a "Choose
 an SAE" button that leads to `#/artifacts/saes` until an SAE is loaded.

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 
@@ -148,7 +149,77 @@ try {
     assert.match(lens.SITE_TIPS.out, /neuron outputs and attention inputs/);
     assert.match(lens.SITE_TIPS.mid, /neuron inputs and attention outputs/);
   }
-  console.log("Lens room: band spans, site series, family sources, the fit ladder and the fit's status passed");
+
+  // The 2x2 without the fit: drowse.ai's hosted section renders LensQuad (its runtime fits nothing,
+  // and its build refuses the fit's words), so nothing LensQuad reaches imports the fit job or
+  // LensFit or carries the fit's markup; drowse's own section (LensFit columns) still shows the fit.
+  {
+    const fitMarkers = ["Lens fit progress", "Generation pauses while documents are fitted", "Fit locally", "drowse lens fit"];
+    const count = (text, needle) => text.split(needle).length - 1;
+    const { installRuntimeClient } = await server.ssrLoadModule("/src/lib/runtime/registry.ts");
+    installRuntimeClient({
+      mode: "http", sessions: {}, profiles: {}, manifolds: {}, templates: {}, tree: {}, events: {}, probes: {}, instruments: {},
+      dispose: async () => {},
+    });
+    const { render } = await server.ssrLoadModule("svelte/server");
+    const { default: LensQuad } = await server.ssrLoadModule("/src/panels/rooms/lens/LensQuad.svelte");
+    const graph = server.environments.ssr.moduleGraph;
+    const reached = new Set();
+    const queue = [await graph.getModuleByUrl("/src/panels/rooms/lens/LensQuad.svelte")];
+    while (queue.length > 0) {
+      const module = queue.shift();
+      if (reached.has(module)) continue;
+      reached.add(module);
+      queue.push(...module.importedModules);
+    }
+    const sources = new URL("../src/", import.meta.url).pathname;
+    const files = [...new Set([...reached].map(module => module.file).filter(file => file?.startsWith(sources)))];
+    assert.ok(files.some(file => file.endsWith("/rooms/lens/LensFamily.svelte")), "the walk reaches the columns");
+    assert.deepEqual(files.filter(file => /instrumentAuthoring|LensFit\.svelte$/.test(file)), [], "LensQuad imports no fit");
+    for (const file of files) {
+      const text = readFileSync(file, "utf8");
+      for (const marker of fitMarkers) assert.ok(!text.includes(marker), `${file} carries "${marker}"`);
+    }
+
+    const { sessionState } = await server.ssrLoadModule("/src/lib/stores/session.svelte.ts");
+    const { lensSourceState } = await server.ssrLoadModule("/src/lib/stores/instruments.svelte.ts");
+    sessionState.info = { model_id: "m", instruments: [{ family: "lens", capabilities: { source_switch: true, preparations: ["fetch", "fit"] } }] };
+    const otherS = { source: "local:s", kind: "local", family: "S", lens: "S", active: false, sites: ["out"], layers: { out: [0, 1] }, n_prompts: 32 };
+    lensSourceState.sources = [local, otherS];
+    lensSourceState.fitDocuments = 64;
+    const quad = render(LensQuad, {}).body;
+    assert.match(quad, /aria-label="The four lenses"/);
+    assert.deepEqual([count(quad, ">S-lens<"), count(quad, ">R-lens<"), count(quad, ">Sources<")], [1, 1, 2]);
+    for (const marker of fitMarkers) assert.ok(!quad.includes(marker), `the plain 2x2 shows "${marker}"`);
+
+    const { lensFit } = await server.ssrLoadModule("/src/lib/stores/instrumentAuthoring.svelte.ts");
+    const { default: NativeSection } = await server.ssrLoadModule("/src/panels/JLensSourceSection.svelte");
+    let native = render(NativeSection, {}).body;
+    assert.equal(count(native, ">Fit locally<"), 2, "idle: each family offers a local fit");
+    assert.doesNotMatch(native, /Lens fit progress/);
+    assert.doesNotMatch(native, /aria-pressed="false"\s+disabled/, "idle: every source can be chosen");
+    // An R fit running: its progress among R's sources (after S's form), S's form still there, and
+    // a source not in use waits for it (the running flag LensFamily takes).
+    Object.assign(lensFit.state, { running: true, current: 3, total: 8, message: "prompt 3/8", latest: { state: "running", source: "local:r" } });
+    native = render(NativeSection, {}).body;
+    assert.equal(count(native, 'aria-label="Lens fit progress"'), 1);
+    assert.match(native, /data-tip="Generation pauses while documents are fitted"/);
+    assert.match(native, /data-tip="3 of 8 documents"/);
+    assert.match(native, />Cancel</);
+    assert.equal(count(native, ">Fit locally<"), 1);
+    assert.ok(native.indexOf(">Fit locally<") < native.indexOf("Lens fit progress"), "S's column, then R's");
+    assert.match(native, /aria-pressed="false"\s+disabled/, "local:s waits while the fit runs");
+    // A failed R fit: its error under R's sources, and both forms back.
+    Object.assign(lensFit.state, { running: false, error: "no documents", latest: { state: "error", source: "local:r" } });
+    native = render(NativeSection, {}).body;
+    assert.match(native, /<p class="meta err[^"]*" role="alert">no documents<\/p>/);
+    assert.equal(count(native, ">Fit locally<"), 2);
+    Object.assign(lensFit.state, { running: false, current: 0, total: 0, message: null, error: null, latest: null });
+    lensSourceState.sources = [];
+    lensSourceState.fitDocuments = null;
+    sessionState.info = null;
+  }
+  console.log("Lens room: band spans, site series, family sources, the fit ladder, the fit's status and the 2x2 without the fit passed");
 } finally {
   await server.close();
 }
