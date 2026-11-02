@@ -20,7 +20,8 @@ from drowse.lens.jlens import JacobianLens
 from drowse.lens.key import LensKey
 from drowse.model.blocks import model_spec
 from drowse.model.units import (
-    Pole, head_read_rows, head_write_matrix, neuron_read, neuron_reads, neuron_write, neuron_writes,
+    Pole, head_read_rows, head_write_matrix, neuron_read, neuron_read_rows, neuron_reads, neuron_write,
+    neuron_writes,
 )
 from drowse.naming import HeadRef, NeuronRef
 from drowse.units.reads import (
@@ -536,6 +537,77 @@ def test_find_recovers_a_neuron_write(lensed: Any) -> None:
     assert set(by_selector.layers) == {1} and len(by_selector.layers[1]["neurons"]) <= 2
 
 
+def test_population_artifacts_reproduce_top_without_the_vocabulary(lensed: Any) -> None:
+    """The per-layer artifacts a client ships offline: the population
+    scalars, contrast statistics and whitened write norms, by hand.  With
+    them one token's ``top`` z needs that token's logit alone."""
+    from drowse.lens.decompose import NeuronWrites
+
+    session, r, s = lensed
+    spec = model_spec(session.model)
+    L = 1
+    block = spec.blocks[L]
+    reads = session.units.reads
+    artifacts = reads.population_artifacts(L)
+    writes = neuron_writes(block).T
+    a, b = neuron_read_rows(block)
+    f = writes.shape[0]
+    # R: the final norm's scale of each transported write, its lse and the
+    # per-token mean and std across the layer's writes.
+    x = writes @ r.matrix(L, "out").T
+    rho = torch.rsqrt(x.pow(2).mean(-1) + spec.final_norm.eps)
+    torch.testing.assert_close(artifacts["R.writes.rho"], rho, rtol=1e-5, atol=1e-6)
+    logits = full_logits(_readout(session), x)
+    torch.testing.assert_close(artifacts["R.writes.lse"], logits.logsumexp(-1), rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(artifacts["R.writes.lse_neg"], (-logits).logsumexp(-1), rtol=1e-5, atol=1e-5)
+    torch.testing.assert_close(artifacts["R.writes.mean"], logits.mean(0), rtol=1e-5, atol=1e-5)
+    assert set(k for k in artifacts if k.startswith("R.fires+")) == {
+        "R.fires+.rho", "R.fires+.lse", "R.fires+.mean", "R.fires+.std",
+    }
+    # S: ‖u‖ and the footprint std per row; fires pooled over both poles.
+    emb = session.lens.token_embeddings()
+    u = writes @ s.matrix(L, "out")
+    torch.testing.assert_close(artifacts["S.writes.norm"], u.norm(dim=-1), rtol=1e-5, atol=1e-6)
+    torch.testing.assert_close(artifacts["S.writes.footprint_std"], emb.variance(u).sqrt(), rtol=1e-4, atol=1e-6)
+    fires = torch.cat([a + b, a - b]) @ s.matrix(L, "mid")
+    unit = fires / fires.norm(dim=-1, keepdim=True)
+    pooled = unit @ emb.centred(range(emb.vocab)).T
+    torch.testing.assert_close(artifacts["S.fires.mean"], pooled.mean(0), rtol=1e-4, atol=1e-5)
+    assert "S.fires+.mean" not in artifacts and artifacts["S.fires+.norm"].shape == (f,)
+    # The top shortcut: token v's z from its own logits and the artifacts.
+    v = int(session.units.top("e", by="writes", layers=[L], k=1).token_id)
+    lg = token_logits(_readout(session), x, torch.tensor([v]))[:, 0]
+    z = (lg - artifacts["R.writes.mean"][v]) / artifacts["R.writes.std"][v]
+    z_full = (logits[:, v] - logits[:, v].mean()) / logits[:, v].std(correction=0)
+    torch.testing.assert_close(z, z_full, rtol=1e-4, atol=1e-4)
+    # Heads: the OV contrast per family over the head-read vocabulary.
+    kept = reads.head_kept_ids()
+    assert artifacts["R.heads.ov.mean"].shape == artifacts["S.heads.ov.std"].shape == kept.shape
+    assert not any(key.startswith("heads.norm_derivative") for key in artifacts)  # llama: no head norms
+    # find's whitened write norms.
+    expected = NeuronWrites(neuron_writes(block), session.whitener, L).norms()
+    torch.testing.assert_close(artifacts["neurons.write_norms"], expected.cpu())
+    # The null basis is public too: orthonormal columns, the bottom 1%.
+    null = reads.null_basis()
+    torch.testing.assert_close(null.T @ null, torch.eye(null.shape[1]), atol=1e-5, rtol=0)
+
+
+def test_population_artifacts_leave_out_absent_halves(make_tiny_session: Any) -> None:
+    session = make_tiny_session()
+    _install_lens(session, "R", seed=1, last_out=False)
+    session.lens.select_source("local:r")
+    artifacts = session.units.reads.population_artifacts(1)
+    # Without an S lens there is no S half, and no head contrast past L0
+    # (a head's input side reads through S at L − 1 out).
+    assert not any(key.startswith("S.") or ".heads." in key for key in artifacts)
+    assert {"R.writes.rho", "R.fires-.lse", "neurons.write_norms"} <= set(artifacts)
+    assert "R.heads.ov.mean" in session.units.reads.population_artifacts(0)  # L0 reads the embedding
+    from drowse.errors import RequestError
+
+    with pytest.raises(RequestError, match="outside"):
+        session.units.reads.population_artifacts(len(session.layers))
+
+
 def test_refusals(lensed: Any) -> None:
     session, _r, _s = lensed
     from drowse.errors import RequestError
@@ -632,6 +704,12 @@ def test_gemma4_head_reads_go_through_the_head_norms(tmp_path: Path) -> None:
         D_q = _mean_norm_derivative(block, "query", rows)[h]
         # The derivative is not a multiple of the identity: it turns B.
         assert float((D_v - D_v.diagonal().mean() * torch.eye(D_v.shape[0])).abs().max()) > 1e-3
+        # The offline artifacts carry the same derivatives a head read applies.
+        artifacts = session.units.reads.population_artifacts(L)
+        torch.testing.assert_close(
+            artifacts["heads.norm_derivative.value"][attn.kv_head(h)], D_v, atol=1e-5, rtol=1e-4,
+        )
+        torch.testing.assert_close(artifacts["heads.norm_derivative.query"][h], D_q, atol=1e-5, rtol=1e-4)
 
         emb = session.lens.token_embeddings()
         kept = emb.keep.nonzero().squeeze(1)

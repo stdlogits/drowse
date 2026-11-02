@@ -295,6 +295,17 @@ dictionary="neurons")` (`NeuronWrites`: each layer's writes, signed, in the
 whitened metric) with each neuron's pole and label. `stats(unit)` is the
 firing block alone.
 
+`population_artifacts(layer)` is the browser seam's offline half: everything
+a reader without a vocabulary pass needs at one layer, host fp32 tensors keyed
+by name, a key absent where its lens half is. Per neuron population the R
+`rho` (the final norm's scale of each transported row), `lse` (`lse_neg` for
+writes) and contrast `mean`/`std`; the S `norm` (`‖u‖`) and `footprint_std`
+(`sqrt(uᵀ Σ_E u)`) and contrast (S fires pooled); the heads' `ov` contrast
+per family over `head_kept_ids()`; the head norms' mean derivatives; the
+whitened write norms `find` divides by. drowse.ai's pack builder calls it
+(and the public `null_basis()`) instead of the private builders, and
+`tests/fixtures/browser/unit-artifacts-*` pins its output.
+
 **Firing.** `Firing.scale` is what the unit's readings divide by:
 `{"source": "catalog" | "neutral", "detail", "top", "value"}` (`top` the
 source's `act_top` of the pole or head, `value` the soft scale over it).

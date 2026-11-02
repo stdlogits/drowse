@@ -967,7 +967,7 @@ class UnitReader:
 
     # --------------------------------------------------------------- neurons
 
-    def _null_basis(self) -> torch.Tensor:
+    def null_basis(self) -> torch.Tensor:
         """The bottom :data:`NULL_SHARE` right-singular directions of
         ``W_U diag(γ_final)``, ``[d, m]`` on the device (built once)."""
         null = self._null
@@ -1013,7 +1013,7 @@ class UnitReader:
                 )
             logits = self._masked_logit_lens(w)
             skew, kurt = logit_moments(logits[None])
-            null = self._null_basis()
+            null = self.null_basis()
             scalars = torch.stack([
                 w.norm(), cos_ab, (null.T @ w).pow(2).sum() / w.pow(2).sum().clamp_min(1e-30),
                 skew[0], kurt[0],
@@ -1894,6 +1894,87 @@ class UnitReader:
         return FindResult(label, k, rows, self._catalog_summary())
 
     # ------------------------------------------------------------- population
+
+    def population_artifacts(self, layer: int) -> dict[str, torch.Tensor]:
+        """Everything a reader without a pass over the vocabulary needs at
+        ``layer``, fp32 on the host and keyed by name; a key is absent where
+        its lens half is (the R and S matrices the reader's lenses hold at the
+        site).  What drowse.ai's pack builder ships per layer:
+
+        - population scalars, per neuron population (``writes`` at ``out``,
+          ``fires+``/``fires-`` at ``mid``): R ``.rho`` (the final norm's
+          scale of each transported row, ``rsqrt(mean((J x)²) + ε_f)``),
+          ``.lse`` (and ``.lse_neg`` for ``writes``); S ``.norm`` (``‖u‖``,
+          ``u = x K``) and ``.footprint_std`` (``sqrt(uᵀ Σ_E u)``), both
+          floored as ``top`` floors them;
+        - the contrast statistics ``hide_hubs`` and ``top`` z-score by:
+          ``<family>.<population>.mean``/``.std`` ``[V]`` (S ``fires`` is one
+          pooled population of both poles), and per family the heads'
+          ``<family>.heads.ov.mean``/``.std`` over the head-read vocabulary
+          (``head_kept_ids``) where both of a head read's factors exist;
+        - ``heads.norm_derivative.<role>`` ``[heads, hd, hd]``: the head norms'
+          mean derivatives a head read applies (query heads for ``query``, KV
+          heads otherwise), for a block with head norms;
+        - ``neurons.write_norms`` ``[d_ff]``: ``‖W w_n‖``, the whitened write
+          norms ``find`` divides its scores by (with a neutral baseline).
+        """
+        from drowse.lens.decompose import NeuronWrites
+
+        layer = int(layer)
+        if not 0 <= layer < self.n_layers:
+            raise RequestError(f"layer {layer} is outside the model's {self.n_layers} layers")
+        out: dict[str, torch.Tensor] = {}
+        with self._section("unit artifacts"), torch.inference_mode():
+            lenses = self._lenses()
+            block = self.runtime.block(layer)
+            emb = self._embeddings()
+            eps = float(self.runtime.spec().final_norm.eps)
+            writes, plus, minus = self._neuron_populations(block)
+            places: tuple[tuple[str, str, dict[str, torch.Tensor]], ...] = (
+                ("writes", "out", {"writes": writes}),
+                ("fires", "mid", {"fires+": plus, "fires-": minus}),
+            )
+            for place, site, populations in places:
+                matrix, label = self._r_matrix(lenses, layer, site)
+                stats = None if label is None else self._neuron_contrast(lenses, layer, "R", place)
+                if stats is not None:
+                    for name, rows in populations.items():
+                        x = rows if matrix is None else rows @ matrix.T
+                        out[f"R.{name}.rho"] = torch.rsqrt(x.pow(2).mean(-1) + eps)
+                        parts = ("mean", "std", "lse", "lse_neg") if place == "writes" else ("mean", "std", "lse")
+                        for part in parts:
+                            out[f"R.{name}.{part}"] = stats.get(f"{name}.{part}")
+                s_matrix = self._matrix(lenses.s, layer, site)
+                stats = None if s_matrix is None else self._neuron_contrast(lenses, layer, "S", place)
+                if stats is not None and s_matrix is not None:
+                    for name, rows in populations.items():
+                        u = self._s_covectors(rows, s_matrix)
+                        out[f"S.{name}.norm"] = u.norm(dim=-1).clamp_min(1e-12)
+                        out[f"S.{name}.footprint_std"] = emb.variance(u).clamp_min(1e-30).sqrt()
+                    for part in ("mean", "std"):
+                        out[f"S.{place}.{part}"] = stats.get(f"{place}.{part}")
+            norms = self._head_norms(block)
+            for role, value in norms.items():
+                if value is not None:
+                    out[f"heads.norm_derivative.{role}"] = value
+            heads = range(block.n_heads)
+            if self._b_factor(lenses, block, heads, norms) is not None:
+                for family in ("R", "S"):
+                    if self._a_factor(lenses, block, heads, family) is not None:
+                        mean, std = self._head_contrast(lenses, block, family, norms).mean_std("ov")
+                        out[f"{family}.heads.ov.mean"] = mean
+                        out[f"{family}.heads.ov.std"] = std
+            whitener = None if self._whitener is None else self._whitener()
+            if whitener is not None and layer in whitener:
+                out["neurons.write_norms"] = NeuronWrites(neuron_writes(block), whitener, layer).norms()
+            _drain(self.device)
+            return {name: value.detach().to("cpu", torch.float32).contiguous() for name, value in out.items()}
+
+    def head_kept_ids(self) -> torch.Tensor:
+        """The vocabulary ids a head read streams (its ``ov`` statistics'
+        index), on the host."""
+        with torch.inference_mode():
+            return self._head_kept().cpu()
 
     def layer_contrast(self, layer: int) -> dict[str, Any]:
         """Build (or load) one layer's neuron contrast statistics for both
