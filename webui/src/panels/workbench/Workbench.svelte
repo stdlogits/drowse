@@ -174,24 +174,31 @@
   .chev.open { rotate: 180deg; }
 
   /* A phone on its side: two columns, the conversation (thread row, log) and beside it the composer
-   * at the foot, or the inspector, which takes the whole column while it shows. The loom page
-   * scrolls instead, its map most of a screen tall with room above it to scroll back by. */
-  @media (max-height: 520px) {
+   * at the foot of its own column (the Thread row does not push it down), or the inspector, which
+   * takes the whole column while it shows. Below 480 px wide
+   * the side column would leave the log too narrow to read (a short portrait screen such as 320x480
+   * keeps the one column); at 480 the log keeps 172 px of text. */
+  @media (max-height: 520px) and (min-width: 480px) {
     .phone:not(.loom-page) .dw-main {
       display: grid;
       grid-template-columns: minmax(0, 1fr) clamp(260px, 40%, 360px);
-      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      grid-template-rows: auto auto minmax(0, 1fr);
       column-gap: var(--s4);
     }
     .phone:not(.loom-page) .thread-fold { grid-column: 1; grid-row: 1; }
     .phone:not(.loom-page) .dw-thread { grid-column: 1; grid-row: 2; }
-    .phone :global(.chat .log) { grid-column: 1; grid-row: 3 / 5; }
-    .phone :global(.chat .raw-host) { grid-column: 1 / -1; grid-row: 3 / 5; }
+    .phone :global(.chat .log) { grid-column: 1; grid-row: 3; }
+    .phone :global(.chat .raw-host) { grid-column: 1 / -1; grid-row: 3; }
     .phone.sheet-shown :global(.chat .raw-host) { grid-column: 1; }
-    .phone :global(.chat .dock) { grid-column: 2; grid-row: 4; padding-inline: 0 var(--s4); }
+    .phone :global(.chat .dock) { grid-column: 2; grid-row: 1 / -1; align-self: end; padding-inline: 0 var(--s4); }
     .phone .sheet, .phone .sheet.open { grid-column: 2; grid-row: 1 / -1; height: auto; margin: 0 var(--s4) var(--s4) 0; border-radius: var(--r-row); }
     .phone .grab { display: none; }
     .phone.sheet-shown :global(.chat .dock) { display: none; }
+  }
+
+  /* On any short screen the loom page scrolls instead, its map most of a screen tall with room above
+   * it to scroll back by. */
+  @media (max-height: 520px) {
     .phone.loom-page { height: auto; overflow: visible; }
     .phone.loom-page .dw-main { height: auto; }
     .phone.loom-page .loom { flex: none; overflow: visible; }
