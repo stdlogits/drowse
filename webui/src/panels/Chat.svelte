@@ -1165,12 +1165,52 @@
   }));
 </script>
 
+<!-- What the words are coloured by: under the composer in a chat, under the completion's head in
+     raw completion (RawBuffer's Colors). -->
+{#snippet readingTools()}
+  <div class="reading" id="chat-reading-tools" transition:expand>
+    <label class="ctl">
+      <span class="ctl-label" data-tip="Color words by token surprisal, sampler entropy, or an attached reading. Select a word for its exact value.">Color words by</span>
+      <Select value={highlightState.target ?? ""} options={highlightOptions} onchange={onHighlightChange}
+        ariaLabel={rawMode ? "Color completion tokens by" : "Color generated words by"} />
+    </label>
+    {#if compareColorAvailable}
+      <button type="button" class="dw-text" aria-pressed={highlightState.compareTwo} onclick={onCompareToggle}>
+        {highlightState.compareTwo ? "One color" : "Compare two colors"}
+      </button>
+    {/if}
+    {#if highlightState.compareTwo}
+      <label class="ctl">
+        <span class="ctl-label">With</span>
+        <Select value={highlightState.compareTarget ?? ""} options={compareOptions} onchange={onCompareChange}
+          disabled={!highlightState.compareTwo} ariaLabel="Second word color" />
+      </label>
+    {/if}
+    {#if automaticComparisonAvailable}
+      <Switch checked={autoRegenState.enabled} onchange={toggleAutoRegen} label="Compare replies"
+        hint="Create a second version after every reply using the comparison settings." />
+      {#if autoRegenState.enabled}
+        <Select value={autoRegenState.mode} options={AUTO_REGEN_MODES} onchange={onAutoRegenModeChange}
+          disabled={abState.processingAb} ariaLabel="Automatic comparison style" />
+        {#if autoRegenState.mode === "custom"}
+          {@const customProblem = customComparisonProblem(autoRegenState.custom)}
+          <input type="text" class="ctl-input" value={autoRegenState.custom} disabled={abState.processingAb}
+            oninput={(ev) => setAutoRegenCustom((ev.currentTarget as HTMLInputElement).value)}
+            placeholder="seed=42, temperature=1.5" aria-label="Custom automatic comparison sampling"
+            aria-invalid={customProblem !== null} aria-describedby={customProblem ? "custom-comparison-problem" : undefined} />
+          {#if customProblem}<span id="custom-comparison-problem" class="ctl-label" role="alert">{customProblem}</span>{/if}
+        {/if}
+      {/if}
+    {/if}
+  </div>
+{/snippet}
+
 <div class="chat-panel">
 <div class="chat" aria-label={rawMode ? "Text completion" : "Chat"} bind:this={chatRef}>
   <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{streamAnnouncement}</div>
 
   {#if rawMode}
-    <div class="raw-host"><RawBuffer /></div>
+    <div class="raw-host"><RawBuffer colors={readingTools} bind:colorsOpen={readingOpen} /></div>
   {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The scrollable conversation supports keyboard scrolling.) -->
   <div
@@ -1263,43 +1303,7 @@
 
   <div class="dock">
     <PendingBubbles />
-    {#if readingOpen}
-      <div class="reading" id="chat-reading-tools" transition:expand>
-        <label class="ctl">
-          <span class="ctl-label" data-tip="Color words by token surprisal, sampler entropy, or an attached reading. Select a word for its exact value.">Color words by</span>
-          <Select value={highlightState.target ?? ""} options={highlightOptions} onchange={onHighlightChange}
-            ariaLabel={rawMode ? "Color completion tokens by" : "Color generated words by"} />
-        </label>
-        {#if compareColorAvailable}
-          <button type="button" class="dw-text" aria-pressed={highlightState.compareTwo} onclick={onCompareToggle}>
-            {highlightState.compareTwo ? "One color" : "Compare two colors"}
-          </button>
-        {/if}
-        {#if highlightState.compareTwo}
-          <label class="ctl">
-            <span class="ctl-label">With</span>
-            <Select value={highlightState.compareTarget ?? ""} options={compareOptions} onchange={onCompareChange}
-              disabled={!highlightState.compareTwo} ariaLabel="Second word color" />
-          </label>
-        {/if}
-        {#if automaticComparisonAvailable}
-          <Switch checked={autoRegenState.enabled} onchange={toggleAutoRegen} label="Compare replies"
-            hint="Create a second version after every reply using the comparison settings." />
-          {#if autoRegenState.enabled}
-            <Select value={autoRegenState.mode} options={AUTO_REGEN_MODES} onchange={onAutoRegenModeChange}
-              disabled={abState.processingAb} ariaLabel="Automatic comparison style" />
-            {#if autoRegenState.mode === "custom"}
-              {@const customProblem = customComparisonProblem(autoRegenState.custom)}
-              <input type="text" class="ctl-input" value={autoRegenState.custom} disabled={abState.processingAb}
-                oninput={(ev) => setAutoRegenCustom((ev.currentTarget as HTMLInputElement).value)}
-                placeholder="seed=42, temperature=1.5" aria-label="Custom automatic comparison sampling"
-                aria-invalid={customProblem !== null} aria-describedby={customProblem ? "custom-comparison-problem" : undefined} />
-              {#if customProblem}<span id="custom-comparison-problem" class="ctl-label" role="alert">{customProblem}</span>{/if}
-            {/if}
-          {/if}
-        {/if}
-      </div>
-    {/if}
+    {#if readingOpen}{@render readingTools()}{/if}
 
     <StatusFooter />
     <RecipeBar />
