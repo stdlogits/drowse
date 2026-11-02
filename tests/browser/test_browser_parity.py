@@ -11,6 +11,7 @@ outputs from its inputs.
 """
 from __future__ import annotations
 
+import base64
 import csv
 import json
 import math
@@ -20,6 +21,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import numpy as np
 import pytest
 import torch
 from fastapi.testclient import TestClient
@@ -1512,6 +1514,116 @@ def test_budget_exhaustion_and_invalid_thresholds_are_explicit():
             _count_persistent_loops(distances, persistence_frac=fraction)
     with pytest.raises(ValueError, match="128"):
         _count_persistent_loops(torch.zeros(129, 129))
+
+
+# ---------------------------------------------------------------------------
+# Hook ABI v5: units, token anatomy, the mid site and the S lens
+# ---------------------------------------------------------------------------
+# One golden per (name, arch) built by tests/support/browser_units.py on the
+# units-tiny-models-v1 fixture; regenerate with
+# ``PYTHONPATH=. python -m tests.support.browser_units --write``.
+
+
+def test_units_validator_refuses_boundary_ties_and_declares_runs() -> None:
+    """A ranked list's last entry must clear the best excluded one (read off
+    the list one deeper); near-ties inside it are declared as runs."""
+    from tests.support import browser_units
+
+    def tokens(*values: float) -> dict[str, Any]:
+        return {"unit": "z", "tokens": [{"token_id": i, "token": str(i), "value": v} for i, v in enumerate(values)]}
+
+    ties: list[dict[str, Any]] = []
+    browser_units.rank_lists(tokens(3.0, 2.0, 1.9995, 1.0), tokens(3.0, 2.0, 1.9995, 1.0, 0.5), ties, "read")
+    assert ties == [{"path": "read.tokens", "key": ["token_id"], "groups": [[1, 2]]}]
+    with pytest.raises(browser_units.FixtureError, match="ties the best excluded"):
+        browser_units.rank_lists(tokens(3.0, 1.0), tokens(3.0, 1.0, 0.9999), [], "read")
+    # Probabilities rank by ln p: a tail 3e-6 apart in p is 0.036 apart in ln p.
+    probability = {**tokens(0.5, 8.5e-5), "unit": "probability"}
+    deeper = {**tokens(0.5, 8.5e-5, 8.2e-5), "unit": "probability"}
+    browser_units.rank_lists(probability, deeper, [], "read")
+
+
+def test_units_compare_matches_declared_runs_by_identity() -> None:
+    """Inside a declared run entries may permute, matched by identity with
+    every field compared; outside, order, ids and labels compare exactly."""
+    from tests.support import browser_units
+
+    entries = [{"token_id": i, "token": t, "value": v}
+               for i, t, v in ((7, "a", 3.0), (8, "b", 2.0), (9, "c", 1.9995), (4, "d", 1.0))]
+    expected = {"read": {"tokens": entries}}
+    ties = {"read.tokens": {"key": ["token_id"], "groups": [[1, 2]]}}
+
+    def problems(rows: list[dict[str, Any]]) -> list[str]:
+        return browser_units.compare(expected, {"read": {"tokens": rows}}, ties=ties)
+
+    assert problems([entries[0], entries[2], entries[1], entries[3]]) == []
+    assert problems([entries[1], entries[0], entries[2], entries[3]])  # across runs
+    assert problems([entries[0], {**entries[1], "token_id": -999}, entries[2], entries[3]])
+    assert problems([entries[0], entries[2], {**entries[1], "token": "WRONG"}, entries[3]])
+    assert problems([entries[0], entries[1], entries[2], {**entries[3], "token": "WRONG"}])
+    # An int array's ignored indices (peak rows without a margin) are skipped.
+    rows = {"row": browser_units.encode(np.array([3, 4, 5], dtype=np.int32))}
+    moved = {"row": browser_units.encode(np.array([3, 9, 5], dtype=np.int32))}
+    assert browser_units.compare(rows, moved, ties={"row": {"ignore": [1]}}) == []
+    assert browser_units.compare(rows, moved)
+    # float16 records allow one ulp.
+    half = np.array([1.0, 2.0, 1000.0], dtype=np.float16)
+
+    def record(values: np.ndarray) -> dict[str, Any]:
+        data = base64.b64encode(values.astype("<f2").tobytes()).decode("ascii")
+        return {"dtype": "float16", "encoding": "float16-le-base64", "shape": [3], "data": data}
+
+    one_ulp = half.copy()
+    one_ulp[2] = np.nextafter(half[2], np.float16(np.inf))
+    two_ulp = one_ulp.copy()
+    two_ulp[2] = np.nextafter(one_ulp[2], np.float16(np.inf))
+    assert browser_units.compare(record(half), record(one_ulp)) == []
+    assert browser_units.compare(record(half), record(two_ulp))
+
+
+def test_units_tiny_models_regenerate_to_their_digests() -> None:
+    """The fixture weights are integers and hashes only, so their file is
+    byte-exact on every platform, and every tensor round-trips q4f32_1."""
+    from tests.support import browser_units
+
+    expected = (GOLDENS / browser_units.MODEL_FILE).read_bytes()
+    assert browser_units._serialize(browser_units.build_units_tiny_models()) == expected
+    for arch in browser_units.ARCHES:
+        model, _tokenizer, rows = browser_units.build_model(arch)
+        quantized = [row for row in rows if row["kind"] == "q4"]
+        params = dict(model.named_parameters())
+        for row in quantized:
+            weight = params[row["name"]].detach()
+            assert torch.equal(browser_units.q4_round_trip(weight), weight), row["name"]
+
+
+def test_units_goldens_stay_within_their_caps() -> None:
+    from tests.support import browser_units
+
+    names = [browser_units.MODEL_FILE] + [
+        browser_units.golden_file(name, arch)
+        for arch in browser_units.ARCHES for name in browser_units.BUILDERS
+    ]
+    sizes = {name: (GOLDENS / name).stat().st_size for name in names}
+    assert max(sizes.values()) <= browser_units.FILE_CAP
+    assert sum(sizes.values()) <= browser_units.TOTAL_CAP
+
+
+@pytest.mark.parametrize("arch", ["gemma3", "qwen3"])
+@pytest.mark.parametrize("name", [
+    "block-sites", "unit-stats", "unit-ablation", "unit-probes", "unit-activity", "lens-reads",
+    "slens", "token-anatomy", "attention-patterns", "unit-reads", "unit-artifacts", "neuron-push",
+])
+def test_units_golden_matches_python(name: str, arch: str) -> None:
+    """Rebuild the golden with the engine on the file's recorded choices and
+    compare within its own tolerance block (ids, structure and texts exactly;
+    a declared tie run's entries matched by identity)."""
+    from tests.support import browser_units
+
+    expected = browser_units.load_golden(browser_units.golden_file(name, arch))
+    actual = json.loads(browser_units._serialize(browser_units.build_golden(name, arch, replay=expected)))
+    problems = browser_units.golden_problems(expected, actual)
+    assert not problems, "\n".join(problems[:20])
 
 
 if __name__ == "__main__":

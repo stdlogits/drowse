@@ -157,6 +157,7 @@ set session privates.
 | `decode.py` | `FakeLogitsModel`/`make_logits_model`, `scripted_model`/`scripted_logits`, `NoCacheModel`, `StopTokenizer`, `CharTokenizer`, for decode-loop, scoring, naturalness and joint-logprob tests. |
 | `jlens_toys.py` | `frozen_toy(n_layers)`: a genuine tiny llama (`TOY_D` wide, `TOY_VOCAB` tokens, weights re-drawn) the lens transport fits, with its own `CharTokenizer`. |
 | `lens_oracle.py` | The autograd lens oracle: `oracle_estimate`/`oracle_lens` compute every kind and site by autograd through the model's own modules, with the RelP rules as derivative patches (`relp_backward_rules`). The reference the transport is tested against. |
+| `browser_units.py` | The hook ABI v5 goldens (`tests/fixtures/browser/units-tiny-models-v1.json` and `<name>-<arch>-v1.json`): the `units-tiny-models-v1` fixture (gemma3_text and qwen3, 4 layers × 64, weights from a portable integer generator that drowse.ai rebuilds bit for bit, every linear q4-exact), `fixture(arch)` (a session in a scratch home with the fixture's neutral corpus, token counts, hand-built R/S lenses and band), one `build_<golden>` per file, the validator (finite values, top-k boundary margins against the call one deeper, decisive greedy picks, peak-row margins, size caps; near-tie runs declared), `golden_problems`/`compare`, and `write_goldens`. Regenerate with `PYTHONPATH=. python -m tests.support.browser_units --write`. |
 | `blocks.py` | `tiny_dense_model(model_type)`: a float64 tiny model of each dense family (`DENSE_FAMILIES`) with every weight, norm and scalar re-drawn and windows that bind; `default_init_model(model_type, seed=, dtype=)`: the same architecture at its default initialization in a low precision (bf16), the rounding a verification must not take for a term; `spec_forward(spec, ids)`: mids, block outputs and logits from a `ModelSpec` alone, the oracle for `BlockSpec` and transport layer maps. |
 | `server.py` | `mock_session`, `script_generate`, `StubSession` (below). |
 | `cli.py` | `FakeSession`, `install_fake_session` (patches `DrowseSession.from_pretrained`, the CLI's one construction seam, so the real narration, YAML defaults and close-on-exit run), `poison_session` (any model load raises). |
@@ -194,6 +195,24 @@ files from it, so their paths are part of its interface:
   affected golden in the same change, and drowse.ai's runtime has to match
   before its submodule pin moves past it. Each golden's file name carries its
   `schemaVersion` (`-v1`, `post-block-rank-one-v2`).
+- The hook ABI v5 goldens (units, token anatomy, the `mid` site, the S lens)
+  are one file per architecture, each at most 256 KiB and 2 MiB together, all
+  built by `tests/support/browser_units.py` and rebuilt by
+  `test_units_golden_matches_python` within each file's own `tolerance`
+  block. The model file holds integers and hashes only and must regenerate
+  byte for byte. A deliberate engine change that moves them regenerates the
+  set (`PYTHONPATH=. python -m tests.support.browser_units --write`). The
+  validator refuses a top-k boundary without a 1e-3 margin (each ranked
+  list against the same call one deeper; probability lists by `ln p`), a
+  greedy pick without one, an unmargined peak row a list or trace shows and
+  a one-signed traced neuron; a read moves to another `k` (recorded) to
+  clear its boundaries. Writing, every margin also clears the
+  cross-platform slack (twice the `python` tolerance); the parity test
+  rebuilds on the file's recorded choices (`build_golden(..., replay=)`:
+  its `k`s, `top`s, knobs and gate thresholds), so no platform re-decides
+  near a threshold. Near-ties inside a list are runs in the file's
+  `declared_ties` (`{path, key, groups}`): the comparison matches a run's
+  entries by identity and compares every field, order kept between runs.
 - Add a case to `browser_steering_expression.json` only once drowse.ai's
   TypeScript parser agrees: both sides run the same table.
 - `tests/fixtures/steering_ir.json` is the parsed-IR golden, Python-only for

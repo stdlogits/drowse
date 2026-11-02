@@ -71,10 +71,9 @@ _MLP_CHILDREN = frozenset({"gate_proj", "up_proj", "down_proj", "act_fn"})
 _MOE_NAMES = frozenset({"experts", "router", "shared_expert", "shared_experts", "gate"})
 
 _GELU_C = math.sqrt(2.0 / math.pi)
-#: Probe-match tolerances.  Wide enough for bf16 modules, far below the O(1)
-#: gap between the shapes being told apart.
+#: Probe-match tolerance, relative to the expected value.  Wide enough for
+#: bf16 modules, far below the O(1) gap between the shapes being told apart.
 _MATCH_RTOL = 3e-2
-_OFFSET_GAP = 0.25
 
 
 # -- activations -------------------------------------------------------------
@@ -435,22 +434,59 @@ def _norm_spec(
     r = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + float(eps))
     implied = y / (x * r)  # the per-channel multiplier the module applied
     w = None if weight is None else weight.detach().float().cpu()
-    candidates = (0.0, 1.0) if w is not None else (0.0,)
-    for offset in candidates:
+    # Each convention's error is judged relative to its own gain: a bf16
+    # module rounds a gain of ~1,000 by a few units, so an absolute gap would
+    # refuse the right convention on large gains (gemma-3-270m's MLP output
+    # norms).
+    fits: dict[float, float] = {}
+    for offset in (0.0, 1.0) if w is not None else (0.0,):
         gain = torch.ones(dim) if w is None else w + offset
-        error = (implied - gain).abs()
-        if (
-            float(error.median()) < _OFFSET_GAP
-            and bool((error <= _MATCH_RTOL * gain.abs().clamp_min(1.0)).all())
-        ):
-            return NormSpec(
-                module=module, dim=dim, eps=float(eps), offset=offset,
-                weighted=w is not None,
-            )
-    raise UnsupportedBlockError(
-        f"{where} ({kind}) is not an RMSNorm with a plain or 1+w weight",
-        layer=layer,
+        error = (implied - gain).abs() / gain.abs().clamp_min(1.0)
+        if bool((error <= _MATCH_RTOL).all()):
+            fits[offset] = float(error.median())
+    if not fits:
+        raise UnsupportedBlockError(
+            f"{where} ({kind}) is not an RMSNorm with a plain or 1+w weight",
+            layer=layer,
+        )
+    offset = min(fits, key=fits.__getitem__)
+    if len(fits) > 1:
+        # Every gain is large enough that both conventions fit within the
+        # module's rounding: the module itself, run with a zero weight,
+        # answers its offset exactly (a plain norm 0, a 1+w norm the bare
+        # normalization).  The closer median is the fallback when it can't.
+        probed = _zero_weight_offset(module, x.to(device=device, dtype=dtype), x * r)
+        if probed is not None:
+            offset = probed
+    return NormSpec(
+        module=module, dim=dim, eps=float(eps), offset=offset,
+        weighted=w is not None,
     )
+
+
+def _zero_weight_offset(
+    module: nn.Module, x: torch.Tensor, normalized: torch.Tensor,
+) -> float | None:
+    """The offset an RMSNorm adds to its weight, read by calling it with a
+    zero weight (without touching its own), or ``None`` when that call
+    doesn't answer one of the two conventions."""
+    weight = getattr(module, "weight", None)
+    if not isinstance(weight, torch.Tensor):
+        return None
+    try:
+        with torch.no_grad():
+            y = torch.func.functional_call(
+                module, {"weight": torch.zeros_like(weight)}, (x,),
+            ).float().cpu()
+    except Exception:  # a hook-wrapped or exotic module: fall back
+        return None
+    if tuple(y.shape) != tuple(normalized.shape):
+        return None
+    implied = y / normalized
+    for offset in (0.0, 1.0):
+        if bool(((implied - offset).abs() <= _MATCH_RTOL).all()):
+            return offset
+    return None
 
 
 def _activation_kind(act: Any, layer: int) -> ActivationKind:

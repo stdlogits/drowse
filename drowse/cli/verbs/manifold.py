@@ -69,7 +69,7 @@ def _fit_noop(
     return preflight_manifold_fit_noop(
         folder, model_id=args.model, layer_indices=layers,
         sae=sae, fit_mode=fit_mode, hyperparams=hyperparams,
-        quantize=args.quantize, device=args.device,
+        quantize=args.quantize, device=args.device, dtype=args.dtype,
     )
 
 

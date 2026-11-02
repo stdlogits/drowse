@@ -186,7 +186,9 @@ export type ModelPreference = "speed" | "balanced" | "quality";
 export type StructuredHookProfileId =
   | "standard-v1"
   | "standard-v2"
-  | "standard-v3";
+  | "standard-v3"
+  | "standard-v4"
+  | "standard-v4-residual";
 
 export interface RuntimeIdentity {
   sourceModel: string;
@@ -246,7 +248,7 @@ export interface ModelThinkingProfile {
 
 export interface CatalogInstrumentPack {
   id: string;
-  kind: "core" | "jlens" | "sae";
+  kind: "core" | "jlens" | "slens" | "units" | "sae";
   displayName: string;
   license: string;
   sourceRepository: string;

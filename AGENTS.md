@@ -95,7 +95,8 @@ python scripts/migrate_lens_v7.py --home DIR [--dry-run]  # pre-5.4 lens homes
 python scripts/regenerate_bundled.py [TARGETS...]         # bundled corpora + neutral baseline
 ```
 
-Model-loading verbs also take `-d/--device` and `-q/--quantize 4bit|8bit`;
+Model-loading verbs also take `-d/--device`, `-q/--quantize 4bit|8bit` and
+`--dtype float32|bfloat16|float16`;
 most read verbs take `-j/--json`. The root parser has exactly these nine
 verbs; a bare verb or group prints its help and exits 0, and `drowse MODEL` is
 an argparse error. Precedence is CLI > YAML > runner default; every verb with
@@ -238,11 +239,17 @@ interface here:
   (`loom/recipe.py`), the tree filter (`loom/filter.py`), the sampler, the
   measurement envelope, the affine lowering, a term's layers and shares
   (`SteeringComposer.term_layers`, the validate response), DLS, the Fisher fit
-  and topology;
+  and topology, and (hook ABI v5, pinned by the `units-tiny-models-v1` goldens
+  of `tests/support/browser_units.py`) the in-block sites, unit mean-ablation,
+  the unit tap, unit activity, token anatomy, the R/S lens reads, the S
+  readout, the static unit reads and the neuron push;
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`
   `METHOD_FIT_MODES`, the manifold sidecar and `.drowse` formats, lens format
   v7 (`sites.out`, `out.layer-L` shards);
-- Python it calls: `lens.store.save_lens_at`/`LensProvenance`, and the
+- Python it calls: `lens.store.save_lens_at`/`LensProvenance`,
+  `units.reads.UnitReader.population_artifacts`/`null_basis`/`head_kept_ids`
+  (its offline unit packs), the fixture generator in
+  `tests/support/browser_units.py`, and the
   lens estimator (today the removed `lens.fit.fit_jacobian_lens`; its hosted
   fit moving to `lens.fit.fit_lens(kind=, sites=("out",))` is a pending
   follow-up, `drowse/lens/AGENTS.md`).

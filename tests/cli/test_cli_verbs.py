@@ -128,7 +128,10 @@ def _parser_at(argv: list[str]) -> argparse.ArgumentParser:
     ["unit", "top", "owl", "-m", "x", "--by", "says"],
     ["unit", "top", "owl", "-m", "x", "-k", "0"],
     ["unit", "fetch"],
-    ["unit", "fetch", "m", "-d", "cpu"],        # no model load: no -d/-q
+    ["unit", "fetch", "m", "-d", "cpu"],        # no model load: no -d/-q/--dtype
+    ["unit", "fetch", "m", "--dtype", "float32"],
+    ["lens", "counts", "m", "--dtype", "float32"],  # reads the tokenizer only
+    ["lens", "fit", "m", "--dtype", "fp32"],
     ["unit", "ls", "m", "-f"],
     ["unit", "catalog"],                       # the binding is listed by `ls`
     ["unit", "rm", "m", "-j"],
@@ -182,7 +185,8 @@ def test_rejected_argv(argv: list[str]) -> None:
      {"layer": 14, "revision": "abc"}),
     (["unit", "read", "neuron/L8n344", "-m", "m"],
      {"command": "unit read", "unit": "neuron/L8n344", "model": "m", "top_k": 8,
-      "hide_hubs": False, "json_output": False, "device": "auto", "quantize": None}),
+      "hide_hubs": False, "json_output": False, "device": "auto", "quantize": None,
+      "dtype": None}),
     (["unit", "read", "head/L20h17", "-m", "m", "--hide-hubs", "-k", "16", "-j"],
      {"hide_hubs": True, "top_k": 16, "json_output": True}),
     (["unit", "top", "#42", "-m", "m"],
