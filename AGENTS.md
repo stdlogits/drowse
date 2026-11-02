@@ -236,7 +236,9 @@ interface here:
   `tests/browser/test_browser_parity.py` (`tests/AGENTS.md`);
 - semantics it reimplements: the grammar, `compose_call`
   (`loom/recipe.py`), the tree filter (`loom/filter.py`), the sampler, the
-  measurement envelope, the affine lowering, DLS, the Fisher fit and topology;
+  measurement envelope, the affine lowering, a term's layers and shares
+  (`SteeringComposer.term_layers`, the validate response), DLS, the Fisher fit
+  and topology;
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`
   `METHOD_FIT_MODES`, the manifold sidecar and `.drowse` formats, lens format
   v7 (`sites.out`, `out.layer-L` shards);
