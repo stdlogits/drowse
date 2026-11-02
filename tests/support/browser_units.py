@@ -24,9 +24,9 @@ import math
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import torch
@@ -139,9 +139,15 @@ _D, _FF, _LAYERS, _HEADS, _KV, _HD = 64, 96, 4, 4, 2, 16
 #: Per tensor role, its scale exponent ``E_t`` (tuned until the validator
 #: passes, then frozen; recorded per tensor in the model file).
 _EXPONENTS = {
-    "embed_tokens": 5, "q_proj": 5, "k_proj": 5, "v_proj": 5, "o_proj": 5,
+    "embed_tokens": 3, "q_proj": 5, "k_proj": 5, "v_proj": 5, "o_proj": 5,
     "gate_proj": 5, "up_proj": 5, "down_proj": 5,
 }
+#: Per-arch overrides (Gemma's tied head reads a √d-scaled input space).
+_ARCH_EXPONENTS: dict[str, dict[str, int]] = {"gemma3": {"embed_tokens": 4}, "qwen3": {}}
+
+
+def _exponent(arch: str, role: str) -> int:
+    return _ARCH_EXPONENTS[arch].get(role, _EXPONENTS[role])
 
 
 def fixture_config(arch: str) -> Any:
@@ -191,10 +197,10 @@ def build_model(arch: str) -> tuple[Any, Any, list[dict[str, Any]]]:
     for ordinal, (name, shape) in enumerate(tensor_table(model)):
         role = _role(name)
         if role in _EXPONENTS:
-            value = quantized_tensor(ordinal, shape, _EXPONENTS[role])
+            value = quantized_tensor(ordinal, shape, _exponent(arch, role))
             if not torch.equal(q4_round_trip(value), value):
                 raise AssertionError(f"{name} is not q4-exact")
-            kind, exponent = "q4", _EXPONENTS[role]
+            kind, exponent = "q4", _exponent(arch, role)
         else:
             value, kind, exponent = norm_tensor(ordinal, shape, arch), "norm", None
         params[name].copy_(value)
@@ -291,9 +297,16 @@ def encode(value: Any) -> Any:
     }
 
 
+def _encoded(value: Any) -> bool:
+    """Whether ``value`` is one of :func:`encode`'s array records."""
+    return isinstance(value, dict) and (
+        {"dtype", "encoding", "shape", "data"} <= set(value) or {"shape", "values"} == set(value)
+    )
+
+
 def decode(value: Any) -> np.ndarray:
     """The inverse of :func:`encode`."""
-    if isinstance(value, dict) and "encoding" in value:
+    if isinstance(value, dict) and "encoding" in value and "data" in value:
         dtype = "<i4" if value["dtype"] == "int32" else "<f4"
         raw = np.frombuffer(base64.b64decode(value["data"]), dtype=dtype)
         return raw.reshape(value["shape"])
@@ -306,16 +319,25 @@ class FixtureError(AssertionError):
     """The validator refused a golden (it would not discriminate)."""
 
 
-def _margin(a: float, b: float) -> bool:
+#: Probabilities compare at 1e-5 absolute (B1-goldens §3), so their lists
+#: keep ten times that between neighbours.
+PROBABILITY_MARGIN = 1e-4
+
+
+def _margin(a: float, b: float, *, absolute: float | None = None) -> bool:
+    if absolute is not None:
+        return abs(a - b) >= absolute
     return abs(a - b) >= MARGIN * max(1.0, abs(a), abs(b))
 
 
-def require_top_margin(values: Sequence[float], k: int, what: str) -> None:
+def require_top_margin(
+    values: Sequence[float], k: int, what: str, *, absolute: float | None = None,
+) -> None:
     """``values`` sorted descending: consecutive returned values and the
     k-th against the best excluded keep the margin."""
     take = min(int(k), len(values))
     for i in range(take - 1 + (1 if take < len(values) else 0)):
-        if not _margin(float(values[i]), float(values[i + 1])):
+        if not _margin(float(values[i]), float(values[i + 1]), absolute=absolute):
             raise FixtureError(
                 f"{what}: entries {i} and {i + 1} tie within the margin "
                 f"({values[i]!r} vs {values[i + 1]!r})"
@@ -324,7 +346,7 @@ def require_top_margin(values: Sequence[float], k: int, what: str) -> None:
 
 def require_finite(tree: Any, what: str, *, limit: float | None = None) -> None:
     def walk(node: Any, path: str) -> None:
-        if isinstance(node, dict) and "encoding" in node and node.get("dtype") == "float32":
+        if _encoded(node) and node.get("dtype") == "float32":
             array = decode(node)
             if not np.isfinite(array).all():
                 raise FixtureError(f"{what}{path}: non-finite value")
@@ -362,11 +384,28 @@ def _close(a: np.ndarray, b: np.ndarray, atol: float, rtol: float) -> bool:
     return a.shape == b.shape and bool(np.all(np.abs(a - b) <= atol + rtol * np.abs(a)))
 
 
-def compare(expected: Any, actual: Any, *, path: str = "", atol: float = 1e-6, rtol: float = 1e-5) -> list[str]:
+def _floats(tree: Any) -> list[float]:
+    if isinstance(tree, dict):
+        return [x for v in tree.values() for x in _floats(v)]
+    if isinstance(tree, list):
+        return [x for v in tree for x in _floats(v)]
+    return [float(tree)] if isinstance(tree, float) else []
+
+
+def compare(
+    expected: Any, actual: Any, *, path: str = "", atol: float = 1e-6, rtol: float = 1e-5,
+    soft: frozenset[str] = frozenset(),
+) -> list[str]:
     """Every difference between two goldens, values within the tolerance,
-    ints, strings, booleans and structure exactly."""
+    ints, strings, booleans and structure exactly.  A path in ``soft`` (a
+    declared tie) compares its float values as a sorted multiset only."""
     problems: list[str] = []
-    if isinstance(expected, dict) and ("encoding" in expected or "values" in expected):
+    if path.lstrip(".") in soft:
+        a, b = sorted(_floats(expected)), sorted(_floats(actual))
+        if len(a) != len(b) or not _close(np.array(a), np.array(b), atol, rtol):
+            return [f"{path}: declared-tie values differ"]
+        return []
+    if _encoded(expected):
         if not isinstance(actual, dict):
             return [f"{path}: expected an array"]
         a, b = decode(expected), decode(actual)
@@ -381,13 +420,15 @@ def compare(expected: Any, actual: Any, *, path: str = "", atol: float = 1e-6, r
         if not isinstance(actual, dict) or set(expected) != set(actual):
             return [f"{path}: keys {sorted(expected)} != {sorted(actual) if isinstance(actual, dict) else actual!r}"]
         for key in expected:
-            problems += compare(expected[key], actual[key], path=f"{path}.{key}", atol=atol, rtol=rtol)
+            problems += compare(
+                expected[key], actual[key], path=f"{path}.{key}", atol=atol, rtol=rtol, soft=soft,
+            )
         return problems
     if isinstance(expected, list):
         if not isinstance(actual, list) or len(expected) != len(actual):
             return [f"{path}: list lengths differ"]
         for i, (x, y) in enumerate(zip(expected, actual, strict=True)):
-            problems += compare(x, y, path=f"{path}[{i}]", atol=atol, rtol=rtol)
+            problems += compare(x, y, path=f"{path}[{i}]", atol=atol, rtol=rtol, soft=soft)
         return problems
     if isinstance(expected, float) or isinstance(actual, float):
         if not isinstance(actual, (int, float)) or isinstance(actual, bool) or not isinstance(expected, (int, float)):
@@ -436,6 +477,8 @@ class Fixture:
     arch: str
     session: Any
     home: Path
+    #: Each generated node's prompt render (its prefill's input ids).
+    prompts: dict[str, list[int]] = field(default_factory=dict)
 
     @property
     def tokenizer(self) -> Any:
@@ -485,7 +528,8 @@ def fixture(arch: str, *, lenses: bool = True) -> Iterator[Fixture]:
             )
             try:
                 if lenses:
-                    rows = int(session.model.get_input_embeddings().weight.shape[0])
+                    embedding = cast(Any, session.model).get_input_embeddings()
+                    rows = int(embedding.weight.shape[0])
                     counts = torch.full((rows,), 1_000, dtype=torch.int64)
                     for symbol in DROPPED_SYMBOLS:
                         counts[session.tokenizer.convert_tokens_to_ids(symbol)] = 0
@@ -820,9 +864,29 @@ def build_attention_patterns(fx: Fixture) -> dict[str, Any]:
 #: The fixture direction the mixed case pushes along.
 FIXTURE_DIRECTION = "deceptive_fixture"
 
-#: The gated case's condition per arch: open on some decode steps, shut on
-#: others (``neuron/L1n5``'s readings over the greedy decode).
-GATES = {"gemma3": "neuron/L1n5 > 0", "qwen3": "neuron/L1n5 < -0.25"}
+#: The neuron-push golden's gated case (any condition: only its lowering is pinned).
+PUSH_GATE = "neuron/L1n5 > 0"
+
+
+def _gate_for(fx: Fixture, ids: Sequence[int], steps: int) -> str:
+    """The gated case's condition: ``neuron/L1n5`` above the midpoint of its
+    two largest readings over the forwards that gate a decode step, so the
+    gate opens on exactly one step and stays shut on the others."""
+    session = fx.session
+    session.add_probe("neuron/L1n5")
+    try:
+        readings = [
+            float(chunk.measurements["scores"]["neuron/L1n5"])
+            for chunk in session.generate_stream(
+                fx.tokenizer.decode(list(ids)), raw=True, stateless=True, sampling=_greedy(steps + 1),
+            )
+        ][:steps]
+    finally:
+        session.remove_probe("neuron/L1n5")
+    top, second = sorted(readings, reverse=True)[:2]
+    if not _margin(top, second):
+        raise FixtureError("unit-ablation gated: the gate unit's readings tie")
+    return f"neuron/L1n5 > {round((top + second) / 2, 4)}"
 
 ABLATION_CASES: tuple[tuple[str, str, int], ...] = (
     ("neurons-full", "!neuron/L1n5 + !neuron/L1n40", 0),
@@ -830,7 +894,7 @@ ABLATION_CASES: tuple[tuple[str, str, int], ...] = (
     ("head-global", "!head/L1h3", 0),
     ("coefficients", "0.5 !neuron/L2n7 + 2 !neuron/L2n8 - !head/L2h0", 0),
     ("triggers", "!neuron/L1n5@prompt + !head/L2h1@response + !neuron/L3n9@first:2", 4),
-    ("gated", "!neuron/L2n7@when:{gate}", 4),
+    ("gated", "!head/L2h0@when:{gate}", 4),
     ("mixed", f"0.4 {FIXTURE_DIRECTION} + !neuron/L1n5", 2),
     ("push-and-ablate", "0.3 neuron/L2n7 + !neuron/L2n7", 0),
 )
@@ -880,6 +944,7 @@ def _run_case(fx: Fixture, ids: Sequence[int], steering: str | None, steps: int)
     prefill; a decode step's one row); the last layer's ``out`` at every
     prefill position."""
     text = fx.tokenizer.decode(list(ids))  # raw mode reads the BOS piece as its special
+    tables: list[dict[str, Any]] | None = None
     with _capture_blocks(fx, positions=None) as store, _capture_inputs(fx) as inputs:
         if steps == 0:
             if steering is None:
@@ -895,7 +960,6 @@ def _run_case(fx: Fixture, ids: Sequence[int], steering: str | None, steps: int)
             ).first
             if len(run.tokens) != steps + 1:
                 raise FixtureError(f"decode stopped after {len(run.tokens)} of {steps + 1} tokens")
-            tables = None
     if steps and steering is not None:
         with fx.session.steering(steering):
             tables = _unit_tables(fx)
@@ -925,8 +989,9 @@ def build_unit_ablation(fx: Fixture) -> dict[str, Any]:
     ids = short_prompt_ids(fx.tokenizer, fx.arch)
     base = {steps: _run_case(fx, ids, None, steps) for steps in sorted({s for *_x, s in ABLATION_CASES})}
     cases = []
+    gate = _gate_for(fx, ids, 4)
     for name, steering, steps in ABLATION_CASES:
-        steering = steering.format(gate=GATES[fx.arch])
+        steering = steering.format(gate=gate)
         case = _run_case(fx, ids, steering, steps)
         ref = base[steps]
         first, ref_first = decode(case["forwards"][0]["out"]), decode(ref["forwards"][0]["out"])
@@ -993,7 +1058,12 @@ def generated_node(fx: Fixture, steering: str | None = None) -> str:
     """The chat prompt plus :data:`DECODE_STEPS` greedy tokens, in the tree
     (a fresh conversation from the root)."""
     fx.session.tree.navigate(fx.session.tree.root_id)
-    runs = fx.session.generate(list(CHAT), steering=steering, sampling=_greedy(DECODE_STEPS))
+    with _capture_inputs(fx) as inputs:
+        runs = fx.session.generate(
+            CHAT[1]["content"], system_prompt=CHAT[0]["content"], steering=steering,
+            sampling=_greedy(DECODE_STEPS),
+        )
+    fx.prompts[str(runs.node_ids[0])] = inputs[0]
     if len(runs.first.tokens) != DECODE_STEPS:
         raise FixtureError(f"the generated node stopped after {len(runs.first.tokens)} tokens")
     node = runs.node_ids[0]
@@ -1034,14 +1104,10 @@ def _replayer(fx: Fixture) -> Any:
 
     session = fx.session
     return NodeReplayer(
-        replayer=cast_any(None), model=session.model, lens=session.lens,
+        replayer=cast(Any, None), model=session.model, lens=session.lens,
         units=session.units.reads.runtime, tokenizer=session.tokenizer,
-        tree=lambda: session.tree, traits=cast_any(None), trigger_context=TriggerContext(),
+        tree=lambda: session.tree, traits=cast(Any, None), trigger_context=TriggerContext(),
     )
-
-
-def cast_any(value: Any) -> Any:
-    return value
 
 
 def _hand_activity(fx: Fixture, forward: Any, *, top: int, units: Sequence[str]) -> dict[str, Any]:
@@ -1088,7 +1154,12 @@ def _activity_diagnostics(
     }
 
 
-def _check_activity(result: dict[str, Any], diag: dict[str, Any], top: int, case: str, *, ties: bool) -> None:
+def _check_activity(
+    result: dict[str, Any], diag: dict[str, Any], top: int, case: str, *, ties: bool,
+) -> list[str]:
+    """Refuses a top-``top`` boundary without the margin; returns the listed
+    or traced units whose peak row has none (declared: the browser's row
+    must then hold a value within tolerance of the peak)."""
     units = diag["units"]
     peak = decode(diag["peak"])
     margin = decode(diag["row_margin"])
@@ -1096,18 +1167,26 @@ def _check_activity(result: dict[str, Any], diag: dict[str, Any], top: int, case
     for kind in ("neuron", "head"):
         mags = sorted((abs(float(peak[i])) for u, i in index.items() if u.startswith(kind)), reverse=True)
         listed = [p for p in result["top"] if p["kind"] == kind]
-        if listed and not ties:
-            require_top_margin(mags, len(listed), f"unit-activity {case} {kind} peaks")
+        take = len(listed)
+        # The boundary decides membership and must hold; a near tie inside
+        # the list only orders it (declared: compared as a map by unit).
+        if not ties and 0 < take < len(mags) and not _margin(mags[take - 1], mags[take]):
+            raise FixtureError(f"unit-activity {case} {kind}: entry {take - 1} ties the best excluded")
     if ties:
-        return
+        return []
     rows = decode(diag["row"])
-    for unit in [p["unit"] for p in result["top"]] + list(result["traces"]):
+    tied: list[str] = []
+    for kind in ("neuron", "head"):
+        values = [abs(float(p["peak"])) for p in result["top"] if p["kind"] == kind]
+        if any(not _margin(a, b) for a, b in zip(values, values[1:], strict=False)):
+            tied.append(f"{kind} order")
+    for unit in dict.fromkeys([p["unit"] for p in result["top"]] + list(result["traces"])):
         i = index[unit]
         if int(rows[i]) < 0:  # every row excluded: the unit never ranks
             continue
-        scale = max(1.0, abs(float(peak[i])))
-        if float(margin[i]) < MARGIN * scale:
-            raise FixtureError(f"unit-activity {case}: {unit}'s peak row has no margin")
+        if float(margin[i]) < MARGIN * max(1.0, abs(float(peak[i]))):
+            tied.append(unit)
+    return tied
 
 
 # ---------------------------------------------------------------------------
@@ -1133,34 +1212,47 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
                top: int, *, args: dict[str, Any], ties: bool = False) -> None:
         result = {k: v for k, v in result.items() if k != "node_id"}
         diag = _activity_diagnostics(fx, full, excluded, name)
-        _check_activity(result, diag, top, name, ties=ties)
-        cases.append({"name": name, "arguments": args, "declared_ties": ties, "result": result,
+        tied_rows = _check_activity(result, diag, top, name, ties=ties)
+        cases.append({"name": name, "arguments": args, "declared_ties": ties,
+                      "tied_peak_rows": tied_rows, "result": result,
                       "diagnostics": {k: v for k, v in diag.items() if k != "units"}})
 
+    def tuned(name: str, node: str, args: dict[str, Any], *, raw: bool = False) -> None:
+        """The largest ``top`` ≤ the asked one whose boundaries keep the margin."""
+        full = dict(session.unit_activity(node, top=1024, units=every, raw=raw))
+        excluded = {full["sink_raw_index"]} - {None}
+        diag = _activity_diagnostics(fx, full, excluded, name)
+        for top in range(int(args["top"]), 2, -1):
+            result = dict(session.unit_activity(node, **{**args, "top": top}, raw=raw))
+            try:
+                _check_activity(result, diag, top, name, ties=False)
+            except FixtureError:
+                continue
+            record(name, result, full, excluded, top, args={**args, "top": top, "raw": raw})
+            return
+        raise FixtureError(f"unit-activity {name}: no top keeps its boundary margin")
+
     generated = generated_node(fx)
-    args = {"top": 8, "units": list(ACTIVITY_UNITS), "raw_index": 2, "layers": "0,2"}
-    result = dict(session.unit_activity(generated, **args))
-    full = dict(session.unit_activity(generated, top=1024, units=every))
-    sink = {result["sink_raw_index"]} - {None}
-    record("generated", result, full, sink, 8, args=args)
+    tuned("generated", generated, {"top": 8, "units": list(ACTIVITY_UNITS), "raw_index": 2, "layers": "0,2"})
 
     first = raw_first_turn(fx, 3)
     # A raw node replays raw (its prompt is the raw render, not the template's).
-    result = dict(session.unit_activity(first, top=8, raw_index=1, raw=True))
     full = dict(session.unit_activity(first, top=1024, units=every, raw=True))
-    if result["sink_raw_index"] != 0:
+    if full["sink_raw_index"] != 0:
         raise FixtureError("unit-activity sink: row 0 is not at the sink")
-    record("sink", result, full, {0}, 8, args={"top": 8, "raw_index": 1, "raw": True})
+    tuned("sink", first, {"top": 8, "raw_index": 1}, raw=True)
     # drowse 6.0 answers a population at the sink (every value 0) rather
     # than refusing it; a refusal would be recorded as one.
     try:
-        at_sink = dict(session.unit_activity(first, top=8, raw_index=0, raw=True))
+        sink_top = int(cases[-1]["arguments"]["top"])  # the sink case's tuned top
+        at_sink = dict(session.unit_activity(first, top=sink_top, raw_index=0, raw=True))
     except DrowseError as exc:
         status, text = exc.user_message()
         cases.append({"name": "sink-population", "arguments": {"raw_index": 0, "raw": True},
                       "refusal": {"status": status, "text": text, "code": type(exc).__name__}})
     else:
-        record("sink-population", at_sink, full, {0}, 8, args={"top": 8, "raw_index": 0, "raw": True})
+        record("sink-population", at_sink, full, {0}, sink_top,
+               args={"top": sink_top, "raw_index": 0, "raw": True})
 
     ids = short_prompt_ids(fx.tokenizer, fx.arch)
 
@@ -1206,15 +1298,579 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
         raise FixtureError(f"unit-activity excluded-and-zero: L1n5 peaks {pick}")
 
     segmented = generated_node(fx, steering="!neuron/L1n5@prompt")
-    full = dict(session.unit_activity(segmented, top=1024, units=every))
-    excluded = {full["sink_raw_index"]} - {None}
-    for top in (8, 7, 6, 5, 4):  # the largest top whose boundaries keep the margin
-        result = dict(session.unit_activity(segmented, top=top))
-        try:
-            _check_activity(result, _activity_diagnostics(fx, full, excluded, "segmented"), top,
-                            "segmented", ties=False)
-        except FixtureError:
-            continue
-        break
-    record("segmented", result, full, excluded, top, args={"top": top})
+    tuned("segmented", segmented, {"top": 8})
     return {**header("unit-activity", fx.arch, model_file_sha256()), "cases": cases}
+
+
+# ---------------------------------------------------------------------------
+# 11. unit-reads and 12. unit-artifacts
+# ---------------------------------------------------------------------------
+
+READ_UNITS = ("neuron/L1n5", "neuron/L2n40", "head/L1h3", "head/L2h0", "head/L0h1")
+TOP_TOKENS = ("e", "a")
+READ_K = 5
+
+
+def _token_id(fx: Fixture, symbol: str) -> int:
+    return int(fx.tokenizer.convert_tokens_to_ids(symbol))
+
+
+def _check_token_lists(tree: Any, what: str, ties: list[str]) -> None:
+    """Every returned token list's neighbours keep the margin; a list that
+    does not is declared (``declared_ties``: the browser compares its ids
+    as a set and its values in order, softly) rather than refused, since a
+    hundred lists over a 116-token mask meet a few near-ties by chance."""
+    if isinstance(tree, dict):
+        tokens = tree.get("tokens")
+        if isinstance(tokens, list) and tokens and isinstance(tokens[0], dict) and "value" in tokens[0]:
+            values = sorted((float(t["value"]) for t in tokens), reverse=True)
+            absolute = PROBABILITY_MARGIN if tree.get("unit") == "probability" else None
+            try:
+                require_top_margin(values, len(values), what, absolute=absolute)
+            except FixtureError:
+                ties.append(what)
+        for key, child in tree.items():
+            _check_token_lists(child, f"{what}.{key}", ties)
+    elif isinstance(tree, list):
+        for i, child in enumerate(tree):
+            _check_token_lists(child, f"{what}[{i}]", ties)
+
+
+def find_vector() -> torch.Tensor:
+    """The fixed ``[d]`` vector ``unitFind`` decomposes at layer 2."""
+    return quantized_tensor(2000, (_D,), 3)
+
+
+def build_unit_reads(fx: Fixture) -> dict[str, Any]:
+    """``unitRead`` (hubs shown and hidden), ``unitTop`` by writes and fires
+    over every layer, and ``unitFind`` of a vector and a lens selector,
+    catalog unbound."""
+    units = fx.session.units
+    assert fx.session.whitener is not None
+    reads = []
+    ties: list[str] = []
+    for i, unit in enumerate(READ_UNITS):
+        for hide in (False, True):
+            read = units.read(unit, k=READ_K, hide_hubs=hide).to_dict()
+            _check_token_lists(read, f"reads[{len(reads)}].read", ties)
+            reads.append({"unit": unit, "hide_hubs": hide, "read": read})
+    if len(ties) > len(reads):
+        raise FixtureError(f"unit-reads: {len(ties)} token lists tie; retune the fixture")
+    tops = []
+    for symbol in TOP_TOKENS:
+        for by in ("writes", "fires"):
+            result = units.top(symbol, by=by, layers="all", k=READ_K).to_dict()
+            scores = [float(hit["score"]) for hit in result["hits"]]
+            try:
+                require_top_margin(scores, len(scores), "top")
+            except FixtureError:
+                ties.append(f"top[{len(tops)}].result.hits")
+            tops.append({"token": symbol, "by": by, "result": result})
+    vector = find_vector()
+    selector = f"jlens/#{_token_id(fx, 'e')}"
+    finds = [
+        {"target": "vector", "layer": 2, "vector": encode(vector),
+         "result": units.find(vector, layer=2, k=READ_K).to_dict()},
+        {"target": selector, "result": units.find(selector, k=READ_K).to_dict()},
+    ]
+    return {
+        **header("unit-reads", fx.arch, model_file_sha256()),
+        "k": READ_K, "reads": reads, "top": tops, "find": finds, "declared_ties": ties,
+    }
+
+
+def build_unit_artifacts(fx: Fixture) -> dict[str, Any]:
+    """What drowse.ai's pack builder ships per layer
+    (:meth:`~drowse.units.reads.UnitReader.population_artifacts`), the null
+    basis as its projector with the eigenvalue margin at its cut, and the
+    head-read vocabulary."""
+    from drowse.units.reads import NULL_SHARE
+
+    reads = fx.session.units.reads
+    assert fx.session.whitener is not None
+    layers = []
+    for layer in range(len(fx.spec.blocks)):
+        artifacts = reads.population_artifacts(layer)
+        layers.append({"layer": layer, "tensors": {k: encode(v) for k, v in sorted(artifacts.items())}})
+    null = reads.null_basis().cpu().double()
+    unembed = fx.session.model.get_output_embeddings().weight.detach().double()
+    gain = fx.spec.final_norm.gain().double()
+    rows = unembed * gain
+    eigen = torch.linalg.eigvalsh(rows.T @ rows)  # ascending
+    keep = max(1, int(NULL_SHARE * _D))
+    lo, hi = float(eigen[keep - 1]), float(eigen[keep])
+    if not _margin(lo, hi):
+        raise FixtureError(f"unit-artifacts: no eigenvalue margin at the null cut ({lo} vs {hi})")
+    return {
+        **header("unit-artifacts", fx.arch, model_file_sha256()),
+        "layers": layers,
+        "head_kept_ids": encode(reads.head_kept_ids().to(torch.int32)),
+        "null": {
+            "rank": keep, "projector": encode((null @ null.T).float()),
+            "eigen_cut": [_f32(lo), _f32(hi)],
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# 7. lens-reads and 8. slens
+# ---------------------------------------------------------------------------
+
+READ_POSITIONS = (2, 5, 11)
+
+
+def _site_rows(fx: Fixture) -> dict[str, torch.Tensor]:
+    """``out``, ``mid`` and ``block_in`` ``[L, positions, d]`` of the short
+    prompt at :data:`READ_POSITIONS`."""
+    from drowse.loom.node_replay import tap_token
+
+    ids = torch.tensor([short_prompt_ids(fx.tokenizer, fx.arch)])
+    taps = []
+    with torch.inference_mode():
+        for p in READ_POSITIONS:
+            taps.append(tap_token(fx.session.model, fx.spec, ids, p, patterns=False))
+    return {
+        site: torch.stack([getattr(t, site).float() for t in taps], dim=1)
+        for site in ("out", "mid", "block_in")
+    }
+
+
+def build_lens_reads(fx: Fixture) -> dict[str, Any]:
+    """The lens instrument's reads of residual rows at both sites of every
+    layer (R through ``J``, the logit lens at the last ``out``, S centred;
+    present and absent halves) and of two directions (a neuron write at
+    ``out``, an attention write at ``mid``), ``k = 5``."""
+    from drowse.model.units import neuron_write
+
+    lens = fx.session.lens
+    rows = _site_rows(fx)
+    ties: list[str] = []
+    requests = []
+    for layer in range(len(fx.spec.blocks)):
+        for site in ("out", "mid"):
+            got = lens.read(rows[site][layer], layer, site, of="residual", k=READ_K)
+            assert isinstance(got, list)
+            reads = [read.to_dict() for read in got]
+            _check_token_lists(reads, f"requests[{len(requests)}].reads", ties)
+            requests.append({
+                "of": "residual", "layer": layer, "site": site,
+                "rows": encode(rows[site][layer]), "reads": reads,
+            })
+    directions = (
+        ("neuron/L2n7 write", 2, "out", neuron_write(fx.spec.blocks[2], 7).float()),
+        ("attention write L1 p5", 1, "mid", (rows["mid"][1, 1] - rows["block_in"][1, 1])),
+    )
+    for label, layer, site, vector in directions:
+        read = lens.read(vector, layer, site, of="direction", k=READ_K)
+        assert not isinstance(read, list)
+        reads = [read.to_dict()]
+        _check_token_lists(reads, f"requests[{len(requests)}].reads", ties)
+        requests.append({
+            "of": "direction", "label": label, "layer": layer, "site": site,
+            "rows": encode(vector[None]), "reads": reads,
+        })
+    return {
+        **header("lens-reads", fx.arch, model_file_sha256()),
+        "positions": list(READ_POSITIONS), "k": READ_K, "band": list(BAND),
+        "requests": requests, "declared_ties": ties,
+    }
+
+
+SLENS_WORDS = ("e", "a")
+
+
+def build_slens(fx: Fixture) -> dict[str, Any]:
+    """The S readout: the token mask and embedding statistics, footprint z
+    of three residuals at each S:out layer, the ``slens/`` probe rows, the
+    atom directions ``K^{out}_L ẽ_v``, and a masked token's refusal."""
+    from drowse.errors import DrowseError
+    from drowse.lens.depth import layer_depth, s_weights
+    from drowse.lens.footprint import footprint_probe_rows
+
+    session = fx.session
+    lens = session.lens
+    emb = lens.token_embeddings()
+    s_lens = lens.resident_input()
+    assert s_lens is not None
+    rows = _site_rows(fx)
+    layers = sorted(int(L) for L in s_lens.layers("out"))
+    footprints = []
+    ties: list[str] = []
+    for layer in layers:
+        x = rows["out"][layer] - lens.neutral_mean("out", layer)
+        u = x @ s_lens.matrix(layer, "out").float()
+        z = emb.z(u).masked_fill(~emb.keep[: emb.vocab], -torch.inf)
+        top = z.topk(READ_K, dim=-1)
+        for r in range(int(z.shape[0])):
+            values = [float(v) for v in top.values[r]]
+            try:
+                require_top_margin(values, READ_K, "footprint")
+            except FixtureError:
+                ties.append(f"footprints[{len(footprints)}].top[{r}]")
+        footprints.append({
+            "layer": layer, "u": encode(u),
+            "top": [{"ids": [int(i) for i in top.indices[r]], "z": [_f32(v) for v in top.values[r]]}
+                    for r in range(int(z.shape[0]))],
+        })
+    word_ids = [int(lens.resolve_token(word, family="S")) for word in SLENS_WORDS]
+    n = len(fx.spec.blocks)
+    per_layer = []
+    for layer in layers:
+        x = rows["out"][layer] - lens.neutral_mean("out", layer)
+        u = x @ s_lens.matrix(layer, "out").float()
+        per_layer.append(emb.z_of(u, torch.tensor(word_ids)))         # [positions, words]
+    z = torch.stack(per_layer)                                          # [L, positions, words]
+    depths = torch.tensor([[layer_depth(L, n)] for L in layers], dtype=torch.float32)
+    w = torch.tensor([[weight] for weight in s_weights(layers, n, lens.band)], dtype=torch.float32)
+    probes = [
+        {"word": word, "rows": encode(footprint_probe_rows(z[:, :, i], depths, w))}
+        for i, word in enumerate(SLENS_WORDS)
+    ]
+    atoms = []
+    for word in (f"#{word_ids[0]}", SLENS_WORDS[1]):
+        name = lens.register_input_direction(word)
+        profile = session.registry.profiles[name]
+        atoms.append({"atom": name, "layers": {str(L): encode(profile[L].float().cpu()) for L in sorted(profile)}})
+    masked = int(fx.tokenizer.convert_tokens_to_ids(DROPPED_SYMBOLS[0]))
+    try:
+        lens.register_input_direction(f"#{masked}")
+    except DrowseError as exc:
+        status, text = exc.user_message()
+        refusal = {"token_id": masked, "status": status, "code": type(exc).__name__, "text": text}
+    else:
+        raise FixtureError("slens: a masked token did not refuse")
+    return {
+        **header("slens", fx.arch, model_file_sha256()),
+        "mask": {**emb.describe(), "kept": [int(i) for i in emb.keep.nonzero().reshape(-1)]},
+        "mean_E": encode(emb.mean.float()), "sigma_E": encode(emb.cov.float()),
+        "scale": _f32(float(emb.scale)),
+        "footprints": footprints, "probe_words": list(SLENS_WORDS), "probe_word_ids": word_ids,
+        "probe_depths": encode(depths.reshape(-1)), "probe_weights": encode(w.reshape(-1)),
+        "probes": probes, "atoms": atoms, "refusal": refusal, "declared_ties": ties,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 9. token-anatomy
+# ---------------------------------------------------------------------------
+
+ANATOMY_INDEX = 3
+ANATOMY_STEERING = "0.3 neuron/L2n7 + !head/L1h3"
+
+
+def _anatomy_intermediates(fx: Fixture, node: str) -> dict[str, Any]:
+    """The unsteered anatomy's pieces at its producing position: the taps,
+    the unembedding cotangent ``u``, ``g_L`` at both sites where the R lens
+    (or the logit lens) holds a layer, every unit's contribution and every
+    head's write norm."""
+    from drowse.lens.read import output_transport
+    from drowse.loom.node_replay import (
+        head_contributions,
+        head_write_norms,
+        neuron_contributions,
+        tap_token,
+        unembed_cotangent,
+    )
+
+    spec = fx.spec
+    raw = list(fx.session.tree.get(node).raw_token_ids)
+    ids = fx.prompts[node] + raw[:ANATOMY_INDEX]
+    token = raw[ANATOMY_INDEX]
+    with torch.inference_mode():
+        taps = tap_token(fx.session.model, spec, torch.tensor([ids]), len(ids) - 1, patterns=False)
+        u = unembed_cotangent(spec, taps.out[-1], token)
+        r = fx.session.lens.resident()
+        n = len(spec.blocks)
+        g: dict[str, dict[int, torch.Tensor]] = {"out": {}, "mid": {}}
+        for site in ("out", "mid"):
+            for layer in range(n):
+                try:
+                    matrix, label = output_transport(r, layer, site, n, torch.device("cpu"))
+                except Exception:  # noqa: BLE001 - an absent layer has no g
+                    continue
+                if label is None:
+                    continue
+                g[site][layer] = u if matrix is None else matrix.float().T @ u
+        neurons = torch.zeros(n, spec.blocks[0].d_ff)
+        heads = torch.zeros(n, spec.blocks[0].n_heads)
+        for block in spec.blocks:
+            L = block.layer
+            if L in g["out"]:
+                neurons[L] = neuron_contributions(block, g["out"][L], taps.acts[L], taps.mlp_out[L]).cpu()
+            if L in g["mid"]:
+                heads[L] = head_contributions(block, g["mid"][L], taps.z[L], taps.attn_out[L]).cpu()
+        norms = torch.stack([
+            head_write_norms(block, taps.z[block.layer], taps.attn_out[block.layer]).cpu()
+            for block in spec.blocks
+        ])
+    return {
+        "ids": ids, "token_id": token,
+        "taps": {
+            "block_in": encode(taps.block_in), "mid": encode(taps.mid), "out": encode(taps.out),
+            "act": encode(torch.stack(taps.acts)), "z": encode(torch.stack(taps.z)),
+        },
+        "u": encode(u),
+        "g_out": {str(L): encode(v) for L, v in sorted(g["out"].items())},
+        "g_mid": {str(L): encode(v) for L, v in sorted(g["mid"].items())},
+        "neuron_contributions": encode(neurons),
+        "head_contributions": encode(heads),
+        "head_write_norms": encode(norms),
+    }
+
+
+def build_token_anatomy(fx: Fixture) -> dict[str, Any]:
+    """``token_anatomy`` of the generated node's raw index 3: unsteered,
+    under a neuron push and a head ablation, and with an R lens that holds
+    no ``mid`` layer (no patterns, heads absent)."""
+    from drowse.lens.store import LensProvenance, save_lens
+    from drowse.model.fingerprint import loaded_model_fingerprint
+
+    session = fx.session
+    knobs = {"k": 4, "units": 4, "patterns": 2}
+    node = generated_node(fx)
+    plain = session.token_anatomy(node, ANATOMY_INDEX, **knobs)
+    steered_node = generated_node(fx, steering=ANATOMY_STEERING)
+    steered = session.token_anatomy(steered_node, ANATOMY_INDEX, **knobs)
+    out_only = fixture_lens("R")
+    out_only = type(out_only)(
+        {L: out_only.matrix(L, "out") for L in out_only.layers("out")},
+        n_prompts=3, d_model=_D, key=out_only.key,
+    )
+    save_lens(out_only, session.model_id, LensProvenance(
+        corpus_spec="units-tiny-fixture", corpus_sha256="0" * 64, seq_len=8, dim_batch=1,
+        model_fingerprint=loaded_model_fingerprint(session.model, session.model_id),
+    ), name="r-out")
+    session.lens.select_source("local:r-out")
+    try:
+        no_mid = session.token_anatomy(node, ANATOMY_INDEX, **knobs)
+    finally:
+        session.lens.select_source("local:r")
+    ties: list[str] = []
+    cases = []
+    for name, steering, envelope in (
+        ("unsteered", None, plain), ("steered", ANATOMY_STEERING, steered), ("no-r-mid", None, no_mid),
+    ):
+        _check_token_lists(envelope, f"cases[{len(cases)}].envelope", ties)
+        cases.append({"name": name, "steering": steering, "envelope": envelope})
+    return {
+        **header("token-anatomy", fx.arch, model_file_sha256()),
+        "raw_index": ANATOMY_INDEX, "knobs": knobs, "cases": cases,
+        "intermediates": _anatomy_intermediates(fx, node), "declared_ties": ties,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 13. neuron-push
+# ---------------------------------------------------------------------------
+
+
+def build_neuron_push(fx: Fixture) -> dict[str, Any]:
+    """``neuron/`` atoms: the registered profile (the ``+``-pole write at the
+    neuron's layer) and its lowered affine group through the fixture's
+    whitener, as ``affine-composed-lowering-v1.json`` records one."""
+    from drowse.geometry.inject import synthesize_subspace
+    from drowse.steering.grammar import format_expr, parse_expr
+    from drowse.steering.hooks import _lower_affine_subspaces
+
+    session = fx.session
+    whitener = session.whitener
+    assert whitener is not None
+    name = session.units.register_direction("L2n7")
+    profile = session.registry.profiles[name]
+    means = {L: whitener.layer_means[L].float() for L in profile}
+    cases = []
+    for expression in (
+        "0.3 neuron/L2n7", "-0.3 neuron/L2n7", "0.3 neuron/L2n7@response",
+        f"0.3 neuron/L2n7@when:{PUSH_GATE}",
+    ):
+        steering = parse_expr(expression)
+        entry = steering.alphas[name]
+        if isinstance(entry, float):
+            coefficient, trigger = entry, steering.trigger
+        else:
+            assert isinstance(entry, tuple)
+            coefficient, trigger = float(entry[0]), entry[1]
+        basis, coords = {}, {}
+        for layer, direction in profile.items():
+            norm = float(direction.float().norm())
+            basis[layer] = (direction.float() / norm).reshape(1, -1).cpu()
+            coords[layer] = torch.tensor([norm], dtype=torch.float32)
+        synthesized = synthesize_subspace([(basis, coords, coefficient)], [], means, whitener=whitener)
+        lowered = _lower_affine_subspaces(synthesized)
+        layers = []
+        for layer in sorted(lowered):
+            group = lowered[layer]
+            world = group.target @ group.subspace.basis
+            target = float(world.norm())
+            layers.append({
+                "layer": int(layer), "basis": encode(world / target),
+                "neutral": encode(group.subspace.mean), "target": _f32(target),
+                "along": _f32(float(group.eff_along)), "delta": encode(group.eff_along * world),
+            })
+        cases.append({
+            "expression": expression, "canonical": format_expr(steering),
+            "coefficient": coefficient, "trigger": _trigger(trigger), "layers": layers,
+        })
+    return {
+        **header("neuron-push", fx.arch, model_file_sha256()),
+        "profile": {str(L): encode(v.float().cpu()) for L, v in sorted(profile.items())},
+        "cases": cases,
+    }
+
+
+# ---------------------------------------------------------------------------
+# 5. unit-probes
+# ---------------------------------------------------------------------------
+
+PROBE_UNITS = ("neuron/L1n5", "head/L2h1")
+PROBE_CASES = (("unsteered", None), ("ablated-neuron", "!neuron/L1n5"), ("ablated-head", "!head/L2h1"))
+
+
+def build_unit_probes(fx: Fixture) -> dict[str, Any]:
+    """Attached unit probes through the live tap and the read plane: per
+    forward (a prefill and 4 decode steps, raw mode, greedy) the token
+    envelope's ``units`` readings, and the generation's final aggregate,
+    unsteered and with each probed unit ablated (a probe reads the value
+    the module used: an ablated neuron reads its mean)."""
+    session = fx.session
+    for unit in PROBE_UNITS:
+        session.add_probe(unit)
+    text = fx.tokenizer.decode(short_prompt_ids(fx.tokenizer, fx.arch))
+    cases = []
+    try:
+        for name, steering in PROBE_CASES:
+            # One event per emitted text piece: a partial UTF-8 byte waits for
+            # its sequence, so an event can carry several raw tokens.
+            steps = [
+                {"raw_index": chunk.raw_index, "token_id": chunk.token_id,
+                 "measurements": chunk.measurements}
+                for chunk in session.generate_stream(
+                    text, raw=True, stateless=True, steering=steering, sampling=_greedy(5),
+                )
+            ]
+            final = session.generate(
+                text, raw=True, stateless=True, steering=steering, sampling=_greedy(5),
+            ).first
+            if len(final.tokens) != 5:
+                raise FixtureError(f"unit-probes {name}: {len(final.tokens)} tokens")
+            cases.append({
+                "name": name, "steering": steering, "steps": steps,
+                "aggregate": final.measurements,
+            })
+    finally:
+        for unit in PROBE_UNITS:
+            session.remove_probe(unit)
+    return {
+        **header("unit-probes", fx.arch, model_file_sha256()),
+        "ids": short_prompt_ids(fx.tokenizer, fx.arch), "probes": list(PROBE_UNITS), "cases": cases,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Writing and checking the set
+# ---------------------------------------------------------------------------
+
+#: Every per-arch golden, in the plan's order.
+BUILDERS: dict[str, Callable[[Fixture], dict[str, Any]]] = {
+    "block-sites": build_block_sites,
+    "unit-stats": build_unit_stats,
+    "unit-ablation": build_unit_ablation,
+    "unit-probes": build_unit_probes,
+    "unit-activity": build_unit_activity,
+    "lens-reads": build_lens_reads,
+    "slens": build_slens,
+    "token-anatomy": build_token_anatomy,
+    "attention-patterns": build_attention_patterns,
+    "unit-reads": build_unit_reads,
+    "unit-artifacts": build_unit_artifacts,
+    "neuron-push": build_neuron_push,
+}
+
+
+def golden_file(name: str, arch: str) -> str:
+    return f"{name}-{arch}-v1.json"
+
+
+def build_golden(name: str, arch: str) -> dict[str, Any]:
+    """One golden, from a fresh fixture (no builder sees another's state)."""
+    with fixture(arch) as fx:
+        golden = BUILDERS[name](fx)
+    require_finite(golden, golden_file(name, arch))
+    if name == "block-sites":
+        require_finite(golden["sites"], golden_file(name, arch), limit=1e3)
+    return golden
+
+
+def build_all() -> dict[str, bytes]:
+    """Every file's bytes, validated and within the caps."""
+    files = {MODEL_FILE: _serialize(build_units_tiny_models())}
+    for arch in ARCHES:
+        for name in BUILDERS:
+            files[golden_file(name, arch)] = _serialize(build_golden(name, arch))
+    for path, data in files.items():
+        if len(data) > FILE_CAP:
+            raise FixtureError(f"{path} is {len(data)} bytes, over the {FILE_CAP}-byte cap")
+    total = sum(len(data) for data in files.values())
+    if total > TOTAL_CAP:
+        raise FixtureError(f"the goldens total {total} bytes, over the {TOTAL_CAP}-byte cap")
+    return files
+
+
+def write_goldens(directory: Path = GOLDENS) -> dict[str, int]:
+    """Build, validate and write every file (nothing is written unless the
+    whole set passes); returns each file's size."""
+    files = build_all()
+    directory.mkdir(parents=True, exist_ok=True)
+    for path, data in files.items():
+        (directory / path).write_bytes(data)
+    return {path: len(data) for path, data in files.items()}
+
+
+def load_golden(path: str, directory: Path = GOLDENS) -> dict[str, Any]:
+    return json.loads((directory / path).read_text())
+
+
+def comparable(golden: dict[str, Any]) -> dict[str, Any]:
+    """A golden as the parity test compares it: unit activity's top lists
+    as maps keyed by unit (their order follows the compared values), a
+    tied peak row's ``raw_index`` left to the value comparison."""
+    golden = json.loads(json.dumps(golden))
+    if golden.get("golden") == "unit-activity":
+        for case in golden["cases"]:
+            result = case.get("result")
+            if result is None:
+                continue
+            tied = set(case.get("tied_peak_rows", ()))
+            peaks = {}
+            for peak in result["top"]:
+                if peak["unit"] in tied or case.get("declared_ties"):
+                    peak = {k: v for k, v in peak.items() if k != "raw_index"}
+                peaks[peak["unit"]] = peak
+            result["top"] = peaks
+    return golden
+
+
+def soft_paths(golden: dict[str, Any]) -> frozenset[str]:
+    return frozenset(golden.get("declared_ties") or ())
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    import argparse
+    import sys
+
+    parser = argparse.ArgumentParser(prog="python -m tests.support.browser_units")
+    parser.add_argument("--write", action="store_true", help="regenerate the goldens in place")
+    parser.add_argument("--out", type=Path, default=GOLDENS, help="directory to write into")
+    args = parser.parse_args(argv)
+    if not args.write:
+        parser.print_help()
+        return 0
+    sizes = write_goldens(args.out)
+    for path, size in sizes.items():
+        sys.stderr.write(f"{size:>8}  {path}\n")
+    sys.stderr.write(f"{sum(sizes.values()):>8}  total\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

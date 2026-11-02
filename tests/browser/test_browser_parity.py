@@ -1295,3 +1295,60 @@ def test_budget_exhaustion_and_invalid_thresholds_are_explicit():
             _count_persistent_loops(distances, persistence_frac=fraction)
     with pytest.raises(ValueError, match="128"):
         _count_persistent_loops(torch.zeros(129, 129))
+
+
+# ---------------------------------------------------------------------------
+# Hook ABI v5: units, token anatomy, the mid site and the S lens
+# ---------------------------------------------------------------------------
+# One golden per (name, arch) built by tests/support/browser_units.py on the
+# units-tiny-models-v1 fixture; regenerate with
+# ``PYTHONPATH=. python -m tests.support.browser_units --write``.
+
+
+def test_units_tiny_models_regenerate_to_their_digests() -> None:
+    """The fixture weights are integers and hashes only, so their file is
+    byte-exact on every platform, and every tensor round-trips q4f32_1."""
+    from tests.support import browser_units
+
+    expected = (GOLDENS / browser_units.MODEL_FILE).read_bytes()
+    assert browser_units._serialize(browser_units.build_units_tiny_models()) == expected
+    for arch in browser_units.ARCHES:
+        model, _tokenizer, rows = browser_units.build_model(arch)
+        quantized = [row for row in rows if row["kind"] == "q4"]
+        params = dict(model.named_parameters())
+        for row in quantized:
+            weight = params[row["name"]].detach()
+            assert torch.equal(browser_units.q4_round_trip(weight), weight), row["name"]
+
+
+def test_units_goldens_stay_within_their_caps() -> None:
+    from tests.support import browser_units
+
+    names = [browser_units.MODEL_FILE] + [
+        browser_units.golden_file(name, arch)
+        for arch in browser_units.ARCHES for name in browser_units.BUILDERS
+    ]
+    sizes = {name: (GOLDENS / name).stat().st_size for name in names}
+    assert max(sizes.values()) <= browser_units.FILE_CAP
+    assert sum(sizes.values()) <= browser_units.TOTAL_CAP
+
+
+@pytest.mark.parametrize("arch", ["gemma3", "qwen3"])
+@pytest.mark.parametrize("name", [
+    "block-sites", "unit-stats", "unit-ablation", "unit-probes", "unit-activity", "lens-reads",
+    "slens", "token-anatomy", "attention-patterns", "unit-reads", "unit-artifacts", "neuron-push",
+])
+def test_units_golden_matches_python(name: str, arch: str) -> None:
+    """Rebuild the golden with the engine and compare within its own
+    tolerance block (ids, structure and texts exactly; declared ties softly)."""
+    from tests.support import browser_units
+
+    expected = browser_units.load_golden(browser_units.golden_file(name, arch))
+    actual = json.loads(browser_units._serialize(browser_units.build_golden(name, arch)))
+    tolerance = expected["tolerance"]["python"]
+    problems = browser_units.compare(
+        browser_units.comparable(expected), browser_units.comparable(actual),
+        atol=tolerance["atol"], rtol=tolerance["rtol"],
+        soft=browser_units.soft_paths(expected) | browser_units.soft_paths(actual),
+    )
+    assert not problems, "\n".join(problems[:20])

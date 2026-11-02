@@ -1,0 +1,1098 @@
+{
+ "schemaVersion": 1,
+ "golden": "token-anatomy",
+ "hookAbi": "block-sites-v5",
+ "arch": "gemma3",
+ "fixtureModels": {"name": "units-tiny-models-v1", "sha256": "aa4ad593300b622d6ee27ffcee83eab691a8c64d008f1b47fa0756060948d3a2"},
+ "tolerance": {
+  "python": {"atol": 1e-06, "rtol": 1e-05},
+  "library": {"atol": 1e-05, "rtol": 0.0001, "probability_atol": 1e-05, "z_atol": 0.0001},
+  "rounded": {"atol": 2e-06},
+  "ids": "exact"
+ },
+ "raw_index": 3,
+ "knobs": {"k": 4, "units": 4, "patterns": 2},
+ "cases": [
+  {
+   "name": "unsteered",
+   "steering": null,
+   "envelope": {
+    "measurements": {
+     "version": 2,
+     "scope": "replay",
+     "provenance": "replayed",
+     "instruments": {},
+     "anatomy": {
+      "token": {"raw_index": 3, "token_id": 202, "token": "\n", "position": 37, "prompt_length": 35, "probability": 0.766381},
+      "binding": {
+       "sources": {"R": "local:r", "S": "local:s"},
+       "steering": null
+      },
+      "layers": [
+       {
+        "layer": 0,
+        "depth": 0.0,
+        "reads_as": {
+         "layer": 0,
+         "site": "out",
+         "depth": 0.0,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 0.0,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.318827},
+           {"token_id": 68, "token": "a", "value": 0.115917},
+           {"token_id": 146, "token": "�", "value": 0.068579},
+           {"token_id": 100, "token": "�", "value": 0.035577}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": true,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 3.651406},
+           {"token_id": 48, "token": "M", "value": 2.695999},
+           {"token_id": 211, "token": "\u0013", "value": 2.395782},
+           {"token_id": 38, "token": "C", "value": 1.794753}
+          ],
+          "absent": null
+         }
+        },
+        "attention": {
+         "layer": 0,
+         "site": "mid",
+         "depth": 0.0,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.0, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "layer 0 not in fitted R:mid lens layers [1, 3]..[1, 3]"},
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 16, "token": "-", "value": 2.716043},
+           {"token_id": 38, "token": "C", "value": 2.034491},
+           {"token_id": 24, "token": "5", "value": 1.954855},
+           {"token_id": 48, "token": "M", "value": 1.95297}
+          ],
+          "absent": null
+         }
+        },
+        "mlp": {
+         "layer": 0,
+         "site": "out",
+         "depth": 0.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.0,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 100, "token": "�", "value": 0.443453},
+           {"token_id": 66, "token": "_", "value": 0.062967},
+           {"token_id": 214, "token": "\u0016", "value": 0.051456},
+           {"token_id": 31, "token": "<", "value": 0.047598}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 60, "token": "Y", "value": 2.109641},
+           {"token_id": 97, "token": "~", "value": 2.052579},
+           {"token_id": 46, "token": "K", "value": 1.817306},
+           {"token_id": 31, "token": "<", "value": 1.788582}
+          ],
+          "absent": null
+         }
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L0n31", "kind": "neuron", "layer": 0, "index": 31, "contribution": -0.326787, "activation": 1.776513, "activation_over_scale": 1.162924},
+         {"unit": "neuron/L0n0", "kind": "neuron", "layer": 0, "index": 0, "contribution": -0.299057, "activation": 1.622549, "activation_over_scale": 0.582042},
+         {"unit": "neuron/L0n8", "kind": "neuron", "layer": 0, "index": 8, "contribution": -0.229529, "activation": -0.894298, "activation_over_scale": -0.551123},
+         {"unit": "neuron/L0n95", "kind": "neuron", "layer": 0, "index": 95, "contribution": 0.198441, "activation": 0.866888, "activation_over_scale": 0.277901}
+        ],
+        "heads": []
+       },
+       {
+        "layer": 1,
+        "depth": 0.333333,
+        "reads_as": {
+         "layer": 1,
+         "site": "out",
+         "depth": 0.333333,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.334438},
+           {"token_id": 146, "token": "�", "value": 0.132985},
+           {"token_id": 239, "token": "�", "value": 0.063225},
+           {"token_id": 105, "token": "�", "value": 0.061813}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 0.777778,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": true,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 4.362638},
+           {"token_id": 48, "token": "M", "value": 2.265692},
+           {"token_id": 215, "token": "\u0017", "value": 2.088253},
+           {"token_id": 37, "token": "B", "value": 1.741347}
+          ],
+          "absent": null
+         }
+        },
+        "attention": {
+         "layer": 1,
+         "site": "mid",
+         "depth": 0.333333,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 223, "token": "\u001f", "value": 0.090849},
+           {"token_id": 191, "token": "�", "value": 0.087545},
+           {"token_id": 210, "token": "\u0012", "value": 0.082288},
+           {"token_id": 244, "token": "�", "value": 0.077782}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.777778, "unit": "footprint_z", "lens": "S:mid", "centred": false, "tokens": [], "absent": "layer 1 not in fitted S:mid lens layers [0, 2]..[0, 2]"}
+        },
+        "mlp": {
+         "layer": 1,
+         "site": "out",
+         "depth": 0.333333,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 49, "token": "N", "value": 0.117376},
+           {"token_id": 87, "token": "t", "value": 0.084376},
+           {"token_id": 56, "token": "U", "value": 0.076441},
+           {"token_id": 141, "token": "�", "value": 0.061224}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 0.777778,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 87, "token": "t", "value": 2.367773},
+           {"token_id": 215, "token": "\u0017", "value": 2.187918},
+           {"token_id": 56, "token": "U", "value": 2.038937},
+           {"token_id": 94, "token": "{", "value": 2.020609}
+          ],
+          "absent": null
+         }
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L1n8", "kind": "neuron", "layer": 1, "index": 8, "contribution": 0.360935, "activation": -1.891946, "activation_over_scale": -0.522662},
+         {"unit": "neuron/L1n25", "kind": "neuron", "layer": 1, "index": 25, "contribution": -0.311181, "activation": -1.674643, "activation_over_scale": -1.311022},
+         {"unit": "neuron/L1n86", "kind": "neuron", "layer": 1, "index": 86, "contribution": 0.270004, "activation": 3.547517, "activation_over_scale": 1.028548},
+         {"unit": "neuron/L1n35", "kind": "neuron", "layer": 1, "index": 35, "contribution": -0.189314, "activation": 1.233264, "activation_over_scale": 0.507657}
+        ],
+        "heads": [
+         {"unit": "head/L1h1", "kind": "head", "layer": 1, "index": 1, "contribution": 0.55272, "activation": 4.168071, "activation_over_scale": 0.620937},
+         {"unit": "head/L1h0", "kind": "head", "layer": 1, "index": 0, "contribution": 0.186782, "activation": 4.083666, "activation_over_scale": 0.498184},
+         {"unit": "head/L1h2", "kind": "head", "layer": 1, "index": 2, "contribution": 0.075471, "activation": 3.976996, "activation_over_scale": 0.775668},
+         {"unit": "head/L1h3", "kind": "head", "layer": 1, "index": 3, "contribution": -0.01039, "activation": 3.062209, "activation_over_scale": 0.501062}
+        ]
+       },
+       {
+        "layer": 2,
+        "depth": 0.666667,
+        "reads_as": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "residual",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "attention": {
+         "layer": 2,
+         "site": "mid",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:mid lens layers [1, 3]..[1, 3]"},
+         "s": {
+          "family": "S",
+          "weight": 0.222222,
+          "unit": "footprint_z",
+          "lens": "S:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 64, "token": "]", "value": 3.370775},
+           {"token_id": 207, "token": "\u000f", "value": 2.712683},
+           {"token_id": 215, "token": "\u0017", "value": 2.266349},
+           {"token_id": 5, "token": "\"", "value": 2.229997}
+          ],
+          "absent": null
+         }
+        },
+        "mlp": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "steering": null,
+        "neurons": [],
+        "heads": []
+       },
+       {
+        "layer": 3,
+        "depth": 1.0,
+        "reads_as": {
+         "layer": 3,
+         "site": "out",
+         "depth": 1.0,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "logit",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.76638},
+           {"token_id": 228, "token": "�", "value": 0.074872},
+           {"token_id": 211, "token": "\u0013", "value": 0.019407},
+           {"token_id": 35, "token": "@", "value": 0.015604}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "attention": {
+         "layer": 3,
+         "site": "mid",
+         "depth": 1.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "R:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 233, "token": "�", "value": 0.263743},
+           {"token_id": 63, "token": "\\", "value": 0.075611},
+           {"token_id": 152, "token": "�", "value": 0.043424},
+           {"token_id": 174, "token": "�", "value": 0.043406}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:mid", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:mid lens layers [0, 2]..[0, 2]"}
+        },
+        "mlp": {
+         "layer": 3,
+         "site": "out",
+         "depth": 1.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "logit",
+          "centred": false,
+          "tokens": [
+           {"token_id": 56, "token": "U", "value": 0.129252},
+           {"token_id": 46, "token": "K", "value": 0.123131},
+           {"token_id": 82, "token": "o", "value": 0.049159},
+           {"token_id": 244, "token": "�", "value": 0.043656}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L3n0", "kind": "neuron", "layer": 3, "index": 0, "contribution": -0.279468, "activation": -1.590863, "activation_over_scale": -0.626327},
+         {"unit": "neuron/L3n88", "kind": "neuron", "layer": 3, "index": 88, "contribution": 0.124094, "activation": -1.121608, "activation_over_scale": -0.711731},
+         {"unit": "neuron/L3n67", "kind": "neuron", "layer": 3, "index": 67, "contribution": -0.120998, "activation": -2.988806, "activation_over_scale": -0.442822},
+         {"unit": "neuron/L3n76", "kind": "neuron", "layer": 3, "index": 76, "contribution": -0.108879, "activation": 0.876174, "activation_over_scale": 0.557846}
+        ],
+        "heads": [
+         {"unit": "head/L3h1", "kind": "head", "layer": 3, "index": 1, "contribution": -0.165975, "activation": 3.456379, "activation_over_scale": 0.663004},
+         {"unit": "head/L3h3", "kind": "head", "layer": 3, "index": 3, "contribution": -0.13842, "activation": 3.975953, "activation_over_scale": 0.682886},
+         {"unit": "head/L3h0", "kind": "head", "layer": 3, "index": 0, "contribution": 0.103577, "activation": 4.378849, "activation_over_scale": 0.700276},
+         {"unit": "head/L3h2", "kind": "head", "layer": 3, "index": 2, "contribution": -0.043318, "activation": 3.811615, "activation_over_scale": 0.747188}
+        ]
+       }
+      ],
+      "units": [
+       {"unit": "head/L1h1", "kind": "head", "layer": 1, "index": 1, "contribution": 0.55272, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L1n8", "kind": "neuron", "layer": 1, "index": 8, "contribution": 0.360935, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L0n31", "kind": "neuron", "layer": 0, "index": 31, "contribution": -0.326787, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L1n25", "kind": "neuron", "layer": 1, "index": 25, "contribution": -0.311181, "activation": null, "activation_over_scale": null}
+      ],
+      "units_absent": null,
+      "units_scale": "neutral",
+      "patterns": [
+       {"unit": "head/L1h1", "layer": 1, "head": 1, "contribution": 0.55272, "weights": [0.027689, 0.048921, 0.016019, 0.023797, 0.018069, 0.024489, 0.035356, 0.046867, 0.020116, 0.009583, 0.009254, 0.014979, 0.017642, 0.016702, 0.029175, 0.015035, 0.031493, 0.042755, 0.019141, 0.020882, 0.0124, 0.028505, 0.034611, 0.022788, 0.021681, 0.019807, 0.040082, 0.04458, 0.032208, 0.02226, 0.02274, 0.045388, 0.012607, 0.021968, 0.02985, 0.031828, 0.037017, 0.031716]},
+       {"unit": "head/L1h0", "layer": 1, "head": 0, "contribution": 0.186782, "weights": [0.03438, 0.054269, 0.005412, 0.04504, 0.010617, 0.023186, 0.107067, 0.005112, 0.00688, 0.007454, 0.01858, 0.035337, 0.028122, 0.006703, 0.015855, 0.010449, 0.028181, 0.023488, 0.059975, 0.009819, 0.004092, 0.047575, 0.083194, 0.01256, 0.022315, 0.00745, 0.012152, 0.030114, 0.031665, 0.015032, 0.030673, 0.03767, 0.008696, 0.032745, 0.026232, 0.020423, 0.012832, 0.028652]}
+      ],
+      "context": ["<bos>", "<start_of_turn>", "u", "s", "e", "r", "\n", "B", "e", " ", "b", "r", "i", "e", "f", ".", "\n", "\n", "H", "i", " ", "t", "h", "e", "r", "e", "<end_of_turn>", "\n", "<start_of_turn>", "m", "o", "d", "e", "l", "\n", "\n", "\n", "\n"]
+     }
+    }
+   }
+  },
+  {
+   "name": "steered",
+   "steering": "0.3 neuron/L2n7 + !head/L1h3",
+   "envelope": {
+    "measurements": {
+     "version": 2,
+     "scope": "replay",
+     "provenance": "replayed",
+     "instruments": {},
+     "anatomy": {
+      "token": {"raw_index": 3, "token_id": 202, "token": "\n", "position": 37, "prompt_length": 35, "probability": 0.783185},
+      "binding": {
+       "sources": {"R": "local:r", "S": "local:s"},
+       "steering": "0.3 neuron/L2n7 + !head/L1h3"
+      },
+      "layers": [
+       {
+        "layer": 0,
+        "depth": 0.0,
+        "reads_as": {
+         "layer": 0,
+         "site": "out",
+         "depth": 0.0,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 0.0,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.318827},
+           {"token_id": 68, "token": "a", "value": 0.115917},
+           {"token_id": 146, "token": "�", "value": 0.068579},
+           {"token_id": 100, "token": "�", "value": 0.035577}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": true,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 3.651406},
+           {"token_id": 48, "token": "M", "value": 2.695999},
+           {"token_id": 211, "token": "\u0013", "value": 2.395782},
+           {"token_id": 38, "token": "C", "value": 1.794753}
+          ],
+          "absent": null
+         }
+        },
+        "attention": {
+         "layer": 0,
+         "site": "mid",
+         "depth": 0.0,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.0, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "layer 0 not in fitted R:mid lens layers [1, 3]..[1, 3]"},
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 16, "token": "-", "value": 2.716043},
+           {"token_id": 38, "token": "C", "value": 2.034491},
+           {"token_id": 24, "token": "5", "value": 1.954855},
+           {"token_id": 48, "token": "M", "value": 1.95297}
+          ],
+          "absent": null
+         }
+        },
+        "mlp": {
+         "layer": 0,
+         "site": "out",
+         "depth": 0.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.0,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 100, "token": "�", "value": 0.443453},
+           {"token_id": 66, "token": "_", "value": 0.062967},
+           {"token_id": 214, "token": "\u0016", "value": 0.051456},
+           {"token_id": 31, "token": "<", "value": 0.047598}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 60, "token": "Y", "value": 2.109641},
+           {"token_id": 97, "token": "~", "value": 2.052579},
+           {"token_id": 46, "token": "K", "value": 1.817306},
+           {"token_id": 31, "token": "<", "value": 1.788582}
+          ],
+          "absent": null
+         }
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L0n31", "kind": "neuron", "layer": 0, "index": 31, "contribution": -0.309821, "activation": 1.776513, "activation_over_scale": 1.162924},
+         {"unit": "neuron/L0n0", "kind": "neuron", "layer": 0, "index": 0, "contribution": -0.28353, "activation": 1.622549, "activation_over_scale": 0.582042},
+         {"unit": "neuron/L0n8", "kind": "neuron", "layer": 0, "index": 8, "contribution": -0.217612, "activation": -0.894298, "activation_over_scale": -0.551123},
+         {"unit": "neuron/L0n95", "kind": "neuron", "layer": 0, "index": 95, "contribution": 0.188138, "activation": 0.866888, "activation_over_scale": 0.277901}
+        ],
+        "heads": []
+       },
+       {
+        "layer": 1,
+        "depth": 0.333333,
+        "reads_as": {
+         "layer": 1,
+         "site": "out",
+         "depth": 0.333333,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.209202},
+           {"token_id": 146, "token": "�", "value": 0.205629},
+           {"token_id": 239, "token": "�", "value": 0.092894},
+           {"token_id": 105, "token": "�", "value": 0.065085}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 0.777778,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": true,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 4.358747},
+           {"token_id": 48, "token": "M", "value": 2.379749},
+           {"token_id": 215, "token": "\u0017", "value": 1.85224},
+           {"token_id": 30, "token": ";", "value": 1.788382}
+          ],
+          "absent": null
+         }
+        },
+        "attention": {
+         "layer": 1,
+         "site": "mid",
+         "depth": 0.333333,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 210, "token": "\u0012", "value": 0.187247},
+           {"token_id": 223, "token": "\u001f", "value": 0.101688},
+           {"token_id": 244, "token": "�", "value": 0.081344},
+           {"token_id": 235, "token": "�", "value": 0.063045}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.777778, "unit": "footprint_z", "lens": "S:mid", "centred": false, "tokens": [], "absent": "layer 1 not in fitted S:mid lens layers [0, 2]..[0, 2]"}
+        },
+        "mlp": {
+         "layer": 1,
+         "site": "out",
+         "depth": 0.333333,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 146, "token": "�", "value": 0.066847},
+           {"token_id": 49, "token": "N", "value": 0.064781},
+           {"token_id": 87, "token": "t", "value": 0.06464},
+           {"token_id": 193, "token": "\u0001", "value": 0.055309}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 0.777778,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 87, "token": "t", "value": 2.436578},
+           {"token_id": 215, "token": "\u0017", "value": 2.235147},
+           {"token_id": 211, "token": "\u0013", "value": 2.047067},
+           {"token_id": 202, "token": "\n", "value": 1.958152}
+          ],
+          "absent": null
+         }
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L1n86", "kind": "neuron", "layer": 1, "index": 86, "contribution": 0.286652, "activation": 4.265422, "activation_over_scale": 1.236693},
+         {"unit": "neuron/L1n8", "kind": "neuron", "layer": 1, "index": 8, "contribution": 0.263684, "activation": -1.565367, "activation_over_scale": -0.432442},
+         {"unit": "neuron/L1n25", "kind": "neuron", "layer": 1, "index": 25, "contribution": -0.250946, "activation": -1.529471, "activation_over_scale": -1.197373},
+         {"unit": "neuron/L1n35", "kind": "neuron", "layer": 1, "index": 35, "contribution": -0.12727, "activation": 0.938974, "activation_over_scale": 0.386516}
+        ],
+        "heads": [
+         {"unit": "head/L1h1", "kind": "head", "layer": 1, "index": 1, "contribution": 0.511863, "activation": 4.071339, "activation_over_scale": 0.606526},
+         {"unit": "head/L1h0", "kind": "head", "layer": 1, "index": 0, "contribution": 0.172975, "activation": 3.988893, "activation_over_scale": 0.486622},
+         {"unit": "head/L1h3", "kind": "head", "layer": 1, "index": 3, "contribution": -0.151275, "activation": 2.903421, "activation_over_scale": 0.47508},
+         {"unit": "head/L1h2", "kind": "head", "layer": 1, "index": 2, "contribution": 0.069892, "activation": 3.884699, "activation_over_scale": 0.757667}
+        ]
+       },
+       {
+        "layer": 2,
+        "depth": 0.666667,
+        "reads_as": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "residual",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "attention": {
+         "layer": 2,
+         "site": "mid",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:mid lens layers [1, 3]..[1, 3]"},
+         "s": {
+          "family": "S",
+          "weight": 0.222222,
+          "unit": "footprint_z",
+          "lens": "S:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 64, "token": "]", "value": 3.429608},
+           {"token_id": 207, "token": "\u000f", "value": 2.89766},
+           {"token_id": 215, "token": "\u0017", "value": 2.379625},
+           {"token_id": 5, "token": "\"", "value": 2.372406}
+          ],
+          "absent": null
+         }
+        },
+        "mlp": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "steering": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "neurons": [],
+        "heads": []
+       },
+       {
+        "layer": 3,
+        "depth": 1.0,
+        "reads_as": {
+         "layer": 3,
+         "site": "out",
+         "depth": 1.0,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "logit",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.783185},
+           {"token_id": 228, "token": "�", "value": 0.0896},
+           {"token_id": 125, "token": "�", "value": 0.008593},
+           {"token_id": 35, "token": "@", "value": 0.008163}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "attention": {
+         "layer": 3,
+         "site": "mid",
+         "depth": 1.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "R:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 86, "token": "s", "value": 0.06833},
+           {"token_id": 211, "token": "\u0013", "value": 0.052347},
+           {"token_id": 234, "token": "�", "value": 0.05207},
+           {"token_id": 174, "token": "�", "value": 0.043984}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:mid", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:mid lens layers [0, 2]..[0, 2]"}
+        },
+        "mlp": {
+         "layer": 3,
+         "site": "out",
+         "depth": 1.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "logit",
+          "centred": false,
+          "tokens": [
+           {"token_id": 46, "token": "K", "value": 0.125782},
+           {"token_id": 4, "token": "!", "value": 0.105984},
+           {"token_id": 56, "token": "U", "value": 0.093738},
+           {"token_id": 248, "token": "�", "value": 0.048115}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L3n0", "kind": "neuron", "layer": 3, "index": 0, "contribution": -0.31431, "activation": -2.059184, "activation_over_scale": -0.810705},
+         {"unit": "neuron/L3n67", "kind": "neuron", "layer": 3, "index": 67, "contribution": -0.127676, "activation": -3.629653, "activation_over_scale": -0.537769},
+         {"unit": "neuron/L3n25", "kind": "neuron", "layer": 3, "index": 25, "contribution": -0.075135, "activation": -0.915636, "activation_over_scale": -0.254475},
+         {"unit": "neuron/L3n75", "kind": "neuron", "layer": 3, "index": 75, "contribution": -0.067593, "activation": 0.618003, "activation_over_scale": 0.543964}
+        ],
+        "heads": [
+         {"unit": "head/L3h1", "kind": "head", "layer": 3, "index": 1, "contribution": -0.335417, "activation": 3.33644, "activation_over_scale": 0.639997},
+         {"unit": "head/L3h0", "kind": "head", "layer": 3, "index": 0, "contribution": 0.104756, "activation": 4.232336, "activation_over_scale": 0.676845},
+         {"unit": "head/L3h3", "kind": "head", "layer": 3, "index": 3, "contribution": -0.088162, "activation": 3.303745, "activation_over_scale": 0.567431},
+         {"unit": "head/L3h2", "kind": "head", "layer": 3, "index": 2, "contribution": -0.01738, "activation": 4.267108, "activation_over_scale": 0.836478}
+        ]
+       }
+      ],
+      "units": [
+       {"unit": "head/L1h1", "kind": "head", "layer": 1, "index": 1, "contribution": 0.511863, "activation": null, "activation_over_scale": null},
+       {"unit": "head/L3h1", "kind": "head", "layer": 3, "index": 1, "contribution": -0.335417, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L3n0", "kind": "neuron", "layer": 3, "index": 0, "contribution": -0.31431, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L0n31", "kind": "neuron", "layer": 0, "index": 31, "contribution": -0.309821, "activation": null, "activation_over_scale": null}
+      ],
+      "units_absent": null,
+      "units_scale": "neutral",
+      "patterns": [
+       {"unit": "head/L1h1", "layer": 1, "head": 1, "contribution": 0.511863, "weights": [0.027689, 0.048921, 0.016019, 0.023797, 0.018069, 0.024489, 0.035356, 0.046867, 0.020116, 0.009583, 0.009254, 0.014979, 0.017642, 0.016702, 0.029175, 0.015035, 0.031493, 0.042755, 0.019141, 0.020882, 0.0124, 0.028505, 0.034611, 0.022788, 0.021681, 0.019807, 0.040082, 0.04458, 0.032208, 0.02226, 0.02274, 0.045388, 0.012607, 0.021968, 0.02985, 0.031828, 0.037017, 0.031716]},
+       {"unit": "head/L3h1", "layer": 3, "head": 1, "contribution": -0.335417, "weights": [0.022397, 0.011131, 0.00549, 0.017713, 0.044994, 0.016517, 0.007132, 0.005717, 0.025664, 0.043751, 0.026023, 0.023353, 0.030783, 0.022569, 0.034758, 0.018895, 0.026639, 0.029581, 0.038582, 0.109011, 0.007822, 0.157613, 0.022726, 0.04351, 0.012342, 0.019726, 0.011018, 0.007043, 0.034116, 0.016514, 0.009202, 0.012421, 0.010675, 0.028685, 0.011462, 0.013654, 0.013787, 0.006983]}
+      ],
+      "context": ["<bos>", "<start_of_turn>", "u", "s", "e", "r", "\n", "B", "e", " ", "b", "r", "i", "e", "f", ".", "\n", "\n", "H", "i", " ", "t", "h", "e", "r", "e", "<end_of_turn>", "\n", "<start_of_turn>", "m", "o", "d", "e", "l", "\n", "\n", "\n", "\n"]
+     }
+    }
+   }
+  },
+  {
+   "name": "no-r-mid",
+   "steering": null,
+   "envelope": {
+    "measurements": {
+     "version": 2,
+     "scope": "replay",
+     "provenance": "replayed",
+     "instruments": {},
+     "anatomy": {
+      "token": {"raw_index": 3, "token_id": 202, "token": "\n", "position": 37, "prompt_length": 35, "probability": 0.76638},
+      "binding": {
+       "sources": {"R": "local:r-out", "S": "local:s"},
+       "steering": null
+      },
+      "layers": [
+       {
+        "layer": 0,
+        "depth": 0.0,
+        "reads_as": {
+         "layer": 0,
+         "site": "out",
+         "depth": 0.0,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 0.0,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.318828},
+           {"token_id": 68, "token": "a", "value": 0.115917},
+           {"token_id": 146, "token": "�", "value": 0.068579},
+           {"token_id": 100, "token": "�", "value": 0.035577}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": true,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 3.651406},
+           {"token_id": 48, "token": "M", "value": 2.695999},
+           {"token_id": 211, "token": "\u0013", "value": 2.395782},
+           {"token_id": 38, "token": "C", "value": 1.794753}
+          ],
+          "absent": null
+         }
+        },
+        "attention": {
+         "layer": 0,
+         "site": "mid",
+         "depth": 0.0,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.0, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "this R lens has no 'mid' site (it holds: out); fit or fetch a R lens that carries mid"},
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 16, "token": "-", "value": 2.716043},
+           {"token_id": 38, "token": "C", "value": 2.03449},
+           {"token_id": 24, "token": "5", "value": 1.954856},
+           {"token_id": 48, "token": "M", "value": 1.95297}
+          ],
+          "absent": null
+         }
+        },
+        "mlp": {
+         "layer": 0,
+         "site": "out",
+         "depth": 0.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.0,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 100, "token": "�", "value": 0.443453},
+           {"token_id": 66, "token": "_", "value": 0.062967},
+           {"token_id": 214, "token": "\u0016", "value": 0.051456},
+           {"token_id": 31, "token": "<", "value": 0.047598}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 1.0,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 60, "token": "Y", "value": 2.109641},
+           {"token_id": 97, "token": "~", "value": 2.052579},
+           {"token_id": 46, "token": "K", "value": 1.817306},
+           {"token_id": 31, "token": "<", "value": 1.788582}
+          ],
+          "absent": null
+         }
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L0n31", "kind": "neuron", "layer": 0, "index": 31, "contribution": -0.326787, "activation": 1.776513, "activation_over_scale": 1.162924},
+         {"unit": "neuron/L0n0", "kind": "neuron", "layer": 0, "index": 0, "contribution": -0.299057, "activation": 1.622549, "activation_over_scale": 0.582042},
+         {"unit": "neuron/L0n8", "kind": "neuron", "layer": 0, "index": 8, "contribution": -0.229529, "activation": -0.894298, "activation_over_scale": -0.551123},
+         {"unit": "neuron/L0n95", "kind": "neuron", "layer": 0, "index": 95, "contribution": 0.198441, "activation": 0.866888, "activation_over_scale": 0.277901}
+        ],
+        "heads": []
+       },
+       {
+        "layer": 1,
+        "depth": 0.333333,
+        "reads_as": {
+         "layer": 1,
+         "site": "out",
+         "depth": 0.333333,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.334438},
+           {"token_id": 146, "token": "�", "value": 0.132985},
+           {"token_id": 239, "token": "�", "value": 0.063225},
+           {"token_id": 105, "token": "�", "value": 0.061813}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 0.777778,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": true,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 4.362638},
+           {"token_id": 48, "token": "M", "value": 2.265691},
+           {"token_id": 215, "token": "\u0017", "value": 2.088252},
+           {"token_id": 37, "token": "B", "value": 1.741346}
+          ],
+          "absent": null
+         }
+        },
+        "attention": {
+         "layer": 1,
+         "site": "mid",
+         "depth": 0.333333,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.222222, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "this R lens has no 'mid' site (it holds: out); fit or fetch a R lens that carries mid"},
+         "s": {"family": "S", "weight": 0.777778, "unit": "footprint_z", "lens": "S:mid", "centred": false, "tokens": [], "absent": "layer 1 not in fitted S:mid lens layers [0, 2]..[0, 2]"}
+        },
+        "mlp": {
+         "layer": 1,
+         "site": "out",
+         "depth": 0.333333,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 0.222222,
+          "unit": "probability",
+          "lens": "R:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 49, "token": "N", "value": 0.117376},
+           {"token_id": 87, "token": "t", "value": 0.084376},
+           {"token_id": 56, "token": "U", "value": 0.076441},
+           {"token_id": 141, "token": "�", "value": 0.061224}
+          ],
+          "absent": null
+         },
+         "s": {
+          "family": "S",
+          "weight": 0.777778,
+          "unit": "footprint_z",
+          "lens": "S:out",
+          "centred": false,
+          "tokens": [
+           {"token_id": 87, "token": "t", "value": 2.367774},
+           {"token_id": 215, "token": "\u0017", "value": 2.187918},
+           {"token_id": 56, "token": "U", "value": 2.038937},
+           {"token_id": 94, "token": "{", "value": 2.020608}
+          ],
+          "absent": null
+         }
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L1n8", "kind": "neuron", "layer": 1, "index": 8, "contribution": 0.360935, "activation": -1.891946, "activation_over_scale": -0.522662},
+         {"unit": "neuron/L1n25", "kind": "neuron", "layer": 1, "index": 25, "contribution": -0.311181, "activation": -1.674642, "activation_over_scale": -1.311022},
+         {"unit": "neuron/L1n86", "kind": "neuron", "layer": 1, "index": 86, "contribution": 0.270004, "activation": 3.547517, "activation_over_scale": 1.028547},
+         {"unit": "neuron/L1n35", "kind": "neuron", "layer": 1, "index": 35, "contribution": -0.189314, "activation": 1.233264, "activation_over_scale": 0.507657}
+        ],
+        "heads": []
+       },
+       {
+        "layer": 2,
+        "depth": 0.666667,
+        "reads_as": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "residual",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "attention": {
+         "layer": 2,
+         "site": "mid",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "this R lens has no 'mid' site (it holds: out); fit or fetch a R lens that carries mid"},
+         "s": {
+          "family": "S",
+          "weight": 0.222222,
+          "unit": "footprint_z",
+          "lens": "S:mid",
+          "centred": false,
+          "tokens": [
+           {"token_id": 64, "token": "]", "value": 3.370775},
+           {"token_id": 207, "token": "\u000f", "value": 2.712682},
+           {"token_id": 215, "token": "\u0017", "value": 2.266349},
+           {"token_id": 5, "token": "\"", "value": 2.229997}
+          ],
+          "absent": null
+         }
+        },
+        "mlp": {
+         "layer": 2,
+         "site": "out",
+         "depth": 0.666667,
+         "of": "direction",
+         "r": {"family": "R", "weight": 0.777778, "unit": "probability", "lens": "R:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted R:out lens layers [0, 1]..[0, 1]"},
+         "s": {"family": "S", "weight": 0.222222, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 2 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "steering": null,
+        "neurons": [],
+        "heads": []
+       },
+       {
+        "layer": 3,
+        "depth": 1.0,
+        "reads_as": {
+         "layer": 3,
+         "site": "out",
+         "depth": 1.0,
+         "of": "residual",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "logit",
+          "centred": false,
+          "tokens": [
+           {"token_id": 202, "token": "\n", "value": 0.76638},
+           {"token_id": 228, "token": "�", "value": 0.074872},
+           {"token_id": 211, "token": "\u0013", "value": 0.019407},
+           {"token_id": 35, "token": "@", "value": 0.015604}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "attention": {
+         "layer": 3,
+         "site": "mid",
+         "depth": 1.0,
+         "of": "direction",
+         "r": {"family": "R", "weight": 1.0, "unit": "probability", "lens": "R:mid", "centred": false, "tokens": [], "absent": "this R lens has no 'mid' site (it holds: out); fit or fetch a R lens that carries mid"},
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:mid", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:mid lens layers [0, 2]..[0, 2]"}
+        },
+        "mlp": {
+         "layer": 3,
+         "site": "out",
+         "depth": 1.0,
+         "of": "direction",
+         "r": {
+          "family": "R",
+          "weight": 1.0,
+          "unit": "probability",
+          "lens": "logit",
+          "centred": false,
+          "tokens": [
+           {"token_id": 56, "token": "U", "value": 0.129252},
+           {"token_id": 46, "token": "K", "value": 0.123131},
+           {"token_id": 82, "token": "o", "value": 0.049159},
+           {"token_id": 244, "token": "�", "value": 0.043656}
+          ],
+          "absent": null
+         },
+         "s": {"family": "S", "weight": 0.0, "unit": "footprint_z", "lens": "S:out", "centred": false, "tokens": [], "absent": "layer 3 not in fitted S:out lens layers [0, 1]..[0, 1]"}
+        },
+        "steering": null,
+        "neurons": [
+         {"unit": "neuron/L3n0", "kind": "neuron", "layer": 3, "index": 0, "contribution": -0.279468, "activation": -1.590863, "activation_over_scale": -0.626326},
+         {"unit": "neuron/L3n88", "kind": "neuron", "layer": 3, "index": 88, "contribution": 0.124094, "activation": -1.121607, "activation_over_scale": -0.711731},
+         {"unit": "neuron/L3n67", "kind": "neuron", "layer": 3, "index": 67, "contribution": -0.120998, "activation": -2.988806, "activation_over_scale": -0.442822},
+         {"unit": "neuron/L3n76", "kind": "neuron", "layer": 3, "index": 76, "contribution": -0.108879, "activation": 0.876175, "activation_over_scale": 0.557846}
+        ],
+        "heads": []
+       }
+      ],
+      "units": [
+       {"unit": "neuron/L1n8", "kind": "neuron", "layer": 1, "index": 8, "contribution": 0.360935, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L0n31", "kind": "neuron", "layer": 0, "index": 31, "contribution": -0.326787, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L1n25", "kind": "neuron", "layer": 1, "index": 25, "contribution": -0.311181, "activation": null, "activation_over_scale": null},
+       {"unit": "neuron/L0n0", "kind": "neuron", "layer": 0, "index": 0, "contribution": -0.299057, "activation": null, "activation_over_scale": null}
+      ],
+      "units_absent": null,
+      "units_scale": "neutral",
+      "patterns": null,
+      "context": null
+     }
+    }
+   }
+  }
+ ],
+ "intermediates": {
+  "ids": [1, 3, 88, 86, 72, 85, 202, 37, 72, 224, 69, 85, 76, 72, 73, 17, 202, 202, 43, 76, 224, 87, 75, 72, 85, 72, 2, 202, 3, 80, 82, 71, 72, 79, 202, 202, 202, 202],
+  "token_id": 202,
+  "taps": {
+   "block_in": {"shape": [4, 64], "values": [1.75, 0.75, -0.25, 1.75, -0.5, -1.25, -0.5, -1.25, -1.25, 0.0, 1.0, 0.75, -0.75, -0.5, 1.75, -1.75, 0.5, 0.75, 0.25, 0.5, -0.5, -0.5, 1.75, -0.25, 1.25, -0.5, -0.5, 1.75, -0.5, -1.25, 1.75, 0.25, 3.5, -3.5, -1.5, -3.0, 0.5, 3.5, 2.0, -3.0, 0.0, 3.5, 0.5, 2.5, 3.5, 0.0, -3.0, 2.0, -1.5, -2.0, -3.0, -1.5, 0.5, -2.5, 2.0, -3.0, -1.0, -2.5, -3.0, -2.5, 2.0, 3.0, 3.0, -1.0, 0.7299639, -0.32000804, -2.283537, 1.4681321, -1.2409894, 0.0799226, -0.7320053, -2.336713, -0.66509104, -1.4988313, 1.5711472, -1.6343919, -1.8838297, 0.55784523, 5.5438814, -2.099993, -0.63820237, 0.768342, 1.5753417, -1.0789161, -1.0198092, 0.12216511, 1.7849594, -0.2686115, 3.5640583, -1.9211216, -0.06958395, 0.1527232, -0.68887466, -1.124619, -0.2032013, 0.43455815, 4.5227704, -3.4622717, 0.53758633, -3.868662, 0.008537173, 2.117099, 2.3282702, -1.7557405, 2.774174, 2.2320428, -0.4049995, 5.4941325, 2.6122909, -1.7026553, -1.5673625, 1.4634356, -2.4365203, -1.0771165, -3.0077298, -1.1445887, -0.20605975, 0.9479917, 2.9435046, -5.751111, -2.1262589, -3.009004, -2.9005363, -0.9651563, 2.1024446, 1.3670644, -0.10192618, 0.40093344, 2.9836373, -1.4921634, -1.3770058, 0.5830461, -2.1820722, 0.7783549, -0.81891584, -4.6848326, -3.124848, -1.7373827, 1.7447517, -1.8802198, -3.3867404, -0.14248419, 4.3195214, -4.423812, -1.4089366, 0.5517954, 3.411393, -1.3747535, 0.48452377, -1.3026078, 1.8648101, -0.22744685, 4.151336, 0.35939384, -0.24789715, -1.0104618, -1.0163503, -0.16204667, 0.15369087, 3.3300347, 2.4519513, -2.6815417, 1.4698741, -7.159176, -1.6072474, 2.2648706, 4.2963247, -1.812494, 2.6214669, 4.9404297, -0.5052216, 6.0420117, 3.555318, -0.038254738, -0.5486142, 1.6021005, -2.4365082, -1.5156484, -2.9779778, -1.4442098, -0.63905334, -1.4929686, 0.32630038, -5.797125, -3.678846, -3.317373, -1.629867, -1.4486283, 1.4710257, 1.7708606, 1.4241085, -0.69379485, 3.089995, -0.9639487, -2.1676757, 0.7394535, -1.2468102, -0.23810486, 1.4097762, -4.583261, -2.4508452, -0.09333956, 1.9803424, -2.7075758, -2.8640075, 1.5034186, 1.4151795, -4.5519032, -0.261213, 1.3743739, 5.3736515, 2.374927, -0.7333923, -2.7619257, 3.396297, -0.5906352, 2.5395987, -0.6043799, 0.41906565, -1.1564522, -2.7504144, -0.6249532, 0.56166136, 1.9029745, 5.01093, -1.0763947, -0.033023953, -8.649489, 1.4741195, 3.2958298, 1.7421238, -0.71847665, 4.4652214, 4.6689606, -1.793157, 6.5506063, 4.630948, 2.3144069, -0.20179507, 2.0893593, -4.9565644, -2.2467794, -3.5326495, -3.6600044, -1.3309813, -5.07744, 1.976785, -6.574294, -1.3529336, -4.403966, -3.7042243, -1.8335607, 2.0831828, 2.2885983, 0.77066183, -1.2313809]},
+   "mid": {"shape": [4, 64], "values": [2.238518, 1.1330123, -1.8393242, 1.2692521, -0.3382036, -0.14214921, -0.49847943, -2.029162, -0.96439445, -1.8283266, 0.761299, 0.4515263, -1.5764396, -0.8912449, 2.8349047, -0.98052496, -0.0022137165, 0.79753363, 0.8684348, 0.55245113, -0.9601412, -0.061639726, 2.092669, 0.090342104, 1.9987452, -0.62443924, -0.8722527, 1.0025077, 0.41912895, -2.0333867, 0.594836, -0.84955835, 4.2135935, -5.145596, -1.1492678, -3.6215, -0.31993008, 3.7787218, 1.7246323, -2.1301496, 1.6651949, 4.175652, 1.2936192, 3.7128365, 2.656601, -1.6106746, -1.2077177, 2.1316998, -2.4162302, -1.283782, -3.660089, -1.4474174, 0.79191136, -0.030810595, 1.7320659, -4.6510897, -2.3549695, -3.5966835, -3.4920259, -1.3377416, 1.0387605, 1.3183739, 0.22469306, 0.2481327, 2.144291, -0.37380224, -1.6008716, 0.09537506, -1.7210022, 0.7640301, -0.35492307, -2.9217172, -1.883793, -0.93552214, 2.2429929, -1.9172641, -2.401813, -1.54201, 4.192657, -3.4485414, -1.0242162, -0.17874235, 2.3245442, 0.08232653, 0.2706281, -0.5749185, 1.4178367, 0.98696584, 3.5599992, -0.7097167, 0.21778637, 0.65397865, -0.859494, -1.9167256, 0.78274953, 3.2032998, 2.5565264, -3.2894087, 1.398505, -6.314885, -0.95528364, 1.8839811, 3.2401876, -1.938833, 1.690526, 1.8982946, -1.5322418, 6.9220862, 3.8711596, -2.209405, -1.3769293, 1.663377, -2.2160535, -0.98799723, -3.102002, -1.1634725, 0.22704801, -0.6413939, 3.3524396, -4.214091, -3.669868, -3.0183992, -2.8679168, -1.0261221, 2.1175203, 1.3860922, -0.3440707, -0.10944098, 2.074158, -2.520748, -2.5528636, 1.0360531, -1.3551126, -0.46619844, -0.2733311, -6.147136, -3.018641, -1.0102379, 2.085146, -2.485895, -2.7431898, 1.6554615, 2.5452948, -4.1831255, -1.0754263, 0.6695415, 4.500778, 0.30589974, -1.2489734, -1.254095, 1.4513379, -0.115715176, 3.055145, -0.050097793, -0.2451333, -0.26053983, -2.0965633, 0.13611919, 0.79400796, 2.9508858, 4.1882844, -1.6839731, 0.8921788, -7.984661, 1.5847087, 2.817231, 2.2663453, -0.9648929, 1.6838684, 4.5473504, -1.8108708, 6.3973713, 3.6389782, 1.6369447, -0.44024393, 1.5481137, -3.035445, -1.2010348, -4.751645, -2.6878474, -0.31914628, -3.8319838, 1.9036812, -7.2981143, -3.4832203, -4.5668845, -2.3587368, -1.403519, 1.9962094, 2.617811, 1.4130486, -0.1646285, 2.321577, -2.553358, -1.634047, 0.88375103, 0.64214265, -0.4638343, 1.5228156, -4.104803, -2.7844784, 0.7859631, 1.8322742, -1.6759847, -2.2764535, 1.1773902, 0.8297256, -4.3679347, 0.26513672, 0.38571954, 4.3253965, 2.1130614, 1.0499392, -3.3902173, 2.6182609, -0.36502314, 2.2339747, -0.47063994, -0.038078964, 0.20363367, -4.1538525, -0.7757163, 1.8152616, 2.2141037, 5.0763597, -2.0506387, 0.061129183, -10.247034, 2.9839628, 3.00798, 1.1693892, 1.797171, 4.293044, 5.2609744, -2.0962462, 5.7235, 6.8672256, 2.6610467, -0.27265346, 1.5947661, -6.7306027, -1.4574848, -2.9035487, -4.075897, -4.313916, -3.9754205, 2.9101765, -6.5977006, -1.3275844, -4.698332, -2.8745322, -1.6208208, 0.8317561, 1.3419583, 1.0403867, -3.7493942]},
+   "out": {"shape": [4, 64], "values": [0.7299639, -0.32000804, -2.283537, 1.4681321, -1.2409894, 0.0799226, -0.7320053, -2.336713, -0.66509104, -1.4988313, 1.5711472, -1.6343919, -1.8838297, 0.55784523, 5.5438814, -2.099993, -0.63820237, 0.768342, 1.5753417, -1.0789161, -1.0198092, 0.12216511, 1.7849594, -0.2686115, 3.5640583, -1.9211216, -0.06958395, 0.1527232, -0.68887466, -1.124619, -0.2032013, 0.43455815, 4.5227704, -3.4622717, 0.53758633, -3.868662, 0.008537173, 2.117099, 2.3282702, -1.7557405, 2.774174, 2.2320428, -0.4049995, 5.4941325, 2.6122909, -1.7026553, -1.5673625, 1.4634356, -2.4365203, -1.0771165, -3.0077298, -1.1445887, -0.20605975, 0.9479917, 2.9435046, -5.751111, -2.1262589, -3.009004, -2.9005363, -0.9651563, 2.1024446, 1.3670644, -0.10192618, 0.40093344, 2.9836373, -1.4921634, -1.3770058, 0.5830461, -2.1820722, 0.7783549, -0.81891584, -4.6848326, -3.124848, -1.7373827, 1.7447517, -1.8802198, -3.3867404, -0.14248419, 4.3195214, -4.423812, -1.4089366, 0.5517954, 3.411393, -1.3747535, 0.48452377, -1.3026078, 1.8648101, -0.22744685, 4.151336, 0.35939384, -0.24789715, -1.0104618, -1.0163503, -0.16204667, 0.15369087, 3.3300347, 2.4519513, -2.6815417, 1.4698741, -7.159176, -1.6072474, 2.2648706, 4.2963247, -1.812494, 2.6214669, 4.9404297, -0.5052216, 6.0420117, 3.555318, -0.038254738, -0.5486142, 1.6021005, -2.4365082, -1.5156484, -2.9779778, -1.4442098, -0.63905334, -1.4929686, 0.32630038, -5.797125, -3.678846, -3.317373, -1.629867, -1.4486283, 1.4710257, 1.7708606, 1.4241085, -0.69379485, 3.089995, -0.9639487, -2.1676757, 0.7394535, -1.2468102, -0.23810486, 1.4097762, -4.583261, -2.4508452, -0.09333956, 1.9803424, -2.7075758, -2.8640075, 1.5034186, 1.4151795, -4.5519032, -0.261213, 1.3743739, 5.3736515, 2.374927, -0.7333923, -2.7619257, 3.396297, -0.5906352, 2.5395987, -0.6043799, 0.41906565, -1.1564522, -2.7504144, -0.6249532, 0.56166136, 1.9029745, 5.01093, -1.0763947, -0.033023953, -8.649489, 1.4741195, 3.2958298, 1.7421238, -0.71847665, 4.4652214, 4.6689606, -1.793157, 6.5506063, 4.630948, 2.3144069, -0.20179507, 2.0893593, -4.9565644, -2.2467794, -3.5326495, -3.6600044, -1.3309813, -5.07744, 1.976785, -6.574294, -1.3529336, -4.403966, -3.7042243, -1.8335607, 2.0831828, 2.2885983, 0.77066183, -1.2313809, 2.9735956, -2.8888373, -2.0563297, 0.7126467, 1.4129847, -0.9815106, 1.4388903, -4.6203156, -3.2337387, 3.1582787, 2.3692908, -3.6088831, -2.7315698, 1.898206, 1.1835601, -2.5573397, 0.26491827, -2.381056, 4.2250967, 2.023867, 1.7442681, -2.4642751, 4.407392, -1.8485183, 2.4249663, -1.3453119, -0.851008, 1.096334, -3.8286967, -0.15111959, 0.6575631, 3.0581255, 1.9604447, -1.6981516, 0.44860977, -8.825009, 1.7212855, 3.971665, 1.1283963, 2.027244, 4.822423, 5.0364947, -1.2100023, 7.253966, 5.679912, 2.5819383, -0.595793, 2.1066456, -7.3869543, -2.1184173, -3.1285594, -3.6273546, -4.2692075, -4.3475137, 3.5789027, -7.421486, -0.5086635, -4.7735653, -1.1533713, -1.2903003, 1.2038044, 2.5138118, -0.9000062, -4.820339]},
+   "act": {"dtype": "float32", "encoding": "float32-le-base64", "shape": [4, 96], "data": "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"},
+   "z": {"shape": [4, 64], "values": [0.49505106, -0.008057258, 0.40424848, 0.20333833, 0.39539683, -1.3071427, 0.60455316, -0.4150171, -0.92117584, -0.6987299, 0.94173574, -0.25413522, 1.0055377, -0.7790313, 0.5001711, -0.6412633, 0.4950511, -0.008057258, 0.4042485, 0.20333831, 0.3953969, -1.3071429, 0.6045532, -0.41501713, -0.9211759, -0.6987299, 0.94173574, -0.25413525, 1.0055379, -0.7790313, 0.5001711, -0.6412633, 1.7707161, 0.57205236, -0.31345344, -0.36241257, 0.27040163, -0.18049863, -0.18140033, -1.6359204, 0.7609721, 0.28192294, -0.20230696, -0.21925122, 1.3273212, -0.47485375, -0.23877822, -0.732468, 1.7707161, 0.57205236, -0.31345344, -0.36241257, 0.27040166, -0.18049864, -0.18140034, -1.6359205, 0.7609721, 0.28192294, -0.20230696, -0.21925123, 1.3273212, -0.47485384, -0.23877823, -0.7324682, -0.30671272, -0.67763084, -0.11528932, -0.32691994, 0.16434024, -0.08823269, -0.6203256, 0.58278525, 0.036971334, 0.3491307, -0.30102652, -0.21392196, 0.19549479, -0.1596877, -0.046336036, 0.0074960887, -0.27816093, -0.5438006, -0.26655576, -0.2527871, 0.1635873, 0.10013332, -0.76677775, 0.6308966, 0.010844183, 0.28129074, -0.11109456, -0.20967011, 0.17485064, -0.1011757, -0.20265347, -0.19875666, 0.42175967, 0.5347574, 0.053177793, -0.45678973, 0.08561036, -0.23116979, -0.35163704, -0.04143654, 0.5377235, -0.007694298, 0.24079236, -0.17535904, -0.21881577, -0.68719685, 0.21397302, -0.2596728, 0.49614602, 0.62404466, 0.075081535, -0.23122728, 0.33877292, -0.31525347, 0.14606188, 0.14312553, 0.04685836, 0.16611053, 0.11650651, -0.297417, -0.051613394, -0.43912995, 0.1940399, 0.13736059, 0.45644423, -1.9402496, -0.45742542, -0.33286273, -0.90234023, 0.9457023, -1.8026264, -0.018794144, -0.39029953, -2.168305, -1.5175703, 0.9146666, -0.79442525, -0.12918374, -0.61529016, -0.63195527, 0.2615441, -2.0009902, -0.4177987, -0.237486, -0.7681686, 1.0685724, -2.0134597, 0.072730646, -0.31660908, -2.0358214, -1.3343341, 0.95548326, -0.95958674, -0.22183834, -0.5849075, -0.6495271, -0.044577513, 1.1544, 0.361596, 0.73530376, 0.70476705, 1.9288069, -0.14071569, -0.12074521, -0.48501176, 0.5093619, 0.718992, 0.9384517, 0.27994087, 1.8024136, 0.44769087, 0.6309516, -0.04260593, 1.185247, 0.41137284, 0.78594697, 0.75827104, 1.885585, -0.19214275, -0.04468511, -0.52157277, 0.5050896, 0.8586709, 0.8975275, 0.25430027, 1.7338707, 0.3667839, 0.59986913, -0.27892628, 0.22296046, 0.08361466, 0.4882371, 0.54335475, -0.3967128, 0.23497783, 0.014443078, 0.23663875, -0.25379458, -0.18850741, -0.10817993, 0.33927414, 0.24861518, 0.038001254, -0.6273783, -0.14887707, 0.01525819, 0.12696326, 0.12877108, 0.32315117, -0.57500356, 0.049815185, 0.023573501, 0.31420997, 0.14676756, -0.16693382, -0.28327367, 0.42000315, 0.33222225, 0.1902268, -0.56530225, 0.6623195, -0.11766626, -0.083445676, -0.14166574, -0.29944485, 0.16717637, 0.24295871, 0.06062964, 0.585354, 0.55495554, -0.33331475, -0.03218159, 0.12362125, -0.04165403, -0.29365972, 0.2011844, 0.14134826, 0.032330588, -0.18606521, 0.2645848, -0.41559255, -0.06359856, -0.067496076, -0.25622615, 0.35479516, 0.4773107, 0.36096317, -0.07467054, 0.43288565, 0.3548427, -0.48152688, 0.02457349]}
+  },
+  "u": [0.075948074, 0.03338252, -0.008319572, 0.070116416, -0.020647692, -0.045093514, -0.014613226, -0.03662902, -0.04742807, 0.0, 0.04265954, 0.032330964, -0.025158405, -0.022680655, 0.058174692, -0.06437966, 0.01590254, 0.033572525, 0.009059598, 0.020196531, -0.014867643, -0.020560095, 0.06874768, -0.00810139, 0.042817228, -0.015269377, -0.018588714, 0.05316758, -0.019150209, -0.04884345, 0.067756794, 0.009016561, 0.11655887, -0.16146602, -0.056046255, -0.08917982, 0.021020874, 0.102402344, 0.070487194, -0.13268459, 0.0, 0.12828556, 0.015297073, 0.093348615, 0.0995362, 0.0, -0.09602069, 0.06772765, -0.062132746, -0.07650351, -0.10204699, -0.05195134, 0.022550173, -0.1027305, 0.08639634, -0.09376715, -0.04410028, -0.07283965, -0.10463299, -0.08053389, 0.06546127, 0.086705245, 0.107594654, -0.03466729],
+  "g_out": {"0": [0.06638101, 0.0005432144, 0.03981429, -0.0015948247, -0.012714175, 0.022215711, 0.008007854, -0.0032131532, -0.023579834, 0.009400714, 0.08148768, 0.046455495, -0.006193664, 0.018005041, 0.033451494, -0.08024052, 0.02912848, 0.009661691, -0.04770112, 0.044844456, 0.012096494, 0.036124904, 0.029536188, 0.043141786, -0.019301917, 0.010143569, -0.063787505, 3.4368597e-05, 0.030892968, -0.07436675, 0.00081798434, -0.052184504, 0.12818862, -0.132465, -0.027092641, 0.011580888, -0.012412362, 0.01501694, 0.06459757, -0.0831057, 0.029687174, 0.109133355, 0.0065985555, 0.08837672, -0.008700065, 0.0021519698, -0.11045448, 0.009708334, -0.0867506, -0.07028046, -0.096604794, -0.021815723, -0.012842961, -0.0707547, 0.039714266, -0.022845982, 0.08134346, -0.018677961, -0.1149732, -0.024997346, 0.08461625, 0.035526402, 0.09568075, -0.037677184], "1": [0.012807792, 0.011247947, -0.06342592, 0.028795015, -0.115149625, -0.058767963, -0.028289357, 0.06480244, -0.082574844, -0.0062690927, 0.087056845, -0.005578786, -0.057941496, -0.1466853, 0.03241729, -0.06712953, 0.04098162, 0.066731006, -0.01904005, -0.026264455, 0.014895469, 0.03448775, 0.015839886, 0.061697677, 7.292442e-05, 0.002029921, -0.032659125, 0.04131195, 0.020335529, -0.042540487, 0.057479404, -0.025660258, 0.12722331, -0.0026531145, -0.037478574, -0.020599619, -0.012898053, 0.07297593, 0.005599376, -0.13523227, -0.048602525, 0.06388642, 0.07904844, 0.13037547, 0.10766862, -0.011130672, -0.071057275, 0.05044929, -0.031454556, -0.12146861, -0.019111726, -0.012708066, 0.029453956, -0.16884482, 0.015143942, -0.06271833, 0.07059735, -0.09484373, -0.12486254, -0.06312731, 0.026875576, 0.063494384, 0.071505174, -0.035567492], "3": [0.075948074, 0.03338252, -0.008319572, 0.070116416, -0.020647692, -0.045093514, -0.014613226, -0.03662902, -0.04742807, 0.0, 0.04265954, 0.032330964, -0.025158405, -0.022680655, 0.058174692, -0.06437966, 0.01590254, 0.033572525, 0.009059598, 0.020196531, -0.014867643, -0.020560095, 0.06874768, -0.00810139, 0.042817228, -0.015269377, -0.018588714, 0.05316758, -0.019150209, -0.04884345, 0.067756794, 0.009016561, 0.11655887, -0.16146602, -0.056046255, -0.08917982, 0.021020874, 0.102402344, 0.070487194, -0.13268459, 0.0, 0.12828556, 0.015297073, 0.093348615, 0.0995362, 0.0, -0.09602069, 0.06772765, -0.062132746, -0.07650351, -0.10204699, -0.05195134, 0.022550173, -0.1027305, 0.08639634, -0.09376715, -0.04410028, -0.07283965, -0.10463299, -0.08053389, 0.06546127, 0.086705245, 0.107594654, -0.03466729]},
+  "g_mid": {"1": [0.055766664, -0.011918142, -0.037289687, 0.024812123, -0.035011973, -0.025443882, -0.03495182, -0.043023895, -0.093063414, 0.023381893, 0.06037164, -0.028217126, -0.020598553, -0.018675722, -0.023121972, -0.06026172, 0.032179546, 0.06853131, 0.04452141, -0.015979536, -0.0018082131, -0.054945447, 0.007170407, 0.041655153, 0.117620744, 0.004134628, 0.018542914, 0.09274523, 0.014359806, -0.060832568, 0.04272388, -0.02075206, 0.026005931, -0.036243036, 0.02225835, -0.10423347, -0.009583458, 0.101229884, 0.049491756, -0.14575626, 0.029272372, -0.0026594698, 0.06510973, -0.021970354, -0.009826816, 0.034491003, -0.046415757, 0.01608987, -0.04781975, -0.058895063, -0.024253715, -0.046095837, -0.002993042, -0.123617694, 0.0918123, -0.037837826, -0.04060048, -0.0019426346, -0.09138948, 0.029558074, 0.11054212, -0.00974993, 0.05835203, -0.03035383], "3": [0.0058168694, 0.07705117, 0.052594837, 0.13834295, 0.016113937, -0.002453215, -0.01553195, -0.064896084, 0.0032704994, 0.051538233, 0.07997212, 0.038573407, 0.047462407, -0.020164043, 0.065978765, -0.030189477, 0.056928307, 0.052394193, 0.012888512, 0.030161813, -0.02950671, -0.045547992, 0.12377596, -0.016838137, 0.06494941, -0.058205504, 0.0044871895, 0.05992864, 0.008616097, -0.040148675, 0.11546808, 0.057092737, 0.07294845, -0.18599899, -0.024512053, -0.0139856525, -0.012514528, 0.103390805, 0.07125218, -0.15884307, -0.021808585, 0.10410348, -0.028418913, 0.0630673, 0.13769652, -0.006728144, -0.086298294, 0.11678164, -0.061641686, -0.057876885, -0.059999466, -0.06573824, 0.051855847, -0.1110012, -0.0010645855, -0.046126097, -0.0105227865, -0.049285628, -0.07158366, -0.012802272, 0.024272857, 0.0744223, 0.103933565, -0.033660367]},
+  "neuron_contributions": {"dtype": "float32", "encoding": "float32-le-base64", "shape": [4, 96], "data": "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"},
+  "head_contributions": {"shape": [4, 4], "values": [0.0, 0.0, 0.0, 0.0, 0.18678191, 0.55271995, 0.07547046, -0.010390153, 0.0, 0.0, 0.0, 0.0, 0.10357684, -0.16597453, -0.043317743, -0.13842013]},
+  "head_write_norms": {"shape": [4, 4], "values": [3.5158708, 4.5413065, 4.3028684, 3.9827268, 4.0836654, 4.168072, 3.9769964, 3.062209, 4.370369, 4.057383, 4.4007416, 3.8754106, 4.3788486, 3.4563785, 3.811615, 3.975953]}
+ },
+ "declared_ties": ["cases[0].envelope.measurements.anatomy.layers[0].attention.s", "cases[0].envelope.measurements.anatomy.layers[3].attention.r", "cases[1].envelope.measurements.anatomy.layers[0].attention.s", "cases[2].envelope.measurements.anatomy.layers[0].attention.s"]
+}
