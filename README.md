@@ -344,6 +344,7 @@ Common options:
 |---|---:|---|
 | `-d`, `--device` | `auto` | `cuda`, `mps`, `cpu`, or automatic selection |
 | `-q`, `--quantize` | none | `4bit` or `8bit` bitsandbytes quantization on CUDA |
+| `--dtype` | device default | `float32`, `bfloat16` or `float16` weights (default bf16 on CUDA/MPS, fp32 on CPU); a fit records the dtype it ran at |
 | `-p`, `--probes` | `all` | Bundled probe categories, `all`, or `none` |
 | `-H`, `--host` | `127.0.0.1` | Bind address; non-loopback requires an API key |
 | `-P`, `--port` | `8000` | Bind port |

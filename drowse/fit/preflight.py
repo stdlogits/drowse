@@ -69,6 +69,7 @@ def preflight_manifold_fit_noop(
     hyperparams: Mapping[str, Any] | None = None,
     quantize: str | None = None,
     device: str = "auto",
+    dtype: str | None = None,
 ) -> ManifoldFitProof | None:
     """Prove an existing fit is exact for ``model_id`` without loading weights.
 
@@ -100,7 +101,9 @@ def preflight_manifold_fit_noop(
         return None
     if mf.fit_mode == "baked":
         return None
-    source_fingerprint = model_source_fingerprint(model_id, quantize=quantize, device=device)
+    source_fingerprint = model_source_fingerprint(
+        model_id, quantize=quantize, device=device, dtype=dtype,
+    )
     if source_fingerprint is None:
         return None
     loaded_fingerprint = _proven_neutral_loaded_fingerprint(model_id, source_fingerprint)

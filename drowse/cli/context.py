@@ -192,11 +192,12 @@ def open_session(
     """
     from drowse.session.session import DrowseSession
 
-    tail = f" ({args.quantize})" if args.quantize else ""
-    note(f"Loading model: {args.model}{tail}")
+    tail = ", ".join(filter(None, (args.quantize, args.dtype)))
+    note(f"Loading model: {args.model}{f' ({tail})' if tail else ''}")
     session = DrowseSession.from_pretrained(
         args.model,
         device=args.device,
+        dtype=args.dtype,
         quantize=args.quantize,
         probes=resolve_probes(args.probes) if roster else [],
         system_prompt=getattr(args, "system_prompt", None),

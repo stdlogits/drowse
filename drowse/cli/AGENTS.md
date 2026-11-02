@@ -95,7 +95,7 @@ validate FILE` adds `ensure_vectors_installed(strict=True, dry_run=True)`
 ## Sessions
 
 `open_session(args, *, roster=False)` is the one construction path: narrated on
-stderr, built from `device`, `quantize`, `system_prompt`, `max_tokens`, `dls =
+stderr, built from `device`, `dtype`, `quantize`, `system_prompt`, `max_tokens`, `dls =
 not --no-dls`, `compile`, `cuda_graphs`, `return_top_k`, closed on exit.
 
 - `roster=True` only for verbs that read probe readings: `serve`, `experiment
@@ -103,10 +103,13 @@ not --no-dls`, `compile`, `cuda_graphs`, `return_top_k`, closed on exit.
   concept axes plus already-fitted bundled multi-node manifolds), `none` or
   empty → `[]`, categories verbatim. Everything else constructs with
   `probes=[]`, which also skips the construction-time neutral capture and fits.
-- `-d/-q` (`MODEL_LOAD`) exist exactly on the verbs that load weights: `serve`,
+- `-d/-q/--dtype` (`MODEL_LOAD`) exist exactly on the verbs that load weights: `serve`,
   `manifold extract|generate|fit`, `template score`, `lens fit|top|decompose`,
-  `sae train`, `unit read|top|find|stats`, every `experiment` verb. `manifold transfer` has neither but loads
-  a model (default device) when it must capture a missing neutral cache.
+  `sae train`, `unit read|top|find|stats`, every `experiment` verb. `manifold transfer` has none but loads
+  a model (default device and dtype) when it must capture a missing neutral cache.
+  `--dtype` is long-only and reaches the loader and the model-source fingerprint,
+  so a fit's identity records the dtype it ran at and the no-op proofs
+  (`lens fit`, `manifold extract|fit`) key on it.
 
 ## Fail before the load
 

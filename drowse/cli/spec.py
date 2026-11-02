@@ -112,8 +112,10 @@ DEVICE = arg("-d", "--device", default="auto",
              help="Device: auto (detect), cuda, mps, or cpu (default: auto)")
 QUANTIZE = arg("-q", "--quantize", choices=["4bit", "8bit"], default=None,
                help="Quantization mode (default: bf16/fp16)")
-#: Every verb that loads a model takes these two.
-MODEL_LOAD = (DEVICE, QUANTIZE)
+DTYPE = arg("--dtype", choices=["float32", "bfloat16", "float16"], default=None,
+            help="Weight dtype (default: bfloat16 on CUDA/MPS, float32 on CPU)")
+#: Every verb that loads a model takes these three.
+MODEL_LOAD = (DEVICE, QUANTIZE, DTYPE)
 
 PROBES = arg(
     "-p", "--probes", nargs="*", default=None,

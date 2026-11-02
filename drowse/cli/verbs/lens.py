@@ -104,6 +104,7 @@ def lens_fit_is_noop(
         seq_len=args.seq_len,
         source_fingerprint=lambda: model_source_fingerprint(
             args.model, quantize=args.quantize, device=args.device,
+            dtype=args.dtype,
         ),
         docs=docs,
         corpus_spec=None if hf_corpus is None else hf_corpus.spec,

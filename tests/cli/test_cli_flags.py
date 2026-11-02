@@ -1158,3 +1158,47 @@ def test_why_histogram_and_json(monkeypatch: pytest.MonkeyPatch, capsys: pytest.
     with pytest.raises(SystemExit) as exc:
         main(["manifold", "why", "nope", "-m", "m/x"])
     assert exc.value.code == 1
+
+
+@pytest.mark.parametrize("dtype", [None, "float32", "bfloat16"])
+def test_dtype_reaches_the_loader_and_the_fit_identity(
+    dtype: str | None, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``--dtype`` is a load flag: the session loads at it, and the lens-fit
+    no-op proof keys the model source on it (a bf16 fit is not an fp32 fit)."""
+    from drowse.cli.verbs.lens import lens_fit_is_noop
+
+    created = install_fake_session(monkeypatch)
+    flag = [] if dtype is None else ["--dtype", dtype]
+    args = parse_args(["lens", "fit", "m/x", "--corpus", "c.txt", *flag])
+    assert args.dtype == dtype
+    with open_session(args):
+        pass
+    assert created[0].load_kwargs["dtype"] == dtype
+
+    seen: list[dict[str, Any]] = []
+
+    def fingerprint(_model: str, **kwargs: Any) -> None:
+        seen.append(kwargs)
+
+    def prove(*_args: Any, source_fingerprint: Any, **_kwargs: Any) -> None:
+        source_fingerprint()
+
+    monkeypatch.setattr("drowse.model.fingerprint.model_source_fingerprint", fingerprint)
+    monkeypatch.setattr("drowse.lens.lifecycle.prove_lens_fit_noop", prove)
+    assert not lens_fit_is_noop(args, None, docs=["a document"])
+    assert seen == [{"quantize": None, "device": "auto", "dtype": dtype}]
+
+
+@pytest.mark.parametrize("argv", [
+    ["serve", "m"],
+    ["manifold", "fit", "x", "-m", "m"],
+    ["template", "score", "t", "-m", "m"],
+    ["lens", "top", "m", "p"],
+    ["sae", "train", "m", "n"],
+    ["unit", "read", "neuron/L1n2", "-m", "m"],
+    ["unit", "stats", "neuron/L1n2", "-m", "m"],
+    ["experiment", "fan", "m", "p", "-g", "a=0,1"],
+])
+def test_every_weight_loading_verb_takes_dtype(argv: list[str]) -> None:
+    assert parse_args([*argv, "--dtype", "float32"]).dtype == "float32"

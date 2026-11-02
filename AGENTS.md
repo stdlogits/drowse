@@ -95,7 +95,8 @@ python scripts/migrate_lens_v7.py --home DIR [--dry-run]  # pre-5.4 lens homes
 python scripts/regenerate_bundled.py [TARGETS...]         # bundled corpora + neutral baseline
 ```
 
-Model-loading verbs also take `-d/--device` and `-q/--quantize 4bit|8bit`;
+Model-loading verbs also take `-d/--device`, `-q/--quantize 4bit|8bit` and
+`--dtype float32|bfloat16|float16`;
 most read verbs take `-j/--json`. The root parser has exactly these nine
 verbs; a bare verb or group prints its help and exits 0, and `drowse MODEL` is
 an argparse error. Precedence is CLI > YAML > runner default; every verb with

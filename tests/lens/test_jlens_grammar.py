@@ -454,7 +454,7 @@ def test_lens_noop_preflight_requires_exact_model_source(
         lambda *_args, **_kwargs: "source-a",
     )
     args = argparse.Namespace(
-        force=False, model="toy/model", quantize=None, device="cpu",
+        force=False, model="toy/model", quantize=None, device="cpu", dtype=None,
         seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
     assert lens_fit_is_noop(args, [0], hf_corpus=corpus)
@@ -503,7 +503,7 @@ def test_lens_noop_preflight_rejects_changed_dataset_revision(
         lambda *_args, **_kwargs: "source-a",
     )
     args = argparse.Namespace(
-        force=False, model="toy/model", quantize=None, device="cpu",
+        force=False, model="toy/model", quantize=None, device="cpu", dtype=None,
         seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
     assert lens_fit_is_noop(args, [0], hf_corpus=old)
@@ -544,7 +544,7 @@ def test_lens_noop_preflight_holds_fit_lock_during_sidecar_read(
     monkeypatch.setattr(lens_io, "lens_fit_lock", fake_lock)
     monkeypatch.setattr(lens_io, "load_local_lens_sidecar", read_sidecar)
     args = argparse.Namespace(
-        force=False, model="toy/model", quantize=None, device="cpu",
+        force=False, model="toy/model", quantize=None, device="cpu", dtype=None,
         seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
 

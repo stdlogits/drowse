@@ -357,7 +357,7 @@ def test_cli_preflight_reports_finished_relp_fit(
         lambda *_args, **_kwargs: "source-a",
     )
     args = argparse.Namespace(
-        force=False, model=_DENSE_MODEL_ID, quantize=None, device="cpu",
+        force=False, model=_DENSE_MODEL_ID, quantize=None, device="cpu", dtype=None,
         seq_len=None, corpus=None, prompts=len(_PROMPTS), kind="r",
         sites=("out", "mid"),
     )
