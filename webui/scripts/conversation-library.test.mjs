@@ -317,6 +317,13 @@ try {
   const refused = { type: "error", code: "SteeringExprError", status: 400, message: "a head has no single write direction; silence it with !head/L20h3" };
   assert.equal(userFacingError(refused, "Generation stopped."), refused.message, "a request error reads as the server wrote it");
   assert.equal(userFacingError({ code: "InternalError", status: 500, message: "boom" }, "Generation stopped."), "Generation stopped.");
+  // Regression: a unit read on a model without unit sites (GPT-2, Pythia, Qwen3.5 base) read as
+  // "Another Drowse tab is using the local model": the upper-cased code UNSUPPORTEDBLOCKERROR
+  // contains LOCK.
+  const unitRefusal = { code: "UnsupportedBlockError", status: 422, message: "layer 0: block has no softmax self-attention ('self_attn'; found attention, input_layernorm, mlp)" };
+  assert.equal(userFacingError(unitRefusal), unitRefusal.message, "a model's unit refusal reads as the server wrote it");
+  assert.doesNotMatch(userFacingError({ code: "BLOCK_SITES_MEMBER_UNAVAILABLE", message: "x" }), /Another Drowse tab/);
+  assert.match(userFacingError({ code: "SessionLockTimeout", status: 409, message: "x" }), /Another Drowse tab/, "a held lock still says so");
 
   process.stdout.write("conversation library tests passed\n");
 } finally {
