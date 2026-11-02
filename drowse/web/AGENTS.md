@@ -300,6 +300,8 @@ lib/manifolds/        fitKind.ts (the one flat/curved classifier), diagnostics
 lib/units.ts          unit IDs, reads, activity and atlas arithmetic (store-free); stores/units
 lib/unitTerms.ts      a unit's recipe terms and their one validity rule (import-free)
 lib/lensRoom.ts       the Lens room's arithmetic (band spans, site series, family sources, fit ladder)
+lib/Slider.svelte     the one range slider; sliderDrag.ts runs its pointer drag, which fires the
+                      input's change once when it ends on a new value, as a keyboard step does
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
 lib/style/            drowse.css (the shell's Ledger classes), global.css, cursors.css
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
