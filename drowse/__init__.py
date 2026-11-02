@@ -5,7 +5,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "6.0.0"
+__version__ = "6.0.1"
 
 _EXPORTS: dict[str, tuple[str, str]] = {
     "DrowseSession": ("drowse.session.session", "DrowseSession"),
