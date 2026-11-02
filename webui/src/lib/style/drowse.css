@@ -123,7 +123,8 @@
 .dw-blocks { display: grid; gap: var(--s3); }
 .dw-blocks > i { display: block; height: 44px; border-radius: var(--r-box); background: var(--wash); }
 
-@media (max-width: 720px) {
+/* The phone (narrow, or short: a phone on its side), as App's phone layout. */
+@media (max-width: 720px), (max-height: 520px) {
   .dw-top, .dw-main, .dw-room { padding-left: var(--s4); padding-right: var(--s4); }
   .dw-main { gap: var(--s6); }
 

@@ -18,7 +18,9 @@ grammar on top of it:
 - the forced-prefix plans behind a token fork and an answer prefill
   (:func:`plan_fork`, :func:`plan_prefill`), which the session executes;
 - opening the turn a stateful generation streams into
-  (:func:`begin_generation_turn`), which also reserves its subtree.
+  (:func:`begin_generation_turn`), which also reserves its subtree, and
+  recording the conversation a stateful message list answers
+  (:func:`split_message_list`).
 """
 
 from __future__ import annotations
@@ -34,6 +36,7 @@ from drowse.generation.sampling import (
 from drowse.loom.errors import InvalidNodeOperationError
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomNode, LoomTree, PromptCapture
+from drowse.model.role_templates import InvalidRoleError, validate_role
 
 if TYPE_CHECKING:
     from drowse.model.scene import TurnGrammar
@@ -504,6 +507,142 @@ def plan_prefill(
     )
 
 
+@dataclass(frozen=True)
+class MessageTurn:
+    """One validated turn of a stateful message list.
+
+    :func:`split_message_list` makes them; :func:`begin_generation_turn`
+    records them.  ``token_ids`` is the text's tokenization, which an
+    authored assistant turn keeps so it stays forkable.
+    """
+
+    seat: str
+    text: str
+    label: str | None
+    thinking: str | None
+    token_ids: tuple[int, ...]
+
+
+def split_message_list(
+    messages: list[Any],
+    *,
+    system_prompt: str | None | InheritSystemPrompt,
+    parent_node_id: str | None,
+    raw: bool,
+    tokenizer: Any,
+    grammar: "TurnGrammar | None",
+) -> tuple[list[MessageTurn], str | None | InheritSystemPrompt]:
+    """A stateful message list's turns and the call's system prompt.
+
+    A message list is a whole conversation, and a stateful generation records
+    the one it answers, so the reply's node replays the prompt it was
+    generated from: :func:`begin_generation_turn` records the turns from the
+    root and the reply renders from them.  A leading ``system`` message is the
+    call's system prompt (the reply's recipe keeps it); passing a different
+    one as well is ambiguous.  Every other message is a ``user`` or
+    ``assistant`` turn with non-empty string ``content`` and optional string
+    ``label`` and ``thinking``; each message stays its own turn, as it does in
+    a stateless render.  A legacy chat template (no scene ``grammar``) only
+    renders alternating turns, so there the list must alternate starting
+    with ``user``.  The list renders from the root, so ``parent_node_id``
+    does not apply, and raw completion takes text, not messages.
+
+    The whole list is checked here, before anything is recorded, so a
+    refused list leaves the tree as it was.
+
+    Raises :class:`InvalidNodeOperationError` (HTTP 400) and
+    :class:`~drowse.model.scene.SceneThinkingUnsupportedError` when a turn
+    carries thinking the family cannot render.
+    """
+    if raw:
+        raise InvalidNodeOperationError(
+            "raw completion takes text, not a message list"
+        )
+    if parent_node_id is not None:
+        raise InvalidNodeOperationError(
+            "a message list is the whole conversation and is recorded from "
+            "the root; parent_node_id does not apply (send None or a string "
+            "to continue a node)"
+        )
+    messages = list(messages)
+    for message in messages:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise InvalidNodeOperationError(
+                "each message needs a role and string content"
+            )
+    if messages and messages[0].get("role") == "system":
+        system = messages.pop(0)["content"]
+        if system_prompt is not INHERIT_SYSTEM_PROMPT and system_prompt != system:
+            raise InvalidNodeOperationError(
+                "the system prompt is given twice: as the list's system "
+                "message and as system_prompt"
+            )
+        system_prompt = system
+    turns: list[MessageTurn] = []
+    previous = "system"  # the root
+    for index, message in enumerate(messages):
+        seat = message.get("role")
+        if seat not in _SEATS:
+            raise InvalidNodeOperationError(
+                "a recorded message list holds one leading system message, "
+                f"then user and assistant turns; got role {seat!r}"
+            )
+        text = message["content"]
+        if text == "":
+            raise InvalidNodeOperationError(
+                f"message {index} ({seat}) has empty content"
+            )
+        label = message.get("label")
+        thinking = message.get("thinking")
+        if label is not None and not isinstance(label, str):
+            raise InvalidNodeOperationError(f"message {index}: label must be a string")
+        if label is not None:
+            try:
+                validate_role(label)
+            except InvalidRoleError as error:
+                raise InvalidNodeOperationError(f"message {index}: {error}") from error
+        if thinking is not None and not isinstance(thinking, str):
+            raise InvalidNodeOperationError(f"message {index}: thinking must be a string")
+        if grammar is None and (seat == previous or (seat == "assistant" and previous != "user")):
+            raise InvalidNodeOperationError(
+                f"message {index}: this model's chat template renders only "
+                f"alternating turns starting with user, and a {seat} turn "
+                f"cannot follow a {previous} one (free seating requires "
+                f"scene mode)"
+            )
+        check_thinking_commit(grammar, thinking)
+        turns.append(MessageTurn(
+            seat=seat, text=text, label=label, thinking=thinking,
+            token_ids=tuple(_encode_nonempty(tokenizer, text)),
+        ))
+        previous = seat
+    return turns, system_prompt
+
+
+def _record_message_turns(tree: LoomTree, turns: list[MessageTurn]) -> str:
+    """Record validated turns from the root; returns the last one's id.
+
+    Each turn reuses an identical child of the one before (same seat, text,
+    label and thinking, so the render is the same) and otherwise lands as a
+    new node, so the list's whole matching path is shared: replies to the
+    same list are siblings, and no existing node is edited.
+    """
+    anchor_id = tree.root_id
+    for turn in turns:
+        if turn.seat == "user":
+            anchor_id = tree.add_user_turn(
+                turn.text, parent_id=anchor_id, role_label=turn.label,
+                thinking_text=turn.thinking,
+            )
+        else:
+            anchor_id = tree.add_assistant_turn(
+                anchor_id, turn.text, role_label=turn.label,
+                thinking_text=turn.thinking,
+                raw_token_ids=list(turn.token_ids), dedup_existing=True,
+            )
+    return anchor_id
+
+
 def begin_generation_turn(
     tree: LoomTree,
     input: Any,
@@ -520,10 +659,13 @@ def begin_generation_turn(
     A ``str`` input commits the new user turn first (under ``sampling``'s
     ``user_role`` label); in flat (``raw``) mode a non-empty span lands as
     its own node and an empty one just extends the parent, with no seating
-    check.  ``None`` or a message list anchors on the parent directly.  The
-    generated node takes ``gen_seat`` and that seat's label from
-    ``sampling``; ``continuation_node_id`` reuses an existing same-seat
-    message whose text the caller replays as the forced decode prefix.
+    check.  ``None`` anchors on the parent directly.  A message list (the
+    :class:`MessageTurn` list :func:`split_message_list` returns) is
+    recorded from the root, reusing the path it matches, and the reply
+    hangs under its last turn.  The generated node
+    takes ``gen_seat`` and that seat's label from ``sampling``;
+    ``continuation_node_id`` reuses an existing same-seat message whose text
+    the caller replays as the forced decode prefix.
     """
     # Per-message labels ride this send's sampling box and are stamped at
     # creation, so a turn keeps its label regardless of later box changes.
@@ -532,20 +674,25 @@ def begin_generation_turn(
     assistant_role = (
         sampling.assistant_role if sampling is not None and not raw else None
     )
-    if isinstance(input, str) and raw:
-        anchor_id = (
-            tree.add_user_turn(input, parent_id=parent_node_id) if input != ""
-            else parent_node_id or tree.active_node_id
-        )
-    elif isinstance(input, str):
-        if gen_seat == "assistant":
-            check_user_send_target(tree, parent_node_id)
-        anchor_id = tree.add_user_turn(
-            input, parent_id=parent_node_id, role_label=user_role,
-        )
-    else:
-        anchor_id = parent_node_id or tree.active_node_id
-    tree.reserve(anchor_id)
+    # The anchor lands and is reserved under one hold of the tree's lock, so
+    # no edit or delete reaches the path the reply answers in between.
+    with tree.lock:
+        if isinstance(input, str) and raw:
+            anchor_id = (
+                tree.add_user_turn(input, parent_id=parent_node_id) if input != ""
+                else parent_node_id or tree.active_node_id
+            )
+        elif isinstance(input, str):
+            if gen_seat == "assistant":
+                check_user_send_target(tree, parent_node_id)
+            anchor_id = tree.add_user_turn(
+                input, parent_id=parent_node_id, role_label=user_role,
+            )
+        elif isinstance(input, list):
+            anchor_id = _record_message_turns(tree, input)
+        else:
+            anchor_id = parent_node_id or tree.active_node_id
+        tree.reserve(anchor_id)
     if continuation_node_id is not None:
         return tree.begin_continuation(continuation_node_id, recipe=recipe)
     return tree.begin_assistant(
@@ -558,6 +705,7 @@ def begin_generation_turn(
 
 __all__ = [
     "ForcedTurn",
+    "MessageTurn",
     "PromptAnchor",
     "TokenAnchor",
     "append_turn",
@@ -568,4 +716,5 @@ __all__ = [
     "plan_prefill",
     "resolve_prompt_anchor",
     "resolve_token_anchor",
+    "split_message_list",
 ]

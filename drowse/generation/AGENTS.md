@@ -145,6 +145,8 @@ cannot reset a field to its default.
 `PromptRenderer.prepare_input` is the one place a conversation becomes
 `input_ids`. `input` is a new user turn (`str`, labelled `user_role`), `None` (no
 new turn) or a message list; anything else is `GenerationRequestError` (400).
+A stateless message list renders alone; a stateful one is recorded first
+(`loom/ops.py::split_message_list`) and renders from its turns as `None` input.
 `raw=True` with `str`/`None` input renders `tree.flat_text(...) + input` with no
 template; the caller chooses `raw`, nothing forces it for base models.
 `INHERIT_SYSTEM_PROMPT` reads the live session default; `None` means none.

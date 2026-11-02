@@ -34,6 +34,11 @@
     menu?.querySelector<HTMLElement>("[role='menuitem']:not(:disabled)")?.focus();
   }
 
+  /** Focus the menu's button (where a dialog its item opened gives focus back). */
+  export function focus(): void {
+    button?.focus({ preventScroll: true });
+  }
+
   function close(restore = true): void {
     open = false;
     if (restore) button?.focus({ preventScroll: true });

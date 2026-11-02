@@ -25,7 +25,7 @@
   import { conversationLibrary, savedConversationState } from "./lib/stores/savedConversations.svelte";
   import { clearConversationOpen, peekConversationOpen } from "./lib/conversationOpen";
   import { newerWorkspaceDraft, readWorkspaceDraft } from "./lib/workspaceDraft";
-  import { containTab, tabStops } from "./lib/focusTrap";
+  import { containTab, focusOpener, returnFocus, tabStops } from "./lib/focusTrap";
   import {
     bootstrap,
     drawerState,
@@ -64,7 +64,10 @@
   let phone = $state(false);
   let topHeight = $state(68);
   let dialogEl: HTMLElement | null = $state(null);
+  let headerMenu: HeaderMenu | null = $state(null);
   let focusWhenReady: DrawerName | null = null;
+  /** What had focus when the dialog opened: focus goes back there when it closes, else to Menu. */
+  let dialogOpener: HTMLElement | null = null;
 
   const modelId = $derived(sessionState.info?.model_id ?? "");
   const modelName = $derived(modelId.split("/").at(-1) || "No model");
@@ -95,7 +98,9 @@
 
   onMount(() => {
     const stop = startRouting();
-    const query = window.matchMedia("(max-width: 720px)");
+    // The phone: narrow, or short (a phone on its side), where the rooms move into the menu and
+    // the workbench is one column (Workbench lays a short one out in two).
+    const query = window.matchMedia("(max-width: 720px), (max-height: 520px)");
     const update = () => { phone = query.matches; };
     update();
     query.addEventListener("change", update);
@@ -243,10 +248,19 @@
   $effect(() => {
     const open = drawerState.open;
     if (open !== null && open !== previousDialog) {
+      if (previousDialog === null) dialogOpener = focusOpener();
       if (!loadedDrawer(open)) focusWhenReady = open;
       void tick().then(focusDialog);
     } else if (open === null) {
       focusWhenReady = null;
+      // Escape, Close or the scrim: focus would fall to the body with the leaving dialog. Once
+      // the header is no longer inert it goes back to the opener, or to Menu, whose item is gone.
+      if (previousDialog !== null) {
+        const leaving = dialogEl;
+        const opener = dialogOpener;
+        dialogOpener = null;
+        void tick().then(() => returnFocus(opener, () => headerMenu?.focus(), leaving));
+      }
     }
     previousDialog = open;
   });
@@ -385,7 +399,7 @@
           <span class="dw-model-name">{modelName}</span>{#if device}<span class="meta">{device}</span>{/if}
         </button>
         <IconButton icon="search" label="Search everything (⌘K)" onclick={openPalette} />
-        <HeaderMenu groups={menuGroups}>
+        <HeaderMenu bind:this={headerMenu} groups={menuGroups}>
           {#snippet extra()}{#if phone}<span>Theme</span><ThemeButton {theme} />{/if}{/snippet}
         </HeaderMenu>
         {#if !phone}<ThemeButton {theme} />{/if}
@@ -481,7 +495,7 @@
   .boot { display: grid; gap: var(--s4); justify-items: start; max-width: 640px; margin: 0 auto; padding: var(--s9) var(--s6); }
   .boot p { color: var(--ink2); overflow-wrap: anywhere; }
   @media (prefers-reduced-transparency: reduce) { .scrim { background: var(--paper); opacity: 0.9; } }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 520px) {
     .dw-top { flex-wrap: nowrap; gap: var(--s2); }
     .mark { margin-right: auto; }
     .dw-top-end { margin-left: 0; min-width: 0; }

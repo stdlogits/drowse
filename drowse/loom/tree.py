@@ -719,6 +719,12 @@ class LoomTree:
     # ------------------------------------------------------------------
 
     @property
+    def lock(self) -> threading.RLock:
+        """The tree's reentrant lock, for a caller that needs several
+        operations to land as one (a recorded turn and its reservation)."""
+        return self._lock
+
+    @property
     def reservation(self) -> str | None:
         """Root of the subtree an in-flight generation streams into, or None."""
         return self._reservation
@@ -1034,6 +1040,7 @@ class LoomTree:
         role_label: str | None = None,
         thinking_text: str | None = None,
         raw_token_ids: list[int],
+        dedup_existing: bool = False,
     ) -> str:
         """Land a finished, authored assistant turn under ``parent_id``.
 
@@ -1042,8 +1049,36 @@ class LoomTree:
         carries ``raw_token_ids`` so it stays forkable.  Surfaces see the
         same ``begin_assistant`` + ``finalize_assistant`` pair a generated
         turn produces.
+
+        With ``dedup_existing``, an assistant child of ``parent_id`` that
+        renders identically (same text, ``role_label`` and ``thinking_text``;
+        generated or authored) is navigated to and returned instead, as
+        :meth:`add_user_turn` does for user turns.  A node inside an
+        in-flight generation's reservation is still streaming and is never
+        reused.
         """
         with self._lock:
+            if dedup_existing:
+                reservation = self._reservation
+                for cid in self.children_of.get(parent_id, []):
+                    sib = self.nodes[cid]
+                    if (
+                        sib.role == "assistant"
+                        and not (
+                            reservation is not None
+                            and (cid == reservation or self.is_ancestor_of(reservation, cid))
+                        )
+                        and sib.text == text
+                        and sib.role_label == role_label
+                        and sib.thinking_text == thinking_text
+                    ):
+                        self.active_node_id = sib.id
+                        self.rev += 1
+                        self._emit(LoomMutated(
+                            op="navigate", rev=self.rev,
+                            active_node_id=self.active_node_id,
+                        ))
+                        return sib.id
             node_id = self.begin_assistant(
                 parent_id, recipe=None, role_label=role_label,
             )

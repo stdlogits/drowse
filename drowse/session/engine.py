@@ -80,6 +80,7 @@ from drowse.generation.types import (
     GenerationTransaction,
     GenState,
 )
+from drowse.loom.ops import split_message_list
 from drowse.loom.recipe import (
     ComposedCall,
     Recipe,
@@ -655,6 +656,14 @@ class GenerationEngine:
         candidate, the active node) but mutates nothing.
         """
         session = self._session
+        if isinstance(input, list) and not stateless:
+            # A stateful message list is recorded as the conversation it
+            # answers; its system message is the call's system prompt.
+            input, system_prompt = split_message_list(
+                input, system_prompt=system_prompt,
+                parent_node_id=parent_node_id, raw=raw,
+                tokenizer=session.tokenizer, grammar=session.scene_grammar,
+            )
         steering, sampling, thinking, system_prompt = self.compose_call(
             steering=steering, sampling=sampling, thinking=thinking,
             system_prompt=system_prompt, raw=raw, gen_seat=gen_seat,
@@ -876,6 +885,13 @@ class GenerationEngine:
             )
             if spec.continuation_node_id is None:
                 txn.provisional_node = assistant_node_id
+            if assistant_node_id is not None and isinstance(spec.input, list):
+                # The list landed as turns from the root: the reply renders
+                # from them, so the node replays the prompt it answered.
+                spec = replace(
+                    spec, input=None,
+                    history_anchor=session.tree.get(assistant_node_id).parent_id,
+                )
             if txn.steering_cm is not None:
                 txn.steering_cm.__enter__()
             use_thinking = spec.use_thinking_req and session.chat_traits.supports_thinking

@@ -19,7 +19,7 @@
   // first; toggling render mode never mutates the tree, only generation
   // and explicit edits do.
 
-  import { onMount, tick } from "svelte";
+  import { onMount, tick, type Snippet } from "svelte";
   import { registerRawBufferController } from "../lib/workspaceController";
   import StatusFooter from "./StatusFooter.svelte";
   import PendingBubbles from "./PendingBubbles.svelte";
@@ -398,6 +398,10 @@
   type Mode = "edit" | "inspect";
   let mode: Mode = $state<Mode>("edit");
 
+  /** What the tokens are coloured by (Chat's reading tools), under the head while Colors is open
+   *  (``colorsOpen``, the Page's one Colors state in either format). */
+  let { colors, colorsOpen = $bindable(false) }: { colors?: Snippet; colorsOpen?: boolean } = $props();
+
   const showColorMirror = $derived(
     mode === "edit" && !committing && (dirty || (highlightState.target !== null && currentTokenViews.some(view => view.tok))) &&
     currentTokenViews.map((token) => token.text).join("") === (dirty ? draft : bufferText),
@@ -595,8 +599,15 @@
 <div class="raw-buffer" aria-label="Completion buffer">
   <div class="raw-head">
     <span class="head-label"><label for="completion-buffer">Text completion</label>{#if sessionState.info?.is_base_model}<BaseModelTag />{/if}{#if dirty}<span class="draft-state" role="status">unsaved edit</span>{/if}</span>
-    <Segmented label="Buffer mode" value={mode} onchange={changeMode} options={modeItems.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
+    <span class="head-tools">
+      {#if colors}
+        <button type="button" class="dw-text" aria-expanded={colorsOpen} aria-controls="chat-reading-tools"
+          onclick={() => (colorsOpen = !colorsOpen)}>Colors</button>
+      {/if}
+      <Segmented label="Buffer mode" value={mode} onchange={changeMode} options={modeItems.map(item => ({ value: item.value, label: item.label, hint: item.title }))} />
+    </span>
   </div>
+  {#if colors && colorsOpen}{@render colors()}{/if}
   <p class="sr-only" id="completion-hint">{mode === "inspect"
     ? "Select a recorded token to see its probabilities. Arrow keys move between tokens."
     : "Continue at the end, cursor, or selection. Originals stay saved in the loom."}</p>
@@ -740,6 +751,7 @@
     font: var(--type-body);
   }
   .raw-head { display: flex; flex: 0 0 auto; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); }
+  .head-tools { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); }
   /* The completion as one reading surface: a wash, no line, the text in the body face at the
    * reading column's line height (room for the tint's spread). */
   .surface {
@@ -815,11 +827,11 @@
   .edit-actions.shown { transition: opacity var(--fast) var(--ease); }
   @starting-style { .edit-actions.shown { opacity: 0; } }
   .generation-actions { margin-left: auto; }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 520px) {
     /* The phone's 16 px gutter, as the conversation's log and dock keep it. */
     .raw-buffer { padding: var(--s4) var(--s4) var(--s2); }
     .surface, .buffer-text, .color-mirror, .inspect { font-size: 16px; }
-    .actions .dw-text { min-height: 44px; }
+    .actions .dw-text, .head-tools .dw-text { min-height: 44px; }
     /* Phone sizes (the Phone canvas): the mode switch's options reach 44 px. */
     .raw-head :global(.seg > button) { position: relative; height: 36px; }
     .raw-head :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }

@@ -697,9 +697,10 @@ class BatchRunner:
         # Stateful sweeps land every row as a sibling under one shared
         # anchor.  A string prompt spawns the shared user turn with the label
         # the rows will send, so the engine's label-aware dedup reuses it, and
-        # the rows anchor at its parent.  Any other input (``None`` continues
-        # the leaf, a messages list anchors directly on the parent) pins the
-        # node active now, else each row would land under the previous one.
+        # the rows anchor at its parent.  ``None`` continues the leaf, so it
+        # pins the node active now, else each row would land under the
+        # previous one.  A messages list is recorded from the root (its first
+        # user turn deduplicated), so it takes no parent.
         # A sweep has no regen modifier, so the parent is placement only.
         gen_parent_id = parent_node_id
         if not stateless:
@@ -714,7 +715,7 @@ class BatchRunner:
                     ),
                 )
                 gen_parent_id = tree.nodes[anchor_id].parent_id
-            elif gen_parent_id is None:
+            elif gen_parent_id is None and not isinstance(prompt, list):
                 gen_parent_id = tree.active_node_id
 
         jobs: list[GenerationJob] = []
