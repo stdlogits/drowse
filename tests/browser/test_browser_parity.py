@@ -1398,8 +1398,9 @@ def test_units_goldens_stay_within_their_caps() -> None:
     "slens", "token-anatomy", "attention-patterns", "unit-reads", "unit-artifacts", "neuron-push",
 ])
 def test_units_golden_matches_python(name: str, arch: str) -> None:
-    """Rebuild the golden with the engine and compare within its own
-    tolerance block (ids, structure and texts exactly; declared ties softly)."""
+    """Rebuild the golden with the engine on the file's recorded choices and
+    compare within its own tolerance block (ids, structure and texts exactly;
+    a declared tie run's entries matched by identity)."""
     from tests.support import browser_units
 
     expected = browser_units.load_golden(browser_units.golden_file(name, arch))
