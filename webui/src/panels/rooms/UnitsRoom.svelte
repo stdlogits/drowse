@@ -263,6 +263,11 @@
     sel = id;
     layer = L;
   }
+  // A search by ID chooses its unit, as choosing its row does.
+  $effect(() => {
+    const ref = q.mode === "id" ? q.ref : null;
+    if (ref) untrack(() => { if (ref.id !== selected) picks += 1; sel = ref.id; layer = ref.layer; kind = ref.kind; });
+  });
   const atLayer = $derived(layer ?? selRef?.layer ?? 0);
 
   // ---------- the atlas

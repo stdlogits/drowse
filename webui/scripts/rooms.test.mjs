@@ -198,6 +198,8 @@ try {
   // room leads to the Workbench, and the builder's hint rides its button's tip.
   assert.doesNotMatch(read("panels/rooms/UnitsRoom.svelte"), /Units light up here|<span class="meta">\{subset\}|>Values over each unit/);
   assert.match(read("panels/rooms/UnitsRoom.svelte"), />No reply yet<[^]*?goto\("workbench"\)\}>Workbench</);
+  // A search by ID chooses its unit: the detail never keeps an earlier pick beside the searched row.
+  assert.match(read("panels/rooms/UnitsRoom.svelte"), /const ref = q\.mode === "id" \? q\.ref : null;\s*if \(ref\) untrack\(\(\) => \{[^}]*sel = ref\.id; layer = ref\.layer; kind = ref\.kind;/);
   assert.doesNotMatch(read("panels/rooms/LensRoom.svelte"), /The lenses read here once/);
   assert.match(read("panels/rooms/LensRoom.svelte"), />No reply yet<[^]*?goto\("workbench"\)\}>Workbench</);
   assert.doesNotMatch(read("panels/manifold/ProbeGeometryPlot.svelte"), /the trail draws while a reply streams/);
