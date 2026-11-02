@@ -827,7 +827,7 @@
   .edit-actions.shown { transition: opacity var(--fast) var(--ease); }
   @starting-style { .edit-actions.shown { opacity: 0; } }
   .generation-actions { margin-left: auto; }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 520px) {
     /* The phone's 16 px gutter, as the conversation's log and dock keep it. */
     .raw-buffer { padding: var(--s4) var(--s4) var(--s2); }
     .surface, .buffer-text, .color-mirror, .inspect { font-size: 16px; }

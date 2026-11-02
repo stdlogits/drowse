@@ -2162,14 +2162,17 @@
     .loom-view-controls .dw-text { min-width: 44px; }
     .snippet-tokens { line-height: 44px; }
   }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 520px) {
+    /* The tools and the map share the page's column, which scrolls: the column grows with them
+     * rather than clipping the map under the tools. */
+    .loom-sidebar { height: auto; min-height: 100%; }
     /* One row of actions that scrolls sideways, as the view tabs do. */
     .loom-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-inline: contain; mask-image: linear-gradient(to right, var(--ink) calc(100% - 24px), transparent); padding-right: var(--s5); }
     .loom-actions::-webkit-scrollbar { display: none; }
     .loom-actions .dw-text { flex: none; white-space: nowrap; }
     .loom-map-summary { display: none; }
     .loom-map-bar { justify-content: flex-end; }
-    .tree-scroll { min-height: min(96px, 25dvh); }
+    .tree-scroll { min-height: min(240px, 45dvh); }
     .filter-input { font-size: 16px; }
     .saved-card { grid-template-columns: 12px minmax(0, 1fr); }
     .saved-actions { grid-column: 2; }

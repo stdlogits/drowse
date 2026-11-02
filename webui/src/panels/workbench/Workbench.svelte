@@ -4,8 +4,11 @@
   // own. Narrower, the thread folds into a row over the page and the Inspector keeps its column
   // beside the page, so a selection always shows. On a phone it is one column (Phone): the thread
   // folds into a row over the conversation, the inspector rises as a sheet between the conversation
-  // and the composer, and the composer folds away while the sheet is pulled up. The conversation's
-  // format sits by the thread's header: under it in the thread column, else in the folded row.
+  // and the composer, and the composer folds away while the sheet is pulled up. A phone on its side
+  // (520 px tall or less) is short of height, not width: the conversation keeps the column under
+  // the thread row and the composer, or the inspector, takes a column beside it, and the loom's
+  // map is most of a screen tall on a page that scrolls. The conversation's format sits by the
+  // thread's header: under it in the thread column, else in the folded row.
   import { untrack } from "svelte";
   import { MediaQuery } from "svelte/reactivity";
   import { Icon, IconButton } from "@stdlogits/ledger";
@@ -30,6 +33,12 @@
   const selecting = $derived(selection.current.kind !== "none");
   const sheetShown = $derived(!loomPage && (selecting || workbenchUi.sheet));
   const LOOM_VIEWS: Record<string, string> = { weave: "Weave", map: "Map", path: "Path", options: "Next options", saved: "Starred" };
+
+  $effect(() => {
+    // The loom takes the phone's column: opening it folds the thread (its way in), which would
+    // otherwise hold most of the column over the map.
+    if (phone && loomPage) untrack(() => (threadOpen = false));
+  });
 
   $effect(() => {
     // A fresh selection on the phone rises at the peek height. Clearing the selection to show the
@@ -58,7 +67,7 @@
   }
 </script>
 
-<div class="workbench" class:phone class:sheet-shown={phone && sheetShown} class:sheet-up={phone && sheetShown && workbenchUi.sheetOpen}>
+<div class="workbench" class:phone class:loom-page={loomPage} class:sheet-shown={phone && sheetShown} class:sheet-up={phone && sheetShown && workbenchUi.sheetOpen}>
   <div class="dw-main">
     <div class="thread-fold">
       <button type="button" class="fold" aria-expanded={threadOpen} aria-controls="workbench-thread" onclick={() => (threadOpen = !threadOpen)}>
@@ -163,6 +172,31 @@
   .fold:hover, .fold[aria-expanded="true"] { color: var(--ink); }
   .chev { display: grid; transition: rotate var(--glide) var(--ease); }
   .chev.open { rotate: 180deg; }
+
+  /* A phone on its side: two columns, the conversation (thread row, log) and beside it the composer
+   * at the foot, or the inspector, which takes the whole column while it shows. The loom page
+   * scrolls instead, its map most of a screen tall with room above it to scroll back by. */
+  @media (max-height: 520px) {
+    .phone:not(.loom-page) .dw-main {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) clamp(260px, 40%, 360px);
+      grid-template-rows: auto auto minmax(0, 1fr) auto;
+      column-gap: var(--s4);
+    }
+    .phone:not(.loom-page) .thread-fold { grid-column: 1; grid-row: 1; }
+    .phone:not(.loom-page) .dw-thread { grid-column: 1; grid-row: 2; }
+    .phone :global(.chat .log) { grid-column: 1; grid-row: 3 / 5; }
+    .phone :global(.chat .raw-host) { grid-column: 1 / -1; grid-row: 3 / 5; }
+    .phone.sheet-shown :global(.chat .raw-host) { grid-column: 1; }
+    .phone :global(.chat .dock) { grid-column: 2; grid-row: 4; padding-inline: 0 var(--s4); }
+    .phone .sheet, .phone .sheet.open { grid-column: 2; grid-row: 1 / -1; height: auto; margin: 0 var(--s4) var(--s4) 0; border-radius: var(--r-row); }
+    .phone .grab { display: none; }
+    .phone.sheet-shown :global(.chat .dock) { display: none; }
+    .phone.loom-page { height: auto; overflow: visible; }
+    .phone.loom-page .dw-main { height: auto; }
+    .phone.loom-page .loom { flex: none; overflow: visible; }
+    .phone.loom-page :global(.tree-scroll) { min-height: calc(100dvh - 72px); }
+  }
 
   /* The sheet shrinks rather than overflow when the thread or the dock leave it less room. */
   .sheet {

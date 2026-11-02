@@ -1611,7 +1611,7 @@
   .clear-conversation.armed { color: var(--ink); }
   .dw-compose .dw-button, .dw-compose .dw-quiet { flex: none; }
 
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 520px) {
     .log { padding: var(--s4) var(--s4) 0; }
     .ab-grid { grid-template-columns: minmax(0, 1fr); }
     .dock { padding: var(--s2) var(--s4) var(--s4); }

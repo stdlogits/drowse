@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "vite";
+import { cssRules, styleRules } from "./markup.mjs";
 
 // The dialog host and the token popover, the surfaces drowse.ai's browser checks used to cover:
 // - an open drawer makes the page behind it inert, and a leaving one takes no input while it fades;
@@ -12,35 +13,6 @@ const src = new URL("../src/", import.meta.url);
 const read = (path) => readFileSync(new URL(path, src), "utf8");
 const VIEWPORTS = [[320, 780], [390, 844], [667, 375], [900, 900], [1440, 900]];
 
-// ---- a stylesheet or a component's <style>, as rules with their media -----------------------
-const styleRules = (source) => cssRules(source.slice(source.indexOf("<style>") + 7, source.indexOf("</style>")));
-function cssRules(text) {
-  const css = text.replace(/\/\*[^]*?\*\//g, "");
-  const rules = [];
-  (function walk(text, media) {
-    let i = 0;
-    while (i < text.length) {
-      const open = text.indexOf("{", i);
-      if (open < 0) break;
-      let depth = 1;
-      let close = open + 1;
-      for (; depth > 0; close += 1) depth += text[close] === "{" ? 1 : text[close] === "}" ? -1 : 0;
-      const head = text.slice(i, open).trim();
-      const body = text.slice(open + 1, close - 1);
-      if (head.startsWith("@")) walk(body, head);
-      else {
-        const decls = {};
-        for (const part of body.split(";")) {
-          const colon = part.indexOf(":");
-          if (colon > 0) decls[part.slice(0, colon).trim()] = part.slice(colon + 1).trim();
-        }
-        rules.push({ media, selectors: head.split(",").map(s => s.trim()), decls });
-      }
-      i = close;
-    }
-  })(css, null);
-  return rules;
-}
 
 /** The declarations ``classes`` gets at ``width`` (max-width media only; later and more specific wins). */
 function computed(rules, classes, width) {

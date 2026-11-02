@@ -98,7 +98,9 @@
 
   onMount(() => {
     const stop = startRouting();
-    const query = window.matchMedia("(max-width: 720px)");
+    // The phone: narrow, or short (a phone on its side), where the rooms move into the menu and
+    // the workbench is one column (Workbench lays a short one out in two).
+    const query = window.matchMedia("(max-width: 720px), (max-height: 520px)");
     const update = () => { phone = query.matches; };
     update();
     query.addEventListener("change", update);
@@ -493,7 +495,7 @@
   .boot { display: grid; gap: var(--s4); justify-items: start; max-width: 640px; margin: 0 auto; padding: var(--s9) var(--s6); }
   .boot p { color: var(--ink2); overflow-wrap: anywhere; }
   @media (prefers-reduced-transparency: reduce) { .scrim { background: var(--paper); opacity: 0.9; } }
-  @media (max-width: 720px) {
+  @media (max-width: 720px), (max-height: 520px) {
     .dw-top { flex-wrap: nowrap; gap: var(--s2); }
     .mark { margin-right: auto; }
     .dw-top-end { margin-left: 0; min-width: 0; }
