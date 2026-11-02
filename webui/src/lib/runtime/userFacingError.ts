@@ -60,7 +60,9 @@ const MESSAGES: Array<[RegExp, ErrorMessage]> = [
     "Drowse could not read that file. Choose an unmodified Drowse file and try again."],
   [/LOCAL_SESSION_(?:INCOMPATIBLE|SCHEMA_UNSUPPORTED)|UNSUPPORTED_SESSION_SCHEMA/u,
     "This saved conversation is not compatible with the current local model session. Start a new local session to continue."],
-  [/LOCK|TAKEOVER|RUNTIME_OWNED|RUNTIME_IN_USE|MODEL_IN_USE|OWNERSHIP_NOT_CLAIMED|STALE_SESSION_OWNER/u,
+  // A lock (SessionLockTimeout, a tab's), never the BLOCK in a model's 422 UnsupportedBlockError
+  // or the BLOCK_SITES_* codes: those are about the model, not another tab.
+  [/(?<!B)LOCK|TAKEOVER|RUNTIME_OWNED|RUNTIME_IN_USE|MODEL_IN_USE|OWNERSHIP_NOT_CLAIMED|STALE_SESSION_OWNER/u,
     "Another Drowse tab is using the local model. Close it or ask that tab to release the model, then try again."],
   [/OUT_OF_MEMORY|\bOOM\b|MODEL_MEMORY|MODEL_OOM|CONFIRMED_OOM/u,
     "This model needs more graphics memory than this device could provide. Try a smaller model or a shorter context."],

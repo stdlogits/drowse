@@ -1,0 +1,1 @@
+import{t as e}from"./src-DWTrC_D-.js";import{r as t}from"./brandMigration-CCzk-exd.js";var n=`drowse.theme`,r=e({key:n});function i(){try{t(window.localStorage,n)}catch{}let e=r.start();return r.choice!==`auto`&&(document.documentElement.dataset.theme=r.choice),e}function a(e){r.set(e)}export{i as n,r,a as t};

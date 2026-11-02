@@ -250,15 +250,17 @@
   footer { gap: var(--s2) var(--s4); padding-top: var(--s1); }
   footer .dw-text { font: var(--type-meta); }
   .error { color: var(--ink); }
-  /* One column when the page region is narrow (the loom names its host ``loom``) or the window short. */
+  /* One column when the page region is narrow (the loom names its host ``loom``) or the window short.
+   * The weave scrolls then, so the sections' focus gutter (their 4px padding) sits inside it
+   * rather than past its edges. */
   @container loom (max-width: 640px) {
     .weave { display: block; overflow-y: auto; }
-    section { overflow: visible; }
+    section { margin: 0; overflow: visible; }
     section + section { margin-top: var(--s5); }
   }
   @media (max-height: 700px) {
     .weave { display: block; overflow-y: auto; }
-    section { overflow: visible; }
+    section { margin: 0; overflow: visible; }
     section + section { margin-top: var(--s5); }
   }
   @media (max-width: 720px) {
