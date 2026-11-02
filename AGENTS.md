@@ -237,9 +237,10 @@ interface here:
   `tests/browser/test_browser_parity.py` (`tests/AGENTS.md`);
 - semantics it reimplements: the grammar, `compose_call`
   (`loom/recipe.py`), the tree filter (`loom/filter.py`), the sampler, the
-  measurement envelope, the affine lowering, DLS, the Fisher fit and topology,
-  and (hook ABI v5, pinned by the `units-tiny-models-v1` goldens of
-  `tests/support/browser_units.py`) the in-block sites, unit mean-ablation,
+  measurement envelope, the affine lowering, a term's layers and shares
+  (`SteeringComposer.term_layers`, the validate response), DLS, the Fisher fit
+  and topology, and (hook ABI v5, pinned by the `units-tiny-models-v1` goldens
+  of `tests/support/browser_units.py`) the in-block sites, unit mean-ablation,
   the unit tap, unit activity, token anatomy, the R/S lens reads, the S
   readout, the static unit reads and the neuron push;
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`

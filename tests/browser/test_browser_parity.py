@@ -5,6 +5,9 @@ steering-expression accept/reject table beside it) with the Python engine and
 compares.  drowse.ai replays the same files through its WebGPU runtime, so a
 semantic change here means regenerating the golden in the same change.  The
 golden files and their paths are part of that seam: never rename or move them.
+``steering-term-layers-v1.json`` has its builder here: run this module
+(``PYTHONPATH=. python -m tests.browser.test_browser_parity``) to recompute its
+outputs from its inputs.
 """
 from __future__ import annotations
 
@@ -12,6 +15,8 @@ import base64
 import csv
 import json
 import math
+import os
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -19,6 +24,8 @@ from typing import Any, cast
 import numpy as np
 import pytest
 import torch
+from fastapi.testclient import TestClient
+from torch import nn
 
 import drowse.loom.tree as loom_module
 from drowse.events import EventBus, LoomMutated
@@ -27,8 +34,14 @@ from drowse.generation.decode import GenerationConfig, _effective_topk, _sampler
 from drowse.geometry.domains import BoxAxis, BoxDomain, CustomDomain, SphereDomain
 from drowse.geometry.fold import project_profile
 from drowse.geometry.inject import subspace_inject, synthesize_subspace
+from drowse.geometry.manifold import Manifold
 from drowse.geometry.rbf import RbfFitPlan, eval_rbf
-from drowse.geometry.subspace import LayerSubspace, fit_affine_subspace, subspace_share
+from drowse.geometry.subspace import (
+    LayerSubspace,
+    fit_affine_subspace,
+    fit_curved_subspace,
+    subspace_share,
+)
 from drowse.geometry.topology import (
     SpectralDiagnostics,
     _count_persistent_loops,
@@ -56,12 +69,17 @@ from drowse.readout.measurements import (
 from drowse.readout.monitor import _depth_stats
 from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.sae.backend import LocalSaeBackend
+from drowse.server import create_app
+from drowse.store import selectors
 from drowse.units.instrument import UnitsInstrument
 from drowse.steering.grammar import SteeringExprError, parse_expr, referenced_selectors
-from drowse.steering.hooks import _lower_affine_subspaces
+from drowse.steering.hooks import CurvedGroup, _lower_affine_subspaces
 from drowse.steering.triggers import TriggerContext
-from tests.support.whitener import isotropic_whitener
+from tests.support.composer import SteeringRig
+from tests.support.manifolds import circle_centroids, stamp_current_geometry
 from tests.support.sae import make_resident, sae_instrument
+from tests.support.server import mock_session
+from tests.support.whitener import isotropic_whitener
 
 GOLDENS = Path(__file__).parent.parent / "fixtures" / "browser"
 
@@ -114,11 +132,17 @@ def test_browser_composed_affine_lowering_matches_python(case: dict[str, object]
         assert delta.tolist() == pytest.approx(expected["delta"], abs=1e-5)
 
 def _whitener() -> tuple[LayerWhitener, dict[int, torch.Tensor]]:
+    return _ppca_whitener(COMPOSED_LOWERING["whiteners"])
+
+def _ppca_whitener(
+    rows: list[dict[str, Any]],
+) -> tuple[LayerWhitener, dict[int, torch.Tensor]]:
+    """A golden's whitener rows (``basis``, ``eigenvalues``, ``ridge``, ``mean``) and its means."""
     centered = {}
     small_inverse = {}
     ridge = {}
     means = {}
-    for row in COMPOSED_LOWERING["whiteners"]:
+    for row in rows:
         layer = row["layer"]
         basis = torch.tensor(row["basis"], dtype=torch.float32)
         eigenvalues = torch.tensor(row["eigenvalues"], dtype=torch.float32)
@@ -477,6 +501,199 @@ def test_browser_steering_fixture_accepts_python_expressions(
 def test_browser_steering_fixture_rejects_python_expressions(expression: str) -> None:
     with pytest.raises(SteeringExprError):
         parse_expr(expression)
+
+
+# ---------------------------------------------------------------------------
+# Steering term layers (the validate response)
+# ---------------------------------------------------------------------------
+
+
+TERM_LAYERS = GOLDENS / "steering-term-layers-v1.json"
+TERM_LAYERS_ABOUT = (
+    "POST .../steering/validate over a model-free composer: per case the response without "
+    "`parts` (canonical expression, n_layers, and each term's key, fitted layers, mean-1 share "
+    "over its fitted layers and the layers its clause selects; or valid false with composition's "
+    "message) and, for a curved % term, the hook's share (_manifold_layer_shares: mean 1 over "
+    "the layers the term acts on) and the lowered plan's curved groups (each layer's along and "
+    "onto as the kernel gets them). Inputs: nLayers identity layers; low-rank whiteners whose "
+    "means are the neutral means; per-layer profile directions (extracts: a vector or "
+    "projection term's share is its whitened norm); a flat manifold (unit basis and node "
+    "coordinates per layer; a % position's share is its push's whitened norm); a curved "
+    "manifold, of which only its fitted layers and baked Mahalanobis shares reach these "
+    "numbers (the builder draws its curve as tests/support/manifolds.py does). Regenerate "
+    "with PYTHONPATH=. python -m tests.browser.test_browser_parity"
+)
+
+
+def _flat_manifold(
+    name: str, spec: dict[str, Any], means: dict[int, torch.Tensor],
+) -> Manifold:
+    """The golden's flat manifold: neutral-anchored as a fold is, one unit basis row a layer."""
+    layers = {}
+    for row in spec["layers"]:
+        basis = torch.tensor([row["basis"]], dtype=torch.float32)
+        mean = (means[row["layer"]] @ basis.T) @ basis
+        coords = torch.tensor([[c] for c in row["nodeCoordinates"]], dtype=torch.float32)
+        layers[row["layer"]] = LayerSubspace.affine(mean, basis, node_coords=coords)
+    labels = spec["labels"]
+    return Manifold(
+        name=name, domain=CustomDomain(1), node_labels=labels,
+        node_coords=torch.linspace(-1.0, 1.0, len(labels)).reshape(-1, 1),
+        layers=layers, feature_space="raw", node_roles=[None] * len(labels),
+        node_kinds=[None] * len(labels), mahalanobis_share=dict.fromkeys(layers, 1.0),
+    )
+
+
+def _curved_manifold(name: str, spec: dict[str, Any], hidden: int) -> Manifold:
+    """The golden's curved manifold: an open interval of nodes on a circle, its shares baked."""
+    labels = spec["labels"]
+    domain = BoxDomain([BoxAxis("t", periodic=False, lo=0.0, hi=1.0)])
+    node_coords = torch.tensor([[i / len(labels)] for i in range(len(labels))])
+    manifold = stamp_current_geometry(Manifold(
+        name=name, domain=domain, node_labels=labels, node_coords=node_coords,
+        layers={
+            row["layer"]: fit_curved_subspace(
+                circle_centroids(len(labels), hidden, 1.0 + 0.2 * row["layer"]),
+                domain.embed(node_coords),
+            ).subspace
+            for row in spec["layers"]
+        },
+        feature_space="raw",
+    ))
+    manifold.mahalanobis_share = {row["layer"]: row["mahalanobisShare"] for row in spec["layers"]}
+    return manifold
+
+
+def term_layers_cases(fixture: dict[str, Any]) -> list[dict[str, Any]]:
+    """Each case's validate response (without ``parts``) and its curved terms' hook shares.
+
+    The route runs as served, over a :class:`SteeringRig` holding the fixture's artifacts.
+    """
+    whitener, means = _ppca_whitener(fixture["whiteners"])
+    rig = SteeringRig(
+        layers=nn.ModuleList(nn.Identity() for _ in range(fixture["nLayers"])),
+        profiles={
+            name: {row["layer"]: torch.tensor(row["direction"], dtype=torch.float32) for row in rows}
+            for name, rows in fixture["profiles"].items()
+        },
+        manifolds={
+            name: _curved_manifold(name, spec, fixture["hiddenSize"]) if spec.get("curved")
+            else _flat_manifold(name, spec, means)
+            for name, spec in fixture["manifolds"].items()
+        },
+        layer_means=means,
+        whitener=whitener,
+    )
+    session = mock_session(layers=rig.layers, gen_lock=rig.lock)
+    session.steering.side_effect = rig.steering
+    client = TestClient(create_app(session, default_steering=None))
+    cases = []
+    for case in fixture["cases"]:
+        reply = client.post(
+            "/drowse/v1/sessions/default/steering/validate",
+            json={"expression": case["expression"]},
+        )
+        assert reply.status_code == 200, reply.text
+        response = reply.json()
+        response.pop("parts", None)
+        record: dict[str, Any] = {
+            "name": case["name"], "expression": case["expression"], "response": response,
+        }
+        if response["valid"]:
+            with rig.steering(parse_expr(case["expression"])):
+                plan = rig.manager.plan
+                assert plan is not None
+                curved = [
+                    {"manifold": term.name, "layers": sorted(term.shares),
+                     "share": [term.shares[layer] for layer in sorted(term.shares)]}
+                    for term in plan.curved
+                ]
+                groups = [
+                    {"layer": layer, "along": group.along, "onto": group.onto}
+                    for layer, lowered in sorted(plan.lower(torch.device("cpu"), torch.float32).items())
+                    for group in lowered if isinstance(group, CurvedGroup)
+                ]
+            if curved:
+                record["curvedShares"] = curved
+                record["curvedGroups"] = groups
+        cases.append(record)
+    return cases
+
+
+def _assert_close(actual: Any, expected: Any, where: str = "") -> None:
+    """Equal, floats to 1e-6 relative (fp32 math differs in the last bits across machines)."""
+    if isinstance(expected, float) and isinstance(actual, (int, float)):
+        assert actual == pytest.approx(expected, rel=1e-6, abs=1e-9), where
+    elif isinstance(expected, dict):
+        assert isinstance(actual, dict) and actual.keys() == expected.keys(), where
+        for key in expected:
+            _assert_close(actual[key], expected[key], f"{where}.{key}")
+    elif isinstance(expected, list):
+        assert isinstance(actual, list) and len(actual) == len(expected), where
+        for index, (a, e) in enumerate(zip(actual, expected)):
+            _assert_close(a, e, f"{where}[{index}]")
+    else:
+        assert actual == expected, where
+
+
+@pytest.mark.usefixtures("isolated_home")
+def test_browser_term_layers_fixture_matches_python() -> None:
+    fixture = json.loads(TERM_LAYERS.read_text())
+    assert fixture["schemaVersion"] == 1
+    assert fixture["about"] == TERM_LAYERS_ABOUT
+    _assert_close(term_layers_cases(fixture), fixture["cases"], "cases")
+    # The fixture covers what it says: a refusal of each kind, scoped and dropped layers, the
+    # curved share over the clause, and repeats folded by key.
+    responses = {case["expression"]: case["response"] for case in fixture["cases"]}
+    assert responses["0.3 a~z"]["terms"][0]["fitted"] == [0, 1, 3]
+    assert responses["0.5 z"]["terms"][0]["share"][2] == 0.0
+    scoped = next(case for case in fixture["cases"] if case["expression"] == "0.3,0.5 mood%n1{0}")
+    assert scoped["curvedShares"] == [{"manifold": "mood", "layers": [0], "share": [1.0]}]
+    # The kernel's coefficients: along · share · 4 and min(1, onto · share · 0.5) per layer.
+    assert scoped["curvedGroups"] == [{"layer": 0, "along": pytest.approx(1.2), "onto": pytest.approx(0.25)}]
+    assert scoped["response"]["terms"][0]["layers"] == [0]
+    assert len(scoped["response"]["terms"][0]["share"]) == 2
+    assert [t["key"] for t in responses["0.2 a{1} + 0.3 a{1} + 0.25 a + 0.5 a{2}@response"]["terms"]] == ["a{1}", "a", "a{2}"]
+    assert sum(not response["valid"] for response in responses.values()) == 5
+
+
+def _golden_json(value: Any, indent: str = "") -> str:
+    """The goldens' layout: objects and nested lists on their own lines, scalar lists inline."""
+    def flat(item: Any) -> bool:
+        return not isinstance(item, (dict, list)) or (
+            isinstance(item, list) and all(not isinstance(x, (dict, list)) for x in item)
+        )
+
+    inner = indent + "  "
+    if isinstance(value, dict) and value:
+        rows = [f"{inner}{json.dumps(key)}: {_golden_json(item, inner)}" for key, item in value.items()]
+        return "{\n" + ",\n".join(rows) + f"\n{indent}}}"
+    if isinstance(value, list) and value and not all(flat(item) for item in value):
+        return "[\n" + ",\n".join(f"{inner}{_golden_json(item, inner)}" for item in value) + f"\n{indent}]"
+    if isinstance(value, list):
+        return "[" + ", ".join(_golden_json(item, inner) for item in value) + "]"
+    return json.dumps(value, ensure_ascii=False)
+
+
+def regenerate_term_layers(path: Path = TERM_LAYERS) -> None:
+    """Recompute ``path``'s outputs from its inputs (the cases' names and expressions)."""
+    fixture = json.loads(path.read_text())
+    previous = os.environ.get("DROWSE_HOME")
+    with tempfile.TemporaryDirectory() as home:
+        os.environ["DROWSE_HOME"] = home
+        selectors.invalidate()
+        try:
+            cases = term_layers_cases(fixture)
+        finally:
+            if previous is None:
+                os.environ.pop("DROWSE_HOME", None)
+            else:
+                os.environ["DROWSE_HOME"] = previous
+            selectors.invalidate()
+    fixture.update(schemaVersion=1, about=TERM_LAYERS_ABOUT, cases=cases)
+    ordered = {key: fixture[key] for key in ("schemaVersion", "about", "source") if key in fixture}
+    ordered.update(fixture)
+    path.write_text(_golden_json(ordered) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -1407,3 +1624,7 @@ def test_units_golden_matches_python(name: str, arch: str) -> None:
     actual = json.loads(browser_units._serialize(browser_units.build_golden(name, arch, replay=expected)))
     problems = browser_units.golden_problems(expected, actual)
     assert not problems, "\n".join(problems[:20])
+
+
+if __name__ == "__main__":
+    regenerate_term_layers()
