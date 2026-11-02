@@ -237,11 +237,18 @@ interface here:
   `tests/browser/test_browser_parity.py` (`tests/AGENTS.md`);
 - semantics it reimplements: the grammar, `compose_call`
   (`loom/recipe.py`), the tree filter (`loom/filter.py`), the sampler, the
-  measurement envelope, the affine lowering, DLS, the Fisher fit and topology;
+  measurement envelope, the affine lowering, DLS, the Fisher fit and topology,
+  and (hook ABI v5, pinned by the `units-tiny-models-v1` goldens of
+  `tests/support/browser_units.py`) the in-block sites, unit mean-ablation,
+  the unit tap, unit activity, token anatomy, the R/S lens reads, the S
+  readout, the static unit reads and the neuron push;
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`
   `METHOD_FIT_MODES`, the manifold sidecar and `.drowse` formats, lens format
   v7 (`sites.out`, `out.layer-L` shards);
-- Python it calls: `lens.store.save_lens_at`/`LensProvenance`, and the
+- Python it calls: `lens.store.save_lens_at`/`LensProvenance`,
+  `units.reads.UnitReader.population_artifacts`/`null_basis`/`head_kept_ids`
+  (its offline unit packs), the fixture generator in
+  `tests/support/browser_units.py`, and the
   lens estimator (today the removed `lens.fit.fit_jacobian_lens`; its hosted
   fit moving to `lens.fit.fit_lens(kind=, sites=("out",))` is a pending
   follow-up, `drowse/lens/AGENTS.md`).
