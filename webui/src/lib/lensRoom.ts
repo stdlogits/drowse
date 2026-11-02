@@ -237,6 +237,10 @@ export function unloaded(row: InstrumentSourceJSON | null | undefined): boolean 
 /** The body a local fit sent, so a refused one can be sent again with ``force``. */
 export type FitBody = { prompts: number; kind: string; sites: string[] };
 
+/** Where a family's column places a local fit: a running fit among its sources, a failed fit's
+ *  error under them, the fit's form after them. */
+export type FitPart = "status" | "error" | "form";
+
 /** The artifact a failed fit may replace (``local:r``): only when the server marked the failure as
  *  the refusal to replace it (``replaceable``) and the fit is the one this view sent. Any other
  *  failure (an unreachable Hub, a cancelled fit) offers nothing. */
