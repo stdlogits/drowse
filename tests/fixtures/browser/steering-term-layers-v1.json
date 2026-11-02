@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "about": "POST .../steering/validate over a model-free composer: per case the response without `parts` (canonical expression, n_layers, and each term's key, fitted layers, mean-1 share over its fitted layers and the layers its clause selects; or valid false with composition's message) and, for a curved % term, the hook's share (_manifold_layer_shares: mean 1 over the layers the term acts on). Inputs: nLayers identity layers; low-rank whiteners whose means are the neutral means; per-layer profile directions (extracts: a vector or projection term's share is its whitened norm); a flat manifold (unit basis and node coordinates per layer; a % position's share is its push's whitened norm); a curved manifold, of which only its fitted layers and baked Mahalanobis shares reach these numbers (the builder draws its curve as tests/support/manifolds.py does). Regenerate with PYTHONPATH=. python -m tests.browser.test_browser_parity",
+  "about": "POST .../steering/validate over a model-free composer: per case the response without `parts` (canonical expression, n_layers, and each term's key, fitted layers, mean-1 share over its fitted layers and the layers its clause selects; or valid false with composition's message) and, for a curved % term, the hook's share (_manifold_layer_shares: mean 1 over the layers the term acts on) and the lowered plan's curved groups (each layer's along and onto as the kernel gets them). Inputs: nLayers identity layers; low-rank whiteners whose means are the neutral means; per-layer profile directions (extracts: a vector or projection term's share is its whitened norm); a flat manifold (unit basis and node coordinates per layer; a % position's share is its push's whitened norm); a curved manifold, of which only its fitted layers and baked Mahalanobis shares reach these numbers (the builder draws its curve as tests/support/manifolds.py does). Regenerate with PYTHONPATH=. python -m tests.browser.test_browser_parity",
   "source": "POST /drowse/v1/sessions/{id}/steering/validate (drowse.steering.composer.SteeringComposer.term_layers); curvedShares: drowse.steering.hooks._manifold_layer_shares",
   "hiddenSize": 3,
   "nLayers": 4,
@@ -285,6 +285,18 @@
           "layers": [0, 1],
           "share": [0.6666666666666666, 1.3333333333333333]
         }
+      ],
+      "curvedGroups": [
+        {
+          "layer": 0,
+          "along": 0.7999999999999999,
+          "onto": 0.16666666666666666
+        },
+        {
+          "layer": 1,
+          "along": 1.5999999999999999,
+          "onto": 0.3333333333333333
+        }
       ]
     },
     {
@@ -309,6 +321,13 @@
           "manifold": "mood",
           "layers": [0],
           "share": [1.0]
+        }
+      ],
+      "curvedGroups": [
+        {
+          "layer": 0,
+          "along": 1.2,
+          "onto": 0.25
         }
       ]
     },

@@ -71,7 +71,7 @@ from drowse.server import create_app
 from drowse.store import selectors
 from drowse.units.instrument import UnitsInstrument
 from drowse.steering.grammar import SteeringExprError, parse_expr, referenced_selectors
-from drowse.steering.hooks import _lower_affine_subspaces
+from drowse.steering.hooks import CurvedGroup, _lower_affine_subspaces
 from drowse.steering.triggers import TriggerContext
 from tests.support.composer import SteeringRig
 from tests.support.manifolds import circle_centroids, stamp_current_geometry
@@ -512,7 +512,8 @@ TERM_LAYERS_ABOUT = (
     "`parts` (canonical expression, n_layers, and each term's key, fitted layers, mean-1 share "
     "over its fitted layers and the layers its clause selects; or valid false with composition's "
     "message) and, for a curved % term, the hook's share (_manifold_layer_shares: mean 1 over "
-    "the layers the term acts on). Inputs: nLayers identity layers; low-rank whiteners whose "
+    "the layers the term acts on) and the lowered plan's curved groups (each layer's along and "
+    "onto as the kernel gets them). Inputs: nLayers identity layers; low-rank whiteners whose "
     "means are the neutral means; per-layer profile directions (extracts: a vector or "
     "projection term's share is its whitened norm); a flat manifold (unit basis and node "
     "coordinates per layer; a % position's share is its push's whitened norm); a curved "
@@ -605,8 +606,14 @@ def term_layers_cases(fixture: dict[str, Any]) -> list[dict[str, Any]]:
                      "share": [term.shares[layer] for layer in sorted(term.shares)]}
                     for term in plan.curved
                 ]
+                groups = [
+                    {"layer": layer, "along": group.along, "onto": group.onto}
+                    for layer, lowered in sorted(plan.lower(torch.device("cpu"), torch.float32).items())
+                    for group in lowered if isinstance(group, CurvedGroup)
+                ]
             if curved:
                 record["curvedShares"] = curved
+                record["curvedGroups"] = groups
         cases.append(record)
     return cases
 
@@ -640,6 +647,8 @@ def test_browser_term_layers_fixture_matches_python() -> None:
     assert responses["0.5 z"]["terms"][0]["share"][2] == 0.0
     scoped = next(case for case in fixture["cases"] if case["expression"] == "0.3,0.5 mood%n1{0}")
     assert scoped["curvedShares"] == [{"manifold": "mood", "layers": [0], "share": [1.0]}]
+    # The kernel's coefficients: along · share · 4 and min(1, onto · share · 0.5) per layer.
+    assert scoped["curvedGroups"] == [{"layer": 0, "along": pytest.approx(1.2), "onto": pytest.approx(0.25)}]
     assert scoped["response"]["terms"][0]["layers"] == [0]
     assert len(scoped["response"]["terms"][0]["share"]) == 2
     assert [t["key"] for t in responses["0.2 a{1} + 0.3 a{1} + 0.25 a + 0.5 a{2}@response"]["terms"]] == ["a{1}", "a", "a{2}"]

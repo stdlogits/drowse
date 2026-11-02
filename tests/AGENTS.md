@@ -213,7 +213,8 @@ files from it, so their paths are part of its interface:
   model-free composer: each term's key, fitted layers, mean-1 share and clause selection, the
   refusals composition answers in band, and a curved `%` term's hook share
   (`_manifold_layer_shares`, mean 1 over the clause's layers where the response's share is mean 1
-  over the fit). Its inputs (whiteners, profile directions, a flat and a curved manifold, the
+  over the fit) with the lowered plan's curved groups (each layer's `along · share · 4` and
+  `min(1, onto · share · 0.5)`, so the gains are pinned too). Its inputs (whiteners, profile directions, a flat and a curved manifold, the
   cases' expressions) stay; after a deliberate change regenerate the outputs with
   `PYTHONPATH=. python -m tests.browser.test_browser_parity`.
 
