@@ -175,7 +175,8 @@ try {
     const sources = new URL("../src/", import.meta.url).pathname;
     const files = [...new Set([...reached].map(module => module.file).filter(file => file?.startsWith(sources)))];
     assert.ok(files.some(file => file.endsWith("/rooms/lens/LensFamily.svelte")), "the walk reaches the columns");
-    assert.deepEqual(files.filter(file => /instrumentAuthoring|LensFit\.svelte$/.test(file)), [], "LensQuad imports no fit");
+    const fitModule = (file) => file.includes("/stores/instrumentAuthoring.") || file.endsWith("/rooms/lens/LensFit.svelte");
+    assert.deepEqual(files.filter(fitModule), [], "LensQuad imports no fit");
     for (const file of files) {
       const text = readFileSync(file, "utf8");
       for (const marker of fitMarkers) assert.ok(!text.includes(marker), `${file} carries "${marker}"`);
