@@ -30,7 +30,7 @@ export interface HostedModelOption {
   remainingDownloadBytes: number;
   firstRunPacks: Array<{
     id: string;
-    kind: "jlens" | "sae";
+    kind: "jlens" | "slens" | "units" | "sae";
     name: string;
     bytes: number;
     requiredForSetup: boolean;

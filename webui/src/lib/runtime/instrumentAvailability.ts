@@ -11,7 +11,7 @@ export function catalogInstrumentAvailability(
   catalog: Pick<CatalogDocument, "models">,
   modelVariantId: string,
   contextTokens: number | null,
-  kind: "jlens" | "sae",
+  kind: "jlens" | "slens" | "units" | "sae",
 ): CatalogInstrumentAvailability {
   const variant = catalog.models
     .flatMap((model) => model.variants)
@@ -34,7 +34,7 @@ export function catalogInstrumentAvailability(
 }
 
 export async function currentCatalogInstrumentAvailability(
-  kind: "jlens" | "sae",
+  kind: "jlens" | "slens" | "units" | "sae",
 ): Promise<CatalogInstrumentAvailability> {
   const controller = getHostedController();
   if (!controller) return "unknown";
