@@ -21,7 +21,6 @@ import base64
 import hashlib
 import json
 import math
-import re
 import tempfile
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -637,14 +636,28 @@ def build_units_tiny_models() -> dict[str, Any]:
     }
 
 
-_SCALAR_LIST = re.compile(r"\[\s*((?:-?[\d.eE+-]+|true|false|null)(?:,\s*(?:-?[\d.eE+-]+|true|false|null))*)\s*\]")
+def _flat(value: Any) -> bool:
+    if isinstance(value, dict):
+        return all(not isinstance(v, (dict, list)) or (isinstance(v, list) and _flat(v)) for v in value.values())
+    if isinstance(value, list):
+        return all(not isinstance(v, (dict, list)) for v in value)
+    return True
+
+
+def _dump(value: Any, depth: int) -> str:
+    """Indented JSON whose scalar lists and flat records sit on one line."""
+    if _flat(value):
+        return json.dumps(value, ensure_ascii=False, separators=(", ", ": "))
+    pad = " " * (depth + 1)
+    if isinstance(value, dict):
+        items = [f"{pad}{json.dumps(k)}: {_dump(v, depth + 1)}" for k, v in value.items()]
+        return "{\n" + ",\n".join(items) + "\n" + " " * depth + "}"
+    items = [f"{pad}{_dump(v, depth + 1)}" for v in value]
+    return "[\n" + ",\n".join(items) + "\n" + " " * depth + "]"
 
 
 def _serialize(obj: Any) -> bytes:
-    """Indented JSON with every list of scalars on one line."""
-    text = json.dumps(obj, indent=1, ensure_ascii=False)
-    text = _SCALAR_LIST.sub(lambda m: "[" + ", ".join(x.strip() for x in m.group(1).split(",")) + "]", text)
-    return (text + "\n").encode("utf-8")
+    return (_dump(obj, 0) + "\n").encode("utf-8")
 
 
 def model_file_sha256() -> str:
@@ -969,3 +982,239 @@ def _naive_post_block(fx: Fixture, ids: Sequence[int], cases: list[dict[str, Any
     if gap < 1e-3:
         raise FixtureError(f"unit-ablation: the naive post-block correction matches ({gap:.3g})")
     return {"layer": layer, "head": head, "position": p, "naive_out": encode(naive), "gap": _f32(gap)}
+
+
+# ---------------------------------------------------------------------------
+# Nodes the replay goldens read
+# ---------------------------------------------------------------------------
+
+
+def generated_node(fx: Fixture, steering: str | None = None) -> str:
+    """The chat prompt plus :data:`DECODE_STEPS` greedy tokens, in the tree
+    (a fresh conversation from the root)."""
+    fx.session.tree.navigate(fx.session.tree.root_id)
+    runs = fx.session.generate(list(CHAT), steering=steering, sampling=_greedy(DECODE_STEPS))
+    if len(runs.first.tokens) != DECODE_STEPS:
+        raise FixtureError(f"the generated node stopped after {len(runs.first.tokens)} tokens")
+    node = runs.node_ids[0]
+    assert node is not None
+    return node
+
+
+#: The raw first turn's one-byte prompt per arch (greedy from it repeats
+#: least on the fixture weights).
+RAW_FIRST = {"gemma3": "=", "qwen3": "K"}
+
+
+def raw_first_turn(fx: Fixture, tokens: int) -> str:
+    """A raw-mode node whose first row is produced at position 0 (the sink):
+    a one-token prompt (BOS, or one byte without one)."""
+    text = RAW_FIRST[fx.arch]
+    fx.session.tree.navigate(fx.session.tree.root_id)
+    runs = fx.session.generate(text, raw=True, sampling=_greedy(tokens))
+    if len(runs.first.tokens) != tokens:
+        raise FixtureError(f"the raw first turn stopped after {len(runs.first.tokens)} tokens")
+    node = runs.node_ids[0]
+    assert node is not None
+    return node
+
+
+def _all_units(fx: Fixture) -> list[str]:
+    spec = fx.spec
+    return [
+        f"neuron/L{b.layer}n{n}" for b in spec.blocks for n in range(spec.blocks[b.layer].d_ff)
+    ] + [f"head/L{b.layer}h{h}" for b in spec.blocks for h in range(b.n_heads)]
+
+
+def _replayer(fx: Fixture) -> Any:
+    """A :class:`NodeReplayer` over the session's public collaborators, for
+    the hand-built forwards (``_activity`` directly)."""
+    from drowse.loom.node_replay import NodeReplayer
+    from drowse.steering.triggers import TriggerContext
+
+    session = fx.session
+    return NodeReplayer(
+        replayer=cast_any(None), model=session.model, lens=session.lens,
+        units=session.units.reads.runtime, tokenizer=session.tokenizer,
+        tree=lambda: session.tree, traits=cast_any(None), trigger_context=TriggerContext(),
+    )
+
+
+def cast_any(value: Any) -> Any:
+    return value
+
+
+def _hand_activity(fx: Fixture, forward: Any, *, top: int, units: Sequence[str]) -> dict[str, Any]:
+    from drowse.loom.replay import ReplaySegment
+
+    replayer = _replayer(fx)
+    runtime = fx.session.units.reads.runtime
+    refs = [runtime.parse(unit) for unit in units]
+    segments = (ReplaySegment(0, int(forward.ids.shape[1]), prefill=False, gen_step=0),)
+    with torch.inference_mode():
+        result = replayer._activity(
+            runtime.spec(), runtime.scales(), forward, segments,
+            top=top, refs=refs, population=None, pop_layers=[],
+        )
+    result["node_id"] = "hand-built"
+    result["steering"] = None
+    return dict(result)
+
+
+def _activity_diagnostics(
+    fx: Fixture, full: dict[str, Any], excluded: set[int], case: str, *, ties: bool = False,
+) -> dict[str, Any]:
+    """Every unit's peak value, peak row and peak-row margin (from a call
+    tracing every unit), the arrays the browser checks its device peaks by."""
+    traces = full["traces"]
+    units = list(traces)
+    values = np.array([traces[u] for u in units], dtype=np.float64)  # [units, rows]
+    rows = values.shape[1]
+    keep = np.array([r not in excluded for r in range(rows)])
+    peak = np.zeros(len(units))
+    row = -np.ones(len(units), dtype=np.int64)
+    margin = np.zeros(len(units))
+    if keep.any():
+        masked = np.where(keep, np.abs(values), -1.0)
+        row = masked.argmax(1)
+        peak = values[np.arange(len(units)), row]
+        ranked = np.sort(masked, axis=1)[:, ::-1]
+        margin = ranked[:, 0] - (ranked[:, 1] if rows > 1 else -1.0)
+    return {
+        "units": units,
+        "peak": encode(peak.astype(np.float32)),
+        "row": encode(row.astype(np.int32)),
+        "row_margin": encode(margin.astype(np.float32)),
+    }
+
+
+def _check_activity(result: dict[str, Any], diag: dict[str, Any], top: int, case: str, *, ties: bool) -> None:
+    units = diag["units"]
+    peak = decode(diag["peak"])
+    margin = decode(diag["row_margin"])
+    index = {unit: i for i, unit in enumerate(units)}
+    for kind in ("neuron", "head"):
+        mags = sorted((abs(float(peak[i])) for u, i in index.items() if u.startswith(kind)), reverse=True)
+        listed = [p for p in result["top"] if p["kind"] == kind]
+        if listed and not ties:
+            require_top_margin(mags, len(listed), f"unit-activity {case} {kind} peaks")
+    if ties:
+        return
+    rows = decode(diag["row"])
+    for unit in [p["unit"] for p in result["top"]] + list(result["traces"]):
+        i = index[unit]
+        if int(rows[i]) < 0:  # every row excluded: the unit never ranks
+            continue
+        scale = max(1.0, abs(float(peak[i])))
+        if float(margin[i]) < MARGIN * scale:
+            raise FixtureError(f"unit-activity {case}: {unit}'s peak row has no margin")
+
+
+# ---------------------------------------------------------------------------
+# 6. unit-activity
+# ---------------------------------------------------------------------------
+
+ACTIVITY_UNITS = ("neuron/L1n5", "head/L2h1", "neuron/L3n9")
+
+
+def build_unit_activity(fx: Fixture) -> dict[str, Any]:
+    """``UnitActivityJSON`` over generated, sink, hand-built and segmented
+    forwards, with every unit's peak, row and row margin."""
+    from drowse.errors import DrowseError
+    from drowse.loom.replay import ReplayForward
+    from drowse.steering.hooks import UnitGroup, UnitHook, UnitOp
+    from drowse.steering.triggers import Trigger, TriggerContext
+
+    session = fx.session
+    every = _all_units(fx)
+    cases: list[dict[str, Any]] = []
+
+    def record(name: str, result: dict[str, Any], full: dict[str, Any], excluded: set[int],
+               top: int, *, args: dict[str, Any], ties: bool = False) -> None:
+        result = {k: v for k, v in result.items() if k != "node_id"}
+        diag = _activity_diagnostics(fx, full, excluded, name)
+        _check_activity(result, diag, top, name, ties=ties)
+        cases.append({"name": name, "arguments": args, "declared_ties": ties, "result": result,
+                      "diagnostics": {k: v for k, v in diag.items() if k != "units"}})
+
+    generated = generated_node(fx)
+    args = {"top": 8, "units": list(ACTIVITY_UNITS), "raw_index": 2, "layers": "0,2"}
+    result = dict(session.unit_activity(generated, **args))
+    full = dict(session.unit_activity(generated, top=1024, units=every))
+    sink = {result["sink_raw_index"]} - {None}
+    record("generated", result, full, sink, 8, args=args)
+
+    first = raw_first_turn(fx, 3)
+    # A raw node replays raw (its prompt is the raw render, not the template's).
+    result = dict(session.unit_activity(first, top=8, raw_index=1, raw=True))
+    full = dict(session.unit_activity(first, top=1024, units=every, raw=True))
+    if result["sink_raw_index"] != 0:
+        raise FixtureError("unit-activity sink: row 0 is not at the sink")
+    record("sink", result, full, {0}, 8, args={"top": 8, "raw_index": 1, "raw": True})
+    # drowse 6.0 answers a population at the sink (every value 0) rather
+    # than refusing it; a refusal would be recorded as one.
+    try:
+        at_sink = dict(session.unit_activity(first, top=8, raw_index=0, raw=True))
+    except DrowseError as exc:
+        status, text = exc.user_message()
+        cases.append({"name": "sink-population", "arguments": {"raw_index": 0, "raw": True},
+                      "refusal": {"status": status, "text": text, "code": type(exc).__name__}})
+    else:
+        record("sink-population", at_sink, full, {0}, 8, args={"top": 8, "raw_index": 0, "raw": True})
+
+    ids = short_prompt_ids(fx.tokenizer, fx.arch)
+
+    def hand(name: str, runs: tuple[tuple[int, int], ...], rows: list[int], stop: int,
+             excluded: set[int], *, top: int, units: Sequence[str], ties: bool = False) -> None:
+        forward = ReplayForward(
+            ids=torch.tensor([ids[:stop]]), prompt_length=stop,
+            raw_ids=tuple(ids[r] for r in rows), raw_index=len(rows) - 1, runs=runs,
+        )
+        result = _hand_activity(fx, forward, top=top, units=units)
+        full = _hand_activity(fx, forward, top=1024, units=every)
+        record(name, result, full, excluded, top, ties=ties, args={
+            "top": top, "units": list(units), "ids": ids[:stop],
+            "runs": [list(run) for run in runs], "raw_ids": [ids[r] for r in rows],
+        })
+
+    # Two spans with a gap; the first starts with an unproduced row (at −1),
+    # then the sink (row 1 at position 0).
+    hand("two-spans", ((0, 0), (3, 7)), [0, 1, 2, 7, 8, 9], 9, {0, 1}, top=4, units=())
+    # Every row excluded: one unproduced row and the sink.
+    hand("all-excluded", ((0, 0),), [0, 1], 1, {0, 1}, top=8, units=("neuron/L1n5",))
+    # A unit forced to exactly 0 on every row (``keep = 0, bias = 0``, built
+    # through UnitOp: the grammar's terms always carry ``c·mean``) peaks at
+    # the first produced non-sink row; a declared tie case.
+    block = fx.spec.blocks[1]
+    keep = torch.ones(block.d_ff)
+    keep[5] = 0.0
+    hook = UnitHook(block.mlp.down)
+    hook.recompose(
+        (UnitGroup(Trigger.BOTH, UnitOp(keep, torch.zeros(block.d_ff), device=torch.device("cpu"),
+                                        dtype=torch.float32)),),
+        TriggerContext(),
+    )
+    hook.attach()
+    try:
+        hand("excluded-and-zero", ((0, 0),), [0, 1, 2, 3, 4, 5], 5, {0, 1}, top=1024,
+             units=("neuron/L1n5",), ties=True)
+    finally:
+        hook.detach()
+    zero = next(c for c in cases if c["name"] == "excluded-and-zero")["result"]
+    pick = next(p for p in zero["top"] if p["unit"] == "neuron/L1n5")
+    if pick["peak"] != 0.0 or pick["raw_index"] != 2:
+        raise FixtureError(f"unit-activity excluded-and-zero: L1n5 peaks {pick}")
+
+    segmented = generated_node(fx, steering="!neuron/L1n5@prompt")
+    full = dict(session.unit_activity(segmented, top=1024, units=every))
+    excluded = {full["sink_raw_index"]} - {None}
+    for top in (8, 7, 6, 5, 4):  # the largest top whose boundaries keep the margin
+        result = dict(session.unit_activity(segmented, top=top))
+        try:
+            _check_activity(result, _activity_diagnostics(fx, full, excluded, "segmented"), top,
+                            "segmented", ties=False)
+        except FixtureError:
+            continue
+        break
+    record("segmented", result, full, excluded, top, args={"top": top})
+    return {**header("unit-activity", fx.arch, model_file_sha256()), "cases": cases}
