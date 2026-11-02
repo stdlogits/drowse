@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
+import { textOf } from "./markup.mjs";
 
 // A reader that lags its token frames gets one ``resync`` (``ws_stream._OutboundQueue``): the
 // server dropped frames while generation went on into the tree. The client rebuilds the streaming
@@ -104,7 +105,7 @@ try {
     const { render } = await server.ssrLoadModule("svelte/server");
     const { default: StatusFooter } = await server.ssrLoadModule("/src/panels/StatusFooter.svelte");
     genStatus.maxTokens = 1024;
-    const text = render(StatusFooter, {}).body.replace(/<!--[^>]*-->/g, "").replace(/<[^>]+>/g, "").replace(/\s+/g, " ");
+    const text = textOf(render(StatusFooter, {}).body).replace(/\s+/g, " ");
     assert.match(text, /4 \/ 1024 tokens/, "the count and the limit are spaced");
   }
 

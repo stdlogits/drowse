@@ -11,7 +11,6 @@
 //
 // A category the committed ratchet does not list yet is new: check fails until --write records
 // it, and --write takes today's count as its first ceiling. After that it only goes down.
-import { existsSync } from "node:fs";
 import { readdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, extname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -208,7 +207,16 @@ function compare(current, ratchet, keys = Object.keys(CATEGORIES)) {
 const current = await measure();
 const sum = totals(current.files);
 const summary = Object.entries(sum).map(([key, n]) => `${key} ${n}`).join(", ");
-const saved = existsSync(ratchetPath) ? JSON.parse(await readFile(ratchetPath, "utf8")) : null;
+/** The committed ratchet, or null when there is none (read once: no check before the read). */
+async function readSaved() {
+  try {
+    return JSON.parse(await readFile(ratchetPath, "utf8"));
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+const saved = await readSaved();
 // Categories the committed ratchet already records; any other is new and has no ceiling yet.
 const recorded = Object.keys(CATEGORIES).filter(key => key in (saved?.categories ?? {}));
 const unrecorded = Object.keys(CATEGORIES).filter(key => !recorded.includes(key));

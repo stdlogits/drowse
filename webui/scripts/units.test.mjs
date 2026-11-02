@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { createServer } from "vite";
+import { textOf, withoutComments } from "./markup.mjs";
 
 // Units: the arithmetic of the unit view and the Units room (lib/units.ts), the units store over a
 // stub runtime, the recipe's unit terms, and the two views rendered on the server in a catalogued
@@ -414,7 +415,7 @@ try {
   assert.match(html, />its own layer</, "a unit's strip shows its layer, fixed");
   assert.doesNotMatch(html, />All fitted</, "no clause control on a unit");
   assert.equal((html.match(/class="cell is-fixed[^"]*\bis-on\b/g) ?? []).length, 1, "one layer lit");
-  const text = (markup) => markup.replace(/<[^>]*>/g, "");
+  const text = textOf;
   assert.match(text(html), /0\.2 neuron\/L31n4410\s*Copy/, "the term as the expression writes it");
   const silenced = { mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true };
   editor("head/L28h12", silenced);
@@ -526,7 +527,7 @@ try {
   // W6 integration: the room's chosen unit is pushed or silenced right there, through
   // lib/steerActions (its chip lands in the recipe's strip), and the summary shows the term held.
   {
-    const bare = (h) => h.replace(/<!--[^]*?-->/g, "");
+    const bare = withoutComments;
     const button = (pressed, label) => new RegExp(`aria-pressed="${pressed}">(?:<svg[^]*?</svg>)?${label.replace("+", "\\+")}</button>`);
     const acts = bare(summary.slice(0, summary.indexOf("peak here")));
     for (const label of ["Push +", "Push −", "Silence"]) assert.match(acts, button(false, label), `the summary offers ${label}`);

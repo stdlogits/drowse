@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
+import { textOf, withoutComments } from "./markup.mjs";
 
 const server = await createServer({
   root: fileURLToPath(new URL("..", import.meta.url)),
@@ -238,9 +239,9 @@ try {
     assert.deepEqual(boxes, ["Hi", "there", "Let", "me", "I", "'ve", "got", "to", "go", "\n\n", "Bye"],
       "every box starts at its first glyph (prompt, thinking and generated tokens)");
     const said = html.slice(html.indexOf('class="dw-said'));
-    const text = said.slice(said.indexOf(">") + 1, said.indexOf("</div>")).replace(/<!--[^]*?-->/g, "").replace(/<[^>]*>/g, "").replace(/&#39;/g, "'");
+    const text = textOf(said.slice(said.indexOf(">") + 1, said.indexOf("</div>"))).replace(/&#39;/g, "'");
     assert.equal(text, words.join(""), "the reply's text is unchanged");
-    assert.match(said.replace(/<!--[^]*?-->/g, ""), /got<\/span> <span[^>]*class="tok\b[^"]*"[^>]*>to<\/span>/, "the space before \"to\" sits between the boxes");
+    assert.match(withoutComments(said), /got<\/span> <span[^>]*class="tok\b[^"]*"[^>]*>to<\/span>/, "the space before \"to\" sits between the boxes");
     chatLog.turns = [];
 
     const raw = await source("panels/RawBuffer.svelte");
