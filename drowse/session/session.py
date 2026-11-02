@@ -1654,9 +1654,8 @@ class DrowseSession:
         ).with_probe_hashes(self._roster.probe_hash)
         return begin_generation_turn(
             self.tree, input, raw=raw, parent_node_id=parent_node_id,
-            sampling=sampling, recipe=recipe,
-            tokenizer=self._tokenizer, grammar=self.scene_grammar,
-            gen_seat=gen_seat, continuation_node_id=continuation_node_id,
+            sampling=sampling, recipe=recipe, gen_seat=gen_seat,
+            continuation_node_id=continuation_node_id,
         )
 
     # -- Generation: blocking --

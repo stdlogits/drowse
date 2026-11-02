@@ -662,6 +662,7 @@ class GenerationEngine:
             input, system_prompt = split_message_list(
                 input, system_prompt=system_prompt,
                 parent_node_id=parent_node_id, raw=raw,
+                tokenizer=session.tokenizer, grammar=session.scene_grammar,
             )
         steering, sampling, thinking, system_prompt = self.compose_call(
             steering=steering, sampling=sampling, thinking=thinking,

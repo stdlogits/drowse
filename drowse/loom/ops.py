@@ -506,26 +506,52 @@ def plan_prefill(
     )
 
 
+@dataclass(frozen=True)
+class MessageTurn:
+    """One validated turn of a stateful message list.
+
+    :func:`split_message_list` makes them; :func:`begin_generation_turn`
+    records them.  ``token_ids`` is the text's tokenization, which an
+    authored assistant turn keeps so it stays forkable.
+    """
+
+    seat: str
+    text: str
+    label: str | None
+    thinking: str | None
+    token_ids: tuple[int, ...]
+
+
 def split_message_list(
     messages: list[Any],
     *,
     system_prompt: str | None | InheritSystemPrompt,
     parent_node_id: str | None,
     raw: bool,
-) -> tuple[list[dict[str, Any]], str | None | InheritSystemPrompt]:
+    tokenizer: Any,
+    grammar: "TurnGrammar | None",
+) -> tuple[list[MessageTurn], str | None | InheritSystemPrompt]:
     """A stateful message list's turns and the call's system prompt.
 
     A message list is a whole conversation, and a stateful generation records
     the one it answers, so the reply's node replays the prompt it was
-    generated from: :func:`begin_generation_turn` commits the turns from the
+    generated from: :func:`begin_generation_turn` records the turns from the
     root and the reply renders from them.  A leading ``system`` message is the
     call's system prompt (the reply's recipe keeps it); passing a different
     one as well is ambiguous.  Every other message is a ``user`` or
-    ``assistant`` turn with string ``content`` and optional ``label`` and
-    ``thinking``.  The list renders from the root, so ``parent_node_id`` does
-    not apply, and raw completion takes text, not messages.
+    ``assistant`` turn with non-empty string ``content`` and optional string
+    ``label`` and ``thinking``; each message stays its own turn, as it does in
+    a stateless render.  A legacy chat template (no scene ``grammar``) only
+    renders alternating turns, so there the list must alternate starting
+    with ``user``.  The list renders from the root, so ``parent_node_id``
+    does not apply, and raw completion takes text, not messages.
 
-    Raises :class:`InvalidNodeOperationError` (HTTP 400).
+    The whole list is checked here, before anything is recorded, so a
+    refused list leaves the tree as it was.
+
+    Raises :class:`InvalidNodeOperationError` (HTTP 400) and
+    :class:`~drowse.model.scene.SceneThinkingUnsupportedError` when a turn
+    carries thinking the family cannot render.
     """
     if raw:
         raise InvalidNodeOperationError(
@@ -537,27 +563,78 @@ def split_message_list(
             "the root; parent_node_id does not apply (send None or a string "
             "to continue a node)"
         )
-    turns = list(messages)
-    for message in turns:
+    messages = list(messages)
+    for message in messages:
         if not isinstance(message, dict) or not isinstance(message.get("content"), str):
             raise InvalidNodeOperationError(
                 "each message needs a role and string content"
             )
-    if turns and turns[0].get("role") == "system":
-        system = turns.pop(0)["content"]
+    if messages and messages[0].get("role") == "system":
+        system = messages.pop(0)["content"]
         if system_prompt is not INHERIT_SYSTEM_PROMPT and system_prompt != system:
             raise InvalidNodeOperationError(
                 "the system prompt is given twice: as the list's system "
                 "message and as system_prompt"
             )
         system_prompt = system
-    for message in turns:
-        if message.get("role") not in _SEATS:
+    turns: list[MessageTurn] = []
+    previous = "system"  # the root
+    for index, message in enumerate(messages):
+        seat = message.get("role")
+        if seat not in _SEATS:
             raise InvalidNodeOperationError(
                 "a recorded message list holds one leading system message, "
-                f"then user and assistant turns; got role {message.get('role')!r}"
+                f"then user and assistant turns; got role {seat!r}"
             )
+        text = message["content"]
+        if text == "":
+            raise InvalidNodeOperationError(
+                f"message {index} ({seat}) has empty content"
+            )
+        label = message.get("label")
+        thinking = message.get("thinking")
+        if label is not None and not isinstance(label, str):
+            raise InvalidNodeOperationError(f"message {index}: label must be a string")
+        if thinking is not None and not isinstance(thinking, str):
+            raise InvalidNodeOperationError(f"message {index}: thinking must be a string")
+        if grammar is None and (seat == previous or (seat == "assistant" and previous != "user")):
+            raise InvalidNodeOperationError(
+                f"message {index}: this model's chat template renders only "
+                f"alternating turns starting with user, and a {seat} turn "
+                f"cannot follow a {previous} one (free seating requires "
+                f"scene mode)"
+            )
+        check_thinking_commit(grammar, thinking)
+        turns.append(MessageTurn(
+            seat=seat, text=text, label=label, thinking=thinking,
+            token_ids=tuple(_encode_nonempty(tokenizer, text)),
+        ))
+        previous = seat
     return turns, system_prompt
+
+
+def _record_message_turns(tree: LoomTree, turns: list[MessageTurn]) -> str:
+    """Record validated turns from the root; returns the last one's id.
+
+    Each turn reuses an identical child of the one before (same seat, text,
+    label and thinking, so the render is the same) and otherwise lands as a
+    new node, so the list's whole matching path is shared: replies to the
+    same list are siblings, and no existing node is edited.
+    """
+    anchor_id = tree.root_id
+    for turn in turns:
+        if turn.seat == "user":
+            anchor_id = tree.add_user_turn(
+                turn.text, parent_id=anchor_id, role_label=turn.label,
+                thinking_text=turn.thinking,
+            )
+        else:
+            anchor_id = tree.add_assistant_turn(
+                anchor_id, turn.text, role_label=turn.label,
+                thinking_text=turn.thinking,
+                raw_token_ids=list(turn.token_ids), dedup_existing=True,
+            )
+    return anchor_id
 
 
 def begin_generation_turn(
@@ -568,8 +645,6 @@ def begin_generation_turn(
     parent_node_id: str | None,
     sampling: SamplingConfig | None,
     recipe: Recipe,
-    tokenizer: Any = None,
-    grammar: "TurnGrammar | None" = None,
     gen_seat: str = "assistant",
     continuation_node_id: str | None = None,
 ) -> str:
@@ -579,9 +654,9 @@ def begin_generation_turn(
     ``user_role`` label); in flat (``raw``) mode a non-empty span lands as
     its own node and an empty one just extends the parent, with no seating
     check.  ``None`` anchors on the parent directly.  A message list (the
-    turns :func:`split_message_list` returns) is committed from the root
-    turn by turn through :func:`append_turn` (``tokenizer`` and ``grammar``
-    are its), and the reply hangs under its last turn.  The generated node
+    :class:`MessageTurn` list :func:`split_message_list` returns) is
+    recorded from the root, reusing the path it matches, and the reply
+    hangs under its last turn.  The generated node
     takes ``gen_seat`` and that seat's label from ``sampling``;
     ``continuation_node_id`` reuses an existing same-seat message whose text
     the caller replays as the forced decode prefix.
@@ -605,13 +680,7 @@ def begin_generation_turn(
             input, parent_id=parent_node_id, role_label=user_role,
         )
     elif isinstance(input, list):
-        anchor_id = tree.root_id
-        for message in input:
-            anchor_id = append_turn(
-                tree, tokenizer, grammar, anchor_id, message["content"],
-                seat=message["role"], role_label=message.get("label"),
-                thinking=message.get("thinking"),
-            )
+        anchor_id = _record_message_turns(tree, input)
     else:
         anchor_id = parent_node_id or tree.active_node_id
     tree.reserve(anchor_id)
@@ -627,6 +696,7 @@ def begin_generation_turn(
 
 __all__ = [
     "ForcedTurn",
+    "MessageTurn",
     "PromptAnchor",
     "TokenAnchor",
     "append_turn",

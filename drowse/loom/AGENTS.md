@@ -108,7 +108,7 @@ its session lock).
 | Op | Behavior worth knowing |
 |---|---|
 | `add_user_turn` | Reuses a user child with identical text, `role_label` and `thinking_text` (regen and prefill rely on this) |
-| `add_assistant_turn` | Authored turn through the same begin/finalize pair: `tokens=None`, `raw_token_ids` kept, so it stays forkable |
+| `add_assistant_turn` | Authored turn through the same begin/finalize pair: `tokens=None`, `raw_token_ids` kept, so it stays forkable; `dedup_existing` reuses an identical assistant child outside the reservation (a recorded message list relies on this) |
 | `begin_continuation` | Resets a node in place; the caller replays its old text as the forced prefix |
 | `branch` | Authored sibling. Copies `role_label`; copies `thinking_text` only for unchanged text; `role=` overrides the seat; refuses the root |
 | `graft` | Validates all turns (user/assistant seats, role slugs) first, then chain + absent cast labels + note in one `rev` |
@@ -258,11 +258,16 @@ label unsteered.
   a user parent even in scene mode (commit with `append_turn`, then generate
   from `None`). Flat mode lands a non-empty span as its own node and lets an
   empty one extend the parent. `continuation_node_id` reuses a message. A
-  message list is a whole conversation: `split_message_list` takes a leading
-  system message as the call's system prompt and refuses a `parent_node_id`,
-  raw mode and other roles, and the turns land from the root through
-  `append_turn`, the reply under the last; the engine then renders from those
-  turns, so the reply replays the prompt it answered.
+  message list is a whole conversation: `split_message_list` checks the whole
+  list before anything is recorded (a leading system message becomes the
+  call's system prompt; it refuses a `parent_node_id`, raw mode, other roles,
+  empty content, and non-alternating turns on a legacy template) and returns
+  `MessageTurn`s. They land from the root, each message its own turn, reusing
+  an identical child at each step (`add_user_turn` / `add_assistant_turn`
+  with `dedup_existing`), so a re-sent list shares its whole history and its
+  replies are siblings; no existing node is edited. The reply hangs under the
+  last turn and the engine renders from those turns, so it replays the prompt
+  it answered.
 - `resolve_token_anchor` is the one `(node_id, raw_index)` validation, shared
   by forks and replay; `TokenAnchor` snapshots `raw_ids`.
 - `plan_fork` replays `raw_ids[:raw_index]`, forces `alt_token_id` or

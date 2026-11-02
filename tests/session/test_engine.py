@@ -819,6 +819,28 @@ def test_a_stateful_message_list_records_the_conversation_it_answers(tiny_sessio
     assert all(session.tree.get(node_id).parent_id == user for node_id in fan.node_ids)
     assert session.tree.children_of[session.tree.root_id].count(user) == 1
 
+    # With assistant history and two adjacent user messages, the recorded
+    # list renders the prompt a stateless render of it does (each message its
+    # own turn), and a fan reuses the whole history, so its replies are
+    # siblings. The earlier reply under "Hi there" is left as it was.
+    history = [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "Hi there"},
+        {"role": "assistant", "content": "Hello."},
+        {"role": "user", "content": "One thing."},
+        {"role": "user", "content": "And another."},
+    ]
+    alone = session.generate(history, sampling=greedy, stateless=True).first
+    fan = session.generate(history, sampling=greedy, n=2)
+    assert [r.prompt_tokens for r in fan] == [alone.prompt_tokens] * 2
+    (last,) = {session.tree.get(node_id).parent_id for node_id in fan.node_ids}
+    assert [(n.role, n.text) for n in session.tree.path_to(last)[1:]] == [
+        (m["role"], m["content"]) for m in history[1:]
+    ]
+    assert session.tree.path_to(last)[1].id == user
+    assert sum(n.text == "Hello." for n in session.tree.nodes.values()) == 1
+    assert (node.text, node.parent_id) == (result.text, user)
+
     with pytest.raises(InvalidNodeOperationError, match="whole conversation"):
         session.generate(messages, sampling=greedy, parent_node_id=node.id)
 

@@ -20,7 +20,9 @@ import torch
 from drowse import GenState, LoomTree, Recipe, SamplingConfig, derive_seed_schedule
 from drowse.generation.decode import GenerationConfig, GenerationState
 from drowse.generation.results import GenerationResult, RunSet
+from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT
 from drowse.generation.types import CallSpec
+from drowse.loom.ops import begin_generation_turn, split_message_list
 from drowse.session.batch import (
     BatchRunner,
     BatchStopCriteria,
@@ -41,6 +43,11 @@ from tests.support.composer import SteeringRig
 # ---------------------------------------------------------------------------
 # A fake single-generation engine for the runner's orchestration.
 # ---------------------------------------------------------------------------
+
+
+_CHAR_TOKENIZER = SimpleNamespace(
+    encode=lambda text, add_special_tokens=False: [ord(c) for c in text],
+)
 
 
 class _Engine:
@@ -66,27 +73,34 @@ class _Engine:
         sampling = kwargs.get("sampling")
         if not kwargs.get("stateless"):
             parent_id = kwargs.get("parent_node_id")
-            if isinstance(input, str):
-                anchor_id = self.tree.add_user_turn(
-                    input,
-                    parent_id=parent_id,
-                    role_label=(
-                        sampling.user_role
-                        if sampling is not None and not kwargs.get("raw") else None
-                    ),
+            recipe = Recipe(steering=str(steering) if steering else None)
+            if isinstance(input, list):
+                # The engine's own path: the list is checked, then recorded
+                # from the root (its matching path reused).
+                turns, _system = split_message_list(
+                    input, system_prompt=INHERIT_SYSTEM_PROMPT,
+                    parent_node_id=parent_id, raw=False,
+                    tokenizer=_CHAR_TOKENIZER, grammar=None,
                 )
-            elif isinstance(input, list):
-                # A messages list is recorded from the root, as
-                # ``begin_generation_turn`` does (user turns are enough here).
-                anchor_id = self.tree.root_id
-                for message in input:
-                    anchor_id = self.tree.add_user_turn(message["content"], parent_id=anchor_id)
+                node_id = begin_generation_turn(
+                    self.tree, turns, raw=False, parent_node_id=None,
+                    sampling=None, recipe=recipe,
+                )
+                self.tree.reserve(None)
             else:
-                # ``None`` (continue the leaf) anchors directly on the parent.
-                anchor_id = parent_id or self.tree.active_node_id
-            node_id = self.tree.begin_assistant(
-                anchor_id, recipe=Recipe(steering=str(steering) if steering else None),
-            )
+                if isinstance(input, str):
+                    anchor_id = self.tree.add_user_turn(
+                        input,
+                        parent_id=parent_id,
+                        role_label=(
+                            sampling.user_role
+                            if sampling is not None and not kwargs.get("raw") else None
+                        ),
+                    )
+                else:
+                    # ``None`` (continue the leaf) anchors directly on the parent.
+                    anchor_id = parent_id or self.tree.active_node_id
+                node_id = self.tree.begin_assistant(anchor_id, recipe=recipe)
             self.tree.finalize_assistant(
                 node_id, text=f"out_{index}", applied_steering=str(steering),
             )
@@ -327,18 +341,26 @@ class TestRunnerSweep:
         seeds = [c["sampling"].seed for c in engine.calls]
         assert seeds == derive_seed_schedule(42, 3)
 
-    def test_stateful_message_list_rows_take_no_parent(self) -> None:
+    def test_stateful_message_list_rows_are_siblings(self) -> None:
         # A message list is recorded from the root, so its rows carry no
-        # parent (the engine refuses one) and land under its recorded turns
+        # parent (the engine refuses one); each row reuses the whole recorded
+        # history, assistant turn included, so the replies are siblings
         # (tests/session/test_engine.py).
         runner, engine = _runner()
         tree = engine.tree
         tree.add_user_turn("start")
-        runset = runner.sweep([{"role": "user", "content": "hi"}], {"a": [0.0, 0.3]}, stateless=False)
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "hello"},
+            {"role": "user", "content": "again"},
+        ]
+        runset = runner.sweep(messages, {"a": [0.0, 0.3]}, stateless=False)
         assert [c["parent_node_id"] for c in engine.calls] == [None, None]
-        hi = [n for n in tree.nodes.values() if n.text == "hi"]
-        assert len(hi) == 1 and hi[0].parent_id == tree.root_id
-        assert tree.children_of[hi[0].id] == list(runset.node_ids)
+        assert [sum(n.text == m["content"] for n in tree.nodes.values()) for m in messages] == [1, 1, 1]
+        hi = next(n for n in tree.nodes.values() if n.text == "hi")
+        again = next(n for n in tree.nodes.values() if n.text == "again")
+        assert hi.parent_id == tree.root_id
+        assert tree.children_of[again.id] == list(runset.node_ids)
 
     @pytest.mark.parametrize("sweep", [{}, {"a": []}])
     def test_rejects_empty_sweeps(self, sweep: dict[str, list[float]]) -> None:

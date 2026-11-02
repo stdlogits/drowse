@@ -63,8 +63,6 @@ def test_finalized_generation_recipe_keeps_prompt_through_probe_hashing(
         _roster=SimpleNamespace(
             probe_hash=lambda name: "calm-sha256" if name == "calm" else None,
         ),
-        _tokenizer=None,
-        scene_grammar=None,
     ))
     node_id = DrowseSession._start_loom_assistant(
         session, None, stateless=False, raw=raw, parent_node_id=parent,
@@ -147,8 +145,6 @@ def test_fan_siblings_round_trip_with_their_sampling_blocks():
         _renderer=_renderer(tree, None),
         _monitor=SimpleNamespace(probe_names=[]),
         _roster=SimpleNamespace(probe_hash=lambda _name: None),
-        _tokenizer=None,
-        scene_grammar=None,
     ))
     schedule = derive_seed_schedule(None, 3)
     node_ids = []
