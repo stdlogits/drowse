@@ -397,6 +397,22 @@ def test_large_bf16_norm_gains_keep_their_convention(model_type: str, offset: fl
     assert spec.blocks[1].mlp_out_norm.offset == offset
 
 
+@pytest.mark.parametrize(("model_type", "offset"), [("gemma3_text", 1.0), ("gemma4_text", 0.0)])
+def test_all_large_bf16_norm_gains_keep_their_convention(model_type: str, offset: float) -> None:
+    """With no small gain both conventions fit within bf16 rounding and a
+    median comparison picks the wrong one on some draws; the zero-weight
+    probe answers the convention on every draw."""
+    model = default_init_model(model_type, seed=0, dtype=torch.bfloat16)
+    norm = cast(nn.Module, get_layers(model)[1].post_feedforward_layernorm)
+    for seed in range(12):
+        gen = torch.Generator().manual_seed(seed)
+        gain = 199.0 + 1450.0 * torch.rand(32, generator=gen)
+        cast(torch.Tensor, norm.weight).copy_(gain - offset)
+        spec = model_spec(model)
+        assert spec.blocks[1].mlp_out_norm is not None
+        assert spec.blocks[1].mlp_out_norm.offset == offset, seed
+
+
 def test_a_layernorm_is_refused() -> None:
     model = tiny_dense_model("llama")
     get_layers(model)[2].input_layernorm = nn.LayerNorm(32).double()

@@ -437,24 +437,56 @@ def _norm_spec(
     # Each convention's error is judged relative to its own gain: a bf16
     # module rounds a gain of ~1,000 by a few units, so an absolute gap would
     # refuse the right convention on large gains (gemma-3-270m's MLP output
-    # norms).  When both conventions fit, the closer one wins.
-    best: tuple[float, float] | None = None
+    # norms).
+    fits: dict[float, float] = {}
     for offset in (0.0, 1.0) if w is not None else (0.0,):
         gain = torch.ones(dim) if w is None else w + offset
         error = (implied - gain).abs() / gain.abs().clamp_min(1.0)
         if bool((error <= _MATCH_RTOL).all()):
-            median = float(error.median())
-            if best is None or median < best[0]:
-                best = (median, offset)
-    if best is None:
+            fits[offset] = float(error.median())
+    if not fits:
         raise UnsupportedBlockError(
             f"{where} ({kind}) is not an RMSNorm with a plain or 1+w weight",
             layer=layer,
         )
+    offset = min(fits, key=fits.__getitem__)
+    if len(fits) > 1:
+        # Every gain is large enough that both conventions fit within the
+        # module's rounding: the module itself, run with a zero weight,
+        # answers its offset exactly (a plain norm 0, a 1+w norm the bare
+        # normalization).  The closer median is the fallback when it can't.
+        probed = _zero_weight_offset(module, x.to(device=device, dtype=dtype), x * r)
+        if probed is not None:
+            offset = probed
     return NormSpec(
-        module=module, dim=dim, eps=float(eps), offset=best[1],
+        module=module, dim=dim, eps=float(eps), offset=offset,
         weighted=w is not None,
     )
+
+
+def _zero_weight_offset(
+    module: nn.Module, x: torch.Tensor, normalized: torch.Tensor,
+) -> float | None:
+    """The offset an RMSNorm adds to its weight, read by calling it with a
+    zero weight (without touching its own), or ``None`` when that call
+    doesn't answer one of the two conventions."""
+    weight = getattr(module, "weight", None)
+    if not isinstance(weight, torch.Tensor):
+        return None
+    try:
+        with torch.no_grad():
+            y = torch.func.functional_call(
+                module, {"weight": torch.zeros_like(weight)}, (x,),
+            ).float().cpu()
+    except Exception:  # a hook-wrapped or exotic module: fall back
+        return None
+    if tuple(y.shape) != tuple(normalized.shape):
+        return None
+    implied = y / normalized
+    for offset in (0.0, 1.0):
+        if bool(((implied - offset).abs() <= _MATCH_RTOL).all()):
+            return offset
+    return None
 
 
 def _activation_kind(act: Any, layer: int) -> ActivationKind:
