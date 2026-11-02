@@ -69,6 +69,7 @@ def _reference(mon: Monitor, hidden: dict[int, torch.Tensor]) -> dict[str, Any]:
         "membership": float(mem),
         "residual": float(resid),
         "nearest": torch.argsort(dist)[:3].tolist(),
+        "distances": dist.tolist(),
     }
 
 
@@ -100,8 +101,12 @@ def test_stacked_read_matches_the_per_layer_read(periodic: bool) -> None:
         assert list(got.coords) == pytest.approx(ref["coords"], abs=1e-4)
         assert got.membership == pytest.approx(ref["membership"], abs=1e-5)
         assert got.residual == pytest.approx(ref["residual"], abs=1e-5)
+        # The curve passes through neutral at one node, so that node and neutral tie exactly and
+        # their order is the platform's float rounding: the labels read must be the reference's
+        # three nearest by distance, in order, whichever way a tie falls.
         labels = m.node_labels + ["neutral"]
-        assert [lab for lab, _d in got.nearest] == [labels[i] for i in ref["nearest"]]
+        picked = [ref["distances"][labels.index(lab)] for lab, _d in got.nearest]
+        assert picked == pytest.approx(sorted(ref["distances"])[:3], abs=1e-6)
 
 
 def test_a_read_of_some_layers_reweighs_over_them() -> None:
