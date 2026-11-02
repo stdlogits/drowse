@@ -554,7 +554,7 @@ def test_transfer_without_shared_layers_raises_instead_of_exiting(
     def sidecar(model_id: str) -> dict[str, object]:
         layer = 0 if model_id == "src/model" else 1
         return {
-            "method": "neutral_activations", "format_version": 4,
+            "method": "neutral_activations", "format_version": 5,
             "capture_version": 1, "model_fingerprint": f"fp:{model_id}",
             "model_source_fingerprint": f"source:{model_id}",
             "capture_sha256": model_id, "tensor_sha256": {str(layer): "0" * 64},

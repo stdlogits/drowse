@@ -20,3 +20,19 @@ export function loomSearchExcerpt(text: string, query: string): { before: string
     after: readable.slice(index + needle.length, end) + (end < readable.length ? "…" : ""),
   };
 }
+
+/** A node's text on one line for a list row, or what stands in for it: a reply that is all
+ *  thinking (a thinking model that hit its token budget inside the block) says so, with its
+ *  thinking token count when the rows are loaded, rather than reading as an empty turn. */
+export function loomNodeSnippet(
+  node: { text: string | null; thinking_text: string | null; thinking_tokens?: readonly unknown[] | null },
+  empty = "Empty turn",
+): string {
+  const text = (node.text ?? "").replace(/\s+/g, " ").trim();
+  if (text) return text;
+  if ((node.thinking_text ?? "").trim()) {
+    const n = node.thinking_tokens?.length ?? 0;
+    return n > 0 ? `Thinking only · ${n} token${n === 1 ? "" : "s"}` : "Thinking only";
+  }
+  return empty;
+}

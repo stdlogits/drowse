@@ -23,6 +23,106 @@ export interface ActivePathJSON {
   node_ids: string[];
 }
 
+/**
+ * One unit's peak over the node: its signed value (over scale) at the
+ * token where ``|value|`` peaks, and the catalog's label of the pole that
+ * peaked (a head's label), ``None`` without a bound catalog or a row (the
+ * session fills it; the replay leaves it ``None``).
+ */
+export interface ActivityPeak {
+  unit: string;
+  kind: "neuron" | "head";
+  layer: number;
+  index: number;
+  peak: number;
+  raw_index: number;
+  label: UnitLabelJSON | null;
+}
+
+export interface ActivityPopulation {
+  raw_index: number;
+  encoding: string;
+  layers: PopulationLayer[];
+}
+
+/**
+ * Where unit activity's values divide by: the bound neuron-lens catalog's
+ * ``act_top`` (``"catalog"``) or the neutral statistics' (``"neutral"``,
+ * relative to the neutral text), with which (``detail``).
+ */
+export interface ActivityScale {
+  source: "catalog" | "neutral";
+  detail: string;
+}
+
+export interface ActivityToken {
+  raw_index: number;
+  token_id: number;
+  token: string;
+}
+
+/**
+ * One layer of a token's anatomy: the residual at ``out`` (``reads_as``,
+ * S centred), the attention write at ``mid``, the MLP write and the
+ * steering injection (``None`` when none) at ``out``, read as directions;
+ * the layer's top neurons and heads by contribution.
+ */
+export interface AnatomyLayer {
+  layer: number;
+  depth: number;
+  reads_as: LensReadDict;
+  attention: LensReadDict;
+  mlp: LensReadDict;
+  steering: LensReadDict | null;
+  neurons: AnatomyUnit[];
+  heads: AnatomyUnit[];
+}
+
+/**
+ * A top head's attention from the token's producing position over the
+ * context (``weights[j]`` for position ``j``; position 0 is the sink).
+ */
+export interface AnatomyPattern {
+  unit: string;
+  layer: number;
+  head: number;
+  contribution: number;
+  weights: number[];
+}
+
+/**
+ * The anatomy's token: raw index, id and piece, its producing
+ * ``position`` in the replayed sequence, the prompt render's length and the
+ * model's probability of it there.
+ */
+export interface AnatomyToken {
+  raw_index: number;
+  token_id: number;
+  token: string;
+  position: number;
+  prompt_length: number;
+  probability: number;
+}
+
+/**
+ * A unit's direct contribution to the anatomy token's logit through the
+ * R lens; ``activation`` is a neuron's raw activation or a head's write
+ * norm, and ``activation_over_scale`` the same over the unit's reading
+ * scale (the units family's unit: the number its probe, unit activity and
+ * the unit view show; :attr:`TokenAnatomy.units_scale` names its source),
+ * ``None`` without unit statistics.  Both are ``None``
+ * in the cross-layer list.
+ */
+export interface AnatomyUnit {
+  unit: string;
+  kind: "neuron" | "head";
+  layer: number;
+  index: number;
+  contribution: number;
+  activation: number | null;
+  activation_over_scale: number | null;
+}
+
 /** ``CastMember.to_dict()`` plus the server-derived ``origin``. */
 export interface CastMemberJSON {
   recipe: RecipeJSON | null;
@@ -112,6 +212,21 @@ export interface ExtractResponse {
   progress?: string[];
 }
 
+/**
+ * One family's half of a lens read (``lens.read.FamilyRead``):
+ * ``weight`` is the depth rule's, ``centred`` whether it read ``x − μ``
+ * (the S half of a residual), ``absent`` why it was not read.
+ */
+export interface FamilyReadDict {
+  family: "R" | "S";
+  weight: number;
+  unit: "probability" | "footprint_z";
+  lens: string | null;
+  centred: boolean;
+  tokens: TokenScoreDict[];
+  absent: string | null;
+}
+
 export interface FilterMatchesJSON {
   expr: string;
   matching_node_ids: string[];
@@ -143,6 +258,29 @@ export interface GeometryProbeInfo {
   node_coords: number[][] | null;
 }
 
+/** What the head's projections pick up at ``L − 1``'s output. */
+export interface HeadInputsJSON {
+  query: UnitPlaceJSON;
+  key: UnitPlaceJSON;
+  value: UnitPlaceJSON;
+}
+
+export interface HeadReadJSON {
+  unit: string;
+  kind: "head";
+  layer: number;
+  index: number;
+  kv_head: number;
+  depth: number;
+  copies: UnitPlaceJSON;
+  suppresses: UnitPlaceJSON;
+  inputs: HeadInputsJSON;
+  copy_score: Record<string, number | null>;
+  firing: UnitFiringJSON;
+  label: UnitLabelJSON | null;
+  catalog: UnitCatalogBlockJSON;
+}
+
 /** What a read family supports, declared by the server rather than guessed. */
 export interface InstrumentCapabilities {
   sources: boolean;
@@ -165,16 +303,34 @@ export interface InstrumentFamilyBlock {
   capabilities: InstrumentCapabilities;
 }
 
-/** One usable artifact source (lens binding / SAE source row). */
+/**
+ * One usable artifact source (lens binding / SAE source row).
+ *
+ * A lens row names its kind (``lens``: J/R/K/S), the family slot it
+ * selects into (``family``: ``R`` or ``S``), the sites it carries, each
+ * site's layers (``layers``), its documents (``n_prompts``), each site's
+ * recorded split-half difference by layer where the fit kept one
+ * (``split_half``, ``{site: {layer: difference}}``; imports lack it),
+ * on a family's active row whether it matches the loaded weights
+ * (``compatible``) and, for a provider binding, the repository file bound
+ * per site (``checkpoints``).
+ */
 export interface InstrumentSourceJSON {
   source: string;
   kind?: string;
   name?: string;
   active?: boolean;
+  lens?: "J" | "R" | "K" | "S";
+  family?: "R" | "S";
+  sites?: ("out" | "mid")[];
+  layers?: Record<string, number[]>;
+  n_prompts?: number;
+  split_half?: Record<string, Record<string, number>>;
+  compatible?: boolean;
   provider?: string;
   repo_id?: string;
   repo_revision?: string;
-  checkpoint?: string;
+  checkpoints?: Record<string, string>;
   layer?: number;
   features?: number;
   description_source?: SaeDescriptionSourceJSON | null;
@@ -205,15 +361,41 @@ export interface JointLogprobsJSON {
   n_rank1_changed: number;
 }
 
+/**
+ * One layer-aggregated chip; ``id`` is its vocabulary id (two ids may
+ * decode to the same ``token`` text).
+ */
 export interface LensAggregateTokenJSON {
   token: string;
+  id: number;
   strength: number;
   com: number;
   spread: number;
 }
 
+/**
+ * The session's S→R crossover band (``lens/depth.py``): its ends as
+ * fractions of depth and ``[w_S, w_R]`` at every layer of the model.
+ */
+export interface LensBandJSON {
+  lo: number;
+  hi: number;
+  weights: number[][];
+}
+
+/**
+ * What the lens channel was measuring: the source of each lens family
+ * that produced its data, keyed ``R`` (``jlens/`` readings, the native
+ * readout) and ``S`` (``slens/`` readings), present only for a family that
+ * did; and the recipe steering.
+ */
+export interface LensBindingJSON {
+  sources: Record<string, string | null>;
+  steering: string | null;
+}
+
 export interface LensInstrumentJSON {
-  binding: MeasurementBindingJSON;
+  binding: LensBindingJSON;
   readings?: Record<string, ScalarReadingJSON>;
   readout?: LensReadoutBlockJSON;
 }
@@ -224,9 +406,14 @@ export interface LensLiveState {
   layers: number[] | null;
 }
 
-/** One pinned J-lens token probe (the readout channel). */
+/**
+ * One pinned lens token probe (the readout channel). ``namespace`` says
+ * which: ``jlens`` (toward saying the word; it reads the mean fitted-layer
+ * probability) or ``slens`` (toward having read it; the mean footprint z).
+ */
 export interface LensProbeInfo {
   family: "lens";
+  namespace: "jlens" | "slens";
   name: string;
   layers: number[];
   intrinsic_dim: number;
@@ -235,8 +422,35 @@ export interface LensProbeInfo {
   token_id: number | null;
 }
 
+/** One fetchable lens provider source, prepared or not. */
+export interface LensProviderJSON {
+  source: string;
+  lens: "J" | "R" | "K" | "S";
+  family: "R" | "S";
+  sites: ("out" | "mid")[];
+  repo_id: string;
+}
+
+/**
+ * The read of one vector at ``(layer, site)`` (``lens.read.LensRead``);
+ * ``of`` is ``residual`` or ``direction``.
+ */
+export interface LensReadDict {
+  layer: number;
+  site: "out" | "mid";
+  depth: number;
+  of: "residual" | "direction";
+  r: FamilyReadDict;
+  s: FamilyReadDict;
+}
+
+/**
+ * The native readout: the per-layer top-k matrix and its
+ * layer-aggregated chips.  :func:`summary_measurements` keeps ``layers``
+ * only on request.
+ */
 export interface LensReadoutBlockJSON {
-  layers: LensReadoutLayerJSON[];
+  layers?: LensReadoutLayerJSON[];
   aggregate: LensAggregateTokenJSON[];
 }
 
@@ -265,8 +479,9 @@ export interface LoomNodeDetailJSON {
   role_label: string | null;
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
+  aggregate_measurements: MeasurementsEnvelopeJSON | null;
   applied_steering: string | null;
-  finish_reason: string | null;
+  finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
   notes: string;
   created_at: number;
@@ -278,6 +493,7 @@ export interface LoomNodeDetailJSON {
   tokens: LoomTokenRowJSON[] | null;
   thinking_tokens: LoomTokenRowJSON[] | null;
   raw_token_ids: number[] | null;
+  prompt_capture: PromptCaptureJSON | null;
   children: string[];
 }
 
@@ -299,8 +515,9 @@ export interface LoomNodeJSON {
   role_label: string | null;
   thinking_text: string | null;
   aggregate_readings: Record<string, number>;
+  aggregate_measurements: MeasurementsEnvelopeJSON | null;
   applied_steering: string | null;
-  finish_reason: string | null;
+  finish_reason: "stop" | "length" | "stop_sequence" | "cancelled" | null;
   starred: boolean;
   notes: string;
   created_at: number;
@@ -312,6 +529,7 @@ export interface LoomNodeJSON {
   tokens: LoomTokenRowJSON[] | null;
   thinking_tokens: LoomTokenRowJSON[] | null;
   raw_token_ids: number[] | null;
+  prompt_capture: PromptCaptureJSON | null;
 }
 
 /** ``LoomTree.to_dict(include_tokens=True)`` + the effective cast roster. */
@@ -426,6 +644,7 @@ export interface MeasurementInstrumentsJSON {
   geometry?: GeometryInstrumentJSON;
   lens?: LensInstrumentJSON;
   sae?: SaeInstrumentJSON;
+  units?: UnitsInstrumentJSON;
 }
 
 /** The one versioned read-side wire record. */
@@ -435,12 +654,51 @@ export interface MeasurementsEnvelopeJSON {
   provenance: "captured" | "replayed";
   instruments: MeasurementInstrumentsJSON;
   scores?: Record<string, number>;
-  per_layer_scores?: Record<string, Record<string, number>>;
+  anatomy?: TokenAnatomy;
 }
 
 /** The replay endpoints' response body. */
 export interface MeasurementsReplayJSON {
   measurements: MeasurementsEnvelopeJSON | null;
+}
+
+/**
+ * The loaded model's shape, for the Model room: its decoder layers, residual
+ * width, neurons and attention heads per layer (``None`` when the config does
+ * not name them; the widest when it varies by layer) and parameter count.
+ */
+export interface ModelArchitectureJSON {
+  model_type: string;
+  layers: number;
+  hidden_size: number;
+  neurons_per_layer: number | null;
+  heads_per_layer: number | null;
+  parameters: number;
+}
+
+/**
+ * One pole: its write read at ``out`` (writes) and its read direction at
+ * ``mid`` (fires on), its logit-lens shape, firing and label.
+ */
+export interface NeuronPoleJSON {
+  pole: "+" | "-";
+  writes: UnitPlaceJSON;
+  fires_on: UnitPlaceJSON;
+  vocab_skew: number;
+  vocab_kurt: number;
+  firing: UnitFiringJSON;
+  label: UnitLabelJSON | null;
+}
+
+export interface NeuronReadJSON {
+  unit: string;
+  kind: "neuron";
+  layer: number;
+  index: number;
+  depth: number;
+  scalars: UnitScalarsJSON;
+  poles: NeuronPoleJSON[];
+  catalog: UnitCatalogBlockJSON;
 }
 
 export interface NodeDiffJSON {
@@ -471,13 +729,33 @@ export interface PairwiseCompareResponse {
   model: string | null;
 }
 
+/**
+ * One layer's whole population at one token, packed
+ * (:data:`POPULATION_ENCODING`): ``neurons`` has ``d_ff`` values, ``heads``
+ * ``n_heads``.
+ */
+export interface PopulationLayer {
+  layer: number;
+  neurons: string;
+  heads: string;
+  n_neurons: number;
+  n_heads: number;
+}
+
 export interface PreparationProgress {
   current: number | null;
   total: number | null;
   unit: string;
 }
 
-/** One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``. */
+/**
+ * One shape over lens ``fetch``/``fit``, sae ``fetch``/``train`` and the
+ * units ``fetch`` (the neuron-lens catalog; ``slug`` names it).
+ *
+ * A lens fit's ``replaceable`` is true only when it failed because it
+ * would replace the artifact at its name; the same request with ``force``
+ * replaces it.
+ */
 export interface PreparationStatusJSON {
   state: string;
   operation: string | null;
@@ -489,8 +767,10 @@ export interface PreparationStatusJSON {
   cancellable: boolean;
   live_layers?: number[] | null;
   source?: string | null;
+  replaceable?: boolean | null;
   release?: string | null;
   name?: string | null;
+  slug?: string | null;
   info?: SaeRuntimeInfo | null;
 }
 
@@ -519,7 +799,7 @@ export interface ProbeLayerGeometry {
 }
 
 export interface ProbeListResponse {
-  probes: (GeometryProbeInfo | LensProbeInfo | SaeProbeInfo)[];
+  probes: (GeometryProbeInfo | LensProbeInfo | SaeProbeInfo | UnitsProbeInfo)[];
 }
 
 /** A curved fit's curve/surface overlay, sampled into the whitened frame. */
@@ -536,24 +816,45 @@ export interface ProbeOverlay {
  * here (rather than as an anonymous ``dict[str, Any]`` on the channel)
  * is what lets the generated dashboard types name the geometry reading
  * instead of falling back to an opaque record.
+ *
+ * :func:`summary_measurements` keeps the summary, plus the three per-layer
+ * traces on request, and never ``subspace_coords_per_layer`` (the probe
+ * inspector's live trail); a generated token row keeps only
+ * :class:`RowProbeReadingDict`.
  */
 export interface ProbeReadingJSON {
   fraction: number;
   nearest: [string, number][];
   coords: number[];
   residual: number;
-  fraction_per_layer: Record<string, number>;
-  coords_per_layer: Record<string, number[]>;
-  residual_per_layer: Record<string, number>;
-  assignment?: [string, number][];
-  membership?: number;
-  depth_com?: number[];
-  depth_spread?: number[];
+  fraction_per_layer?: Record<string, number>;
+  coords_per_layer?: Record<string, number[]>;
+  residual_per_layer?: Record<string, number>;
+  assignment: [string, number][];
+  membership: number;
+  depth_com: number[];
+  depth_spread: number[];
   subspace_coords_per_layer?: Record<string, number[]>;
 }
 
 export interface ProfileListResponse {
   profiles: VectorInfo[];
+}
+
+/**
+ * ``PromptCapture.to_dict()``: an authored node's prompt rows' replay
+ * anchor (the capturing call's steering, the render's system prompt,
+ * thinking flag and flat mode, where each channel starts, and the digest
+ * of the render before the later channel).
+ */
+export interface PromptCaptureJSON {
+  steering: string | null;
+  system_prompt: string | null;
+  thinking: boolean;
+  raw: boolean;
+  start: number | null;
+  thinking_start: number | null;
+  digest: string;
 }
 
 /** ``Recipe.to_dict()`` — the per-node reproducibility receipt. */
@@ -741,7 +1042,12 @@ export interface ScoreTemplateResponse {
   contexts: ChoiceScores[];
 }
 
-/** ``session_info()`` — the single session's full descriptor. */
+/**
+ * ``session_info()`` — the single session's full descriptor.
+ *
+ * ``architecture`` is optional on the wire: a runtime that does not describe
+ * its model (the browser runtime, until it does) leaves it out.
+ */
 export interface SessionInfo {
   id: string;
   model_id: string;
@@ -765,6 +1071,7 @@ export interface SessionInfo {
   scene_mode: boolean;
   thinking_input_supported: boolean;
   strips_history_thinking: boolean;
+  architecture?: ModelArchitectureJSON;
 }
 
 export interface SessionListResponse {
@@ -776,16 +1083,104 @@ export interface SourceSwitchResponse {
   live_layers: number[];
 }
 
+/**
+ * Prepared sources.  The SAE adds its provider ``releases``; the lens
+ * adds its fetchable ``providers``, the crossover ``band``, the documents a
+ * local fit averages over by default (``fit_documents``) and the S read's
+ * ``token_mask``.
+ */
 export interface SourcesResponse {
   sources: InstrumentSourceJSON[];
   releases?: SaeReleaseJSON[];
+  providers?: LensProviderJSON[];
+  band?: LensBandJSON;
+  fit_documents?: number;
+  token_mask?: TokenMaskJSON;
 }
 
-/** ``POST .../steering/validate`` — a form result, not a failed request. */
+/**
+ * A term's probe gate (``@when:<probe><op><threshold>``): ``probe`` the
+ * scalar key verbatim, the comparison and its threshold.
+ */
+export interface SteeringGateJSON {
+  probe: string;
+  op: ">" | ">=" | "<" | "<=";
+  threshold: number;
+}
+
+/**
+ * One term of a validated expression, in order (``grammar.TermPart``).
+ *
+ * ``text`` is the term alone as ``format_expr`` writes it (``expression``
+ * is these joined); ``op`` is ``push``, ``ablate``, ``project`` or
+ * ``position``; ``target`` the selector without coefficient, clause or
+ * trigger (a projection's ``a~b``, a position's manifold); ``coeff`` the
+ * coefficient (a position's along) and ``onto`` a position's collapse (0
+ * otherwise); ``position`` a position's node label or coordinates;
+ * ``layers`` the ``{…}`` clause (``null`` for none); ``trigger`` the ``@``
+ * clause without the ``@`` (``null`` for both phases), and the same trigger
+ * in fields: ``phase`` its window's preset name (``null`` for a counted
+ * window), ``first_n`` / ``after_n`` the counted windows (``@first:N`` /
+ * ``@after:N``), ``gate`` its probe gate (a bare ``@when:`` is phase
+ * ``response`` with a gate); ``projection`` a projection's base, operator
+ * and second concept (``null`` otherwise).
+ */
+export interface SteeringPartJSON {
+  text: string;
+  op: "push" | "ablate" | "project" | "position";
+  target: string;
+  coeff: number;
+  onto: number;
+  position: string | number[] | null;
+  layers: "workspace" | number[] | null;
+  trigger: string | null;
+  phase: "both" | "before" | "response" | "after" | "thinking" | null;
+  first_n: number | null;
+  after_n: number | null;
+  gate: SteeringGateJSON | null;
+  projection: SteeringProjectionJSON | null;
+}
+
+/**
+ * A projection term's parts: ``base~onto`` keeps the part of ``base``
+ * along ``onto``, ``base|onto`` removes it.
+ */
+export interface SteeringProjectionJSON {
+  base: string;
+  operator: "~" | "|";
+  onto: string;
+}
+
+/**
+ * Where one validated term acts (``SteeringComposer.term_layers``).
+ *
+ * ``fitted`` are the layers the term can act on, ``share`` its weight at
+ * each (aligned with ``fitted``, mean 1 over them), ``layers`` the ones its
+ * ``{…}`` clause selects (``fitted`` without one).  ``key`` is the term's
+ * canonical key, clause included.
+ */
+export interface SteeringTermLayersJSON {
+  key: string;
+  fitted: number[];
+  share: number[];
+  layers: number[];
+}
+
+/**
+ * ``POST .../steering/validate`` — a form result, not a failed request.
+ *
+ * A valid, non-empty expression also carries the model's depth, where each
+ * of its terms acts (the term editor's depth strip) and each term in order
+ * with its fields (``parts``: the recipe row shows a recipe from elsewhere
+ * as chips from them).
+ */
 export interface SteeringValidationResponse {
   valid: boolean;
   expression: string;
   error: string | null;
+  n_layers?: number;
+  terms?: SteeringTermLayersJSON[];
+  parts?: SteeringPartJSON[];
 }
 
 export interface TemplateContextJSON {
@@ -847,6 +1242,44 @@ export interface TemplateTurnJSON {
   [key: string]: unknown;
 }
 
+/**
+ * One token, every layer (``session.token_anatomy``).  ``units_scale``
+ * names where the unit rows' ``activation_over_scale`` divides by: the
+ * bound neuron-lens catalog's ``act_top`` (``"catalog"``) or the neutral
+ * statistics' (``"neutral"``, relative to the neutral text); ``None``
+ * without unit statistics.
+ */
+export interface TokenAnatomy {
+  token: AnatomyToken;
+  binding: LensBindingJSON;
+  layers: AnatomyLayer[];
+  units: AnatomyUnit[];
+  units_absent: string | null;
+  units_scale: "catalog" | "neutral" | null;
+  patterns: AnatomyPattern[] | null;
+  context: string[] | null;
+}
+
+/**
+ * Where the S read's token mask comes from: a bound neuron-lens catalog's
+ * token counts (``"catalog"``), the model's corpus counts (``"corpus"``,
+ * ``drowse lens counts``) or the tokenizer's rules alone (``"tokenizer"``,
+ * whose ``detail`` says what to run); ``kept`` is the built mask's size,
+ * ``None`` before the first S read.
+ */
+export interface TokenMaskJSON {
+  source: "catalog" | "corpus" | "tokenizer";
+  detail: string;
+  kept: number | null;
+}
+
+/** One ranked token of a lens read half (``lens.read.TokenScore``). */
+export interface TokenScoreDict {
+  token_id: number;
+  token: string;
+  value: number;
+}
+
 export interface TranscriptLoadResponseJSON {
   leaf_id: string;
   rev: number;
@@ -873,6 +1306,279 @@ export interface TreeRestoreResponse {
   root_id: string;
   active_node_id: string;
   nodes: number;
+}
+
+/**
+ * Unit activity over a node's tokens (:meth:`NodeReplayer.unit_activity`).
+ *
+ * ``tokens`` are the node's raw tokens, each read at its producing forward;
+ * ``sink_raw_index`` names the token produced at the attention sink
+ * (position 0), whose values are 0 and never peak, or is ``None``.
+ * ``traces`` maps each requested unit to one value per token.  Every value
+ * is over the unit's reading scale, whose source ``scale`` names
+ * (``{"source": "catalog" | "neutral", "detail"}``,
+ * :meth:`~drowse.units.stats.UnitScales.describe`), and ``top`` ranks every
+ * unit by it.
+ */
+export interface UnitActivityJSON {
+  node_id: string;
+  steering: string | null;
+  unit: string;
+  scale: ActivityScale;
+  tokens: ActivityToken[];
+  sink_raw_index: number | null;
+  top: ActivityPeak[];
+  traces: Record<string, number[]>;
+  population: ActivityPopulation | null;
+}
+
+export interface UnitCatalogBindingJSON {
+  revision: string | null;
+  fetched_at: string | null;
+  files: number;
+}
+
+/** The catalog binding as a unit view shows it. */
+export interface UnitCatalogBlockJSON {
+  bound: boolean;
+  slug: string | null;
+  url: string | null;
+  credit: string | null;
+  reason: string | null;
+}
+
+/**
+ * ``GET .../instruments/units/catalog`` — the model's neuron-lens catalog:
+ * ``available`` (catalogued), ``bound`` (fetched at the pinned commit) or
+ * why not.
+ */
+export interface UnitCatalogJSON {
+  model_id: string;
+  available: boolean;
+  bound: boolean;
+  slug: string | null;
+  repo: string;
+  revision: string;
+  credit: string | null;
+  reason: string | null;
+  binding: UnitCatalogBindingJSON | null;
+}
+
+/** The catalog binding without a unit: bound, or why not. */
+export interface UnitCatalogSummaryJSON {
+  bound: boolean;
+  slug: string | null;
+  credit: string | null;
+  reason: string | null;
+}
+
+/**
+ * ``POST .../instruments/units/find`` — a direction split over each
+ * layer's neuron writes (Mahalanobis; the sign is the pole).
+ */
+export interface UnitFindJSON {
+  target: string;
+  k: number;
+  mean_share: number;
+  layers: Record<string, UnitFindLayerJSON>;
+  catalog: Record<string, unknown>;
+}
+
+export interface UnitFindLayerJSON {
+  share: number;
+  neurons: UnitFindNeuronJSON[];
+}
+
+export interface UnitFindNeuronJSON {
+  unit: string;
+  index: number;
+  pole: "+" | "-";
+  coeff: number;
+  label: UnitLabelJSON | null;
+}
+
+/**
+ * How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
+ * the catalog) or why absent; ``scale``, what its readings divide by
+ * (``None`` without unit statistics); drowse's neutral statistics
+ * (``act_top`` or a head's ``write_top``, the mean, the documents); the
+ * catalog's activation row.
+ */
+export interface UnitFiringJSON {
+  rate: number | null;
+  rate_absent: string | null;
+  scale: UnitScaleJSON | null;
+  neutral: Record<string, number> | null;
+  neutral_absent: string | null;
+  catalog: Record<string, unknown> | null;
+  catalog_absent: string | null;
+}
+
+/**
+ * One lens family's read of a unit vector at its place: the depth rule's
+ * ``weight`` for the family there, the lens read through (``R:out``,
+ * ``S:mid``, ``logit``, ``embedding``), and the tokens or why absent.
+ */
+export interface UnitHalfJSON {
+  family: "R" | "S";
+  weight: number;
+  unit: "probability" | "footprint_z" | "layer_z" | "own_token_z" | "energy_z";
+  lens: string | null;
+  tokens: UnitTokenJSON[];
+  absent: string | null;
+}
+
+/**
+ * A catalog label (neuron-lens, by Claude Haiku 5.5): what the unit fires
+ * on, attends to (heads) and writes, with confidences; its legibility
+ * tests; the credit and the unit's neuron-lens.com page.
+ */
+export interface UnitLabelJSON {
+  fires?: string | null;
+  fires_conf?: number | null;
+  attends?: string | null;
+  attends_conf?: number | null;
+  writes?: string | null;
+  writes_conf?: number | null;
+  note?: string | null;
+  legible?: Record<string, unknown> | null;
+  credit: string;
+  url: string;
+  /** Open shape — the producer may carry more than the
+   *  contract names; unknown keys ride through. */
+  [key: string]: unknown;
+}
+
+/**
+ * One catalog label: a neuron pole's (``pole`` ``+``/``-``) or a head's
+ * (``pole`` ``None``); ``label`` is ``None`` where the catalog has no row.
+ */
+export interface UnitLabelRowJSON {
+  unit: string;
+  pole: "+" | "-" | null;
+  label: UnitLabelJSON | null;
+}
+
+/**
+ * ``GET .../instruments/units/labels`` — the catalog's labels for some
+ * units (disk only): every pole of each neuron, each head once.  Unbound:
+ * no rows, and ``catalog.reason`` says why.
+ */
+export interface UnitLabelsJSON {
+  catalog: UnitCatalogSummaryJSON;
+  labels: UnitLabelRowJSON[];
+}
+
+/**
+ * A unit vector read at ``(layer, site)``: S and R halves; ``hubs`` is
+ * ``hidden`` when the halves rank by the layer-contrastive z.
+ */
+export interface UnitPlaceJSON {
+  layer: number;
+  site: "out" | "mid";
+  depth: number;
+  hubs: "shown" | "hidden";
+  s: UnitHalfJSON;
+  r: UnitHalfJSON;
+}
+
+export interface UnitScalarsJSON {
+  w_norm: number;
+  cos_ab: number;
+  null_share: number;
+  mean_act: number | null;
+}
+
+/**
+ * What a unit's readings divide by: ``source`` ``"catalog"`` (the bound
+ * neuron-lens catalog's ``act_top``) or ``"neutral"`` (drowse's, over the
+ * neutral statements: a reading is relative to the neutral text), ``detail``
+ * (which catalog, or how many statements), ``top`` the pole's (head's)
+ * ``act_top`` there and ``value`` the soft scale over it.
+ */
+export interface UnitScaleJSON {
+  source: "catalog" | "neutral";
+  detail: string;
+  top: number;
+  value: number;
+}
+
+/** One ranked token of a unit read, in its half's ``unit``. */
+export interface UnitTokenJSON {
+  token_id: number;
+  token: string;
+  value: number;
+}
+
+/**
+ * One family's score of a pole for the token: the layer-contrastive
+ * ``z``, the raw read (R ``probability``, S ``footprint_z``), the weight.
+ */
+export interface UnitTopHalfJSON {
+  z: number | null;
+  weight: number;
+  lens: string | null;
+  probability?: number | null;
+  footprint_z?: number | null;
+}
+
+export interface UnitTopHitJSON {
+  unit: string;
+  layer: number;
+  index: number;
+  pole: "+" | "-";
+  score: number;
+  r: UnitTopHalfJSON;
+  s: UnitTopHalfJSON;
+  label: UnitLabelJSON | null;
+}
+
+/**
+ * ``GET .../instruments/units/top`` — the neuron poles that write or fire
+ * on a token most specifically.
+ */
+export interface UnitTopJSON {
+  token_id: number;
+  token: string;
+  by: "writes" | "fires";
+  hits: UnitTopHitJSON[];
+  layers: Record<string, UnitTopLayerJSON>;
+}
+
+export interface UnitTopLayerJSON {
+  weights: Record<string, number>;
+  lens: Record<string, string | null>;
+  absent: Record<string, string | null>;
+}
+
+/**
+ * The units family: attached ``neuron/…`` / ``head/…`` probe readings.
+ * ``binding.source`` is always ``None`` (units are the model's own parts);
+ * each reading's ``meta.scale`` names its reading scale's source
+ * (``"catalog"``: the bound neuron-lens catalog's ``act_top``;
+ * ``"neutral"``: the neutral statistics', relative to the neutral text).
+ */
+export interface UnitsInstrumentJSON {
+  binding: MeasurementBindingJSON;
+  readings: Record<string, ScalarReadingJSON>;
+}
+
+/**
+ * One attached unit probe: an MLP neuron or attention head, read at its
+ * own layer in units of its reading scale (the bound catalog's ``act_top``,
+ * else the neutral statistics', blended with a floor:
+ * ``units.stats.UnitScales``; each reading's ``meta.scale`` names which).
+ */
+export interface UnitsProbeInfo {
+  family: "units";
+  name: string;
+  unit: string;
+  kind: "neuron" | "head";
+  layer: number;
+  index: number;
+  layers: number[];
+  intrinsic_dim: number;
+  feature_space: string;
 }
 
 /** ``profile_to_json`` — a registered steering profile's identity. */

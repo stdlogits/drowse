@@ -1,255 +1,32 @@
-/* Minimal global resets.  Per-component styles override anything here. */
-@import "./transitions.css";
+/* The dashboard's globals beyond Ledger's base (the package's base.css): cursors, the shell's
+ * parts (drowse.css), and the few element rules every component leans on. No monospace anywhere:
+ * code and keys read in the text face, with tabular numbers. */
 @import "./cursors.css";
-
-@view-transition { navigation: auto; }
-
-@media (prefers-reduced-motion: no-preference) {
-  html:not([data-theme-transition])::view-transition-old(root) {
-    animation: page-depart 180ms var(--ease-exit) both;
-  }
-  html:not([data-theme-transition])::view-transition-new(root) {
-    animation: page-arrive 240ms var(--ease-enter) both;
-  }
-}
-
-@keyframes page-depart {
-  to { opacity: 0; filter: blur(4px); }
-}
-
-@keyframes page-arrive {
-  from { opacity: 0; filter: blur(4px); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  ::view-transition-group(*), ::view-transition-old(*), ::view-transition-new(*) {
-    animation: none !important;
-  }
-}
-
-html[data-theme-transition="snapshot"]::view-transition {
-  pointer-events: none;
-}
-
-html[data-theme-transition="snapshot"]::view-transition-group(root) {
-  animation: none;
-}
-
-html[data-theme-transition="snapshot"]::view-transition-group(*),
-html[data-theme-transition="snapshot"]::view-transition-old(*),
-html[data-theme-transition="snapshot"]::view-transition-new(*) {
-  animation-duration: var(--selection-dur);
-  animation-timing-function: var(--selection-ease);
-}
-
-html[data-theme-transition="snapshot"]::view-transition-old(root) {
-  animation: theme-fade-out var(--dur-theme) var(--selection-ease) both;
-  mix-blend-mode: normal;
-  z-index: 2;
-}
-
-html[data-theme-transition="snapshot"]::view-transition-new(root) {
-  animation: none;
-  mix-blend-mode: normal;
-  z-index: 1;
-}
-
-html[data-theme-transition="snapshot"],
-html[data-theme-transition="snapshot"] * {
-  transition: none !important;
-}
-
-@keyframes theme-fade-out {
-  from { opacity: 1; }
-  to { opacity: 0; }
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  html[data-theme-transition="fallback"],
-  html[data-theme-transition="fallback"] * {
-    transition-property: color, background-color, border-color, fill, stroke, transform !important;
-    transition-duration: var(--dur-theme) !important;
-    transition-timing-function: var(--selection-ease) !important;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  html[data-theme-transition="snapshot"]::view-transition-old(root) {
-    animation: none;
-    opacity: 0;
-  }
-}
-
-.generation-active {
-  position: relative;
-}
-
-.generation-active.generation-active::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  pointer-events: none;
-  background: radial-gradient(ellipse at 50% 0%, color-mix(in oklch, var(--accent) 9%, transparent), transparent 70%);
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--accent) 22%, transparent),
-    inset 0 0 24px color-mix(in oklch, var(--accent) 8%, transparent),
-    0 0 18px color-mix(in oklch, var(--accent) 10%, transparent);
-  opacity: 0.7;
-}
-
-.generation-label {
-  color: var(--fg-muted);
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-}
-
-@media (prefers-reduced-motion: no-preference) {
-  .generation-active.generation-active::before {
-    animation: generation-breathe 3.2s ease-in-out infinite;
-  }
-}
-
-@keyframes generation-breathe {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 0.9; }
-}
-
-@media (forced-colors: active) {
-  .generation-active.generation-active::before {
-    background: none;
-    box-shadow: none;
-    border: 1px dashed Highlight;
-    opacity: 1;
-    animation: none;
-  }
-}
-
-.loading-pulse {
-  position: relative;
-  isolation: isolate;
-}
-
-.loading-pulse.loading-pulse::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  pointer-events: none;
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--loading-accent) 55%, transparent),
-    inset 0 0 18px color-mix(in oklch, var(--loading-accent) 20%, transparent);
-  opacity: 0.55;
-}
-
-.loading-placeholder {
-  padding: var(--surface-padding);
-  border-radius: var(--radius);
-  background: var(--surface-sheen), var(--bg-elev);
-  color: var(--fg-dim);
-  overflow-wrap: anywhere;
-}
-
-.loading-pulse.loading-pulse:disabled { opacity: 1; }
-
-@media (prefers-reduced-motion: no-preference) {
-  .loading-pulse.loading-pulse::before {
-    animation: loading-breathe 2.2s ease-in-out infinite;
-  }
-}
-
-@keyframes loading-breathe {
-  0%, 100% { opacity: 0.2; }
-  50% { opacity: 0.85; }
-}
-
-@media (forced-colors: active) {
-  .loading-pulse.loading-pulse::before {
-    box-shadow: none;
-    border: 1px dashed CanvasText;
-    opacity: 1;
-    animation: none;
-  }
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
-  height: 100%;
-  /* The Observatory ambient: a faint blue-violet field high off-canvas
-   * plus a violet breath at the lower corner. Material, not data —
-   * everything readable sits on panels above it. */
-  background: var(--ambient-canvas);
-  color: var(--fg);
-  font-family: var(--font-reading);
-  font-weight: var(--weight-reading);
-  line-height: 1.5;
-  letter-spacing: 0;
-  text-size-adjust: 100%;
-  -webkit-font-smoothing: antialiased;
-  -moz-osx-font-smoothing: grayscale;
-}
-
-html {
-  /* Preserve the compact workbench geometry while letting every type role
-   * scale with the browser's configured default size. */
-  font-size: 87.5%;
-  scrollbar-gutter: stable;
-}
+@import "./drowse.css";
 
 body {
-  font-size: var(--text);
+  color: var(--ink2);
+  font-variant-numeric: tabular-nums;
 }
 
-* {
-  box-sizing: border-box;
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--display);
+  font-weight: 600;
+  text-wrap: balance;
 }
 
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--space-4);
-  width: min(100%, var(--page-max));
-  margin-inline: auto;
-  min-height: calc(var(--page-header-height) + env(safe-area-inset-top));
-  padding: max(var(--surface-padding), env(safe-area-inset-top)) max(var(--page-gutter), env(safe-area-inset-right)) var(--surface-padding) max(var(--page-gutter), env(safe-area-inset-left));
+p {
+  text-wrap: pretty;
 }
 
-.page-brand {
-  display: inline-flex;
-  align-items: center;
-  min-height: var(--control-target);
-  flex: 0 0 auto;
-  color: var(--fg);
-  font-family: var(--font-structure);
-  font-size: var(--text-wordmark);
-  font-weight: var(--weight-display);
-  letter-spacing: -0.075em;
-  line-height: 1;
-  text-decoration: none;
-  transition: color var(--dur-fast) var(--ease-out);
-}
-
-.page-brand:hover { color: var(--accent); }
-
-.skip-link { min-height: var(--control-target); display: inline-flex; align-items: center; }
-
-@media (max-width: 760px) {
-  :root { --page-header-height: 72px; }
-}
-
-.sr-only {
-  position: absolute !important;
-  width: 1px !important;
-  height: 1px !important;
-  padding: 0 !important;
-  margin: -1px !important;
-  overflow: hidden !important;
-  clip: rect(0, 0, 0, 0) !important;
-  white-space: nowrap !important;
-  border: 0 !important;
+b,
+strong {
+  font-weight: 600;
 }
 
 button,
@@ -260,235 +37,105 @@ textarea {
   color: inherit;
 }
 
-:is(button, a):is(.primary, .primary-action, .contribute-action, .safe-action),
-button.sk-btn.solid,
-button.save-btn {
-  --control-sheen: var(--action-sheen);
-}
-
-button {
-  cursor: pointer;
-  /* Keep component background shorthands from flattening the shared finish. */
-  background-image: var(--control-sheen) !important;
-  /* Component-local `font: inherit` rules predate the semantic type roles.
-   * Buttons remain structural unless a data component explicitly opts out. */
-  font-family: var(--font-structure) !important;
-  font-weight: var(--weight-structure) !important;
-  letter-spacing: 0;
-  -webkit-tap-highlight-color: transparent;
-}
-
 button:disabled {
-  cursor: not-allowed;
+  cursor: default;
 }
 
-/* Legacy controls use several surface tiers. Resolve those tiers locally so
- * light-mode buttons share one white material without whitening content wells,
- * semantic actions, data colors, or the dark palette. */
-:root[data-theme="light"] :is(button, summary, select) {
-  --glass: var(--control-neutral-bg);
-  --glass-strong: var(--control-neutral-bg);
-  --glass-bright: var(--control-neutral-bg);
-  --bg-elev: var(--control-neutral-bg);
-  --bg-deep: var(--control-neutral-bg);
-  --input-well: var(--control-neutral-bg);
-  --bg-hover: var(--control-neutral-hover);
-  --shadow-well: var(--shadow-control);
+/* A bare field is a wash with no line (zero specificity: a component's own field styles win). */
+:where(input:not([type="checkbox"], [type="radio"], [type="range"], [type="file"], [type="color"]), select, textarea) {
+  min-height: 36px;
+  padding: 0 var(--s3);
+  border: 0;
+  border-radius: var(--r-col);
+  background: var(--wash);
+  color: var(--ink);
+  font: var(--type-small);
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: var(--font-structure);
-  font-weight: var(--weight-display);
-  text-wrap: balance;
+:where(textarea) {
+  padding: var(--s2) var(--s3);
 }
 
-p {
-  text-wrap: pretty;
-}
-
-b, strong {
-  font-weight: var(--weight-bold);
-}
-
-img {
-  outline: 1px solid var(--image-outline);
-  outline-offset: -1px;
-}
-
-:where(output, time, data, [role="status"], [role="progressbar"], [aria-valuenow]) {
-  font-variant-numeric: tabular-nums;
-}
-
-.drawer h2.eyebrow,
-.drawer-shell h2.title {
-  margin: 0;
-}
-
-:is(.drawer, .drawer-shell) > .body {
-  scrollbar-gutter: stable both-edges;
-}
-
-:where(
-  [class~="title"],
-  [class*="-title"],
-  [class~="heading"],
-  [class*="-heading"],
-  [class~="label"],
-  [class*="-label"]
-) {
-  font-family: var(--font-structure);
-}
-
-label,
-legend,
-select,
-summary,
-[role="tab"] {
-  font-family: var(--font-structure);
-  font-weight: var(--weight-structure);
-}
-
-@media (max-width: 760px) and (pointer: coarse) {
-  input,
-  select,
-  textarea {
-    /* Prevent focus zoom on mobile browsers while preserving pinch zoom. */
-    font-size: var(--text-input-touch) !important;
-  }
+:where(input, select, textarea)::placeholder {
+  color: var(--ink3);
 }
 
 code,
 pre,
 kbd,
 samp {
-  font-family: var(--font-data);
-  font-weight: var(--weight-data);
+  font-family: inherit;
   font-variant-numeric: tabular-nums;
 }
 
-::selection {
-  background: var(--selection-bg);
+:where(output, time, data, [role="status"], [role="progressbar"], [aria-valuenow]) {
+  font-variant-numeric: tabular-nums;
 }
 
-.bootstrap-error {
-  display: grid;
-  min-height: 100dvh;
-  place-content: center;
-  justify-items: center;
-  gap: var(--space-6);
-  padding: var(--space-xl) max(var(--surface-padding), env(safe-area-inset-right)) var(--space-xl) max(var(--surface-padding), env(safe-area-inset-left));
-  text-align: center;
+:where([class~="title"], [class*="-title"], [class~="heading"], [class*="-heading"]) {
+  font-family: var(--display);
 }
 
-.bootstrap-error h1,
-.bootstrap-error p {
-  margin: 0;
-}
-
-.bootstrap-error p {
-  max-width: 38rem;
-  color: var(--fg-muted);
-  line-height: 1.6;
-  overflow-wrap: anywhere;
-}
-
-.bootstrap-error h1 { max-width: 20ch; line-height: 1.15; }
-.bootstrap-error-actions { display: grid; justify-items: center; gap: var(--space-5); margin-block: var(--space-3); }
-.bootstrap-error .bootstrap-error-safety { max-width: 32rem; font-size: var(--text-sm); }
-.bootstrap-error .bootstrap-error-guidance { font-size: var(--text-sm); }
-.bootstrap-error [role="status"]:empty { display: none; }
-
-.bootstrap-error button {
-  min-height: max(48px, var(--control-target));
-  max-width: 100%;
-  justify-self: center;
-  padding: var(--space-5) var(--space-7);
-  border: 1px solid var(--glass-line);
-  border-radius: var(--radius);
-  color: var(--action-ink);
-  background: var(--control-sheen), var(--action-bg);
-  font: inherit;
-  font-weight: var(--weight-structure);
-  cursor: pointer;
-}
-
-:focus-visible {
-  /* One release-wide keyboard contract. `!important` is intentional: a
-   * number of dense legacy fields locally clear `outline`, and a missing
-   * focus indicator is never an acceptable component-level variation. */
-  outline: 2px solid var(--focus-ring) !important;
-  outline-offset: 2px;
-}
-
-.field-focus:focus,
-.field-focus:focus-within {
-  box-shadow: var(--shadow-field-focus) !important;
-}
-
+/* Focus rings for the keyboard; a pointer user gets them on text fields only. */
 :root[data-input-modality="pointer"] :focus-visible:not(input:not([type="range"]):not([type="checkbox"]):not([type="radio"]), textarea, [contenteditable="true"]) {
-  outline: none !important;
+  outline: none;
 }
 
-button, input[type="range"], [role="tab"] {
+button,
+input[type="range"],
+[role="tab"] {
   -webkit-user-select: none;
   user-select: none;
 }
 
-.field-focus:focus-visible,
-.field-focus > :is(input, button):focus-visible {
-  outline: none !important;
+@media (max-width: 760px) and (pointer: coarse) {
+  input,
+  select,
+  textarea {
+    /* No focus zoom on phones; pinch zoom still works. */
+    font-size: 16px;
+  }
 }
 
-.field-focus:focus-visible,
-.field-focus:has(> :is(input, button):focus-visible) {
-  box-shadow: var(--shadow-field-keyboard) !important;
+/* Loading is a wash block, never a spinner or a pulse. */
+.loading-placeholder {
+  padding: var(--s4);
+  border-radius: var(--r-box);
+  background: var(--wash);
+  color: var(--ink3);
+  overflow-wrap: anywhere;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  :root {
-    --press-scale: 1;
-  }
-  html:focus-within {
-    scroll-behavior: auto;
-  }
-  *,
-  *::before,
-  *::after {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-    scroll-behavior: auto !important;
-  }
+.generation-label {
+  color: var(--ink3);
+  font: var(--type-meta);
+}
+
+* {
+  scrollbar-color: var(--wash2) transparent;
 }
 
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-  background: var(--glass-line);
-  border-radius: var(--radius-pill);
+  border-radius: var(--r-pill);
+  background: var(--wash2);
 }
+
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--fg-muted);
+  background: var(--ink3);
 }
+
 @media (forced-colors: active) {
-  :focus-visible { outline-color: Highlight !important; }
-  .field-focus:focus-visible,
-  .field-focus:has(> :is(input, button):focus-visible) {
-    outline: 2px solid Highlight !important;
-    outline-offset: 2px;
-  }
-  button, input, select, textarea, [role="option"] {
-    border-color: ButtonText;
+  :focus-visible {
+    outline-color: Highlight;
   }
   :is([aria-pressed="true"], [aria-selected="true"], [aria-checked="true"]) {
     outline: 2px solid Highlight;

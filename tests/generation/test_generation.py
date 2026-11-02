@@ -16,7 +16,7 @@ from drowse.generation.decode import (
 )
 from drowse.generation.finalize import MIN_ELAPSED_FOR_RATE
 from drowse.model.chat import chat_eos_ids, logits_keep_kwarg
-from drowse.readout.types import ProbeReading
+from drowse.readout.types import ProbeReading, ScalarReading
 from drowse.generation.types import GenState
 from drowse.readout.planner import CaptureMode, CaptureState
 from tests.support.decode import NoCacheModel, StopTokenizer, scripted_model
@@ -635,7 +635,7 @@ def test_finalize_reuses_one_aggregate_pool_for_monitor_lens_and_sae() -> None:
 
     capture = Capture()
     monitor_reading = ProbeReading(0.0, [], coords=(0.1,))
-    lens_reading = ProbeReading(0.0, [], coords=(0.2,))
+    lens_reading = ScalarReading(value=0.2, unit="mean_token_probability")
     sae_reading = ProbeReading(0.0, [], coords=(0.3,))
     seen: list[tuple[str, bool]] = []
 
@@ -677,7 +677,7 @@ def test_finalize_reuses_one_aggregate_pool_for_monitor_lens_and_sae() -> None:
     assert seen == [("monitor", True), ("lens", True), ("sae", True)]
     assert result.probe_readings == {
         "toy": monitor_reading,
-        "jlens/g": lens_reading,
+        "jlens/g": lens_reading.to_probe_reading(),
         "sae/0": sae_reading,
     }
 

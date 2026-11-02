@@ -106,13 +106,21 @@ const wsConn: RuntimeConnection = {
 
 let firstDecodeTokenAt: number | null = null;
 let activeRequestId: string | null = null;
+/** A ``resync`` arrived during the current generation: its live frames have a
+ *  gap the tree fills, except for a stateless reply, which has no node. */
+let streamGap = false;
 
 export function onWsMessage(cb: WsListener): () => void {
   wsConn.listeners.add(cb);
   return () => wsConn.listeners.delete(cb);
 }
 
-export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
+/** Open the runtime channel (or join the open one). Opening rehydrates: the authoritative tree, then
+ *  the session, profiles, probes and manifolds. Page bootstrap opens it once that way, so a load
+ *  fetches each of them once; ``sessionFresh`` skips the session read bootstrap just made. */
+export function ensureRuntimeChannel(
+  { sessionFresh = false }: { sessionFresh?: boolean } = {},
+): Promise<RuntimeEventChannel> {
   if (wsConn.opening && wsConn.channel && wsConn.ready) {
     return wsConn.ready.then(() => wsConn.channel!);
   }
@@ -179,6 +187,9 @@ export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
       return;
     }
     notifyListeners(msg);
+    // The runtime dropped frames this client read too slowly for: rebuild
+    // from the authoritative tree, holding later frames until it lands.
+    if (disposition === "tree_resync") beginTreeRecovery(loomTree.rev);
   };
   const clearConnection = (): void => {
     if (wsConn.channel !== channel) return;
@@ -296,8 +307,9 @@ export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
       state.state !== "closed" || state.expected || wsConn.channel !== channel
     ) return;
     const reason = state.reason ?? "The Drowse runtime connection closed unexpectedly";
+    const code = state.code ?? "RUNTIME_CHANNEL_CLOSED";
     const friendly = userFacingError(
-      { code: "RUNTIME_CHANNEL_CLOSED", message: reason },
+      { code, message: reason },
       "The local model connection closed. Reopen the model and try again.",
     );
     if (rehydrating) {
@@ -310,9 +322,18 @@ export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
       genStatus.active || chatLog.pendingIndex !== null ||
       loomTree.pendingNodeId !== null || abState.processingAb || isPendingBusy()
     ) {
-      dispatch({ type: "error", code: "RUNTIME_CHANNEL_CLOSED", message: reason });
+      dispatch({ type: "error", code, message: reason });
     } else {
       pushToast(friendly, { kind: "error", ttlMs: null });
+    }
+    // A dropped server connection leaves the conversation on the server: reconnect, which reads
+    // the authoritative tree, so the page shows the reply as the server kept it.
+    // After this close has reached every listener: a channel opened inside it would hear it too.
+    if (code === "RUNTIME_CONNECTION_LOST") {
+      setTimeout(() => {
+        if (wsConn.channel) return;
+        void ensureRuntimeChannel().then(() => { loomTree.error = null; }, () => {});
+      }, 0);
     }
   });
 
@@ -342,7 +363,7 @@ export function ensureRuntimeChannel(): Promise<RuntimeEventChannel> {
         throw new Error("The Drowse runtime connection closed during tree recovery");
       }
       await Promise.allSettled([
-        refreshSession(),
+        ...(sessionFresh ? [] : [refreshSession()]),
         refreshVectorList(),
         refreshProbeList(),
         refreshManifoldList(),
@@ -461,8 +482,13 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       if (!ok) return "tree_resync";
       return;
     }
+    case "resync": {
+      if (genStatus.active) streamGap = true;
+      return "tree_resync";
+    }
     case "started": {
       activeRequestId = msg.request_id ?? null;
+      streamGap = false;
       genStatus.active = true;
       genStatus.replay = null;
       genStatus.tokensSoFar = 0;
@@ -568,8 +594,8 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       }
       // The 5.x measurement envelope is the single read-side record.  Probe
       // readings merge the three families (the rack keys by name); ``scores``
-      // is the flat cross-family axis-0 view (highlight tint);
-      // ``per_layer_scores`` the heatmap; the native lens/sae ``readout``
+      // is the flat cross-family axis-0 view (highlight tint); each reading
+      // carries its own per-layer trace; the native lens/sae ``readout``
       // blocks feed the workspace/discovery cards.
       const m = msg.measurements;
       const stepReadings = mergedReadings(m);
@@ -582,7 +608,6 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
         text: msg.text,
         thinking: msg.thinking,
         tokenId: msg.token_id,
-        perLayerScores: m?.per_layer_scores,
         // ``scores`` is the magnitude-weighted aggregate probe row. Using
         // it instead of a deepest-layer slice makes live highlighting match the
         // post-generation projected pass. Absent when no probes are loaded.
@@ -634,8 +659,8 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       // three families' ``readings`` (a 2-node concept axis is the rank-1
       // case), merged by name; the field is omitted when no probe is attached,
       // so the helper no-ops on undefined.  Skip shadow runs so the rack stays
-      // anchored to the steered branch.  ``scores`` / ``per_layer_scores``
-      // above still feed highlight tinting + the token-drilldown heatmap.
+      // anchored to the steered branch.  ``scores`` above still feeds
+      // highlight tinting.
       if (!abState.processingAb) {
         updateProbesFromReadings(stepReadings);
         // J-LENS tab — the live all-layer readout. Present only while
@@ -665,7 +690,17 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       adoptStreamingNode(msg.node_id);
       const lastSibling = msg.sibling_index + 1 >= msg.sibling_count || msg.result.finish_reason === "cancelled";
       genStatus.active = !lastSibling;
-      genStatus.finishedAt = performance.now();
+      // The runtime's own timing: frame arrivals measure how fast this page read, which after a
+      // resync is not how fast the model wrote.
+      const serverElapsed = msg.result?.elapsed;
+      genStatus.finishedAt = typeof serverElapsed === "number" && Number.isFinite(serverElapsed) &&
+        serverElapsed >= 0 && genStatus.startedAt !== null
+        ? genStatus.startedAt + serverElapsed * 1000
+        : performance.now();
+      const serverRate = msg.result?.tok_per_sec;
+      if (typeof serverRate === "number" && Number.isFinite(serverRate) && serverRate >= 0) {
+        genStatus.tokPerSec = serverRate;
+      }
       genStatus.finishReason = msg.result?.finish_reason ?? "stop";
       // Probe rack — end-of-gen aggregate (the settled ``ProbeReading`` per
       // probe: coords / fraction / nearest / residual + per-layer traces),
@@ -677,6 +712,14 @@ function handleWsMessage(msg: WSServerMessage, receivedAt = performance.now()): 
       }
       const turn = _currentWriteTurn();
       if (turn) {
+        // A stateless reply (a comparison) has no node to resync from; its
+        // text is whole on ``done`` even when the stream dropped frames. The
+        // bubble draws the token rows whenever it has any, and those have the
+        // gap, so a gapped reply drops them and draws the whole text.
+        if (streamGap && !turn.nodeId && typeof msg.result?.text === "string") {
+          turn.text = msg.result.text;
+          turn.tokens = [];
+        }
         turn.finishReason = msg.result?.finish_reason ?? "stop";
         if (msg.result?.applied_steering !== undefined) {
           turn.appliedSteering = msg.result.applied_steering;

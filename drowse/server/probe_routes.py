@@ -4,8 +4,8 @@ One unified collection under ``/drowse/v1/sessions/{id}/probes`` covering every
 probe shape.  A Monitor probe is a :class:`~drowse.geometry.manifold.Manifold` — a
 2-node concept axis is the rank-1 case, a discover / curved fit the rank-R case
 — attached via ``add_probe`` / ``remove_probe``; a ``jlens/<word>`` or
-``sae/<id>`` selector lands on the session's readout-channel registries instead
-and is listed alongside.
+``sae/<id>`` selector lands on the session's readout-channel registries, and a
+``neuron/…`` or ``head/…`` unit on the units family, each listed alongside.
 
 Live per-token scoring during generation rides the WS ``measurements`` envelope
 and the OpenAI / Ollama reading extensions, not a route here.
@@ -13,14 +13,18 @@ and the OpenAI / Ollama reading extensions, not a route here.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
 
 from drowse.errors import DrowseError
 from drowse.readout.monitor_attach import AttachedManifoldProbe
-from drowse.server.runtime import NativeRequest, session_router
+from drowse.server.runtime import (
+    NativeRequest,
+    attached_probe_names,
+    session_router,
+)
 from drowse.server.response_models import (
     GeometryProbeInfo,
     LensProbeInfo,
@@ -28,6 +32,7 @@ from drowse.server.response_models import (
     ProbeInfo,
     ProbeListResponse,
     SaeProbeInfo,
+    UnitsProbeInfo,
 )
 
 
@@ -53,7 +58,7 @@ def _probe_info(name: str, probe: AttachedManifoldProbe) -> GeometryProbeInfo:
     # The host copy taken at attach: this route is lock-free, and copying the
     # resident (MPS) tensor here would share the device's one command buffer
     # with whatever model op holds it, which aborts the process.
-    node_coords = probe.node_coords_host
+    node_coords = [list(row) for row in probe.node_coords_host] or None
     is_affine = manifold.is_affine
     return {
         "family": "geometry",
@@ -77,6 +82,10 @@ def _probe_info(name: str, probe: AttachedManifoldProbe) -> GeometryProbeInfo:
     }
 
 
+#: A lens probe's family (``LensInstrument.attach``) as its selector namespace.
+_LENS_NAMESPACES: dict[str, Literal["jlens", "slens"]] = {"R": "jlens", "S": "slens"}
+
+
 def _lens_probe_info(name: str, spec: dict[str, Any]) -> LensProbeInfo:
     """Serialize one pinned J-lens token probe (readout channel) to JSON.
 
@@ -85,10 +94,13 @@ def _lens_probe_info(name: str, spec: dict[str, Any]) -> LensProbeInfo:
     exists), ``top_n: 0``, ``domain: {}``, ``is_affine``, ``node_coords``,
     ``node_count`` and the ``node_labels: [word]`` stand-in are gone.  What
     remains is real: the fitted layer set, the one strength axis, and the
-    word / vocabulary id the channel reads.
+    word / vocabulary id the channel reads, and its namespace (an ``slens/``
+    probe reads the S lens's footprint z, a ``jlens/`` one the R lens's
+    probability).
     """
     return {
         "family": "lens",
+        "namespace": _LENS_NAMESPACES[spec["family"]],
         "name": name,
         "layers": sorted(int(l) for l in spec.get("layers", ())),
         "intrinsic_dim": 1,
@@ -119,6 +131,26 @@ def _sae_probe_info(name: str, spec: dict[str, Any]) -> SaeProbeInfo:
     }
 
 
+def _units_probe_info(name: str, spec: dict[str, Any]) -> UnitsProbeInfo:
+    """Serialize one attached unit probe (a neuron or head at one layer).
+
+    Same discipline as the lens and SAE rows: the unit, its kind, layer and
+    index, and the one strength axis it reads (``activation_over_scale``).
+    """
+    layer = int(spec["layer"])
+    return {
+        "family": "units",
+        "name": name,
+        "unit": str(spec["unit"]),
+        "kind": "neuron" if spec["kind"] == "neuron" else "head",
+        "layer": layer,
+        "index": int(spec["index"]),
+        "layers": [layer],
+        "intrinsic_dim": 1,
+        "feature_space": "unit-readout",
+    }
+
+
 def register_probe_routes(app: FastAPI) -> None:
     """Mount the unified probe listing + geometry + attach / detach."""
     session = app.state.session
@@ -131,6 +163,7 @@ def register_probe_routes(app: FastAPI) -> None:
         ]
         rows.extend(_lens_probe_info(name, spec) for name, spec in session.lens.specs().items())
         rows.extend(_sae_probe_info(name, spec) for name, spec in session.sae.specs().items())
+        rows.extend(_units_probe_info(name, spec) for name, spec in session.units.specs().items())
         return {"probes": rows}
 
     @router.get("/probes/{name:path}/geometry")
@@ -165,11 +198,13 @@ def register_probe_routes(app: FastAPI) -> None:
             return _lens_probe_info(registered, spec)
         if (spec := session.sae.specs().get(registered)) is not None:
             return _sae_probe_info(registered, spec)
+        if (spec := session.units.specs().get(registered)) is not None:
+            return _units_probe_info(registered, spec)
         return _probe_info(registered, session.monitor.attached_probes()[registered])
 
     @router.delete("/probes/{name:path}", status_code=204)
     def remove_probe(name: str):
-        if name not in session.monitor.probe_names and name not in session.lens.names and name not in session.sae.names:
+        if name not in attached_probe_names(session):
             raise HTTPException(404, f"probe '{name}' not attached")
         session.remove_probe(name)
         return Response(status_code=204)

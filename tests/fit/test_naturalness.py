@@ -294,6 +294,27 @@ def test_evaluate_compare_linear_requires_a_single_manifold_term_before_fitting(
     assert session.fit_calls == []
 
 
+@pytest.mark.parametrize(
+    ("steering", "expected"),
+    [
+        ("0.5 moods%mood1", "0.5 manifold_linear_chord"),
+        ("0.4 moods%mood1{2-5}", "0.4 manifold_linear_chord{2-5}"),
+        ("-0.3 moods%0.2{workspace}", "-0.3 manifold_linear_chord{workspace}"),
+    ],
+)
+def test_linear_chord_steering_parses_and_keeps_the_layer_clause(
+    steering: str, expected: str,
+) -> None:
+    """Regression: the chord comparison once steered ``__manifold_linear_baseline__``,
+    which the lexer rejects, so ``compare_linear`` could never run."""
+    from drowse.fit.naturalness import _linear_chord_steering, _single_manifold_term
+    from drowse.steering.grammar import format_expr, parse_expr
+
+    chord = _linear_chord_steering(_single_manifold_term(steering))
+    assert chord == expected
+    assert format_expr(parse_expr(chord)) == expected
+
+
 def test_preflight_accepts_discover_manifolds_by_selector(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

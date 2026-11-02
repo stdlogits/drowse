@@ -115,10 +115,10 @@ def _run_jlens(args: argparse.Namespace) -> None:
         try:
             fit_kwargs = {
                 "corpus_spec": f"file:{args.corpus.name}",
-                "source_layers": args.layers,
+                "kind": args.kind,
+                "layers": args.layers,
                 "seq_len": args.seq_len,
                 "dim_batch": args.dim_batch,
-                "prompt_batch": args.prompt_batch,
             }
             _measure(
                 "jlens_force_fit",
@@ -177,8 +177,8 @@ def _parser() -> argparse.ArgumentParser:
     jlens.add_argument("--corpus", type=Path, required=True)
     jlens.add_argument("--prompts", type=int, default=4)
     jlens.add_argument("--seq-len", type=int, default=64)
-    jlens.add_argument("--dim-batch", type=int, default=8)
-    jlens.add_argument("--prompt-batch", type=int)
+    jlens.add_argument("--kind", choices=["J", "R", "K", "S"], default="R")
+    jlens.add_argument("--dim-batch", type=int, default=256)
     jlens.set_defaults(run=_run_jlens)
 
     manifold = sub.add_parser("manifold")

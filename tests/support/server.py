@@ -2,7 +2,7 @@
 
 :func:`mock_session` returns a ``MagicMock`` wired with the session surface
 the OpenAI, Ollama and native routes read on every request: model identity
-and info, a sampling config, an idle loom tree, the three instrument faces
+and info, a sampling config, an idle loom tree, the four instrument faces
 (idle, no probes), the Monitor, the generation state and a working event bus.
 It is an autospec of ``DrowseSession``: a name the class does not define
 reads as ``AttributeError`` and method calls are signature-checked.  Keyword
@@ -22,10 +22,15 @@ from typing import Any, cast
 from unittest.mock import MagicMock, create_autospec
 
 from drowse.events import EventBus
-from drowse.generation.results import GenerationResult, RunSet
+from drowse.generation.results import FinishReason, GenerationResult, RunSet
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomTree
-from drowse.readout.types import GeometryLiveState, LensLiveState, SaeLiveState
+from drowse.readout.types import (
+    GeometryLiveState,
+    LensLiveState,
+    SaeLiveState,
+    UnitsLiveState,
+)
 from drowse.session.session import DrowseSession
 from tests.support.tokens import emit_token
 
@@ -73,6 +78,8 @@ def mock_session(**overrides: Any) -> Any:
         "model_type": "gemma2",
         "num_layers": 26,
         "hidden_dim": 2304,
+        "mlp_width": 9216,
+        "num_heads": 8,
         "vram_used_gb": 5.2,
         "param_count": 2_614_000_000,
         "device": "cpu",
@@ -105,7 +112,7 @@ def mock_session(**overrides: Any) -> Any:
         supports_thinking=False, thinking_optional=False,
     )
 
-    # The three instrument faces the routes and session_info read: idle, no
+    # The four instrument faces the routes and session_info read: idle, no
     # probes, no compatible lens.
     session.lens.has_compatible.return_value = False
     session.geometry.names = []
@@ -120,10 +127,15 @@ def mock_session(**overrides: Any) -> Any:
     session.sae.specs.return_value = {}
     session.sae.active_source = None
     session.sae.live_state = SaeLiveState(enabled=False)
+    session.units.names = []
+    session.units.specs.return_value = {}
+    session.units.active_source = None
+    session.units.live_state = UnitsLiveState(enabled=True)
     session.instruments = {
         "geometry": session.geometry,
         "lens": session.lens,
         "sae": session.sae,
+        "units": session.units,
     }
 
     # The unified monitor: ``probe_names`` (wire/gate surface) and
@@ -191,6 +203,9 @@ class StubSession:
             "model_type": "gemma2",
             "num_layers": 4,
             "hidden_dim": 16,
+            "mlp_width": 32,
+            "num_heads": 2,
+            "param_count": 4096,
             "device": "cpu",
             "dtype": "torch.float32",
         }
@@ -222,7 +237,9 @@ class StubSession:
         # Public instrument surface — ``probe_measurements_aggregate`` reads
         # both the attached roster and the live source/layer binding off
         # these faces.
-        self.lens = SimpleNamespace(live=None, names=[])
+        self.lens = SimpleNamespace(
+            live=None, names=[], measurement_sources=lambda: {"R": None, "S": None},
+        )
         self.sae = SimpleNamespace(live=None, names=[])
         # End-of-generation readings the stub stamps onto every result, so a
         # test can pin the ``done`` frame's aggregate channel.
@@ -326,19 +343,23 @@ class StubSession:
                 self.tree.append_token(
                     assistant_id, {"token_id": 1000 + sibling_idx, "text": token_text},
                 )
+                # Like the engine's decode loop: an external stop that ends
+                # the reply finishes it ``cancelled``.
+                finish_reason: FinishReason = "stop"
                 if self._block_until_stop:
                     import time
                     deadline = time.monotonic() + 5
                     while not self.generation_state.is_stop_requested():
                         assert time.monotonic() < deadline
                         self._stop_event.wait(timeout=0.01)
+                    finish_reason = "cancelled"
                 full_text = prefix + token_text
                 from drowse.readout.measurements import build_measurements
 
                 result = GenerationResult(
                     text=full_text, tokens=[1000 + sibling_idx],
                     token_count=1, tok_per_sec=10.0, elapsed=0.1,
-                    finish_reason="stop",
+                    finish_reason=finish_reason,
                     probe_readings=dict(self.stub_probe_readings),
                     # The engine builds this once at finalize; the ``done``
                     # frame just forwards it.
@@ -348,8 +369,8 @@ class StubSession:
                             dict(self.stub_probe_readings) or None
                         ),
                         lens_readings=dict(self.stub_lens_readings) or None,
-                        lens_source=(
-                            (self.lens.live or {}).get("source")
+                        lens_sources=(
+                            self.lens.measurement_sources()
                             if self.stub_lens_readings else None
                         ),
                     )),
@@ -359,7 +380,7 @@ class StubSession:
                     text=full_text,
                     aggregate_readings={},
                     applied_steering=None,
-                    finish_reason="stop",
+                    finish_reason=finish_reason,
                 )
                 results.append(result)
                 self._last_result = result

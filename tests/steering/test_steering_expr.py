@@ -215,9 +215,13 @@ def test_trigger_before():
     assert s.alphas == {"warm": (0.3, Trigger.PROMPT_ONLY)}
 
 
-def test_trigger_both():
+def test_trigger_both_is_the_bare_float():
+    # Regression: ``@both`` stored ``(0.3, Trigger.BOTH)`` while format_expr
+    # wrote it tagless, which re-parsed to a bare float; one IR per meaning.
     s = parse_expr("0.3 warm@both")
-    assert s.alphas == {"warm": (0.3, Trigger.BOTH)}
+    assert s.alphas == {"warm": 0.3}
+    assert parse_expr(format_expr(s)) == s
+    assert parse_expr("0.3 warm + 0.2 warm@both").alphas == {"warm": 0.5}
 
 
 def test_trigger_thinking():
@@ -290,6 +294,23 @@ def test_projection_chained_rejected():
     with pytest.raises(SteeringExprError) as ei:
         parse_expr("0.5 a~b~c")
     assert "chained projection" in str(ei.value).lower()
+
+
+@pytest.mark.parametrize("expr", [
+    "0.\u0665 x",                # Arabic-Indic five in a coefficient
+    "\u0665 x",
+    "x{\u0664}",                 # ... and in a layer clause
+    "x{\uff14}",                 # fullwidth four
+    "jlens/#\u0661\u0662",
+    "sae/\u0663",
+    "x@first:\u0663",
+    "x@when:p>\u0663",
+])
+def test_non_ascii_digits_are_rejected(expr: str) -> None:
+    # Regression: NUM and layer indices took any Unicode decimal digit, which
+    # the documented grammar (and a JavaScript ``\\d``) does not.
+    with pytest.raises(SteeringExprError):
+        parse_expr(expr)
 
 
 def test_projection_with_trigger():
@@ -1166,3 +1187,197 @@ def test_unrepresentable_trigger_raises_instead_of_emitting_a_sentinel() -> None
     trig = Trigger(prompt=False, first_n=5, after_n=2)
     with pytest.raises(SteeringExprError, match="programmatic-only"):
         format_expr(Steering(alphas={"alice/x": (0.5, trig)}))
+
+
+# -------------------------------------------------------- layer clauses ---
+
+def test_layer_clause_scopes_every_term_kind() -> None:
+    from drowse.steering.grammar import AblationTerm, ManifoldTerm
+
+    s = parse_expr(
+        "0.5 honest{12-20} + !jlens/Paris{24-30}@response"
+        " + 0.4 personas%hacker{workspace} + 0.3 honest~formal{8,10,12}"
+        " - 0.2 formal.casual{4-8,20}"
+    )
+    assert list(s.alphas) == [
+        "honest{12-20}", "!jlens/Paris{24-30}", "personas%hacker{workspace}",
+        "honest~formal{8,10,12}", "formal.casual{4-8,20}",
+    ]
+    assert s.alphas["honest{12-20}"] == 0.5
+    assert s.alphas["formal.casual{4-8,20}"] == -0.2
+    ablation = s.alphas["!jlens/Paris{24-30}"]
+    assert isinstance(ablation, AblationTerm)
+    assert ablation.target == "jlens/Paris"
+    assert ablation.layers == tuple(range(24, 31))
+    assert ablation.trigger == Trigger.GENERATED_ONLY
+    manifold = s.alphas["personas%hacker{workspace}"]
+    assert isinstance(manifold, ManifoldTerm)
+    assert (manifold.manifold, manifold.position, manifold.layers) == (
+        "personas", "hacker", "workspace",
+    )
+    projected = s.alphas["honest~formal{8,10,12}"]
+    assert isinstance(projected, ProjectedTerm)
+    assert (projected.base, projected.onto, projected.layers) == (
+        "honest", "formal", (8, 10, 12),
+    )
+
+
+def test_unscoped_terms_carry_no_layers() -> None:
+    from drowse.steering.grammar import AblationTerm, ManifoldTerm
+
+    s = parse_expr("!a + 0.2 m%x + 0.3 a~b")
+    for term in s.alphas.values():
+        assert isinstance(term, (AblationTerm, ManifoldTerm, ProjectedTerm))
+        assert term.layers is None
+
+
+@pytest.mark.parametrize(("text", "canonical"), [
+    ("0.5 honest{20,4-8}", "0.5 honest{4-8,20}"),
+    ("0.5 honest{ 8 , 4-6 }", "0.5 honest{4-6,8}"),
+    ("0.5 honest{4,5,6}", "0.5 honest{4-6}"),
+    ("0.5 honest{4,5}", "0.5 honest{4-5}"),
+    ("0.5 honest{3-3}", "0.5 honest{3}"),
+    ("0.5 honest{8,10,12}", "0.5 honest{8,10,12}"),
+    ("0.5 honest{WorkSpace}", "0.5 honest{workspace}"),
+    ("0.5 honest{all}", "0.5 honest"),
+    ("0.5 honest{ALL}@after", "0.5 honest@after"),
+    ("!x{2}", "!x{2}"),
+    ("-!x{2,1}", "-!x{1-2}"),
+    ("0.3 !x{1}@response", "0.3 !x{1}@response"),
+    ("0.6,0.3 m%0.1,-0.2{9,7}@after", "0.6,0.3 m%0.1,-0.2{7,9}@after"),
+    ("0.5 a|b{0}", "0.5 a|b{0}"),
+    ("0.2 sae/12{5}", "0.2 sae/12{5}"),
+    ("0.3 jlens/#1234{0-2}@first:3", "0.3 jlens/#1234{0-2}@first:3"),
+])
+def test_layer_clause_canonical_form(text: str, canonical: str) -> None:
+    s = parse_expr(text)
+    assert format_expr(s) == canonical
+    assert parse_expr(format_expr(s)) == s
+
+
+@pytest.mark.parametrize(("text", "col", "message"), [
+    ("x{}", 1, "empty layer clause"),
+    ("x{  }", 1, "empty layer clause"),
+    ("x{8-4}", 2, "reversed layer range"),
+    ("x{4-8,6}", 6, "named twice"),
+    ("x{3,3}", 4, "named twice"),
+    ("x{-1}", 2, "non-negative"),
+    ("x{2,-1}", 4, "non-negative"),
+    ("x{sample}", 2, "unknown layer mode"),
+    ("x{1,,2}", 4, "empty entry"),
+    ("x{a}", 2, "malformed layers"),
+    ("x{4", 1, "unterminated layer clause"),
+    ("x}", 1, "unexpected character"),
+    ("x{4}{5}", 4, "one layer clause"),
+    ("x{4}~y", 4, "follows the whole selector"),
+    ("m%a{3}%b", 6, "follows the whole selector"),
+    ("x@response{4}", 10, "before the '@' trigger"),
+    ("x@when:p>0{4}", 10, "before the '@' trigger"),
+    ("0.2 neuron/L8n344{8}", 17, "carry their own layer"),
+    ("!head/L3h1{3}", 10, "carry their own layer"),
+    # A unit is no projection operand at all, so that refusal comes first.
+    ("0.5 a~neuron/L8n3{8}", 6, "does not compose with projection"),
+])
+def test_layer_clause_rejections_carry_a_column(
+    text: str, col: int, message: str,
+) -> None:
+    with pytest.raises(SteeringExprError, match=message) as exc:
+        parse_expr(text)
+    assert exc.value.col == col
+
+
+def test_layer_clause_is_part_of_the_term_identity() -> None:
+    from drowse.steering.grammar import AblationTerm
+
+    # Same selector, same clause: merges as today (written order is irrelevant).
+    assert parse_expr("0.5 a{4,5} + 0.2 a{5,4}").alphas == {
+        "a{4-5}": pytest.approx(0.7),
+    }
+    # Different clauses: two terms; an unscoped term is a third key.
+    assert parse_expr("0.5 a{1} + 0.2 a{2} + 0.1 a").alphas == {
+        "a{1}": 0.5, "a{2}": 0.2, "a": 0.1,
+    }
+    # ``{all}`` is no clause, so it merges with the unscoped term.
+    assert parse_expr("0.5 a{all} + 0.1 a").alphas == {"a": pytest.approx(0.6)}
+    abl = parse_expr("!a{1} + 0.5 !a{1} + !a").alphas
+    assert set(abl) == {"!a{1}", "!a"}
+    term = abl["!a{1}"]
+    assert isinstance(term, AblationTerm)
+    assert term.coeff == pytest.approx(1.5)
+    proj = parse_expr("0.2 a~b{3} + 0.3 a~b{3} + 0.1 a~b").alphas
+    assert set(proj) == {"a~b{3}", "a~b"}
+    merged = proj["a~b{3}"]
+    assert isinstance(merged, ProjectedTerm)
+    assert merged.coeff == pytest.approx(0.5)
+    mfld = parse_expr("0.2 m%x{3} + 0.3 m%x{3} + 0.1 m%x{4}").alphas
+    assert set(mfld) == {"m%x{3}", "m%x{4}"}
+
+
+def test_layer_clause_triggers_merge_per_clause() -> None:
+    # Differing triggers are fine across clauses, an error within one.
+    s = parse_expr("0.5 a{1}@after + 0.5 a{2}@before")
+    assert s.alphas == {
+        "a{1}": (0.5, Trigger.AFTER_THINKING), "a{2}": (0.5, Trigger.PROMPT_ONLY),
+    }
+    with pytest.raises(SteeringExprError, match="conflicting triggers"):
+        parse_expr("0.5 a{1}@after + 0.5 a{1}@before")
+    with pytest.raises(SteeringExprError, match="conflicting triggers"):
+        parse_expr("!a{1}@after + !a{1}@before")
+
+
+def test_layer_clause_rides_the_bare_atom_ladder(tmp_path: Path) -> None:
+    from drowse.steering.grammar import ManifoldTerm
+
+    _mk(tmp_path, "default", "deer.wolf")
+    sel.invalidate()
+    s = parse_expr("0.5 wolf{2-3} + 0.3 deer.wolf{workspace}")
+    assert set(s.alphas) == {
+        "default/deer.wolf%wolf{2-3}", "default/deer.wolf%deer{workspace}",
+    }
+    label = s.alphas["default/deer.wolf%wolf{2-3}"]
+    assert isinstance(label, ManifoldTerm) and label.layers == (2, 3)
+    # A registered profile wins the ladder and keeps its clause in the key.
+    shadow = parse_expr("0.5 deer.wolf{1}", profile_names={"deer.wolf"})
+    assert shadow.alphas == {"deer.wolf{1}": 0.5}
+
+
+def test_layer_clause_round_trips_hand_built_terms() -> None:
+    from drowse.steering.grammar import AblationTerm, ManifoldTerm
+
+    s = Steering(alphas={
+        "!a{2}": AblationTerm(
+            coeff=0.4, trigger=Trigger.BOTH, target="a", layers=(2,),
+        ),
+        "m%x{workspace}": ManifoldTerm(
+            along=-0.5, onto=0.25, trigger=Trigger.AFTER_THINKING,
+            manifold="m", position="x", layers="workspace",
+        ),
+        "a~b{0-1}": ProjectedTerm(
+            coeff=0.3, trigger=Trigger.BOTH, operator="~", base="a", onto="b",
+            layers=(0, 1),
+        ),
+        "c{3}": (0.2, Trigger.PROMPT_ONLY),
+    })
+    assert format_expr(s) == (
+        "0.4 !a{2} - 0.5,-0.25 m%x{workspace}@after + 0.3 a~b{0-1}"
+        " + 0.2 c{3}@before"
+    )
+    assert parse_expr(format_expr(s)) == s
+
+
+def test_referenced_selectors_strip_the_layer_clause() -> None:
+    assert referenced_selectors("0.5 ns/honest:sae{1-3} + 0.2 a~b{4}@after") == [
+        ("ns", "honest", "sae"), (None, "a", "raw"), (None, "b", "raw"),
+    ]
+    assert referenced_selectors("0.4 m%x{2}") == []
+
+
+def test_split_layer_clause() -> None:
+    from drowse.steering.grammar import split_layer_clause
+
+    assert split_layer_clause("honest") == ("honest", None)
+    assert split_layer_clause("honest{4-6,9}") == ("honest", (4, 5, 6, 9))
+    assert split_layer_clause("a~b{workspace}") == ("a~b", "workspace")
+    assert split_layer_clause("ns/a:sae{all}") == ("ns/a:sae", None)
+    with pytest.raises(SteeringExprError, match="empty layer clause"):
+        split_layer_clause("a{}")

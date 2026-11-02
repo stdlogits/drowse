@@ -15,10 +15,10 @@ import { userFacingError } from "../runtime/userFacingError";
 import { invalidateTokenReadoutCache } from "../runtime/tokenReadoutCache";
 import type { LoomNodeJSON, LoomTreeJSON } from "../types";
 import type { CastMemberJSON, ChatTurn, TokenScore } from "../types";
-import { isScalarReading } from "../types";
 import { pushToast } from "./toasts.svelte";
 import { chatLog, genStatus } from "./chat.svelte";
-import { mergedReadings } from "./instruments.svelte";
+import { reconcileTokenSelection } from "./selection.svelte";
+import { authoredRowIndex, rowGeometry } from "../tokenRows";
 import { invalidateEdgeLabels } from "./loomUi.svelte";
 import { hydrateProbeRackFromActiveNode } from "./probes.svelte";
 import { sessionState } from "./session.svelte";
@@ -119,24 +119,45 @@ export function tokenRowToScore(row: NonNullable<LoomNodeJSON["tokens"]>[number]
   if (row.perplexity !== undefined) out.perplexity = row.perplexity;
   if (row.top_alts) out.topAlts = row.top_alts;
   if (row.raw_index !== undefined) out.rawIndex = row.raw_index;
-  const scores = m?.scores ?? row.probes;
-  if (scores) out.probes = scores;
-  const perLayer = m?.per_layer_scores ?? row.per_layer_scores;
-  if (perLayer) out.perLayerScores = perLayer;
+  if (m?.scores) out.probes = m.scores;
   if (m) out.measurements = m;
-  const readings = mergedReadings(m);
-  if (readings) {
-    const byProbe: Record<string, number[]> = {};
-    for (const [name, reading] of Object.entries(readings)) {
-      // Multi-axis coordinates are a geometry-only channel — a one-channel
-      // reading has nothing to spread across axes.
-      if (!isScalarReading(reading) && reading.coords.length > 1) {
-        byProbe[name] = reading.coords;
-      }
-    }
-    if (Object.keys(byProbe).length > 0) out.coordsByProbe = byProbe;
+  // Multi-axis coordinates are a geometry-only channel (a one-channel reading has nothing to
+  // spread across axes); a generated row keeps them, and so does a row kept whole.
+  const byProbe: Record<string, number[]> = {};
+  for (const [name, reading] of Object.entries(rowGeometry(m))) {
+    if (reading.coords.length > 1) byProbe[name] = reading.coords;
   }
+  if (Object.keys(byProbe).length > 0) out.coordsByProbe = byProbe;
   return out;
+}
+
+/** Append to a streaming turn the rows its node holds past the live arrays.
+ *
+ * The server stops sending a reader that lags its token frames and tells it to
+ * resync; the tree has every row, and each row's ``raw_index`` orders it.  Live
+ * rows are kept as they are (no re-render), each channel gains the rows after
+ * its last raw index, and the reply text gains their text, so the token frames
+ * that follow dedupe against the merged arrays.  Returns how many were added. */
+export function catchUpStreamingRows(turn: ChatTurn, node: LoomNodeJSON): number {
+  let added = 0;
+  for (const thinking of [true, false]) {
+    const rows = thinking ? node.thinking_tokens : node.tokens;
+    if (!rows?.length) continue;
+    const live = thinking ? (turn.thinkingTokens ??= []) : (turn.tokens ??= []);
+    const last = live.findLast((token) => token.rawIndex != null)?.rawIndex;
+    const fresh = last === undefined || last === null
+      ? rows.slice(live.length)
+      : rows.filter((row) => row.raw_index !== undefined && row.raw_index !== null && row.raw_index > last);
+    for (const row of fresh) {
+      const score = tokenRowToScore(row);
+      score.thinking = thinking;
+      live.push(score);
+      if (thinking) turn.thinking = true;
+      else turn.text = (turn.text ?? "") + row.text;
+    }
+    added += fresh.length;
+  }
+  return added;
 }
 
 /** Project a LoomNodeJSON to a ChatTurn for Chat.svelte consumption.
@@ -155,11 +176,20 @@ function nodeToTurn(n: LoomNodeJSON): ChatTurn {
     appliedSteering: n.applied_steering ?? null,
     aggregateReadings: n.aggregate_readings ?? undefined,
     finishReason: n.finish_reason ?? undefined,
+    // The same rollup the live done frame carries (read off this node), so a reload keeps it.
+    meanLogprob: n.mean_logprob ?? null,
+  };
+  // A captured prompt turn's rows replay through the node's ``prompt_capture``, addressed by their
+  // place among its captured rows (thinking first); a generated row by its ``raw_index``.
+  const promptIndex = (thinking: boolean, i: number, s: TokenScore): void => {
+    const index = authoredRowIndex(n, thinking, i);
+    if (index !== null) s.promptIndex = index;
   };
   if (n.tokens && n.tokens.length > 0) {
-    turn.tokens = n.tokens.map((r) => {
+    turn.tokens = n.tokens.map((r, i) => {
       const s = tokenRowToScore(r);
       s.thinking = false;
+      promptIndex(false, i, s);
       return s;
     });
   }
@@ -175,9 +205,10 @@ function nodeToTurn(n: LoomNodeJSON): ChatTurn {
     );
   }
   if (n.thinking_tokens && n.thinking_tokens.length > 0) {
-    turn.thinkingTokens = n.thinking_tokens.map((r) => {
+    turn.thinkingTokens = n.thinking_tokens.map((r, i) => {
       const s = tokenRowToScore(r);
       s.thinking = true;
+      promptIndex(true, i, s);
       return s;
     });
     turn.thinking = true;
@@ -243,6 +274,7 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
     chatLog.turns = [];
     chatLog.pendingIndex = null;
     hydratedFrom = new Map();
+    reconcileTokenSelection();
     return;
   }
   const out: ChatTurn[] = [];
@@ -274,9 +306,15 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
         prev.appliedSteering = node.applied_steering ?? null;
         prev.aggregateReadings = node.aggregate_readings ?? prev.aggregateReadings;
         prev.finishReason = node.finish_reason ?? prev.finishReason;
+        // A settled node's rollup (an edit clears it); a streaming one keeps the live value.
+        if (node.finish_reason !== null) prev.meanLogprob = node.mean_logprob ?? null;
         // Server-shipped node tokens are authoritative. Preserve the live
-        // arrays only until the finalized node snapshot carries them.
-        if (node.finish_reason !== null || (prev.tokens?.length ?? 0) === 0) {
+        // arrays only until the finalized node snapshot carries them; while
+        // the node streams, a snapshot only adds the rows the live stream
+        // never delivered (a lagging client's dropped frames).
+        if (loomTree.pendingNodeId === nid && genStatus.active && node.finish_reason === null) {
+          genStatus.tokensSoFar += catchUpStreamingRows(prev, node);
+        } else if (node.finish_reason !== null || (prev.tokens?.length ?? 0) === 0) {
           const fromNode = nodeToTurn(node);
           if (fromNode.tokens || fromNode.thinkingTokens) {
             prev.tokens = fromNode.tokens;
@@ -295,6 +333,7 @@ export function syncChatLogFromTree(preserveLiveTokens = true): void {
   hydratedFrom = nextHydratedFrom;
   chatLog.turns = out;
   chatLog.pendingIndex = pendingIdx;
+  reconcileTokenSelection();
 }
 
 function invalidateChangedEdgeLabels(nextNodes: readonly LoomNodeJSON[], removed: readonly string[]): void {
@@ -330,6 +369,8 @@ function replayContextChanged(nextNodes: readonly LoomNodeJSON[], removed: reado
       previous.thinking_text !== next.thinking_text ||
       previous.applied_steering !== next.applied_steering ||
       JSON.stringify(previous.recipe) !== JSON.stringify(next.recipe) ||
+      // An authored node's prompt tokens replay through its capture.
+      JSON.stringify(previous.prompt_capture ?? null) !== JSON.stringify(next.prompt_capture ?? null) ||
       previous.raw_token_ids?.length !== next.raw_token_ids?.length ||
       (previous.raw_token_ids ?? []).some((id, index) => id !== next.raw_token_ids?.[index]);
   });

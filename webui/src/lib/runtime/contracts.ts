@@ -6,6 +6,7 @@ import type {
   CreateTemplateRequest,
   FilterMatchesJSON,
   FitManifoldRequest,
+  HeadReadJSON,
   GenerateManifoldRequest,
   InstallManifoldRequest,
   InstrumentFamily,
@@ -17,6 +18,7 @@ import type {
   ManifoldListResponse,
   MeasurementsEnvelopeJSON,
   MergeManifoldRequest,
+  NeuronReadJSON,
   NodeDiffJSON,
   PairwiseCompareResponse,
   PreparationOp,
@@ -31,9 +33,15 @@ import type {
   ScoreTemplateResponse,
   SessionInfo,
   SourcesResponse,
+  SteeringValidationResponse,
   TemplateDetail,
   TemplateSummary,
   TranscriptLoadResponseJSON,
+  UnitActivityJSON,
+  UnitCatalogJSON,
+  UnitFindJSON,
+  UnitLabelsJSON,
+  UnitTopJSON,
   VectorInfo,
   WSClientMessage,
   WSGenerateRequest,
@@ -383,6 +391,10 @@ export type RuntimeEventChannelState =
       state: "closed";
       expected: boolean;
       reason: string | null;
+      /** Why it closed, as an error code. Omitted: ``RUNTIME_CHANNEL_CLOSED`` (the runtime went
+       *  away). ``RUNTIME_CONNECTION_LOST``: the connection to a server dropped while the server
+       *  may still hold the conversation, so the client re-reads it from there. */
+      code?: "RUNTIME_CHANNEL_CLOSED" | "RUNTIME_CONNECTION_LOST";
     };
 
 export interface RuntimeEventChannel {
@@ -425,11 +437,14 @@ export interface RuntimeSessionsService {
     }>,
     id?: string,
   ): Promise<SessionInfo>;
+  /** Parse, resolve and dry-install an expression. A valid one may also carry the model's depth
+   *  and where each term acts (``n_layers``, ``terms``: the term editor's depth strip); a runtime
+   *  without them leaves both out and the strip stays hidden. */
   validateSteering(
     expression: string,
     id?: string,
     options?: SteeringValidationOptions,
-  ): Promise<{ valid: boolean; expression: string; error: string | null }>;
+  ): Promise<SteeringValidationResponse>;
 }
 
 export interface SteeringValidationOptions {
@@ -560,7 +575,7 @@ export interface RuntimeInstrumentsService {
    * pack takes effect on the next model load.
    */
   activateInstalledPack(
-    family: Exclude<InstrumentFamily, "geometry">,
+    family: Exclude<InstrumentFamily, "geometry" | "units">,
     body: InstalledInstrumentPackActivationRequest,
     id?: string,
   ): Promise<InstalledInstrumentPackActivationResult>;
@@ -578,6 +593,93 @@ export interface RuntimeInstrumentsService {
   validateLensToken(word: string, id?: string): Promise<LensTokenValidationJSON>;
   validateSaeFeature(featureId: number, id?: string): Promise<{ id: number; label?: string | null; layer: number; max_act?: number | null }>;
   saeFeaturesMetadata(ids: number[], id?: string): Promise<SaeFeatureMetaResponse>;
+  /**
+   * One loom token, every layer: the replay envelope's `anatomy` (what the
+   * residual reads as, what attention and the MLP added, the units that
+   * pushed the token, the top heads' attention). Optional: a runtime without
+   * it leaves it undefined (`replayCapabilities` tells the UI).
+   */
+  tokenAnatomy?(
+    nodeId: string,
+    rawIndex: number,
+    options?: TokenAnatomyOptions,
+    id?: string,
+  ): Promise<{ measurements: MeasurementsEnvelopeJSON }>;
+  /**
+   * Every neuron's and head's activity over a loom node's tokens: the top
+   * units by peak, traces of the requested units and one token's packed
+   * population. Optional, as `tokenAnatomy`.
+   */
+  unitActivity?(
+    nodeId: string,
+    options?: UnitActivityOptions,
+    id?: string,
+  ): Promise<UnitActivityJSON>;
+  /**
+   * Unit reads (optional: a runtime without them omits these members, and
+   * `unitReadsAvailable` hides the unit views). `unitRead` is one unit from
+   * its weights: per neuron pole its writes and what it fires on, per head
+   * its copies, suppressions and inputs, each through the depth rule's S/R
+   * pair, with firing statistics and the catalog label.
+   */
+  unitRead?(unit: string, options?: { k?: number; hideHubs?: boolean }, id?: string): Promise<NeuronReadJSON | HeadReadJSON>;
+  /** Neuron poles that write (`by: "writes"`) or fire on (`"fires"`) a token. */
+  unitTop?(token: string, options?: { by?: "writes" | "fires"; layers?: string; k?: number }, id?: string): Promise<UnitTopJSON>;
+  /** A direction (a selector, or a vector at a layer) split over each layer's neuron writes. */
+  unitFind?(body: UnitFindBody, id?: string): Promise<UnitFindJSON>;
+  /** The model's neuron-lens catalog binding; fetch it with `startPreparation("units", { operation: "fetch" })`. */
+  unitCatalog?(id?: string): Promise<UnitCatalogJSON>;
+  /** The catalog's labels for some units (both poles of a neuron, a head once; disk only). Optional, as the reads. */
+  unitLabels?(units: string[], id?: string): Promise<UnitLabelsJSON>;
+}
+
+export interface TokenAnatomyOptions {
+  /** Tokens per lens read (1-256, default 8). */
+  k?: number;
+  /** Neurons and heads per layer and across layers (1-64, default 8). */
+  units?: number;
+  /** Top heads whose attention is returned (0-16, default 4; 0 skips eager attention). */
+  patterns?: number;
+  steered?: boolean;
+  raw?: boolean;
+}
+
+export interface UnitActivityOptions {
+  /** Units across the node by peak |value| (1-1024, default 32). */
+  top?: number;
+  /** Units to trace token by token (`neuron/L8n344`, `head/L20h3`). */
+  units?: string[];
+  /** One token whose whole population to return (packed float16). */
+  rawIndex?: number;
+  /** The population's layers (a layer selector; default every layer). */
+  layers?: string;
+  steered?: boolean;
+  raw?: boolean;
+}
+
+/** Which node-replay reads a runtime's instruments service offers. */
+export interface RuntimeReplayCapabilities {
+  tokenAnatomy: boolean;
+  unitActivity: boolean;
+}
+
+export function replayCapabilities(
+  instruments: RuntimeInstrumentsService,
+): RuntimeReplayCapabilities {
+  return {
+    tokenAnatomy: typeof instruments.tokenAnatomy === "function",
+    unitActivity: typeof instruments.unitActivity === "function",
+  };
+}
+
+/** `unitFind`'s target: one steerable selector, or a residual vector at a layer. */
+export type UnitFindBody =
+  | { selector: string; k?: number; layers?: string }
+  | { vector: number[]; layer: number; k?: number; layers?: string };
+
+/** Whether this runtime serves the unit reads (the unit view, top, find and the catalog). */
+export function unitReadsAvailable(client: Pick<RuntimeClient, "instruments">): boolean {
+  return typeof client.instruments.unitRead === "function";
 }
 
 export interface InstalledInstrumentPackActivationRequest {
@@ -699,6 +801,13 @@ export const RUNTIME_SERVICE_METHODS = Object.freeze({
     validateLensToken: true,
     validateSaeFeature: true,
     saeFeaturesMetadata: true,
+    tokenAnatomy: true,
+    unitActivity: true,
+    unitRead: true,
+    unitTop: true,
+    unitFind: true,
+    unitCatalog: true,
+    unitLabels: true,
   }),
 }) satisfies {
   [Service in RuntimeServiceName]: Readonly<

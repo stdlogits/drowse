@@ -23,11 +23,11 @@ Internal order: `domains`, `rbf` → `subspace` → `invert`, `manifold`, `tube`
 | Module | Owns |
 |---|---|
 | `domains.py` | `ManifoldDomain`; `BoxDomain`/`BoxAxis`, `SphereDomain`, `KleinBottleDomain`, `ProjectivePlaneDomain`, `CustomDomain`; the `manifold.json` domain union (`validate_domain_spec`, `normalize_domain_spec`, `domain_from_spec`). |
-| `rbf.py` | `RbfFitPlan` (the one layout factorization: exact, fixed-λ, GCV), `RbfFit`, `eval_rbf`/`eval_rbf_jacobian`/`eval_rbf_jet`, `rbf_cardinal_weights`. |
-| `subspace.py` | `LayerSubspace`, `pca_basis`, `fit_affine_subspace`, `fit_curved_subspace`, `LayerFit`, `subspace_share`, `DEFAULT_N_COMPONENTS = 64`. |
+| `rbf.py` | `RbfFitPlan` (the one layout factorization: exact, fixed-λ, GCV), `RbfFit`, `eval_rbf`/`eval_rbf_jacobian`/`eval_rbf_jet` (one layer's parameters, or a stack of them against an `(L, X, m)` query), `rbf_cardinal_weights`. |
+| `subspace.py` | `LayerSubspace`, `StackedRbf` (several curved layers' surfaces and σ-fields of one rank, stacked), `pca_basis`, `fit_affine_subspace`, `fit_curved_subspace`, `LayerFit`, `subspace_share`, `DEFAULT_N_COMPONENTS = 64`. |
 | `manifold.py` | `Manifold`, `MANIFOLD_FIT_POLICY_VERSION`. |
 | `packing.py` | `pack_to_device`: moves an object tree's tensors to a device as one buffer per dtype (what `Manifold.to` and probe attach use off the CPU). |
-| `invert.py` | `_gn_step` (the one damped Gauss-Newton step), `invert_parameterization`, `neutral_origin`. |
+| `invert.py` | `_gn_step` (the one damped Gauss-Newton step), `invert_parameterization`, `invert_stacked`, `neutral_origin`. |
 | `tube.py` | The σ-field: `off_surface_vars`, `fit_sigma_field`. |
 | `inject.py` | `synthesize_subspace`/`SynthesizedSubspace` (composition) and `subspace_inject` (the kernel). |
 | `topology.py` | `derive_pca_coords`, `derive_spectral_coords`, `discover_coords`, `neutral_layout_coord`, `select_topology`. |
@@ -49,8 +49,12 @@ Internal order: `domains`, `rbf` → `subspace` → `invert`, `manifold`, `tube`
   channels, so it is a wrong answer, not a degraded one. The deliberate
   Euclidean code: `pca_basis` without a whitener (the behavior-space fit in
   `fit/naturalness.py`, which lives in output-distribution space, and tests),
-  `Profile.projected_away` (plain Gram-Schmidt, no in-repo caller), and a
-  whitener layer whose neutrals are exactly zero (λ = 1, Σ_reg = I).
+  `Profile.projected_away` (plain Gram-Schmidt, no in-repo caller), a
+  whitener layer whose neutrals are exactly zero (λ = 1, Σ_reg = I), and a
+  head's write norm `‖W_O^h z_h‖` (`units/stats.py`, `units/capture.py`):
+  neuron-lens's definition of a head's firing, a scalar read only in units of
+  that head's own neutral `act_top` and never compared geometrically across
+  units or against a direction (`drowse/units/AGENTS.md`).
 - **μ-center the scatter, never anchor-center it.** `pca_basis` takes centroids
   minus their own mean. Centering on neutral injects the neutral offset as a
   spurious axis and breaks PCA@2 ≡ difference-of-means.
@@ -192,7 +196,10 @@ analytic RBF Jacobian chained through `tangent_jacobian` and a diagonal floor
 for folds; n ≤ 2 solves in closed form so it never syncs.
 `invert_parameterization`: cold, 12 iterations from the 3 nearest nodes, best
 residual wins (guards periodic and fold minima); warm (the monitor's follower),
-4 iterations from the carried foot plus the nearest node. `neutral_origin`
+4 iterations from the carried foot plus the nearest node.  `invert_stacked`
+is the same solve (`_foot_solve`, one body for both) over a `StackedRbf`, one
+query per layer: the monitor's curved read solves every layer in one batched
+pass whose kernels compute each layer as the one-layer solve does. `neutral_origin`
 projects ν onto a curved layer's surface. Origins are per layer because each
 layer embeds the coordinates differently, and the steering follower takes one
 step with no restarts, so its seed must already be in the right basin.
@@ -315,7 +322,11 @@ layer whose centered rows or `K` are non-finite is left out, which is why
 `store/neutral.py::load_neutral_whitener` from the fp32 neutral cache, or by
 the session's lazy neutral state.
 
-Primitives: `apply_inv`, `mahalanobis_norm(s)`, `mahalanobis_cosine`,
+Primitives: `apply_inv`, `whiten(layer, rows)` (the whitened coordinates
+`W v`, `W = Σ^{-1/2} = (1/√λ)(I − V diag(g) Vᵀ)` from the thin SVD of `X`,
+cached per layer, never D×D; whitened dot products are Mahalanobis, and the
+lens decompositions fold `W` into their dictionaries),
+`mahalanobis_norm(s)`, `mahalanobis_cosine`,
 `leace_project` (Belrose et al. 2023; `~` keeps `⟨b, d⟩_M/⟨d, d⟩_M · d`, `|`
 erases it), `subspace_gram(layer, B) = B Σ⁻¹ Bᵀ` (the reduced metric behind the
 share and whitened reads) and `woodbury_factors` (device-resident factors for

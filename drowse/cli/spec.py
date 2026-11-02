@@ -127,7 +127,7 @@ YES = arg("-y", "--yes", action="store_true",
           help="Confirm removal (required)")
 VERBOSE = arg("-v", "--verbose", action="store_true")
 STEER = arg("-S", "--steer", default=None, metavar="EXPR",
-            help='Steering expression, e.g. "0.5 honest + 0.3 warm"')
+            help='Steering expression, e.g. "-0.5 deceptive + 0.3 warm"')
 DESCRIPTION = arg("--description", default="", metavar="TEXT",
                   help="Human-readable description for the folder")
 
@@ -166,7 +166,7 @@ TOP_K_ALTS = arg(
 )
 
 
-def layers_arg(help: str, metavar: str = "L1,L2,...|workspace|all") -> Arg:
+def layers_arg(help: str, metavar: str = "L1,L2-L3,...|workspace|all") -> Arg:
     return arg("--layers", default=None, metavar=metavar, help=help)
 
 

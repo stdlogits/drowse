@@ -24,17 +24,24 @@ import { userFacingError } from "../runtime/userFacingError";
 import type {
   AnyReadingJSON,
   InstrumentSourceJSON,
+  LensBandJSON,
+  LensProviderJSON,
   LensReadoutBlockJSON,
   MeasurementsEnvelopeJSON,
+  ProbeReadingJSON,
+  RowProbeReadingJSON,
   SaeFeatureJSON,
+  SaeReleaseJSON,
+  ScalarReadingJSON,
   TokenScore,
 } from "../types";
 import { resolveReadoutTopK } from "../readouts";
+import { geometryTracesKept, replayIndex, rowGeometry, wholeEnvelope } from "../tokenRows";
 import { pushToast } from "./toasts.svelte";
 import { createPreparationSlice } from "./preparations.svelte";
 import { effectiveRawMode } from "./chat.svelte";
 import { samplingState } from "./sampling.svelte";
-import { MAX_SPARKLINE, refreshProbeList } from "./probes.svelte";
+import { MAX_SPARKLINE, probeRack, refreshProbeList } from "./probes.svelte";
 import {
   instrumentFamily,
   refreshSession,
@@ -51,15 +58,16 @@ export interface LensState {
    * a local boolean, so reloads and multi-tab stay honest. */
   layers: number[] | null;
   /** Latest decode step's readout: layer-index string → descending
-   * ``[token, p]`` top-k (per-layer softmax probability — the one
-   * strength unit every lens surface reports).  Overwritten per token
-   * frame; kept after ``done`` so the settled matrix stays readable. */
-  readout: Record<string, [string, number][]> | null;
+   * ``[token, p, id]`` top-k (per-layer softmax probability — the one
+   * strength unit every lens surface reports — and the vocabulary id).
+   * Overwritten per token frame; kept after ``done`` so the settled matrix
+   * stays readable. */
+  readout: Record<string, LensReadoutPair[]> | null;
   /** Layer-aggregated chip list riding the same step — ``[token,
    * strength, com, spread]`` strength-descending (mean fitted-layer probability
    * + probability-mass-weighted depth center of mass).  Same lifecycle as
    * ``readout``. */
-  aggregate: [string, number, number, number][] | null;
+  aggregate: LensAggregateChip[] | null;
   /** Rolling buffer of recent aggregate frames (``[token, strength]``
    * pairs per step, newest last, capped like the probe sparklines) —
    * backs the workspace token cards' sparklines.  Carries across
@@ -84,18 +92,63 @@ export const lensState: LensState = $state({
   busy: false,
 });
 
+// ------------------------------------------- the lens token pair ---
+//
+// A lens token atom or probe names a word one of two ways: ``jlens/`` reads and steers toward
+// saying it (the R family), ``slens/`` toward having read it (the S family's ``out`` site). Every
+// surface that offers one offers the other (the Lens panel's Watch, Steer and pins, the token
+// view's Probe and Steer toward it), through one pair whose choice they share.
+
+export type LensNamespace = "jlens" | "slens";
+
+/** The pair, as each surface shows it: the namespace, its word, and what it does. */
+export const LENS_NAMESPACES: readonly { value: LensNamespace; label: string; hint: string }[] = [
+  { value: "jlens", label: "As said", hint: "Toward saying it (jlens/, the R lens)" },
+  { value: "slens", label: "As read", hint: "Toward having read it (slens/, the S lens)" },
+];
+
+/** Which of the pair the Lens panel and the token view act with (one choice, both surfaces). */
+export const lensPairState: { namespace: LensNamespace } = $state({ namespace: "jlens" });
+
+/** Whether a namespace's atoms and probes resolve now: ``jlens/`` through the session's R lens,
+ *  ``slens/`` through the active S-family source's ``out`` site, loaded for these weights. */
+export function lensNamespaceReady(namespace: LensNamespace): boolean {
+  if (namespace === "jlens") return sessionState.info?.jlens_fitted === true;
+  const row = lensSourceState.sources.find((source) => source.family === "S" && source.active === true);
+  return row !== undefined && row.compatible !== false && (row.sites === undefined || row.sites.includes("out"));
+}
+
+/** The namespace a surface acts with: the pair's choice when it is ready, else the other one when
+ *  that is (a model with only one lens family offers it alone), else the choice. */
+export function lensNamespaceInUse(): LensNamespace {
+  const chosen = lensPairState.namespace;
+  if (lensNamespaceReady(chosen)) return chosen;
+  const other: LensNamespace = chosen === "jlens" ? "slens" : "jlens";
+  return lensNamespaceReady(other) ? other : chosen;
+}
+
+/** The lens sources and what the Lens room draws them with. ``providers``, ``band`` and
+ *  ``fitDocuments`` are the server's; a runtime that sends none leaves them empty, and the room
+ *  hides what they draw. */
 export const lensSourceState: {
   sources: InstrumentSourceJSON[];
+  providers: LensProviderJSON[];
+  band: LensBandJSON | null;
+  fitDocuments: number | null;
   loading: boolean;
   busy: boolean;
   error: string | null;
-} = $state({ sources: [], loading: false, busy: false, error: null });
+} = $state({ sources: [], providers: [], band: null, fitDocuments: null, loading: false, busy: false, error: null });
 
 export async function refreshLensSources(): Promise<void> {
   if (lensSourceState.loading) return;
   lensSourceState.loading = true;
   try {
-    lensSourceState.sources = (await apiInstruments.sources("lens")).sources;
+    const out = await apiInstruments.sources("lens");
+    lensSourceState.sources = out.sources;
+    lensSourceState.providers = out.providers ?? [];
+    lensSourceState.band = out.band ?? null;
+    lensSourceState.fitDocuments = out.fit_documents ?? null;
     lensSourceState.error = null;
   } catch (e) {
     lensSourceState.error = userFacingError(e, "Word-likelihood sources could not be refreshed.");
@@ -122,14 +175,14 @@ export async function useLensSource(source: string): Promise<void> {
     invalidateTokenReadoutCache("lens");
     await refreshSession();
     await refreshLensSources();
-    pushToast(`J-lens · ${source}`, { kind: "info" });
+    pushToast(`Lens · ${source}`, { kind: "info" });
   } catch (e) {
     lensSourceState.error = userFacingError(
       e,
       "Word insights could not start. Close and reopen the model after changing its tools.",
     );
     pushToast(
-      `J-lens source: ${lensSourceState.error}`,
+      `Lens source: ${lensSourceState.error}`,
       { kind: "error" },
     );
   } finally {
@@ -189,9 +242,15 @@ export interface TokenHoverState {
   probeReadings: Record<string, AnyReadingJSON> | null;
   probes: Record<string, number> | null;
   coordsByProbe: Record<string, number[]> | null;
-  perLayerScores: Record<string, Record<string, number>> | null;
-  lensReadout: Record<string, [string, number][]> | null;
-  lensAggregate: [string, number, number, number][] | null;
+  /** The hovered token's readings replayed (geometry, and the lens and SAE probes'), which a
+   *  generated row does not keep: the cards draw a reading the row lacks, and every layer strip,
+   *  from them; a value the row kept (its score) shows at once. */
+  replayedReadings: Record<string, AnyReadingJSON> | null;
+  /** A generated row's geometry shares and coordinates (null for a whole envelope, whose readings
+   *  are ``probeReadings``): the hovered cards' values while the rest replays. */
+  rowGeometry: Record<string, RowProbeReadingJSON> | null;
+  lensReadout: Record<string, LensReadoutPair[]> | null;
+  lensAggregate: LensAggregateChip[] | null;
   saeReadout: SaeFeatureJSON[] | null;
   lensLoading: boolean;
   saeLoading: boolean;
@@ -206,7 +265,8 @@ export const tokenHoverState: TokenHoverState = $state({
   probeReadings: null,
   probes: null,
   coordsByProbe: null,
-  perLayerScores: null,
+  replayedReadings: null,
+  rowGeometry: null,
   lensReadout: null,
   lensAggregate: null,
   saeReadout: null,
@@ -217,8 +277,14 @@ export const tokenHoverState: TokenHoverState = $state({
 });
 
 interface LensHoverSnapshot {
-  readout: Record<string, [string, number][]>;
-  aggregate: [string, number, number, number][];
+  readout: Record<string, LensReadoutPair[]>;
+  aggregate: LensAggregateChip[];
+}
+
+/** What a lens or SAE hover replay brings: its readout and the attached probes' readings. */
+interface HoverReplay<T> {
+  readout: T;
+  readings: Record<string, ScalarReadingJSON>;
 }
 
 const TOKEN_HOVER_DELAY_MS = 140;
@@ -230,29 +296,38 @@ function _hoverTokenKey(nodeId: string, rawIndex: number, raw: boolean): string 
   return `${modelKey}:${nodeId}:${rawIndex}:${raw ? 1 : 0}`;
 }
 
+/** One layer-aggregated lens chip: ``[token, strength, com, spread, id]``. The vocabulary id
+ *  keys it: two ids can decode to the same text (byte pieces that both render as U+FFFD). */
+export type LensAggregateChip = [string, number, number, number, number];
+
+/** One per-layer lens read: ``[token, p, id]``. Joined to a chip by its id, never its text. */
+export type LensReadoutPair = [string, number, number];
+
 /** The lens native readout block → the display shape the workspace cards and
  *  hover consume: per-layer ``[token, probability]`` (the wire carries
  *  logprob — ``exp()`` restores the displayed per-layer softmax probability)
- *  plus the ``[token, strength, com, spread]`` aggregate chips. */
+ *  plus the ``[token, strength, com, spread, id]`` aggregate chips.  A saved
+ *  row's block has the chips only (no ``layers``): its readout is empty. */
 export function lensReadoutSnapshot(
   block: LensReadoutBlockJSON | undefined,
 ): LensHoverSnapshot | null {
   if (!block) return null;
   return {
-    readout: Object.fromEntries(block.layers.map((row) => [
+    readout: Object.fromEntries((block.layers ?? []).map((row) => [
       String(row.layer),
-      row.tokens.map((token) => [token.token, Math.exp(token.logprob)]),
+      row.tokens.map((token): LensReadoutPair => [token.token, Math.exp(token.logprob), token.id]),
     ])),
     aggregate: block.aggregate.map((token) => [
       token.token,
       token.strength,
       token.com,
       token.spread,
+      token.id,
     ]),
   };
 }
 
-/** Merge the three families' attached-probe ``readings`` from a measurement
+/** Merge the four families' attached-probe ``readings`` from a measurement
  *  envelope — the probe rack keys by name across families, so one dict drives
  *  every probe strip. */
 export function mergedReadings(
@@ -262,43 +337,71 @@ export function mergedReadings(
   const g = m.instruments.geometry?.readings;
   const l = m.instruments.lens?.readings;
   const s = m.instruments.sae?.readings;
-  if (!g && !l && !s) return undefined;
-  return { ...(g ?? {}), ...(l ?? {}), ...(s ?? {}) };
+  const u = m.instruments.units?.readings;
+  if (!g && !l && !s && !u) return undefined;
+  return { ...(g ?? {}), ...(l ?? {}), ...(s ?? {}), ...(u ?? {}) };
 }
 
 function _fetchLensHover(
   nodeId: string,
   rawIndex: number,
   raw: boolean,
-): Promise<LensHoverSnapshot | null> {
+): Promise<HoverReplay<LensHoverSnapshot | null>> {
   return cachedTokenReadout("lens", nodeId, rawIndex, {
     topK: resolveReadoutTopK(samplingState.return_top_k),
     steered: true,
     raw,
     layers: "all",
-  }, undefined, "background").then((res) => (
-    lensReadoutSnapshot(res.measurements.instruments.lens?.readout)
-  ));
+  }, undefined, "background").then((res) => ({
+    readout: lensReadoutSnapshot(res.measurements.instruments.lens?.readout),
+    readings: res.measurements.instruments.lens?.readings ?? {},
+  }));
+}
+
+function _fetchGeometryHover(
+  nodeId: string,
+  rawIndex: number,
+  raw: boolean,
+): Promise<Record<string, ProbeReadingJSON>> {
+  return cachedTokenReadout("geometry", nodeId, rawIndex, { steered: true, raw }, undefined, "background")
+    .then((res) => res.measurements.instruments.geometry?.readings ?? {});
+}
+
+function _fetchUnitsHover(
+  nodeId: string,
+  rawIndex: number,
+  raw: boolean,
+): Promise<Record<string, AnyReadingJSON>> {
+  return cachedTokenReadout("units", nodeId, rawIndex, { steered: true, raw }, undefined, "background")
+    .then((res) => res.measurements.instruments.units?.readings ?? {});
 }
 
 function _fetchSaeHover(
   nodeId: string,
   rawIndex: number,
   raw: boolean,
-): Promise<SaeFeatureJSON[]> {
+): Promise<HoverReplay<SaeFeatureJSON[]>> {
   return cachedTokenReadout("sae", nodeId, rawIndex, {
     topK: resolveReadoutTopK(samplingState.return_top_k),
     steered: true,
     raw,
-  }, undefined, "background").then(
-    (res) => res.measurements.instruments.sae?.readout?.features ?? [],
-  );
+  }, undefined, "background").then((res) => ({
+    readout: res.measurements.instruments.sae?.readout?.features ?? [],
+    readings: res.measurements.instruments.sae?.readings ?? {},
+  }));
 }
 
-/** Begin showing one transcript token in the inspector. Loom-owned captures
- * land synchronously; a channel absent from the original generation may be
- * replayed after a short dwell, but replay results are not substituted for or
- * retained as original capture data. */
+/** Fold one hover replay's readings into the hovered token's, if it is still the one hovered. */
+function _addReplayed(key: string, readings: Record<string, AnyReadingJSON>): void {
+  if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+  tokenHoverState.replayedReadings = { ...(tokenHoverState.replayedReadings ?? {}), ...readings };
+}
+
+/** Begin showing one transcript token in the inspector. What the token's measurements keep lands
+ * synchronously (a live token's whole envelope; a generated row's scores and geometry shares and
+ * coordinates); the rest (the geometry readings and their layers, the lens chips and layer rows,
+ * the lens and SAE probes' readings, the SAE features) replays after a short dwell and fills only
+ * what the token's measurements did not keep. */
 export function beginTokenHover(
   token: TokenScore,
   nodeId: string | null | undefined,
@@ -309,22 +412,26 @@ export function beginTokenHover(
   _hoverFetchTimer = null;
 
   const raw = effectiveRawMode();
-  const rawIndex = token.rawIndex ?? null;
+  // A generated token replays at its raw decode index, a captured prompt token at its place in
+  // its node's capture (``promptIndex``): one address for every family's token readout.
+  const rawIndex = replayIndex(token);
   const modelKey = sessionState.info?.model_id ?? "unknown-model";
   const key = nodeId && rawIndex !== null
     ? _hoverTokenKey(nodeId, rawIndex, raw)
     : `live:${modelKey}:${nodeId ?? "none"}:${rawIndex ?? "none"}:${token.tokenId ?? "none"}`;
   const m = token.measurements;
-  const capturedLens = m?.instruments.lens?.readout;
-  const capturedSae = m?.instruments.sae?.readout;
+  // A generated row keeps no channel but its geometry shares and coordinates: no capture to draw.
+  const whole = wholeEnvelope(m);
+  const capturedLens = whole?.instruments.lens?.readout;
+  const capturedSae = whole?.instruments.sae?.readout;
   tokenHoverState.active = true;
   tokenHoverState.key = key;
   tokenHoverState.tokenText = token.text;
-  tokenHoverState.probeReadings = mergedReadings(m) ?? null;
+  tokenHoverState.probeReadings = mergedReadings(whole) ?? null;
   tokenHoverState.probes = m?.scores ?? token.probes ?? null;
   tokenHoverState.coordsByProbe = token.coordsByProbe ?? null;
-  tokenHoverState.perLayerScores =
-    m?.per_layer_scores ?? token.perLayerScores ?? null;
+  tokenHoverState.replayedReadings = null;
+  tokenHoverState.rowGeometry = whole === null ? rowGeometry(m) : null;
   tokenHoverState.lensReadout = null;
   tokenHoverState.lensAggregate = null;
   tokenHoverState.saeReadout = capturedSae?.features ?? null;
@@ -340,24 +447,50 @@ export function beginTokenHover(
   }
 
   if (!nodeId || rawIndex === null) return;
-  const needsLens = capturedLens === undefined &&
+  // A saved row keeps the lens chips without their layer rows: those replay.
+  const needsLens = capturedLens?.layers === undefined &&
     sessionState.info?.jlens_fitted === true &&
     instrumentFamily("lens")?.capabilities.token_readout === true;
   const needsSae = capturedSae === undefined && saeLoaded() &&
     instrumentFamily("sae")?.capabilities.token_readout === true;
+  // A generated row keeps each geometry share and coordinates: the readings and their layer strips
+  // replay. A lens or SAE probe's reading replays with its family's readout.
+  const capturedGeometry = m?.instruments.geometry?.readings;
+  const needsGeometry = capturedGeometry !== undefined &&
+    !(whole !== null && geometryTracesKept(whole.instruments.geometry?.readings)) &&
+    instrumentFamily("geometry")?.capabilities.token_readout === true;
+  // A generated row keeps a unit probe's value (its score) only: its reading (the depth the card
+  // tints by, the scale its tooltip names) replays.
+  const needsUnits = whole?.instruments.units === undefined &&
+    probeRack.active.some((name) => probeRack.entries.get(name)?.info.family === "units") &&
+    instrumentFamily("units")?.capabilities.token_readout === true;
   tokenHoverState.lensLoading = needsLens;
   tokenHoverState.saeLoading = needsSae;
-  if (!needsLens && !needsSae) return;
+  if (!needsLens && !needsSae && !needsGeometry && !needsUnits) return;
 
   _hoverFetchTimer = setTimeout(() => {
     _hoverFetchTimer = null;
+    if (needsGeometry) {
+      void _fetchGeometryHover(nodeId, rawIndex, raw)
+        .then((readings) => _addReplayed(key, readings))
+        // The strips stay empty; the captured values still show.
+        .catch(() => undefined);
+    }
+    if (needsUnits) {
+      void _fetchUnitsHover(nodeId, rawIndex, raw)
+        .then((readings) => _addReplayed(key, readings))
+        // The row's value still shows, untinted.
+        .catch(() => undefined);
+    }
     if (needsLens) {
       void _fetchLensHover(nodeId, rawIndex, raw)
-        .then((snapshot) => {
+        .then(({ readout: snapshot, readings }) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+          _addReplayed(key, readings);
           if (!snapshot) return;
           tokenHoverState.lensReadout = snapshot.readout;
-          tokenHoverState.lensAggregate = snapshot.aggregate;
+          // The captured chips stand; the replay fills only what the row did not keep.
+          if (tokenHoverState.lensAggregate === null) tokenHoverState.lensAggregate = snapshot.aggregate;
         })
         .catch((error) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;
@@ -374,8 +507,9 @@ export function beginTokenHover(
     }
     if (needsSae) {
       void _fetchSaeHover(nodeId, rawIndex, raw)
-        .then((features) => {
+        .then(({ readout: features, readings }) => {
           if (!tokenHoverState.active || tokenHoverState.key !== key) return;
+          _addReplayed(key, readings);
           tokenHoverState.saeReadout = features;
         })
         .catch((error) => {
@@ -412,11 +546,11 @@ export function endTokenHover(): void {
   }, 45);
 }
 
-export function lensReadoutForDisplay(): Record<string, [string, number][]> | null {
+export function lensReadoutForDisplay(): Record<string, LensReadoutPair[]> | null {
   return tokenHoverState.active ? tokenHoverState.lensReadout : lensState.readout;
 }
 
-export function lensAggregateForDisplay(): [string, number, number, number][] | null {
+export function lensAggregateForDisplay(): LensAggregateChip[] | null {
   return tokenHoverState.active ? tokenHoverState.lensAggregate : lensState.aggregate;
 }
 
@@ -424,18 +558,24 @@ export function saeReadoutForDisplay(): SaeFeatureJSON[] {
   return tokenHoverState.active ? (tokenHoverState.saeReadout ?? []) : saeState.readout;
 }
 
+/** The prepared SAE sources and the SAELens releases this model could fetch. Both come from the
+ *  one ``sources("sae")`` call, so the source picker discovers releases without a request of its
+ *  own (a picker that fetched again whenever its list came back empty looped without end). */
 export const saeSourceState: {
   sources: InstrumentSourceJSON[];
+  releases: SaeReleaseJSON[];
   loading: boolean;
   busy: boolean;
   error: string | null;
-} = $state({ sources: [], loading: false, busy: false, error: null });
+} = $state({ sources: [], releases: [], loading: false, busy: false, error: null });
 
 export async function refreshSaeSources(): Promise<void> {
   if (saeSourceState.loading) return;
   saeSourceState.loading = true;
   try {
-    saeSourceState.sources = (await apiInstruments.sources("sae")).sources;
+    const result = await apiInstruments.sources("sae");
+    saeSourceState.sources = result.sources;
+    saeSourceState.releases = (result.releases ?? []).filter((row) => row.source !== "local");
     saeSourceState.error = null;
   } catch (e) {
     saeSourceState.error = userFacingError(e, "Learned-feature sources could not be refreshed.");
@@ -662,9 +802,9 @@ export async function setLiveLens(enabled: boolean): Promise<void> {
 }
 
 export const lensFetch = createPreparationSlice("lens", "fetch", {
-  label: "J-lens fetch",
+  label: "Lens fetch",
   intervalMs: 1000,
-  successMessage: "J-lens active · live",
+  successMessage: "Lens fetched",
   onSettled: async () => {
     await refreshSession();
     await refreshLensSources();

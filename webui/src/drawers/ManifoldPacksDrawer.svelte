@@ -1,7 +1,5 @@
 <script lang="ts">
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import { slidingSelection } from "../lib/slidingSelection";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { Icon, IconButton, MorphText, Segmented } from "@stdlogits/ledger";
   // ManifoldPacksDrawer — local manifold catalog and HF search/install.
   //
   // Hosted search accepts only repositories with one immutable, provenance-
@@ -27,9 +25,12 @@
   import type { HostedManifoldPackInfo } from "../lib/runtime/contracts";
   import type { ManifoldInfo, RemoteManifoldInfo } from "../lib/types";
   import { manifoldUsage, manifoldUsageMessage } from "../lib/manifolds/selectors";
+  import "./manifold/form.css";
 
   type Tab = "installed" | "search";
 
+  let { params }: { params?: unknown } = $props();
+  const embedded = $derived((params as { embedded?: unknown } | null)?.embedded === true);
   let tab: Tab = $state("installed");
 
   // ----- search-tab state ----------------------------------------------
@@ -44,8 +45,6 @@
   const browserMode = runtimeClient.mode !== "http";
   const artifactAvailability = runtimeOperationAvailability("manifold_artifacts");
   const hfDiscoveryAvailable = !browserMode || artifactAvailability.available;
-  let installedTabButton: HTMLButtonElement | null = $state(null);
-  let searchTabButton: HTMLButtonElement | null = $state(null);
   let localPacks: HostedManifoldPackInfo[] = $state([]);
   let localPacksLoading = $state(false);
   let archiveBusy: string | null = $state(null);
@@ -277,27 +276,8 @@
     );
   }
 
-  function selectTab(next: Tab, focus = false): void {
+  function selectTab(next: Tab): void {
     tab = next;
-    if (!focus) return;
-    queueMicrotask(() => {
-      (next === "installed" ? installedTabButton : searchTabButton)?.focus();
-    });
-  }
-
-  function onTabKeydown(event: KeyboardEvent): void {
-    if (!hfDiscoveryAvailable) return;
-    let next: Tab | null = null;
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      next = tab === "installed" ? "search" : "installed";
-    } else if (event.key === "Home") {
-      next = "installed";
-    } else if (event.key === "End") {
-      next = "search";
-    }
-    if (next === null) return;
-    event.preventDefault();
-    selectTab(next, true);
   }
 
   // ----- installed-tab state -------------------------------------------
@@ -308,6 +288,18 @@
   function fitBadge(row: ManifoldInfo | RemoteManifoldInfo): string | null {
     if (row.fit_mode && row.fit_mode !== "authored") return row.fit_mode;
     return null;
+  }
+
+  // A row's depth strip: twelve cells down the ramp, each its depth's colour, filled when the pack
+  // is fitted for this model (the catalog says whether, not at which layers).
+  const DEPTH = Array.from({ length: 12 }, (_, i) => Math.round(100 - (i / 11) * 100));
+  function fitState(row: ManifoldInfo): { fitted: boolean; word: string; tip: string } {
+    const others = row.fitted_models.length - (row.fitted_for_session ? 1 : 0);
+    const elsewhere = others > 0 ? ` · fitted for ${others} other model${others === 1 ? "" : "s"}` : "";
+    if (row.fitted_for_session && row.stale) return { fitted: true, word: "stale", tip: `Fitted for this model, but stale: refit it${elsewhere}` };
+    if (row.fitted_for_session) return { fitted: true, word: "", tip: `Fitted for this model${elsewhere}` };
+    if (row.stale) return { fitted: false, word: "stale", tip: `Stale: refit it${elsewhere}` };
+    return { fitted: false, word: "not fitted", tip: `Not fitted for this model${elsewhere}` };
   }
 
   // The store keeps the local catalog hot — refresh on mount in case
@@ -322,59 +314,31 @@
   });
 </script>
 
-<div class="drawer-shell">
-  <header class="header">
-    <h2 class="title">Downloaded response controls</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
-  </header>
+<section class="mf-tool" class:dialog={!embedded} aria-label="Downloaded response controls">
+  {#if !embedded}
+    <header class="mf-head">
+      <h2 class="dw-title">Packs</h2>
+      <IconButton icon="close" label="Close" onclick={closeDrawer} />
+    </header>
+  {/if}
 
-  <div class="tabs" role="tablist" aria-label="Manifold pack views" use:slidingSelection>
-    <button
-      bind:this={installedTabButton}
-      id="packs-tab-installed"
-      type="button"
-      role="tab"
-      aria-selected={tab === "installed"}
-      aria-controls="packs-panel"
-      tabindex={tab === "installed" ? 0 : -1}
-      class:active={tab === "installed"}
-      onclick={() => selectTab("installed")}
-      onkeydown={onTabKeydown}
-    >Installed</button>
+  <div class="mf-sec-head views">
     {#if hfDiscoveryAvailable}
-      <button
-        bind:this={searchTabButton}
-        id="packs-tab-search"
-        type="button"
-        role="tab"
-        aria-selected={tab === "search"}
-        aria-controls="packs-panel"
-        tabindex={tab === "search" ? 0 : -1}
-        class:active={tab === "search"}
-        onclick={() => selectTab("search")}
-        onkeydown={onTabKeydown}
-      >Hugging Face</button>
+      <Segmented label="Manifold pack views" value={tab} onchange={(next) => selectTab(next)}
+        options={[{ value: "installed", label: "Installed" }, { value: "search", label: "Hugging Face" }]} />
     {/if}
+    <span class="meta catalog-count"><MorphText text={tab === "installed" ? `${steerRack.catalog.length} installed` : !query.trim() ? "" : `${searchResults.length} found`} /></span>
   </div>
 
-  <div
-    class="body"
-    id="packs-panel"
-    role="tabpanel"
-    aria-labelledby={tab === "installed" ? "packs-tab-installed" : "packs-tab-search"}
-  >
-    <p class="catalog-count"><MorphText text={tab === "installed" ? `${steerRack.catalog.length} installed manifolds` : searchResults === null ? "Search compatible manifolds" : `${searchResults.length} found`} /></p>
+  <div class="panel" id="packs-panel">
     {#if tab === "installed"}
       {#if browserMode}
-        <section class="archive-tools" aria-labelledby="archive-tools-title">
-          <div class="archive-heading">
-            <div>
-              <h2 id="archive-tools-title">Portable control files</h2>
-              <p>Checksums verify archive integrity, not the publisher’s identity.</p>
-            </div>
+        <section class="mf-sec" aria-labelledby="archive-tools-title">
+          <div class="mf-sec-head">
+            <h3 id="archive-tools-title" class="head" data-tip="Checksums verify archive integrity, not the publisher’s identity">Portable files</h3>
             {#if artifactAvailability.available}
-              <label class="file-action" class:disabled={archiveBusy !== null}>
-                <span><MorphText text={archiveBusy === "import" ? "verifying…" : "import pack"} /></span>
+              <label class="dw-quiet file-action" class:disabled={archiveBusy !== null}>
+                <MorphText text={archiveBusy === "import" ? "Verifying…" : "Import pack"} />
                 <input
                   type="file"
                   accept=".drowse,application/zip"
@@ -390,467 +354,144 @@
             {/if}
           </div>
           {#if !artifactAvailability.available}
-            <p class="muted">{artifactAvailability.reason}</p>
+            <p class="meta">{artifactAvailability.reason}</p>
           {:else if archiveProgress}
-            <p class="install-stage" aria-live="polite"><MorphText text={archiveProgress.split(": ")[0]} numbers={false} />{#if archiveProgress.includes(": ")} · {archiveProgress.slice(archiveProgress.indexOf(": ") + 2)}{/if}</p>
+            <p class="meta stage" aria-live="polite"><MorphText text={archiveProgress.split(": ")[0]} numbers={false} />{#if archiveProgress.includes(": ")} · {archiveProgress.slice(archiveProgress.indexOf(": ") + 2)}{/if}</p>
           {/if}
-          {#if artifactAvailability.available && archiveError}<p class="error" role="alert">{archiveError}</p>{/if}
+          {#if artifactAvailability.available && archiveError}<p class="mf-error" role="alert">{archiveError}</p>{/if}
           {#if artifactAvailability.available && pendingReplacement}
-            <div class="replace-warning" role="alert">
-              <span>This replaces the installed pack and its included templates. The current files stay in place until the replacement passes verification.</span>
-              <button type="button" disabled={archiveBusy !== null} onclick={() => void importArchive(pendingReplacement!, true)}>replace installed pack</button>
-              <button type="button" disabled={archiveBusy !== null} onclick={() => (pendingReplacement = null)}>keep current pack</button>
+            <div class="mf-wash" role="alert">
+              <p>This replaces the installed pack and its templates. The current files stay until the replacement passes verification.</p>
+              <div class="mf-actions">
+                <button type="button" class="dw-button" disabled={archiveBusy !== null} onclick={() => void importArchive(pendingReplacement!, true)}>Replace installed pack</button>
+                <button type="button" class="dw-text" disabled={archiveBusy !== null} onclick={() => (pendingReplacement = null)}>Keep current pack</button>
+              </div>
             </div>
           {/if}
           {#if artifactAvailability.available && localPacksLoading}
-            <p class="muted">loading portable packs…</p>
+            <div class="dw-blocks" role="status" aria-label="Loading portable packs"><i></i></div>
           {:else if artifactAvailability.available && localPacks.length > 0}
-            <ul class="archive-list" role="list">
-              {#each localPacks as pack (pack.id)}
-                <li>
-                  <div>
-                    <strong>{pack.namespace}/{pack.name}</strong>
-                    <span>{pack.source.repository ? `${pack.source.repository}@${pack.source.revision}` : pack.source.uri}</span>
-                    <span>Publisher unverified</span>
-                  </div>
-                  <div class="actions">
-                    <button type="button" disabled={archiveBusy !== null} onclick={() => void exportArchive(pack)}><MorphText text={archiveBusy === `export:${pack.id}` ? "Preparing…" : exportedPack === pack.id ? "Download started" : "export"} numbers={false} /></button>
+            <ul class="mf-rows" role="list">
+              {#each localPacks as pack, i (pack.id)}
+                <li class="mf-row stack rise" style:--i={i}>
+                  <span class="mf-id">
+                    <span class="mf-name">{pack.namespace}/{pack.name}</span>
+                    <span class="meta">{pack.source.repository ? `${pack.source.repository}@${pack.source.revision}` : pack.source.uri} · publisher unverified</span>
+                  </span>
+                  <span class="mf-end">
                     {#if confirmLocalDelete === pack.id}
-                      <span>Delete {pack.namespace}/{pack.name} from this device? Export a backup first if you want to keep it.</span>
-                      <button type="button" class="danger" disabled={archiveBusy !== null} onclick={() => void deleteArchive(pack)}>Delete pack</button>
-                      <button type="button" disabled={archiveBusy !== null} onclick={() => (confirmLocalDelete = null)}>cancel</button>
+                      <span class="meta" data-tip="Export a backup first if you want to keep it">Delete from this device?</span>
+                      <button type="button" class="dw-quiet" disabled={archiveBusy !== null} onclick={() => void deleteArchive(pack)}>Delete pack</button>
+                      <button type="button" class="dw-text" disabled={archiveBusy !== null} onclick={() => (confirmLocalDelete = null)}>Cancel</button>
                     {:else}
-                      <button type="button" disabled={archiveBusy !== null} onclick={() => (confirmLocalDelete = pack.id)}>delete</button>
+                      <button type="button" class="dw-text" disabled={archiveBusy !== null} onclick={() => void exportArchive(pack)}><MorphText text={archiveBusy === `export:${pack.id}` ? "Preparing…" : exportedPack === pack.id ? "Download started" : "Export"} numbers={false} /></button>
+                      <button type="button" class="dw-text" disabled={archiveBusy !== null} onclick={() => (confirmLocalDelete = pack.id)}>Delete</button>
                     {/if}
-                  </div>
+                  </span>
                 </li>
               {/each}
             </ul>
           {/if}
         </section>
       {/if}
-      {#if steerRack.loading && steerRack.catalog.length === 0}
-        <p class="muted">loading manifolds…</p>
-      {:else if steerRack.catalog.length === 0}
-        <p class="muted">
-          {artifactAvailability.available
-            ? browserMode
-              ? "No manifolds installed. Import a .drowse or search Hugging Face."
-              : "No manifolds installed. Search Hugging Face to find compatible sources."
-            : "No manifolds installed."}
-        </p>
-      {:else}
-        <ul class="rows" role="list">
-          {#each steerRack.catalog as m (selectorOf(m))}
-            {@const key = selectorOf(m)}
-            {@const badge = fitBadge(m)}
-            <li class="row" {...{ "aria-description": (m.description || key) }}>
-              <div class="meta">
-                <span class="row-name">{key}</span>
-                <span class="row-sub">
-                  {m.domain_label} · {m.node_count} nodes
-                  {#if badge}
-                    <span class="fit-badge fit-{badge}">{badge}</span>
-                  {/if}
-                  {#if m.fitted_for_session}
-                    <span class="fit-tag">fitted</span>
-                  {/if}
-                  {#if m.stale}
-                    <span class="stale">stale</span>
-                  {/if}
-                </span>
-              </div>
-            </li>
-          {/each}
-        </ul>
-      {/if}
-    {:else}
-      <div class="search">
-        <label class="search-label">
-          <span class="vh">search query</span>
-          <input
-            type="search"
-            placeholder="Search Hugging Face…"
-            aria-label="Search HF for drowse-manifold repos"
-            bind:value={query}
-            oninput={scheduleSearch}
-          />
-        </label>
-        {#if !query.trim()}
-          <p class="muted">Only public, browser-compatible Drowse packs appear here.</p>
-        {:else if searchLoading}
-          <p class="muted">searching…</p>
-        {:else if searchError}
-          <p class="error" role="alert">{searchError}</p>
-        {:else if searchResults.length === 0}
-          <p class="muted">No Hugging Face packs match “{query.trim()}”. Try a different search.</p>
+      <section class="mf-sec" aria-label="Installed manifolds">
+        {#if browserMode}<h3 class="head">Installed</h3>{/if}
+        {#if steerRack.loading && steerRack.catalog.length === 0}
+          <div class="dw-blocks" role="status" aria-label="Loading manifolds"><i></i><i></i><i></i></div>
+        {:else if steerRack.catalog.length === 0}
+          <p class="meta">
+            {artifactAvailability.available
+              ? browserMode
+                ? "Nothing installed yet. Import a .drowse or search Hugging Face."
+                : "Nothing installed yet. Search Hugging Face for a pack."
+              : "Nothing installed yet."}
+          </p>
         {:else}
-          <ul class="rows" role="list">
-            {#each searchResults as row (selectorOf(row))}
-              {@const target = selectorOf(row)}
-              {@const inFlight = installing === target}
-              {@const badge = fitBadge(row)}
-              <li class="row" {...{ "aria-description": (row.description || target) }}>
-                <div class="meta">
-                  <span class="row-name">{target}</span>
-                  <span class="row-sub">
-                    {row.domain_label} · {row.node_count} nodes
-                    {#if badge}
-                      <span class="fit-badge fit-{badge}">{badge}</span>
-                    {/if}
-                    {#if row.tensor_models.length > 0}
-                      <span class="hf-fit-count">
-                        · {row.tensor_models.length} fit{row.tensor_models.length === 1 ? "" : "s"}
-                      </span>
-                    {/if}
+          <ul class="mf-rows" role="list">
+            {#each steerRack.catalog as m, i (selectorOf(m))}
+              {@const key = selectorOf(m)}
+              {@const badge = fitBadge(m)}
+              {@const fit = fitState(m)}
+              <li class="mf-row stack rise" style:--i={i} {...{ "aria-description": (m.description || key) }}>
+                <span class="mf-id">
+                  <span class="mf-name">{key}</span>
+                  <span class="meta">{m.domain_label} · {m.node_count} {m.node_count === 1 ? "node" : "nodes"}{badge ? ` · ${badge}` : ""}</span>
+                </span>
+                <span class="mf-end">
+                  {#if fit.word}<span class="meta">{fit.word}</span>{/if}
+                  <span class="mf-depth" class:is-fitted={fit.fitted} class:is-stale={m.stale} role="img" aria-label={fit.tip} data-tip={fit.tip}>
+                    {#each DEPTH as p (p)}<i style:--p="{p}%"></i>{/each}
                   </span>
-                  {#if inFlight && installStage}
-                    <span class="install-stage" aria-live="polite"><MorphText text={installStage} /></span>
-                  {/if}
-                </div>
-                <div class="actions">
-                  <button
-                    type="button"
-                    class="act install"
-                    disabled={inFlight}
-                    onclick={() => void installRow(row)}
-                    {...{ "aria-description": (`install ${target}`) }}
-                  ><MorphText text={inFlight ? "…" : "install"} /></button>
-                </div>
+                </span>
               </li>
             {/each}
           </ul>
         {/if}
-      </div>
+      </section>
+    {:else}
+      <section class="mf-sec" aria-label="Search Hugging Face">
+        <label class="mf-search">
+          <Icon name="search" />
+          <span class="sr-only">Search query</span>
+          <input
+            type="search"
+            placeholder="Search Hugging Face"
+            aria-label="Search HF for drowse-manifold repos"
+            autocomplete="off"
+            spellcheck="false"
+            bind:value={query}
+            oninput={scheduleSearch}
+          />
+          {#if query}<button type="button" class="clear" aria-label="Clear the search" onclick={() => { query = ""; scheduleSearch(); }}><Icon name="close" /></button>{/if}
+        </label>
+        {#if !query.trim()}
+          <p class="meta">Public, browser-compatible drowse packs</p>
+        {:else if searchLoading}
+          <div class="dw-blocks" role="status" aria-label="Searching"><i></i><i></i></div>
+        {:else if searchError}
+          <p class="mf-error" role="alert">{searchError}</p>
+        {:else if searchResults.length === 0}
+          <p class="meta">Nothing matches “{query.trim()}”</p>
+        {:else}
+          <ul class="mf-rows" role="list">
+            {#each searchResults as row, i (selectorOf(row))}
+              {@const target = selectorOf(row)}
+              {@const inFlight = installing === target}
+              {@const badge = fitBadge(row)}
+              <li class="mf-row stack rise" style:--i={i} {...{ "aria-description": (row.description || target) }}>
+                <span class="mf-id">
+                  <span class="mf-name">{target}</span>
+                  <span class="meta">{row.domain_label} · {row.node_count} {row.node_count === 1 ? "node" : "nodes"}{badge ? ` · ${badge}` : ""}{row.tensor_models.length > 0 ? ` · ${row.tensor_models.length} fit${row.tensor_models.length === 1 ? "" : "s"}` : ""}</span>
+                  {#if inFlight && installStage}
+                    <span class="meta stage" aria-live="polite"><MorphText text={installStage} /></span>
+                  {/if}
+                </span>
+                <span class="mf-end">
+                  <button
+                    type="button"
+                    class="dw-quiet"
+                    disabled={inFlight}
+                    onclick={() => void installRow(row)}
+                    {...{ "aria-description": (`install ${target}`) }}
+                  ><MorphText text={inFlight ? "Installing…" : "Install"} /></button>
+                </span>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      </section>
     {/if}
   </div>
-</div>
+</section>
 
 <style>
-  /* Shared installed/search layout: compact tabs, catalog rows, and a
-   * purple install accent for the manifold family. */
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    color: var(--accent);
-    letter-spacing: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-
-  .tabs {
-    display: flex;
-    gap: 0;
-    padding: 0 var(--space-5);
-  }
-  .tabs button {
-    min-height: 44px;
-    background: transparent;
-    border: 0;
-    border-bottom: 2px solid transparent;
-    padding: var(--space-3) var(--space-4);
-    color: var(--fg-dim);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    transition:
-      color var(--dur) var(--ease-out),
-      border-color var(--dur) var(--ease-out);
-  }
-  .tabs button.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-  }
-  .tabs button:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-
-  .body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-height: 0;
-  }
-
-  .search {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  .search-label {
-    display: flex;
-    flex-direction: column;
-  }
-  .vh {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    margin: -1px;
-    padding: 0;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    border: 0;
-  }
-  .search input[type="search"] {
-    min-height: 44px;
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-  }
-  .search input[type="search"]:focus-visible {
-    outline: 1px solid var(--pillar-manifold);
-    outline-offset: -1px;
-  }
-
-  .muted {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    margin: 0;
-    line-height: 1.4;
-  }
-  .error {
-    margin: 0;
-    color: var(--accent-red);
-    font-size: var(--text-sm);
-    word-break: break-word;
-  }
-
-  .archive-tools {
-    display: grid;
-    gap: var(--space-3);
-    padding: var(--surface-padding);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--glass);
-  }
-  .archive-heading,
-  .archive-list li,
-  .replace-warning {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-  }
-  .archive-heading h2 {
-    margin: 0;
-    color: var(--fg-strong);
-    font-size: var(--text-sm);
-  }
-  .archive-heading p {
-    margin: var(--space-1) 0 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .file-action,
-  .archive-tools button {
-    display: inline-flex;
-    min-height: 44px;
-    align-items: center;
-    justify-content: center;
-    padding: var(--space-2) var(--space-3);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    color: var(--pillar-manifold);
-    background: var(--bg-elev);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    cursor: pointer;
-  }
-  .file-action:hover:not(.disabled),
-  .archive-tools button:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--pillar-manifold) 12%, var(--bg-elev));
-  }
-  .file-action.disabled,
-  .archive-tools button:disabled {
-    cursor: not-allowed;
-    opacity: var(--disabled-opacity);
-  }
-  .file-action input {
-    position: absolute;
-    inset: -1px;
-    cursor: pointer;
-    opacity: 0;
-  }
-  .file-action { position: relative; }
-  .file-action.disabled input { cursor: not-allowed; }
-  .file-action:focus-within,
-  .archive-tools button:focus-visible {
-    outline: 2px solid var(--pillar-manifold);
-    outline-offset: 2px;
-  }
-  .archive-list {
-    display: grid;
-    gap: var(--space-2);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-  }
-  .archive-list li {
-    padding-top: var(--space-3);
-    border-top: 1px solid var(--glass-line);
-  }
-  .archive-list li > div:first-child {
-    display: grid;
-    min-width: 0;
-    gap: var(--space-1);
-  }
-  .archive-list strong,
-  .archive-list span {
-    overflow-wrap: anywhere;
-  }
-  .archive-list span {
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-  }
-  .archive-tools button.danger {
-    color: var(--accent-red);
-  }
-  .replace-warning {
-    padding: var(--surface-padding);
-    border-radius: var(--radius);
-    color: var(--warning-ink);
-    background: var(--warning-bg);
-    font-size: var(--text-xs);
-  }
-
-  @media (max-width: 38rem) {
-    .archive-heading,
-    .archive-list li,
-    .replace-warning {
-      align-items: stretch;
-      flex-direction: column;
-    }
-  }
-
-  .rows {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .row {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    align-items: center;
-    gap: var(--space-3);
-    background: var(--surface-sheen), var(--bg-deep);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--surface-padding);
-    transition: background var(--dur) var(--ease-out);
-  }
-  .row:hover { background: color-mix(in srgb, var(--pillar-manifold) 8%, var(--bg-deep)); }
-  .meta {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .row-name {
-    color: var(--fg-strong);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .row-sub {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .fit-badge {
-    display: inline-block;
-    margin-inline-start: var(--space-2);
-    padding: 0 var(--space-2);
-    border-radius: var(--radius);
-    text-transform: uppercase;
-    font-size: var(--text-2xs);
-    letter-spacing: 0.04em;
-    border: 1px solid transparent;
-    color: var(--pillar-manifold);
-    background: color-mix(in srgb, var(--pillar-manifold) 12%, transparent);
-  }
-  .fit-spectral {
-    color: var(--accent);
-    background: var(--accent-subtle);
-  }
-  .fit-tag {
-    color: var(--accent-green);
-    margin-inline-start: var(--space-2);
-    font-size: var(--text-2xs);
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-  }
-  .stale {
-    color: var(--accent-yellow);
-    margin-inline-start: var(--space-2);
-  }
-  .hf-fit-count {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  /* Per-stage install narration — replaces the bare spinner while a
-     multi-hundred-megabyte HF pull lands. */
-  .install-stage {
-    display: block;
-    color: var(--accent);
-    font-size: var(--text-2xs);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .actions {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .act {
-    min-height: 44px;
-    background: var(--glass);
-    color: var(--pillar-manifold);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    cursor: pointer;
-    transition:
-      background var(--dur) var(--ease-out),
-      color var(--dur) var(--ease-out);
-  }
-  .act:hover:not(:disabled) {
-    background: color-mix(in srgb, var(--pillar-manifold) 12%, transparent);
-  }
-  .act:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
+  .views { align-items: center; min-height: 40px; max-width: 760px; }
+  .catalog-count { margin-left: auto; }
+  .panel { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s6); min-width: 0; max-width: 760px; }
+  .stage { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .file-action { position: relative; overflow: hidden; }
+  .file-action.disabled { opacity: 0.4; cursor: default; }
+  .file-action input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+  .file-action.disabled input { cursor: default; }
+  .file-action:focus-within { outline: 2px solid var(--ink); outline-offset: 2px; }
 </style>

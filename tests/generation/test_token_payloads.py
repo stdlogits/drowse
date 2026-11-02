@@ -6,6 +6,7 @@ import math
 
 import pytest
 
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from drowse.readout.types import ProbeReading
 from drowse.generation.token_payloads import TokenProbePayload
 
@@ -18,14 +19,13 @@ def test_from_geometry_shapes_scores_and_channels() -> None:
         coords_per_layer={3: (0.25,)},
     )
 
-    payload = TokenProbePayload.from_geometry({"toy": reading}, per_layer=True)
+    payload = TokenProbePayload.from_geometry({"toy": reading})
 
     assert payload.scores == {"toy": pytest.approx(0.25)}
     # Monitor readings land in the geometry family slot; ``all_readings`` is the
     # cross-family union.
     assert payload.geometry_readings == {"toy": reading}
     assert payload.all_readings == {"toy": reading}
-    assert payload.per_layer_scores == {"3": {"toy": pytest.approx(0.25)}}
 
     envelope = payload.to_token_payload(lens={"3": [("tok", 1.0)]})["measurements"]
     assert envelope["scope"] == "token"
@@ -47,13 +47,11 @@ def test_token_payload_builds_measurement_envelope() -> None:
         coords=(0.25,),
         coords_per_layer={3: (0.25,)},
     )
-    payload = TokenProbePayload.from_geometry(
-        {"toy": reading}, per_layer=True,
-    ).to_token_payload(
+    payload = TokenProbePayload.from_geometry({"toy": reading}).to_token_payload(
         lens={3: [(" tok", 0.25)]},
-        lens_aggregate=[(" tok", 0.2, 0.6, 0.1)],
+        lens_aggregate=[(" tok", 0.2, 0.6, 0.1, 42)],
         lens_token_ids={3: [42]},
-        lens_source="local:default",
+        lens_sources={"R": "local:default"},
         sae=[(7, 3.5, "feature seven", 5.0)],
         sae_source="saelens:release",
         sae_layer=3,
@@ -61,7 +59,7 @@ def test_token_payload_builds_measurement_envelope() -> None:
     )
 
     envelope = payload["measurements"]
-    assert envelope["version"] == 1
+    assert envelope["version"] == MEASUREMENTS_VERSION
     assert envelope["scope"] == "token"
     assert envelope["provenance"] == "captured"
     assert envelope["scores"] == {"toy": pytest.approx(0.25)}
@@ -80,12 +78,13 @@ def test_token_payload_builds_measurement_envelope() -> None:
             }],
             "aggregate": [{
                 "token": " tok",
+                "id": 42,
                 "strength": 0.2,
                 "com": 0.6,
                 "spread": 0.1,
             }],
         },
-        "binding": {"source": "local:default", "steering": "0.3 calm"},
+        "binding": {"sources": {"R": "local:default"}, "steering": "0.3 calm"},
     }
     assert instruments["sae"] == {
         "readout": {
@@ -127,13 +126,19 @@ def test_merge_readings_routes_to_named_family_slot() -> None:
         payload.merge_readings({"x": geo}, family="bogus")
 
 
-def test_from_geometry_leaves_per_layer_rows_off_unless_asked() -> None:
+def test_the_per_layer_trace_lives_in_the_reading_alone() -> None:
+    """There is no layer-major copy beside the readings: the envelope's
+    per-layer data is each reading's own trace."""
     reading = ProbeReading(
         fraction=0.4, nearest=[("calm", 0.2)], coords=(0.75,),
         coords_per_layer={2: (0.5,)},
     )
-    payload = TokenProbePayload.from_geometry({"toy": reading}, per_layer=False)
+    envelope = TokenProbePayload.from_geometry({"toy": reading}).to_token_payload()[
+        "measurements"
+    ]
 
-    assert payload.scores == {"toy": pytest.approx(0.75)}
-    assert payload.geometry_readings == {"toy": reading}
-    assert payload.per_layer_scores is None
+    assert envelope["scores"] == {"toy": pytest.approx(0.75)}
+    assert "per_layer_scores" not in envelope
+    assert envelope["instruments"]["geometry"]["readings"]["toy"]["coords_per_layer"] == {
+        "2": [0.5],
+    }

@@ -494,35 +494,37 @@ def test_sse_send_failure_keeps_lock_until_real_worker_exits() -> None:
 
 
 
-def test_outbound_queue_bounds_pending_thread_callbacks() -> None:
-    from drowse.server.ws_stream import _OutboundQueue, MAX_WS_OUTBOUND_EVENTS
-
-    async def scenario() -> None:
-        overflows: list[bool] = []
-        queue = _OutboundQueue[int](lambda: overflows.append(True))
-        for i in range(10_000):
-            queue.put(i)
-        await asyncio.sleep(0)
-        assert overflows == [True]
-        assert [await queue.get() for _ in range(MAX_WS_OUTBOUND_EVENTS)] == list(range(MAX_WS_OUTBOUND_EVENTS))
-        with pytest.raises(asyncio.TimeoutError):
-            await asyncio.wait_for(queue.get(), 0.01)
-        queue.close()
-    asyncio.run(scenario())
-
-
-def test_slow_tree_subscriber_is_disconnected() -> None:
+def test_slow_tree_subscriber_lags_and_resyncs() -> None:
+    """Regression: a reader behind on tree deltas was closed with 1013."""
     from drowse.events import LoomMutated
     from drowse.server.ws_stream import MAX_WS_OUTBOUND_EVENTS
 
     async def scenario() -> None:
         session = StubSession()
-        async with _socket(session, asyncio.Event()) as (_, outgoing, task):
-            for rev in range(MAX_WS_OUTBOUND_EVENTS + 10):
+        gate = asyncio.Event()
+        async with _socket(session, gate) as (_, outgoing, task):
+            total = MAX_WS_OUTBOUND_EVENTS + 10
+            for rev in range(total):
                 session.events.emit(LoomMutated(op="cast", rev=rev))
-            frame = await asyncio.wait_for(outgoing.get(), 2)
-            assert frame["type"] == "websocket.close" and frame["code"] == 1013
-            await asyncio.wait_for(task, 2)
+            await asyncio.sleep(0.05)
+            assert outgoing.empty() and not task.done()
+            gate.set()
+            revs: list[int] = []
+            async with asyncio.timeout(2):
+                while True:
+                    message = await outgoing.get()
+                    assert message["type"] == "websocket.send", message
+                    frame = json.loads(message["text"])
+                    if frame["type"] == "resync":
+                        break
+                    revs.append(frame["rev"])
+            assert revs == list(range(len(revs))) and len(revs) <= MAX_WS_OUTBOUND_EVENTS + 1
+            assert frame["dropped"] == total - len(revs)
+            # Live again: the next delta arrives as itself.
+            session.events.emit(LoomMutated(op="cast", rev=total))
+            frame = json.loads((await asyncio.wait_for(outgoing.get(), 2))["text"])
+            assert frame["type"] == "tree_mutated" and frame["rev"] == total
+            assert not task.done()
         assert not session.generation_state.is_stop_requested()
     asyncio.run(scenario())
 
@@ -552,13 +554,18 @@ def test_remote_serve_honors_key_precedence_and_transport_limit(monkeypatch: pyt
     import drowse.server as server
     import uvicorn
     from drowse.cli.main import main
-    from drowse.server.ws_stream import MAX_WS_MESSAGE_BYTES
+    from drowse.server.ws_stream import (
+        MAX_WS_MESSAGE_BYTES,
+        WS_PING_INTERVAL_SECONDS,
+        WS_PING_TIMEOUT_SECONDS,
+    )
     from tests.support.cli import install_fake_session
 
     captured: dict[str, Any] = {}
     monkeypatch.setenv("DROWSE_API_KEY", "env-secret")
     install_fake_session(monkeypatch)
     monkeypatch.setattr(serve, "enable_live_lens", lambda *args, **kwargs: None)
+    monkeypatch.setattr(serve, "select_s_lens", lambda *args, **kwargs: None)
     monkeypatch.setattr(server, "create_app", lambda *args, **kwargs: captured.update(kwargs))
     monkeypatch.setattr(uvicorn, "run", lambda *args, **kwargs: captured.update(kwargs))
     argv = ["serve", "model", "--host", "0.0.0.0", "--no-web"]
@@ -568,6 +575,8 @@ def test_remote_serve_honors_key_precedence_and_transport_limit(monkeypatch: pyt
     assert captured["api_key"] == (cli_key or "env-secret")
     assert captured["host"] == "0.0.0.0"
     assert captured["ws_max_size"] == MAX_WS_MESSAGE_BYTES
+    assert captured["ws_ping_interval"] == WS_PING_INTERVAL_SECONDS
+    assert captured["ws_ping_timeout"] is WS_PING_TIMEOUT_SECONDS
 
 
 def test_socket_lifecycles_release_subscriptions() -> None:
@@ -743,3 +752,68 @@ def test_http_send_failure_joins_stream_close_without_blocking_loop(path: str) -
                 await task
         assert closed.is_set() and not app.state.session_lock.locked()
     asyncio.run(scenario())
+
+
+def _stalled_reader_close_code(ping_timeout: float | None) -> int | None:
+    """Serve a socket that writes a backlog faster than its reader takes it, through uvicorn with
+    a short ping interval, and return the close code the reader saw (None: it read every frame)."""
+    import socket as socket_mod
+    import time
+
+    import uvicorn
+    from starlette.applications import Starlette
+    from starlette.routing import WebSocketRoute
+    from websockets.exceptions import ConnectionClosed
+    from websockets.sync.client import connect
+
+    frames, payload = 400, "x" * 32_768
+
+    async def flood(websocket: Any) -> None:
+        await websocket.accept()
+        for index in range(frames):
+            await websocket.send_text(json.dumps({"i": index, "p": payload}))
+        await websocket.send_text(json.dumps({"type": "done"}))
+        with suppress(Exception):
+            await websocket.receive_text()
+
+    with socket_mod.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    config = uvicorn.Config(
+        Starlette(routes=[WebSocketRoute("/ws", flood)]), host="127.0.0.1", port=port,
+        log_level="warning", ws_ping_interval=0.2, ws_ping_timeout=ping_timeout, lifespan="off",
+    )
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        deadline = time.monotonic() + 10
+        while not server.started and time.monotonic() < deadline:
+            time.sleep(0.02)
+        # The client's receive queue is tiny and it stops reading: the server's ping waits in the
+        # TCP stream behind the backlog, as it does behind a slow page's token frames.
+        with connect(
+            f"ws://127.0.0.1:{port}/ws", max_queue=1, max_size=None, ping_interval=None,
+            compression=None,
+        ) as ws:
+            time.sleep(2.0)
+            try:
+                while json.loads(ws.recv(timeout=10)).get("type") != "done":
+                    pass
+            except ConnectionClosed as closed:
+                return closed.rcvd.code if closed.rcvd is not None else 1006
+            return None
+    finally:
+        server.should_exit = True
+        thread.join(10)
+
+
+def test_a_reader_slower_than_its_stream_is_not_closed_by_keepalive() -> None:
+    """Regression: uvicorn's default keepalive closed a page reading slower than generation
+    (its ping waited behind the token backlog, the pong came late), so a live reply was recorded
+    ``cancelled`` about 40 s in.  The serve keepalive never times out a pong; the send timeout
+    is the one dead-peer rule."""
+    from drowse.server.ws_stream import WS_PING_TIMEOUT_SECONDS
+
+    assert WS_PING_TIMEOUT_SECONDS is None
+    assert _stalled_reader_close_code(WS_PING_TIMEOUT_SECONDS) is None

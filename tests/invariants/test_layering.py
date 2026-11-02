@@ -35,7 +35,7 @@ LAYERS: tuple[tuple[str, ...], ...] = (
     # (store.selectors), so the grammar sits above the store.
     ("steering", "steering.grammar", "steering.terms", "steering.triggers"),
     ("readout",),
-    ("lens", "sae"),
+    ("lens", "sae", "units"),
     ("steering.composer", "steering.hooks"),
     ("generation",),
     ("fit",),

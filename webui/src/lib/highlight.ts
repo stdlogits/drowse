@@ -72,17 +72,23 @@ export function highlightStyleFor(
 
 function probeHue(target: string) {
   const info = probeRack.entries.get(parseProbeTarget(target).base)?.info;
-  if (info?.family === "lens") return "surprise";
+  // A word as said is a probability (unsigned); as read, a signed footprint z.
+  if (info?.family === "lens") return info.namespace === "jlens" ? "surprise" : "signed";
   if (info?.family === "sae") return "sae";
   return highlightHue(target);
 }
 
-/** ``highlightStyleFor`` flattened to an inline ``style`` attribute. */
+/** ``highlightStyleFor`` flattened to an inline ``style`` attribute. A single tint also grows
+ *  2px up and down in its own colour (Ledger's marked token), so a run of tinted lines reads as
+ *  one wash; never sideways, where a translucent spread overlaps its neighbour's tint and paints
+ *  a darker seam between tokens (and an opaque one would cover the glyph before it). An empty
+ *  string means the token is not tinted. */
 export function highlightStyleString(t: TokenScore): string {
   const style = highlightStyleFor(t);
   const parts: string[] = [];
   if (style.backgroundColor) {
     parts.push(`background-color: ${style.backgroundColor}`);
+    parts.push(`box-shadow: 0 -2px 0 0 ${style.backgroundColor}, 0 2px 0 0 ${style.backgroundColor}`);
   }
   if (style.backgroundImage) {
     parts.push(`background-image: ${style.backgroundImage}`);

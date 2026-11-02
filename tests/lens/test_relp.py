@@ -1,14 +1,13 @@
-"""CPU tests for the RelP (R-lens) backward rules and the dual-name fit.
+"""CPU tests for the RelP (R-lens) rules and the R/J name and policy split.
 
-``lens/relp.py`` keeps the estimator's forward values bit-identical —
-custom autograd Functions return each module's own output untouched and
-only substitute the backward factor — while reading the Jacobian through
-the LRP-modified backward graph.  The sparse jlens toy (no RMSNorm /
-gated-MLP children) exercises the structural rejection; a dense
-llama-shaped toy defined here drives the detached backward factors, the
-first-forward self-verification, the reversible instance patching, and the
-``session.lens.fit`` name/policy separation (``local/default``
-beside ``local/relp``).
+``lens/relp.py`` names the rules (``RELP_RULES``); the transport estimator
+applies them per block (``rules="relp"``, checked map by map against the
+autograd oracle in ``test_lens_transport.py``).  Here: the rules as a
+derivative (the transport's MLP and norm maps against the oracle's patched
+autograd tangent), the oracle's patches themselves (forward values kept,
+modules restored), and the ``session.lens.fit`` name/policy separation
+(``local:r`` beside ``local:j``) through checkpoint, resume, promotion and
+the no-op proof.
 """
 
 from __future__ import annotations
@@ -16,22 +15,14 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
 import torch
-from torch import nn
 
 from drowse.cli.verbs.lens import lens_fit_is_noop
-from drowse.errors import RelpUnsupportedError
 from drowse.lens.jlens import JacobianLens
-from drowse.lens.relp import (
-    RELP_RULES,
-    _act_backward_factor,
-    _relp_norm_forward,
-    relp_backward_rules,
-)
+from drowse.lens.relp import HALF_RULE_BETA, RELP_RULES
 from drowse.base.source_registry import SourceRef
 from drowse.lens.key import LensKey
 from drowse.lens.store import (
@@ -46,12 +37,16 @@ from drowse.lens.store import (
     save_lens_checkpoint,
 )
 from drowse.lens.sources import LENS_SOURCES, list_lens_sources, use_lens_source
-from tests.support.jlens_toys import TOY_VOCAB, ToyCausalLM
+from drowse.lens.transport import linearize
+from drowse.model.blocks import model_spec
+from tests.support.blocks import tiny_dense_model
+from tests.support.jlens_toys import TOY_D
 from tests.support.lens import LENS_PROMPTS as _PROMPTS
 from tests.support.lens import LensHarness
+from tests.support.lens_oracle import RelpOracleError, relp_backward_rules
 
 _DENSE_MODEL_ID = "toy/relp-dense-model"
-DENSE_D = 6
+DENSE_D = TOY_D
 
 
 @pytest.fixture(autouse=True)
@@ -59,217 +54,88 @@ def _isolated_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
 
 
-# ---------------------------------------------------------------------------
-# Dense toy: llama-shaped blocks the RelP rules accept
-# ---------------------------------------------------------------------------
-
-
-class ToyRMSNorm(nn.Module):
-    """Llama-style plain-weight RMSNorm; class name is the RelP norm marker."""
-
-    def __init__(self, d: int, seed: int = 0) -> None:
-        super().__init__()
-        gen = torch.Generator().manual_seed(seed)
-        self.weight = nn.Parameter(1.0 + 0.1 * torch.randn(d, generator=gen))
-        self.variance_epsilon = 1e-6
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.weight * (
-            x
-            * torch.rsqrt(
-                x.pow(2).mean(-1, keepdim=True) + self.variance_epsilon
-            )
-        )
-
-
-class ToyGatedMLP(nn.Module):
-    """Standard gated MLP shape: gate/up d->2d, down 2d->d, SiLU gate.
-
-    The forward is exactly the canonical composition — the RelP rewrite
-    self-verifies against ``type(self).forward`` bit-for-bit.
-    """
-
-    def __init__(self, d: int, seed: int) -> None:
-        super().__init__()
-        gen = torch.Generator().manual_seed(seed)
-        self.gate_proj = nn.Linear(d, 2 * d, bias=False)
-        self.up_proj = nn.Linear(d, 2 * d, bias=False)
-        self.down_proj = nn.Linear(2 * d, d, bias=False)
-        with torch.no_grad():
-            for lin in (self.gate_proj, self.up_proj, self.down_proj):
-                lin.weight.copy_(
-                    torch.randn(lin.weight.shape, generator=gen) / d**0.5
-                )
-        self.act_fn = nn.SiLU()
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.down_proj(self.act_fn(self.gate_proj(x)) * self.up_proj(x))
-
-
-class DenseToyBlock(nn.Module):
-    """Residual block whose children mimic the llama decoder-layer shape."""
-
-    def __init__(self, d: int, seed: int) -> None:
-        super().__init__()
-        self.input_layernorm = ToyRMSNorm(d, seed=seed)
-        self.post_attention_layernorm = ToyRMSNorm(d, seed=seed + 1000)
-        self.mlp = ToyGatedMLP(d, seed=seed + 2000)
-
-    def forward(self, h: torch.Tensor) -> torch.Tensor:
-        h = h + 0.1 * self.input_layernorm(h)
-        return h + self.mlp(self.post_attention_layernorm(h))
-
-
-class _DenseDecoder(nn.Module):
-    def __init__(self, n_layers: int) -> None:
-        super().__init__()
-        gen = torch.Generator().manual_seed(199)
-        self.embed_tokens = nn.Embedding(TOY_VOCAB, DENSE_D)
-        with torch.no_grad():
-            self.embed_tokens.weight.copy_(
-                torch.randn(TOY_VOCAB, DENSE_D, generator=gen)
-            )
-        self.layers = nn.ModuleList(
-            DenseToyBlock(DENSE_D, seed=i) for i in range(n_layers)
-        )
-        self.norm = ToyRMSNorm(DENSE_D, seed=87)
-
-
-class DenseToyCausalLM(nn.Module):
-    def __init__(self, n_layers: int = 3) -> None:
-        super().__init__()
-        self.model = _DenseDecoder(n_layers)
-        self.lm_head = nn.Linear(DENSE_D, TOY_VOCAB, bias=False)
-        with torch.no_grad():
-            gen = torch.Generator().manual_seed(211)
-            self.lm_head.weight.copy_(
-                torch.randn(TOY_VOCAB, DENSE_D, generator=gen)
-            )
-        self.config = SimpleNamespace(model_type="llama")
-
-    def get_output_embeddings(self) -> nn.Module:
-        return self.lm_head
-
-    def forward(self, input_ids: torch.Tensor, use_cache: bool = False):
-        del use_cache
-        h = self.model.embed_tokens(input_ids)
-        for block in self.model.layers:
-            h = block(h)
-        return SimpleNamespace(logits=self.lm_head(self.model.norm(h)))
-
-
 def _DenseLensHarness(*, n_layers: int = 3) -> LensHarness:
-    """A lens harness on the RelP-compatible dense toy."""
-    model = DenseToyCausalLM(n_layers)
-    model.requires_grad_(False)  # replicate load_model's freeze
-    model.eval()
-    return LensHarness(model=model, model_id=_DENSE_MODEL_ID)
+    """A lens harness on the toy llama, under its own model id."""
+    return LensHarness(n_layers=n_layers, model_id=_DENSE_MODEL_ID)
 
 
 # ---------------------------------------------------------------------------
-# The detached backward factors
+# The rules as a derivative
 # ---------------------------------------------------------------------------
 
 
-def test_norm_ln_rule_matches_reference_detached_rsqrt() -> None:
-    norm = ToyRMSNorm(DENSE_D, seed=3)
-    gen = torch.Generator().manual_seed(7)
-    base = torch.randn(5, DENSE_D, generator=gen)
-    base[0, 3] = 0.0
-
-    x = base.clone().requires_grad_(True)
-    out = _relp_norm_forward(norm, x)
-    assert torch.equal(out.detach(), norm(base))  # forward untouched
-    (grad,) = torch.autograd.grad(out.sum(), x)
-
-    # LN-rule reference: the rsqrt denominator treated as a constant.
-    x_ref = base.clone().requires_grad_(True)
-    ref = norm.weight * (
-        x_ref
-        * torch.rsqrt(
-            x_ref.pow(2).mean(-1, keepdim=True) + norm.variance_epsilon
-        ).detach()
-    )
-    (ref_grad,) = torch.autograd.grad(ref.sum(), x_ref)
-
-    assert torch.allclose(grad, ref_grad, atol=1e-6)
-    # Division-free factor: the x = 0 coordinate keeps weight/rms, not 0.
-    assert grad[0, 3] != 0.0
+def test_relp_rules_record_the_three_rules() -> None:
+    assert RELP_RULES == {
+        "ln_rule": True, "identity_rule": True, "half_rule": True,
+        "half_rule_beta": HALF_RULE_BETA, "include_qk_norms": False,
+    }
+    assert lens_estimator_policy("R")["rules"] == RELP_RULES
+    assert lens_estimator_policy("S")["rules"] == RELP_RULES
+    assert lens_estimator_policy("J")["rules"] is None
+    assert lens_estimator_policy("K")["rules"] is None
 
 
-def test_act_factor_is_detached_sigmoid() -> None:
-    gen = torch.Generator().manual_seed(11)
-    x = torch.randn(64, generator=gen)
-    x[3] = 0.0
-    factor = _act_backward_factor(nn.SiLU(), x)
-    assert torch.equal(factor, torch.sigmoid(x.float()))
-    assert factor[3] == 0.5
+@pytest.mark.parametrize("family", ["llama", "gemma3_text"])
+def test_transport_mlp_and_norm_maps_follow_the_rules(family: str) -> None:
+    """Under ``relp`` the MLP's factors are β·φ(g)·u and β·act(g), and the
+    residual norms are diagonal; under ``standard`` they are act'(g)·u,
+    act(g) and the full norm Jacobian.  Checked on the oracle's patched
+    autograd tangent through one MLP (identity rule + half rule)."""
+    model = tiny_dense_model(family)
+    spec = model_spec(model)
+    block = spec.blocks[1]
+    ids = torch.arange(3, 13)
+    relp = linearize(spec, ids, rules="relp", skip_first=2)[1]
+    standard = linearize(spec, ids, rules="standard", skip_first=2)[1]
+    assert relp.attn_in.xhat is None and relp.mlp_in.xhat is None
+    assert standard.attn_in.xhat is not None and standard.mlp_in.xhat is not None
+    # Head norms keep their true derivative under both rule sets.
+    if relp.q_norm is not None:
+        assert relp.q_norm.xhat is not None
+
+    mlp = block.mlp
+    x = torch.randn(4, spec.d_model, dtype=torch.float64)
+    dx = torch.randn(4, spec.d_model, dtype=torch.float64)
+    blocks = [b.module for b in spec.blocks]
+    with relp_backward_rules(blocks), torch.enable_grad():
+        xr = x.clone().requires_grad_(True)
+        out = block.module.get_submodule("mlp")(xr)
+        (vjp,) = torch.autograd.grad(out, xr, grad_outputs=dx)
+    with torch.no_grad():
+        g, u = mlp.gate(x), mlp.up(x)
+        from drowse.model.blocks import activation, activation_factor
+
+        cg = HALF_RULE_BETA * activation_factor(mlp.act, g) * u
+        cu = HALF_RULE_BETA * activation(mlp.act, g)
+        gh = dx @ mlp.down.weight
+        expected = (cg * gh) @ mlp.gate.weight + (cu * gh) @ mlp.up.weight
+    assert torch.allclose(vjp, expected, atol=1e-10)
 
 
-# ---------------------------------------------------------------------------
-# Structural rejection, self-verification, and reversible patching
-# ---------------------------------------------------------------------------
+def test_oracle_patches_keep_forwards_and_restore_modules() -> None:
+    model = tiny_dense_model("llama")
+    blocks = [b.module for b in model_spec(model).blocks]
+    ids = torch.arange(3, 13)[None]
+    with torch.no_grad():
+        plain = model(ids).logits
+        with relp_backward_rules(blocks):
+            patched = model(ids).logits
+    assert torch.equal(plain, patched)
+    assert all("forward" not in module.__dict__ for module in model.modules())
 
 
-def test_relp_rules_reject_toy_without_dense_shape() -> None:
-    layers = list(ToyCausalLM().model.layers)
-    with pytest.raises(RelpUnsupportedError):
-        with relp_backward_rules(layers):
-            pass  # pragma: no cover - __enter__ must raise
-
-
-def test_relp_rules_forward_bitexact_and_gradients_differ() -> None:
-    blocks = [DenseToyBlock(DENSE_D, seed=i) for i in range(3)]
-    gen = torch.Generator().manual_seed(11)
-    base = torch.randn(1, 8, DENSE_D, generator=gen)
-
-    def _forward_and_grad() -> tuple[torch.Tensor, torch.Tensor]:
-        x = base.clone().requires_grad_(True)
-        h = x
-        for block in blocks:
-            h = block(h)
-        (grad,) = torch.autograd.grad(h.sum(), x)
-        return h.detach(), grad
-
-    vanilla_out, vanilla_grad = _forward_and_grad()
-    with relp_backward_rules(blocks):
-        relp_out, relp_grad = _forward_and_grad()
-    restored_out, restored_grad = _forward_and_grad()
-
-    assert torch.equal(relp_out, vanilla_out)
-    assert not torch.allclose(relp_grad, vanilla_grad)
-    assert torch.equal(restored_out, vanilla_out)
-    assert torch.equal(restored_grad, vanilla_grad)
-    assert all(
-        "forward" not in module.__dict__
-        for block in blocks
-        for module in block.modules()
-    )
-
-
-def test_deviant_gated_mlp_refused_on_first_forward() -> None:
-    class _ScaledGatedMLP(ToyGatedMLP):
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return 2.0 * super().forward(x)
-
-    block = DenseToyBlock(DENSE_D, seed=0)
-    block.mlp = _ScaledGatedMLP(DENSE_D, seed=5)
-    gen = torch.Generator().manual_seed(13)
-    x = torch.randn(1, 4, DENSE_D, generator=gen)
-    with relp_backward_rules([block]):
-        with pytest.raises(RelpUnsupportedError, match="canonical gated-MLP"):
-            block(x)
-
-
-def test_preexisting_instance_forward_refused_at_patch_time() -> None:
-    block = DenseToyBlock(DENSE_D, seed=0)
-    block.mlp.forward = lambda x: x  # instance-level override
-    with pytest.raises(RelpUnsupportedError, match="instance-level forward"):
-        with relp_backward_rules([block]):
-            pass  # pragma: no cover - __enter__ must raise
-    # The norms patched before the refusal were restored on the way out.
-    assert "forward" not in block.input_layernorm.__dict__
-    assert "forward" not in block.post_attention_layernorm.__dict__
+def test_oracle_refuses_a_preexisting_instance_forward() -> None:
+    model = tiny_dense_model("llama")
+    block = model_spec(model).blocks[0].module
+    mlp = block.mlp
+    object.__setattr__(mlp, "forward", lambda x: x)
+    try:
+        with pytest.raises(RelpOracleError, match="instance-level forward"):
+            with relp_backward_rules([block]):
+                pass
+    finally:
+        object.__delattr__(mlp, "forward")
+    assert all("forward" not in module.__dict__ for module in block.modules())
 
 
 # ---------------------------------------------------------------------------
@@ -308,13 +174,14 @@ def test_relp_fit_lands_beside_standard_and_switches() -> None:
     assert {"local:j", "local:r"} <= sources
 
     # save_lens activates the name it saved: the relp fit ran last.
-    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "output") == SourceRef("local", "r")
+    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "R") == SourceRef("local", "r")
 
     use_lens_source(_DENSE_MODEL_ID, "local:j")
-    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "output") == SourceRef("local", "j")
+    assert LENS_SOURCES.active(_DENSE_MODEL_ID, "R") == SourceRef("local", "j")
 
     with pytest.raises(ValueError, match="lens kind"):
         s.lens.fit(_PROMPTS, corpus_spec="test", kind="nonsense")
+    assert LensKey("R").relp and not LensKey("J").relp
 
 
 def test_relp_policy_never_resumes_standard_artifact() -> None:
@@ -350,7 +217,7 @@ def _interrupt_relp_fit_after(n: int, monkeypatch: pytest.MonkeyPatch) -> None:
     """Run a RelP fit that checkpoints every prompt and dies after ``n``."""
     import drowse.lens.fit as jlens_mod
 
-    real_fit = jlens_mod.fit_jacobian_lens
+    real_fit = jlens_mod.fit_lens
 
     def _interrupted(*args: Any, **kwargs: Any) -> Any:
         args = (*args[:2], list(args[2])[:n], *args[3:])
@@ -359,12 +226,12 @@ def _interrupt_relp_fit_after(n: int, monkeypatch: pytest.MonkeyPatch) -> None:
         real_fit(*args, **kwargs)
         raise RuntimeError("simulated interruption")
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", _interrupted)
+    monkeypatch.setattr(jlens_mod, "fit_lens", _interrupted)
     with pytest.raises(RuntimeError, match="simulated interruption"):
         _DenseLensHarness().lens.fit(
             _PROMPTS, corpus_spec="test", kind="R",
         )
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", real_fit)
+    monkeypatch.setattr(jlens_mod, "fit_lens", real_fit)
 
 
 def _forbid_estimator(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -374,7 +241,7 @@ def _forbid_estimator(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fail(*_args: Any, **_kwargs: Any) -> Any:
         raise AssertionError("a finished RelP fit must not refit or rewrite")
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", _fail)
+    monkeypatch.setattr(jlens_mod, "fit_lens", _fail)
     monkeypatch.setattr(lens_io, "_save_fp32_square_safetensors_atomic", _fail)
 
 
@@ -404,14 +271,14 @@ def test_interrupted_relp_fit_resumes_from_checkpoint(
     remove_lens(_DENSE_MODEL_ID, "r")
     _interrupt_relp_fit_after(2, monkeypatch)
 
-    real_fit = jlens_mod.fit_jacobian_lens
+    real_fit = jlens_mod.fit_lens
     consumed: list[int] = []
 
     def _counting(*args: Any, **kwargs: Any) -> Any:
         consumed.append(len(list(args[2])))
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", _counting)
+    monkeypatch.setattr(jlens_mod, "fit_lens", _counting)
     messages: list[str] = []
     resumed = _DenseLensHarness().lens.fit(
         _PROMPTS, corpus_spec="test", kind="R",
@@ -492,6 +359,7 @@ def test_cli_preflight_reports_finished_relp_fit(
     args = argparse.Namespace(
         force=False, model=_DENSE_MODEL_ID, quantize=None, device="cpu",
         seq_len=None, corpus=None, prompts=len(_PROMPTS), kind="r",
+        sites=("out", "mid"),
     )
     assert lens_fit_is_noop(args, None, hf_corpus=corpus)
     args.kind = "j"  # the standard fit has its own, absent, artifact
@@ -513,26 +381,30 @@ def test_lens_writers_bind_the_r_name_to_the_r_kind() -> None:
         save_lens(relp, _DENSE_MODEL_ID, prov, name="j")
     with pytest.raises(ValueError, match="local:r"):
         save_lens_checkpoint(
-            {0: torch.eye(DENSE_D)}, 1, DENSE_D, _DENSE_MODEL_ID, prov,
+            {"out": {0: torch.eye(DENSE_D)}}, 1, DENSE_D, _DENSE_MODEL_ID, prov,
             kind="J", name="r", consumed_prefix_sha256="1" * 64,
         )
 
 
 def test_fit_applies_the_relp_rules_for_an_r_kind() -> None:
-    """``fit_jacobian_lens(kind="R")`` equals the J fit under the rules."""
-    from drowse.lens.fit import fit_jacobian_lens
+    """``fit_lens(kind="R")`` takes the RelP derivative, ``"J"`` the true one:
+    the two differ, each matches the oracle under its own rules, and the
+    model's modules are untouched after."""
+    from drowse.lens.fit import fit_lens
+    from tests.support.lens_oracle import oracle_lens
 
     session = _DenseLensHarness()
     model = session.model
-    layers = list(session.layers)
     tokenizer = session.tokenizer
-    r_lens = fit_jacobian_lens(model, tokenizer, _PROMPTS[:2], layers, kind="R")
-    with relp_backward_rules(layers):
-        j_under_rules = fit_jacobian_lens(model, tokenizer, _PROMPTS[:2], layers)
-    j_lens = fit_jacobian_lens(model, tokenizer, _PROMPTS[:2], layers)
+    r_lens = fit_lens(model, tokenizer, _PROMPTS[:2], kind="R", sites=["out"]).lens
+    j_lens = fit_lens(model, tokenizer, _PROMPTS[:2], kind="J", sites=["out"]).lens
     assert r_lens.key == LensKey("R") and j_lens.key == LensKey("J")
+    rows = [tokenizer.encode(p) for p in _PROMPTS[:2]]
+    layers = {"out": r_lens.source_layers}
+    for kind, lens in (("R", r_lens), ("J", j_lens)):
+        ref = oracle_lens(model, rows, kind=kind, layers=layers, skip_first=16)
+        for layer in lens.source_layers:
+            assert torch.allclose(lens.jacobians[layer], ref["out"][layer], atol=1e-5)
     for layer in r_lens.source_layers:
-        assert torch.equal(r_lens.jacobians[layer], j_under_rules.jacobians[layer])
         assert not torch.allclose(r_lens.jacobians[layer], j_lens.jacobians[layer])
-    # The rules are scoped to the fit: the model's forward is unpatched after.
     assert all("forward" not in mod.__dict__ for mod in model.modules())

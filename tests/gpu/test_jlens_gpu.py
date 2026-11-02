@@ -1,9 +1,9 @@
 """GPU integration tests for the Jacobian lens on a real model.
 
-Micro-fit only (a handful of prompts at a large dim_batch) — enough to
-exercise the real backward path, the motor-regime sanity check, and a
-jlens steering atom end-to-end. Real lens quality needs `drowse lens fit`
-with ≥100 prompts; nothing here asserts readout *quality* beyond the
+Micro-fit only (a handful of prompts) — enough to exercise the real
+transport path at both sites, the motor-regime sanity check, and a jlens
+steering atom end-to-end. Real lens quality needs `drowse lens fit` over
+more documents; nothing here asserts readout *quality* beyond the
 late-layer identity.
 """
 
@@ -75,6 +75,7 @@ def test_micro_fit_shape(session: Any, micro_lens: Any) -> None:
     n_layers = len(session.layers)
     assert micro_lens.n_prompts == 2
     assert len(micro_lens.source_layers) == n_layers - 1
+    assert micro_lens.layers("mid") == list(range(n_layers))
     d = session.model_info["hidden_dim"]
     assert micro_lens.d_model == d
     for J in micro_lens.jacobians.values():
@@ -104,6 +105,8 @@ def test_jlens_steering_atom_generates(session: Any, micro_lens: Any) -> None:
         steering="0.5 jlens/ocean",
         sampling=SamplingConfig(max_tokens=16, seed=7),
         stateless=True,
+        # A thinking model (Qwen3) spends 16 tokens inside <think>: off.
+        thinking=False,
     )
     assert result.first.text
     assert "jlens/ocean" in (result.first.applied_steering or "")
@@ -120,6 +123,7 @@ def test_live_lens_does_not_break_static_steerable(session: Any, micro_lens: Any
             "Count to three.",
             sampling=SamplingConfig(max_tokens=8, seed=3),
             stateless=True,
+            thinking=False,
         )
         assert result.first.text
     finally:

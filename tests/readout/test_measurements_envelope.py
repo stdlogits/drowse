@@ -15,6 +15,7 @@ and NOT eight constant geometry fields.
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -26,7 +27,7 @@ from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.readout.measurements import (
     MEASUREMENTS_VERSION,
     build_measurements,
-    live_sources,
+    envelope_sources,
 )
 
 # The eight fields a synthesized ``ProbeReading`` used to ship for every
@@ -120,11 +121,10 @@ class TestTokenFrame:
             geometry_readings={"formal.casual": _geometry_reading()},
             lens_readings={"jlens/fake": _lens_reading()},
             sae_readings={"sae/548": _sae_reading()},
-            per_layer_scores={"12": {"formal.casual": 0.5}},
             lens_readout={12: [(" a", 0.78)], 18: [(" b", 0.6)]},
-            lens_aggregate=[(" a", 0.41, 0.31, 0.05)],
+            lens_aggregate=[(" a", 0.41, 0.31, 0.05, 7)],
             lens_token_ids={12: [5], 18: [7]},
-            lens_source="local:default",
+            lens_sources={"R": "local:default", "S": "rs-s"},
             sae_features=[(42, 3.5, "fruit", 121.1)],
             sae_source="saelens:scope",
             sae_layer=14,
@@ -135,10 +135,7 @@ class TestTokenFrame:
 
     def test_top_level_keys(self) -> None:
         env = self._envelope()
-        assert set(env) == {
-            "version", "scope", "provenance", "instruments",
-            "scores", "per_layer_scores",
-        }
+        assert set(env) == {"version", "scope", "provenance", "instruments", "scores"}
         assert env["version"] == MEASUREMENTS_VERSION
         assert env["scope"] == "token"
         assert env["provenance"] == "captured"
@@ -152,8 +149,9 @@ class TestTokenFrame:
 
     def test_bindings(self) -> None:
         inst = self._envelope()["instruments"]
+        # The S source is known but no slens/ reading came out: R only.
         assert inst["lens"]["binding"] == {
-            "source": "local:default", "steering": "0.3 formal.casual",
+            "sources": {"R": "local:default"}, "steering": "0.3 formal.casual",
         }
         assert inst["sae"]["binding"] == {
             "source": "saelens:scope",
@@ -186,7 +184,7 @@ class TestTokenFrame:
             "token", "id", "logprob",
         }
         assert set(readout["aggregate"][0]) == {
-            "token", "strength", "com", "spread",
+            "token", "id", "strength", "com", "spread",
         }
 
     def test_sae_readout_rows(self) -> None:
@@ -205,7 +203,7 @@ class TestDoneAggregate:
             geometry_readings={"formal.casual": _geometry_reading()},
             lens_readings={"jlens/fake": _lens_reading()},
             sae_readings={"sae/548": _sae_reading()},
-            lens_source="local:default",
+            lens_sources={"R": "local:default"},
             sae_source="saelens:scope",
             sae_layer=14,
             steering="0.3 formal.casual",
@@ -273,9 +271,9 @@ class TestReplayEnvelopes:
             scope="replay",
             provenance="replayed",
             lens_readout={12: [(" a", 0.78)]},
-            lens_aggregate=[(" a", 0.41, 0.31, 0.05)],
+            lens_aggregate=[(" a", 0.41, 0.31, 0.05, 7)],
             lens_token_ids={12: [5]},
-            lens_source="local:default",
+            lens_sources={"R": "local:default"},
             steering=None,
         )
         assert env is not None
@@ -284,7 +282,7 @@ class TestReplayEnvelopes:
         assert "lens" in env["instruments"]
         assert set(env["instruments"]["lens"]) == {"readout", "binding"}
         assert env["instruments"]["lens"]["binding"] == {
-            "source": "local:default", "steering": None,
+            "sources": {"R": "local:default"}, "steering": None,
         }
 
     def test_sae(self) -> None:
@@ -322,13 +320,13 @@ class TestReplayEnvelopes:
         )
         lens = LensInstrument(
             **lens_kwargs(replay=_canned_replay((
-            {0: [("a", 0.5, 7)]}, [("a", 0.5, 0.0, 0.0)],
+            {0: [("a", 0.5, 7)]}, [("a", 0.5, 0.0, 0.0, 7)], {},
         ))),
         )
         # No fitted lens on the stub: resolve a stand-in over one layer.
         lens._require = lambda: object()  # type: ignore[method-assign]
         lens.runtime.resolve_layers = lambda _lens, _layers: [0]  # type: ignore[method-assign]
-        sae = sae_instrument(session, replay=_canned_replay([(3, 1.5)]))
+        sae = sae_instrument(session, replay=_canned_replay(([(3, 1.5)], {})))
         make_resident(sae.runtime, layer=14)
         for instrument in (geometry, lens, sae):
             out = _token_readout(instrument, instrument.family)
@@ -393,32 +391,35 @@ class TestRejectedKnobs:
 
 
 # ---------------------------------------------------------------------------
-# The live source binding is one expression
+# The envelope source binding is one expression
 # ---------------------------------------------------------------------------
 
-class TestLiveSources:
-    """``live_sources`` is the one reading of the live lens / SAE configs into
-    the envelope's source fields (token rows, authored rows, aggregates)."""
+class TestEnvelopeSources:
+    """``envelope_sources`` is the one reading of the lens families' sources
+    and the live SAE config into the envelope's source fields (token rows,
+    authored rows, aggregates)."""
 
-    _LENS = {"source": "local:j", "layers": [0, 1]}
+    _LENS = {"R": "local:j", "S": "rs-s"}
     _SAE = {"source": "saelens:scope", "layer": 14}
 
-    def test_binds_both_live_readouts(self) -> None:
-        assert live_sources(self._LENS, self._SAE) == {
-            "lens_source": "local:j", "sae_source": "saelens:scope", "sae_layer": 14,
+    def test_binds_both_families(self) -> None:
+        assert envelope_sources(self._LENS, self._SAE) == {
+            "lens_sources": {"R": "local:j", "S": "rs-s"},
+            "sae_source": "saelens:scope", "sae_layer": 14,
         }
 
     def test_an_inactive_readout_binds_nothing(self) -> None:
-        assert live_sources(None, None) == {
-            "lens_source": None, "sae_source": None, "sae_layer": None,
+        assert envelope_sources(None, None) == {
+            "lens_sources": {}, "sae_source": None, "sae_layer": None,
         }
 
     def test_gates_each_family(self) -> None:
-        assert live_sources(self._LENS, self._SAE, lens=False) == {
-            "lens_source": None, "sae_source": "saelens:scope", "sae_layer": 14,
+        assert envelope_sources(self._LENS, self._SAE, lens=False) == {
+            "lens_sources": {}, "sae_source": "saelens:scope", "sae_layer": 14,
         }
-        assert live_sources(self._LENS, self._SAE, sae=False) == {
-            "lens_source": "local:j", "sae_source": None, "sae_layer": None,
+        assert envelope_sources(self._LENS, self._SAE, sae=False) == {
+            "lens_sources": {"R": "local:j", "S": "rs-s"},
+            "sae_source": None, "sae_layer": None,
         }
 
     def test_feeds_the_envelope_binding(self) -> None:
@@ -426,14 +427,243 @@ class TestLiveSources:
             scope="token",
             lens_readout={0: [("a", 0.5)]},
             sae_features=[(3, 1.5, None, None)],
-            **live_sources(self._LENS, self._SAE),
+            **envelope_sources(self._LENS, self._SAE),
         )
         assert env is not None
         lens, sae = env["instruments"].get("lens"), env["instruments"].get("sae")
         assert lens is not None and sae is not None
-        assert lens["binding"]["source"] == "local:j"
+        assert lens["binding"]["sources"] == {"R": "local:j"}
         binding = sae["binding"]
         assert (binding["source"], binding.get("layer")) == ("saelens:scope", 14)
+
+
+class TestLensFamilyAttribution:
+    """Regression: the lens channel's binding named only the R source, so an
+    ``slens/`` reading was attributed to the R lens (and to nothing with the
+    R live readout off).  Each family that produced data is named."""
+
+    @staticmethod
+    def _s_reading() -> ScalarReading:
+        return ScalarReading(
+            value=2.5,
+            unit="mean_footprint_z",
+            per_layer={0: 3.0, 9: 1.0},
+            depth=DepthSummary(center=(0.0,), spread=(0.0,), basis="footprint_z"),
+        )
+
+    def test_s_only(self) -> None:
+        env = build_measurements(
+            scope="aggregate",
+            lens_readings={"slens/owl": self._s_reading()},
+            lens_sources={"R": "rs-r", "S": "rs-s"},
+        )
+        assert env is not None
+        lens = env["instruments"].get("lens")
+        assert lens is not None
+        assert lens["binding"] == {"sources": {"S": "rs-s"}, "steering": None}
+
+    def test_mixed(self) -> None:
+        env = build_measurements(
+            scope="token",
+            lens_readings={"slens/owl": self._s_reading(), "jlens/fake": _lens_reading()},
+            lens_sources={"R": None, "S": "local:s"},
+        )
+        assert env is not None
+        lens = env["instruments"].get("lens")
+        assert lens is not None
+        assert lens["binding"]["sources"] == {"R": None, "S": "local:s"}
+
+    def test_an_unknown_lens_unit_is_a_broken_invariant(self) -> None:
+        with pytest.raises(ValueError, match="no lens family"):
+            build_measurements(
+                scope="token",
+                lens_readings={"x": ScalarReading(value=1.0, unit="raw_activation")},
+            )
+
+
+class TestUnitsChannel:
+    """The units channel: readings plus a source-less binding, nothing else."""
+
+    @staticmethod
+    def _reading() -> ScalarReading:
+        return ScalarReading(
+            value=-1.5,
+            unit="activation_over_scale",
+            per_layer={8: -1.5},
+            depth=DepthSummary(center=(0.25,), spread=(0.0,), basis="single_layer"),
+            meta={"unit": "neuron/L8n344", "activation": -0.75},
+        )
+
+    def test_channel_keys_and_scores(self) -> None:
+        env = build_measurements(
+            scope="aggregate",
+            units_readings={"neuron/L8n344": self._reading()},
+            steering="!head/L2h1",
+        )
+        assert env is not None
+        assert set(env["instruments"]) == {"units"}
+        channel = env["instruments"].get("units")
+        assert channel is not None
+        assert set(channel) == {"binding", "readings"}
+        assert channel["binding"] == {"source": None, "steering": "!head/L2h1"}
+        reading = channel["readings"]["neuron/L8n344"]
+        assert set(reading) == {"value", "unit", "per_layer", "depth", "meta"}
+        assert reading.get("meta") == {"unit": "neuron/L8n344", "activation": -0.75}
+        assert env.get("scores") == {"neuron/L8n344": -1.5}
+
+    def test_no_units_readings_no_channel(self) -> None:
+        env = build_measurements(scope="token", units_readings={})
+        assert env is None
+
+
+# ---------------------------------------------------------------------------
+# The loom token row's projection
+# ---------------------------------------------------------------------------
+
+class TestTokenRow:
+    """The persisted projections of a token envelope: a generated row keeps
+    what the transcript, the reply trace and the filter read per token
+    (``token_row_measurements``); a row nothing replays keeps every reading
+    whole with its traces (``summary_measurements``); a node keeps its
+    aggregate's summary (``aggregate_measurements``).  The inspector's
+    subspace coordinates are never kept."""
+
+    @staticmethod
+    def _envelope(scope: str = "token") -> Any:
+        geometry = _geometry_reading()
+        geometry.fraction_per_layer = {12: 0.123456789, 18: 0.5}
+        geometry.residual_per_layer = {12: 0.0, 18: 0.0}
+        geometry.subspace_coords_per_layer = {12: (0.1, 0.2), 18: (0.3, 0.4)}
+        geometry.assignment = [("formal", 0.987654321)]
+        token = scope == "token"
+        env = build_measurements(
+            scope=scope,
+            geometry_readings={"formal.casual": geometry},
+            lens_readings={"jlens/fake": _lens_reading()},
+            sae_readings={"sae/548": _sae_reading()},
+            lens_readout={12: [(" a", 0.78)], 18: [(" b", 0.6)]} if token else None,
+            lens_aggregate=[(" a", 0.41234567, 0.31, 0.05, 7)] if token else None,
+            lens_token_ids={12: [5], 18: [7]} if token else None,
+            lens_sources={"R": "local:default"},
+            sae_features=[(42, 3.5123456, "fruit", 121.1)] if token else None,
+            sae_source="saelens:scope",
+            sae_layer=14,
+            units_readings={"neuron/L8n344": TestUnitsChannel._reading()},
+            steering="0.3 formal.casual",
+        )
+        assert env is not None
+        return env
+
+    def test_a_generated_row_keeps_the_scores_and_each_share_and_coordinates(self) -> None:
+        from drowse.readout.measurements import ROW_GEOMETRY_KEYS, token_row_measurements
+
+        env = self._envelope()
+        row: Any = token_row_measurements(env)
+        assert set(row) == {"version", "scope", "provenance", "instruments", "scores"}
+        assert (row["version"], row["scope"], row["provenance"]) == (2, "token", "captured")
+        # Every family's per-token value is its scores entry; only geometry
+        # keeps a reading, and only what the tint and the trace read.
+        assert set(row["instruments"]) == {"geometry"}
+        reading = row["instruments"]["geometry"]["readings"]["formal.casual"]
+        assert tuple(reading) == ROW_GEOMETRY_KEYS
+        assert reading == {"fraction": 0.42, "coords": [0.61, -0.2]}
+        assert row["scores"] == env["scores"]
+        assert set(row["scores"]) == {"formal.casual", "jlens/fake", "sae/548", "neuron/L8n344"}
+
+    def test_a_row_without_geometry_keeps_its_scores(self) -> None:
+        from drowse.readout.measurements import token_row_measurements
+
+        env = build_measurements(scope="token", lens_readings={"jlens/fake": _lens_reading()},
+                                 lens_sources={"R": "local:default"})
+        assert env is not None
+        row: Any = token_row_measurements(env)
+        assert row["instruments"] == {} and row["scores"] == {"jlens/fake": 0.0125}
+
+    def test_a_row_kept_whole_has_every_reading_and_its_traces(self) -> None:
+        from drowse.readout.measurements import (
+            GEOMETRY_SUMMARY_KEYS,
+            GEOMETRY_TRACE_KEYS,
+            summary_measurements,
+        )
+
+        row: Any = summary_measurements(self._envelope(), per_layer=True)
+        assert set(row) == {"version", "scope", "provenance", "instruments", "scores"}
+        inst = row["instruments"]
+        assert set(inst) == {"geometry", "lens", "sae", "units"}
+        reading = inst["geometry"]["readings"]["formal.casual"]
+        assert set(reading) == set(GEOMETRY_SUMMARY_KEYS) | set(GEOMETRY_TRACE_KEYS)
+        assert reading.get("fraction_per_layer") == {"12": 0.123457, "18": 0.5}
+        assert reading.get("coords_per_layer") == {"12": [0.5, -0.1], "18": [0.7, -0.3]}
+        assert set(inst["lens"]["readings"]["jlens/fake"]) == {
+            "value", "unit", "per_layer", "depth",
+        }
+        readout = inst["lens"]["readout"]
+        assert [layer["layer"] for layer in readout.get("layers", [])] == [12, 18]
+        assert readout.get("layers", [])[0]["tokens"][0]["logprob"] == float(
+            f"{math.log(0.78):.6g}",
+        )
+        assert set(inst["units"]["readings"]["neuron/L8n344"]) == {
+            "value", "unit", "per_layer", "depth", "meta",
+        }
+        assert inst["lens"]["binding"] == {
+            "sources": {"R": "local:default"}, "steering": "0.3 formal.casual",
+        }
+        assert inst["sae"]["binding"]["layer"] == 14
+
+    def test_floats_round_to_row_digits(self) -> None:
+        from drowse.readout.measurements import (
+            READING_DIGITS,
+            summary_measurements,
+            token_row_measurements,
+        )
+
+        assert READING_DIGITS == 6
+        whole: Any = summary_measurements(self._envelope(), per_layer=False)
+        inst = whole["instruments"]
+        reading = inst["geometry"]["readings"]["formal.casual"]
+        assert reading["assignment"] == [["formal", 0.987654]]
+        assert reading["nearest"] == [["formal", 1.25]]
+        assert inst["lens"]["readout"]["aggregate"][0]["strength"] == 0.412346
+        assert inst["sae"]["readout"]["features"][0]["activation"] == 3.51235
+        assert inst["units"]["readings"]["neuron/L8n344"].get("meta") == {
+            "unit": "neuron/L8n344", "activation": -0.75,
+        }
+        geometry = _geometry_reading()
+        geometry.fraction = 0.123456789
+        geometry.coords = (3.2e-5 + 1.23456789e-9, -0.987654321)
+        env = build_measurements(scope="token", geometry_readings={"p": geometry})
+        assert env is not None
+        row: Any = token_row_measurements(env)
+        assert row["instruments"]["geometry"]["readings"]["p"] == {
+            "fraction": 0.123457, "coords": [3.20012e-05, -0.987654],
+        }
+
+    def test_a_node_keeps_its_aggregate_summary_without_scores(self) -> None:
+        from drowse.readout.measurements import GEOMETRY_SUMMARY_KEYS, aggregate_measurements
+
+        env = self._envelope("aggregate")
+        node: Any = aggregate_measurements(env)
+        assert set(node) == {"version", "scope", "provenance", "instruments"}
+        assert node["scope"] == "aggregate"
+        assert set(node["instruments"]["geometry"]["readings"]["formal.casual"]) == set(
+            GEOMETRY_SUMMARY_KEYS,
+        )
+        # A lens probe keeps its band and depth: the rack's pin draws them.
+        assert node["instruments"]["lens"]["readings"]["jlens/fake"]["per_layer"] == {
+            "12": 0.01, "18": 0.015,
+        }
+
+    def test_the_live_frame_keeps_the_whole_envelope(self) -> None:
+        """The projections copy: the token frame's envelope is untouched."""
+        from drowse.readout.measurements import summary_measurements, token_row_measurements
+
+        env = self._envelope()
+        before = repr(env)
+        token_row_measurements(env)
+        summary_measurements(env, per_layer=True)
+        assert repr(env) == before
+        reading = env["instruments"]["geometry"]["readings"]["formal.casual"]
+        assert reading.get("subspace_coords_per_layer") == {"12": [0.1, 0.2], "18": [0.3, 0.4]}
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +684,32 @@ def test_capability_table_covers_every_family(make_tiny_session: Any) -> None:
 
     session = make_tiny_session(warm=False)
     assert set(CAPABILITIES) == set(session.instruments)
+
+
+def test_a_token_anatomy_rides_a_replay_envelope_only() -> None:
+    """The anatomy key set, pinned: the record sits beside ``instruments`` on
+    a replay envelope (which it alone may fill) and nowhere else."""
+    from drowse.loom.node_replay import token_anatomy_record
+
+    record = token_anatomy_record(
+        raw_index=0, token_id=1, token="a", position=3, prompt_length=4,
+        probability=0.5, sources={"R": "local:r", "S": None}, steering=None,
+        layers=[], units=[], units_absent="no R-family lens", units_scale=None,
+        patterns=None, context=None,
+    )
+    assert set(record) == {
+        "token", "binding", "layers", "units", "units_absent", "units_scale", "patterns",
+        "context",
+    }
+    assert set(record["token"]) == {
+        "raw_index", "token_id", "token", "position", "prompt_length", "probability",
+    }
+    envelope = build_measurements(scope="replay", provenance="replayed", anatomy=record)
+    assert envelope is not None
+    assert set(envelope) == {"version", "scope", "provenance", "instruments", "anatomy"}
+    assert envelope["instruments"] == {} and envelope.get("anatomy") == record
+    with pytest.raises(ValueError, match="replay envelope only"):
+        build_measurements(scope="token", anatomy=record)
 
 
 if __name__ == "__main__":  # pragma: no cover - convenience

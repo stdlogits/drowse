@@ -855,9 +855,10 @@ class SaeInstrument:
         Rebuilds the forward that produced the token (under the node's
         recorded steering when ``apply_steering``; ``raw`` selects the flat
         render) and reads the top-``top_k`` features at the resident hook
-        layer.  ``layers`` is **rejected**, not ignored: the SAE reads its
-        ONE resident hook layer, so a layer selection is a request this
-        family cannot honor.
+        layer, and the attached ``sae/<id>`` probes' readings from the same
+        encode (a loom row keeps only their values).  ``layers`` is
+        **rejected**, not ignored: the SAE reads its ONE resident hook layer,
+        so a layer selection is a request this family cannot honor.
         """
         from drowse.readout.measurements import build_measurements
 
@@ -872,15 +873,18 @@ class SaeInstrument:
         if not 1 <= k <= min(resident.width, 256):
             raise RequestError(f"top_k must be in [1, {min(resident.width, 256)}]")
 
-        def read(hidden: dict[int, torch.Tensor]) -> list[tuple[int, float]]:
+        def read(
+            hidden: dict[int, torch.Tensor],
+        ) -> tuple[list[tuple[int, float]], dict[str, ScalarReading]]:
             acts = self.runtime.encode(hidden[layer])
             values, indices = torch.topk(acts, k=k)
-            return [
+            top = [
                 (int(idx), float(value))
                 for value, idx in zip(values.cpu(), indices.cpu())
             ]
+            return top, self.score_probes_from_activations(acts)
 
-        token, top = self._replay(
+        token, (top, probe_readings) = self._replay(
             node_id, raw_index, layers=[layer], read=read,
             apply_steering=apply_steering, raw=raw,
             label="session.sae.token_readout",
@@ -892,6 +896,7 @@ class SaeInstrument:
                 (fid, activation, self.runtime.label(fid), self.runtime.max_act(fid))
                 for fid, activation in top
             ],
+            sae_readings=probe_readings or None,
             sae_source=self.active_source,
             sae_layer=layer,
             steering=token.steering,

@@ -1,15 +1,8 @@
 <script lang="ts">
-  // Single heatmap cell — a colored square keyed by a score and a
-  // saturation ``scale`` (the value at which the ramp is full).
-  //
-  // Used by the Correlation matrix (cosine similarity per probe pair)
-  // and by the click-token drilldown drawer (per-layer × per-probe
-  // grid for a single token). Unlike translucent token highlighting,
-  // matrix cells composite the same green/red ontology into a visible
-  // neutral base: weak and zero readings must remain legible as data marks.
-  // Cosine grids leave ``scale`` at its ``HIGHLIGHT_SAT`` default ([-1, 1]
-  // data); probe-coordinate grids pass a per-probe node-coordinate extent
-  // so the cells aren't pinned full from coords that run well past ±1.
+  // One heatmap cell: a square whose fill is a score read against ``scale`` (the value at which
+  // the ramp is full). Used by the correlation and compare matrices and the per-layer strips. A
+  // positive score is the depth accent mixed over the wash2 base in oklch; a negative one is ink
+  // mixed over it in oklab (a grey's mix), so weak and zero readings stay legible as marks.
 
   import { HIGHLIGHT_SAT } from "../tokens";
 
@@ -25,8 +18,8 @@
     /** Optional accessible label override.  When omitted, the value is
      * formatted to 3 decimals. */
     title?: string;
-    /** Optional semantic hues. Signed probe cells use the green/red
-     * defaults; logit-space callers pass the J-LENS family blue. */
+    /** The fills a positive and a negative score mix toward (the depth accent and ink by
+     * default; a caller may pass another depth's colour). */
     positiveColor?: string;
     negativeColor?: string;
     /** Keyboard-selected state supplied by a LayerStrip. */
@@ -43,8 +36,8 @@
     scale = HIGHLIGHT_SAT,
     size = 14,
     title,
-    positiveColor = "var(--layer-cell-positive)",
-    negativeColor = "var(--layer-cell-negative)",
+    positiveColor = "var(--tint)",
+    negativeColor = "var(--ink3)",
     active = false,
     showValue = false,
   }: Props = $props();
@@ -58,21 +51,18 @@
     return Math.max(-1, Math.min(1, (value as number) / safeScale));
   });
   const bg = $derived.by(() => {
-    if (isNull) return "var(--layer-cell-empty)";
+    if (isNull) return "var(--wash)";
     const t = normalized;
-    if (Math.abs(t) < 1e-9) return "var(--layer-cell-neutral)";
-
-    // The full-scale endpoints remain >3:1 from the neutral cell as well as
-    // from the card. Magnitude therefore changes lightness, not hue alone —
-    // important for low-contrast displays and color-vision differences.
-    const hue = t > 0 ? positiveColor : negativeColor;
-    const mix = 15 + Math.abs(t) * 85;
-    return `color-mix(in srgb, var(--layer-cell-neutral) ${100 - mix}%, ${hue} ${mix}%)`;
+    if (Math.abs(t) < 1e-9) return "var(--wash2)";
+    // Magnitude moves lightness as well as hue, so the cells read on low-contrast screens and
+    // without colour vision.
+    const mix = Math.round(15 + Math.abs(t) * 85);
+    return t > 0
+      ? `color-mix(in oklch, ${positiveColor} ${mix}%, var(--wash2))`
+      : `color-mix(in oklab, ${negativeColor} ${mix}%, var(--wash2))`;
   });
   const textColor = $derived(
-    !isNull && Math.abs(normalized) >= 0.55
-      ? "var(--text-on-accent)"
-      : "var(--fg)",
+    !isNull && Math.abs(normalized) >= 0.55 ? "var(--paper)" : "var(--ink)",
   );
   const tip = $derived(
     title ?? (isNull ? "-" : (value as number).toFixed(3)),
@@ -99,17 +89,12 @@
     align-items: center;
     justify-content: center;
     cursor: default;
-    font-size: var(--text-2xs);
-    color: var(--fg);
-    box-sizing: border-box;
-    border: 0;
-    border-radius: var(--data-mark-radius);
+    font: 500 10px/1 var(--text);
+    font-variant-numeric: tabular-nums;
+    border-radius: 2px;
+    transition: background-color var(--fast) var(--ease);
   }
   .cell.active {
-    box-shadow: 0 0 0 2px var(--focus-ring);
-  }
-  .t {
-    font-variant-numeric: tabular-nums;
-    text-shadow: var(--shadow-data-label);
+    box-shadow: 0 0 0 2px var(--ink);
   }
 </style>

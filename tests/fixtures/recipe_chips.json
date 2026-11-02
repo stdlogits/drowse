@@ -1,0 +1,1448 @@
+{
+  "about": "Recipe chips and the server's grammar. cases: a rack, the expression its chips write (format_expr(parse_expr(expression)) == expression: every ablation spelled as the server spells it, numbers as %g, a trigger as its canonical clause), and that expression's validate parts, which the chips rebuild from: every kind a chip holds (pushes, positions, partial and signed removals, signed strengths, layer clauses, the five phases, @first:N and @after:N, probe gates on any phase, projections). readOnly: recipes from elsewhere that stay one read-only chip, with a word of the reason. catalog: the manifolds both use. Python: tests/web/test_recipe_chips.py; node: webui/scripts/recipe-chips.test.mjs.",
+  "catalog": [
+    {
+      "namespace": "default",
+      "name": "verbose.concise",
+      "fit_mode": "pca",
+      "resolved_fit_mode": "pca",
+      "node_count": 2,
+      "node_labels": [
+        "verbose",
+        "concise"
+      ],
+      "node_coords": [
+        [
+          1
+        ],
+        [
+          -1
+        ]
+      ]
+    },
+    {
+      "namespace": "default",
+      "name": "calm.anxious",
+      "fit_mode": "pca",
+      "resolved_fit_mode": "pca",
+      "node_count": 2,
+      "node_labels": [
+        "calm",
+        "anxious"
+      ],
+      "node_coords": [
+        [
+          1
+        ],
+        [
+          -1
+        ]
+      ]
+    },
+    {
+      "namespace": "default",
+      "name": "emotions",
+      "fit_mode": "spectral",
+      "resolved_fit_mode": "spectral",
+      "node_count": 2,
+      "node_labels": [
+        "wonder",
+        "dread"
+      ],
+      "node_coords": [
+        [
+          0.3,
+          0.8
+        ],
+        [
+          -0.5,
+          -0.2
+        ]
+      ]
+    },
+    {
+      "namespace": "default",
+      "name": "months_loop",
+      "fit_mode": "authored",
+      "resolved_fit_mode": null,
+      "node_count": 12,
+      "node_labels": [],
+      "node_coords": []
+    }
+  ],
+  "cases": [
+    {
+      "name": "every full ablation is written bare",
+      "subspaceAlong": 1,
+      "rack": [
+        {
+          "name": "default/verbose.concise",
+          "mode": "subspace",
+          "ablate": true,
+          "coords": [],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "jlens/storm",
+          "mode": "jlens",
+          "ablate": true,
+          "alpha": 1,
+          "trigger": "BOTH",
+          "enabled": true,
+          "layers": [
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        },
+        {
+          "name": "slens/#12",
+          "mode": "slens",
+          "ablate": true,
+          "alpha": 1,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "sae/7",
+          "mode": "sae",
+          "ablate": true,
+          "alpha": 1,
+          "trigger": "RESPONSE",
+          "enabled": true
+        },
+        {
+          "name": "neuron/L8n344",
+          "mode": "unit",
+          "ablate": true,
+          "alpha": 1,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "head/L20h3",
+          "mode": "unit",
+          "ablate": true,
+          "alpha": 1,
+          "trigger": "BOTH",
+          "enabled": true
+        }
+      ],
+      "expression": "!default/verbose.concise + !jlens/storm{20-30} + !slens/#12 + !sae/7@response + !neuron/L8n344 + !head/L20h3",
+      "parts": [
+        {
+          "text": "!default/verbose.concise",
+          "op": "ablate",
+          "target": "default/verbose.concise",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "!jlens/storm{20-30}",
+          "op": "ablate",
+          "target": "jlens/storm",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": [
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ],
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "!slens/#12",
+          "op": "ablate",
+          "target": "slens/#12",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "!sae/7@response",
+          "op": "ablate",
+          "target": "sae/7",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "response",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "!neuron/L8n344",
+          "op": "ablate",
+          "target": "neuron/L8n344",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "!head/L20h3",
+          "op": "ablate",
+          "target": "head/L20h3",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "a partial ablation writes its strength",
+      "subspaceAlong": 0.5,
+      "rack": [
+        {
+          "name": "default/verbose.concise",
+          "mode": "subspace",
+          "ablate": true,
+          "coords": [],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BEFORE",
+          "enabled": true,
+          "layers": [
+            3,
+            4,
+            5
+          ]
+        },
+        {
+          "name": "jlens/storm",
+          "mode": "jlens",
+          "ablate": true,
+          "alpha": 0.25,
+          "trigger": "BOTH",
+          "enabled": true,
+          "layers": "workspace"
+        },
+        {
+          "name": "slens/tower",
+          "mode": "slens",
+          "ablate": true,
+          "alpha": 0.5,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "sae/7",
+          "mode": "sae",
+          "ablate": true,
+          "alpha": 0.75,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "head/L20h3",
+          "mode": "unit",
+          "ablate": true,
+          "alpha": 0.5,
+          "trigger": "RESPONSE",
+          "enabled": true
+        }
+      ],
+      "expression": "0.5 !default/verbose.concise{3-5}@before + 0.25 !jlens/storm{workspace} + 0.5 !slens/tower + 0.75 !sae/7 + 0.5 !head/L20h3@response",
+      "parts": [
+        {
+          "text": "0.5 !default/verbose.concise{3-5}@before",
+          "op": "ablate",
+          "target": "default/verbose.concise",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": [
+            3,
+            4,
+            5
+          ],
+          "trigger": "before",
+          "phase": "before",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.25 !jlens/storm{workspace}",
+          "op": "ablate",
+          "target": "jlens/storm",
+          "coeff": 0.25,
+          "onto": 0.0,
+          "position": null,
+          "layers": "workspace",
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.5 !slens/tower",
+          "op": "ablate",
+          "target": "slens/tower",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.75 !sae/7",
+          "op": "ablate",
+          "target": "sae/7",
+          "coeff": 0.75,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.5 !head/L20h3@response",
+          "op": "ablate",
+          "target": "head/L20h3",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "response",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "pushes and positions",
+      "subspaceAlong": 0.5,
+      "rack": [
+        {
+          "name": "default/verbose.concise",
+          "mode": "subspace",
+          "ablate": false,
+          "coords": [
+            1
+          ],
+          "label": "verbose",
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "jlens/storm",
+          "mode": "jlens",
+          "ablate": false,
+          "alpha": 0.3,
+          "trigger": "BOTH",
+          "enabled": true,
+          "layers": [
+            20,
+            21,
+            22
+          ]
+        },
+        {
+          "name": "slens/tower",
+          "mode": "slens",
+          "ablate": false,
+          "alpha": -0.2,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "sae/7",
+          "mode": "sae",
+          "ablate": false,
+          "alpha": 0.4,
+          "trigger": "RESPONSE",
+          "enabled": true
+        },
+        {
+          "name": "neuron/L31n4410",
+          "mode": "unit",
+          "ablate": false,
+          "alpha": -0.35,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "default/emotions",
+          "mode": "manifold",
+          "blend": 0.35,
+          "onto": 0,
+          "coords": [
+            0.3,
+            0.8
+          ],
+          "label": "wonder",
+          "variant": "raw",
+          "trigger": "RESPONSE",
+          "enabled": true,
+          "layers": [
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24
+          ]
+        },
+        {
+          "name": "default/months_loop",
+          "mode": "manifold",
+          "blend": 0.5,
+          "onto": 0.2,
+          "coords": [
+            6
+          ],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        }
+      ],
+      "expression": "0.5 default/verbose.concise%verbose + 0.3 jlens/storm{20-22} - 0.2 slens/tower + 0.4 sae/7@response - 0.35 neuron/L31n4410 + 0.35 default/emotions%wonder{14-24}@response + 0.5,0.2 default/months_loop%6",
+      "parts": [
+        {
+          "text": "0.5 default/verbose.concise%verbose",
+          "op": "position",
+          "target": "default/verbose.concise",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": "verbose",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.3 jlens/storm{20-22}",
+          "op": "push",
+          "target": "jlens/storm",
+          "coeff": 0.3,
+          "onto": 0.0,
+          "position": null,
+          "layers": [
+            20,
+            21,
+            22
+          ],
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-0.2 slens/tower",
+          "op": "push",
+          "target": "slens/tower",
+          "coeff": -0.2,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.4 sae/7@response",
+          "op": "push",
+          "target": "sae/7",
+          "coeff": 0.4,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "response",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-0.35 neuron/L31n4410",
+          "op": "push",
+          "target": "neuron/L31n4410",
+          "coeff": -0.35,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.35 default/emotions%wonder{14-24}@response",
+          "op": "position",
+          "target": "default/emotions",
+          "coeff": 0.35,
+          "onto": 0.0,
+          "position": "wonder",
+          "layers": [
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24
+          ],
+          "trigger": "response",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.5,0.2 default/months_loop%6",
+          "op": "position",
+          "target": "default/months_loop",
+          "coeff": 0.5,
+          "onto": 0.2,
+          "position": [
+            6.0
+          ],
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "numbers as format_expr writes them (%g)",
+      "subspaceAlong": 0.30000000000000004,
+      "rack": [
+        {
+          "name": "default/calm.anxious",
+          "mode": "subspace",
+          "ablate": false,
+          "coords": [
+            1
+          ],
+          "label": "calm",
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "jlens/a",
+          "mode": "jlens",
+          "ablate": false,
+          "alpha": 1e-05,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "sae/7",
+          "mode": "sae",
+          "ablate": false,
+          "alpha": 0.123456789,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "default/months_loop",
+          "mode": "manifold",
+          "blend": 0.1,
+          "onto": 0,
+          "coords": [
+            0.30000000000000004,
+            -1234567
+          ],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        }
+      ],
+      "expression": "0.3 default/calm.anxious%calm + 1e-05 jlens/a + 0.123457 sae/7 + 0.1 default/months_loop%0.3,-1.23457e+06",
+      "parts": [
+        {
+          "text": "0.3 default/calm.anxious%calm",
+          "op": "position",
+          "target": "default/calm.anxious",
+          "coeff": 0.3,
+          "onto": 0.0,
+          "position": "calm",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "1e-05 jlens/a",
+          "op": "push",
+          "target": "jlens/a",
+          "coeff": 1e-05,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.123457 sae/7",
+          "op": "push",
+          "target": "sae/7",
+          "coeff": 0.123457,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.1 default/months_loop%0.3,-1.23457e+06",
+          "op": "position",
+          "target": "default/months_loop",
+          "coeff": 0.1,
+          "onto": 0.0,
+          "position": [
+            0.3,
+            -1234570.0
+          ],
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "exact binary ties round to even, and a negative-zero along keeps its onto",
+      "subspaceAlong": 0.5,
+      "rack": [
+        {
+          "name": "jlens/a",
+          "mode": "jlens",
+          "ablate": false,
+          "alpha": 0.1015625,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "jlens/b",
+          "mode": "jlens",
+          "ablate": true,
+          "alpha": 0.01953125,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "default/months_loop",
+          "mode": "manifold",
+          "blend": -0.0,
+          "onto": 0.3,
+          "coords": [
+            6
+          ],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        }
+      ],
+      "expression": "0.101562 jlens/a + 0.0195312 !jlens/b - 0,-0.3 default/months_loop%6",
+      "parts": [
+        {
+          "text": "0.101562 jlens/a",
+          "op": "push",
+          "target": "jlens/a",
+          "coeff": 0.101562,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.0195312 !jlens/b",
+          "op": "ablate",
+          "target": "jlens/b",
+          "coeff": 0.0195312,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-0,-0.3 default/months_loop%6",
+          "op": "position",
+          "target": "default/months_loop",
+          "coeff": -0.0,
+          "onto": 0.3,
+          "position": [
+            6.0
+          ],
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "a signed strength pushes away, and a removal below zero adds to the component",
+      "subspaceAlong": -0.5,
+      "rack": [
+        {
+          "name": "default/verbose.concise",
+          "mode": "subspace",
+          "ablate": false,
+          "coords": [
+            1
+          ],
+          "label": "verbose",
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "default/calm.anxious",
+          "mode": "subspace",
+          "ablate": true,
+          "coords": [],
+          "label": null,
+          "variant": "raw",
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "jlens/storm",
+          "mode": "jlens",
+          "ablate": true,
+          "alpha": -1,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "slens/tower",
+          "mode": "slens",
+          "ablate": true,
+          "alpha": -0.5,
+          "trigger": "RESPONSE",
+          "enabled": true
+        },
+        {
+          "name": "sae/7",
+          "mode": "sae",
+          "ablate": false,
+          "alpha": -0.4,
+          "trigger": "BOTH",
+          "enabled": true
+        }
+      ],
+      "expression": "-0.5 default/verbose.concise%verbose - 0.5 !default/calm.anxious - !jlens/storm - 0.5 !slens/tower@response - 0.4 sae/7",
+      "parts": [
+        {
+          "text": "-0.5 default/verbose.concise%verbose",
+          "op": "position",
+          "target": "default/verbose.concise",
+          "coeff": -0.5,
+          "onto": 0.0,
+          "position": "verbose",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-0.5 !default/calm.anxious",
+          "op": "ablate",
+          "target": "default/calm.anxious",
+          "coeff": -0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-!jlens/storm",
+          "op": "ablate",
+          "target": "jlens/storm",
+          "coeff": -1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-0.5 !slens/tower@response",
+          "op": "ablate",
+          "target": "slens/tower",
+          "coeff": -0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "response",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "-0.4 sae/7",
+          "op": "push",
+          "target": "sae/7",
+          "coeff": -0.4,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "gates and counted windows",
+      "subspaceAlong": 0.5,
+      "rack": [
+        {
+          "name": "default/calm.anxious",
+          "mode": "subspace",
+          "ablate": false,
+          "coords": [
+            1
+          ],
+          "label": "calm",
+          "variant": "raw",
+          "trigger": "RESPONSE",
+          "layers": [
+            3,
+            4,
+            5
+          ],
+          "gate": {
+            "probe": "default/calm.anxious",
+            "op": "<",
+            "threshold": 0
+          },
+          "enabled": true
+        },
+        {
+          "name": "jlens/storm",
+          "mode": "jlens",
+          "ablate": false,
+          "alpha": 0.3,
+          "trigger": "RESPONSE",
+          "gate": {
+            "probe": "default/verbose.concise",
+            "op": ">",
+            "threshold": 1
+          },
+          "enabled": true
+        },
+        {
+          "name": "slens/tower",
+          "mode": "slens",
+          "ablate": false,
+          "alpha": 0.2,
+          "trigger": "AFTER_N",
+          "tokens": 4,
+          "enabled": true
+        },
+        {
+          "name": "sae/7",
+          "mode": "sae",
+          "ablate": false,
+          "alpha": 0.4,
+          "trigger": "FIRST_N",
+          "tokens": 16,
+          "gate": {
+            "probe": "jlens/storm",
+            "op": "<=",
+            "threshold": 0.05
+          },
+          "enabled": true
+        },
+        {
+          "name": "neuron/L31n4410",
+          "mode": "unit",
+          "ablate": false,
+          "alpha": 0.2,
+          "trigger": "BOTH",
+          "gate": {
+            "probe": "neuron/L8n344",
+            "op": ">=",
+            "threshold": -0.5
+          },
+          "enabled": true
+        },
+        {
+          "name": "head/L20h3",
+          "mode": "unit",
+          "ablate": true,
+          "alpha": 1,
+          "trigger": "THINKING",
+          "gate": {
+            "probe": "default/emotions:fraction",
+            "op": ">",
+            "threshold": 0.3
+          },
+          "enabled": true
+        },
+        {
+          "name": "default/emotions",
+          "mode": "manifold",
+          "blend": 0.35,
+          "onto": 0,
+          "coords": [
+            0.3,
+            0.8
+          ],
+          "label": "wonder",
+          "variant": "raw",
+          "trigger": "AFTER_N",
+          "tokens": 2,
+          "gate": {
+            "probe": "default/emotions@wonder",
+            "op": ">",
+            "threshold": -1
+          },
+          "enabled": true
+        }
+      ],
+      "expression": "0.5 default/calm.anxious%calm{3-5}@when:default/calm.anxious<0 + 0.3 jlens/storm@when:default/verbose.concise>1 + 0.2 slens/tower@after:4 + 0.4 sae/7@first:16&when:jlens/storm<=0.05 + 0.2 neuron/L31n4410@both&when:neuron/L8n344>=-0.5 + !head/L20h3@thinking&when:default/emotions:fraction>0.3 + 0.35 default/emotions%wonder@after:2&when:default/emotions@wonder>-1",
+      "parts": [
+        {
+          "text": "0.5 default/calm.anxious%calm{3-5}@when:default/calm.anxious<0",
+          "op": "position",
+          "target": "default/calm.anxious",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": "calm",
+          "layers": [
+            3,
+            4,
+            5
+          ],
+          "trigger": "when:default/calm.anxious<0",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": {
+            "probe": "default/calm.anxious",
+            "op": "<",
+            "threshold": 0.0
+          },
+          "projection": null
+        },
+        {
+          "text": "0.3 jlens/storm@when:default/verbose.concise>1",
+          "op": "push",
+          "target": "jlens/storm",
+          "coeff": 0.3,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "when:default/verbose.concise>1",
+          "phase": "response",
+          "first_n": null,
+          "after_n": null,
+          "gate": {
+            "probe": "default/verbose.concise",
+            "op": ">",
+            "threshold": 1.0
+          },
+          "projection": null
+        },
+        {
+          "text": "0.2 slens/tower@after:4",
+          "op": "push",
+          "target": "slens/tower",
+          "coeff": 0.2,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "after:4",
+          "phase": null,
+          "first_n": null,
+          "after_n": 4,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.4 sae/7@first:16&when:jlens/storm<=0.05",
+          "op": "push",
+          "target": "sae/7",
+          "coeff": 0.4,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "first:16&when:jlens/storm<=0.05",
+          "phase": null,
+          "first_n": 16,
+          "after_n": null,
+          "gate": {
+            "probe": "jlens/storm",
+            "op": "<=",
+            "threshold": 0.05
+          },
+          "projection": null
+        },
+        {
+          "text": "0.2 neuron/L31n4410@both&when:neuron/L8n344>=-0.5",
+          "op": "push",
+          "target": "neuron/L31n4410",
+          "coeff": 0.2,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "both&when:neuron/L8n344>=-0.5",
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": {
+            "probe": "neuron/L8n344",
+            "op": ">=",
+            "threshold": -0.5
+          },
+          "projection": null
+        },
+        {
+          "text": "!head/L20h3@thinking&when:default/emotions:fraction>0.3",
+          "op": "ablate",
+          "target": "head/L20h3",
+          "coeff": 1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": "thinking&when:default/emotions:fraction>0.3",
+          "phase": "thinking",
+          "first_n": null,
+          "after_n": null,
+          "gate": {
+            "probe": "default/emotions:fraction",
+            "op": ">",
+            "threshold": 0.3
+          },
+          "projection": null
+        },
+        {
+          "text": "0.35 default/emotions%wonder@after:2&when:default/emotions@wonder>-1",
+          "op": "position",
+          "target": "default/emotions",
+          "coeff": 0.35,
+          "onto": 0.0,
+          "position": "wonder",
+          "layers": null,
+          "trigger": "after:2&when:default/emotions@wonder>-1",
+          "phase": null,
+          "first_n": null,
+          "after_n": 2,
+          "gate": {
+            "probe": "default/emotions@wonder",
+            "op": ">",
+            "threshold": -1.0
+          },
+          "projection": null
+        }
+      ]
+    },
+    {
+      "name": "projections relate a concept to a second one",
+      "subspaceAlong": 0.5,
+      "rack": [
+        {
+          "name": "default/verbose.concise~default/calm.anxious",
+          "mode": "projection",
+          "base": "default/verbose.concise",
+          "operator": "~",
+          "onto": "default/calm.anxious",
+          "alpha": 0.4,
+          "trigger": "BOTH",
+          "enabled": true
+        },
+        {
+          "name": "default/calm.anxious|default/verbose.concise",
+          "mode": "projection",
+          "base": "default/calm.anxious",
+          "operator": "|",
+          "onto": "default/verbose.concise",
+          "alpha": -0.6,
+          "trigger": "AFTER_N",
+          "tokens": 4,
+          "layers": [
+            3,
+            4,
+            5
+          ],
+          "gate": {
+            "probe": "jlens/storm",
+            "op": ">",
+            "threshold": 0.1
+          },
+          "enabled": true
+        }
+      ],
+      "expression": "0.4 default/verbose.concise~default/calm.anxious - 0.6 default/calm.anxious|default/verbose.concise{3-5}@after:4&when:jlens/storm>0.1",
+      "parts": [
+        {
+          "text": "0.4 default/verbose.concise~default/calm.anxious",
+          "op": "project",
+          "target": "default/verbose.concise~default/calm.anxious",
+          "coeff": 0.4,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": {
+            "base": "default/verbose.concise",
+            "operator": "~",
+            "onto": "default/calm.anxious"
+          }
+        },
+        {
+          "text": "-0.6 default/calm.anxious|default/verbose.concise{3-5}@after:4&when:jlens/storm>0.1",
+          "op": "project",
+          "target": "default/calm.anxious|default/verbose.concise",
+          "coeff": -0.6,
+          "onto": 0.0,
+          "position": null,
+          "layers": [
+            3,
+            4,
+            5
+          ],
+          "trigger": "after:4&when:jlens/storm>0.1",
+          "phase": null,
+          "first_n": null,
+          "after_n": 4,
+          "gate": {
+            "probe": "jlens/storm",
+            "op": ">",
+            "threshold": 0.1
+          },
+          "projection": {
+            "base": "default/calm.anxious",
+            "operator": "|",
+            "onto": "default/verbose.concise"
+          }
+        }
+      ]
+    }
+  ],
+  "readOnly": [
+    {
+      "expression": "0.5 default/verbose.concise%verbose + 0.25 default/calm.anxious%calm",
+      "problem": "different strengths",
+      "parts": [
+        {
+          "text": "0.5 default/verbose.concise%verbose",
+          "op": "position",
+          "target": "default/verbose.concise",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": "verbose",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.25 default/calm.anxious%calm",
+          "op": "position",
+          "target": "default/calm.anxious",
+          "coeff": 0.25,
+          "onto": 0.0,
+          "position": "calm",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "expression": "-!neuron/L8n344",
+      "problem": "negative",
+      "parts": [
+        {
+          "text": "-!neuron/L8n344",
+          "op": "ablate",
+          "target": "neuron/L8n344",
+          "coeff": -1.0,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "expression": "1.5 jlens/storm",
+      "problem": "range",
+      "parts": [
+        {
+          "text": "1.5 jlens/storm",
+          "op": "push",
+          "target": "jlens/storm",
+          "coeff": 1.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "expression": "-0.5 default/emotions%wonder",
+      "problem": "range",
+      "parts": [
+        {
+          "text": "-0.5 default/emotions%wonder",
+          "op": "position",
+          "target": "default/emotions",
+          "coeff": -0.5,
+          "onto": 0.0,
+          "position": "wonder",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "expression": "0.3 local/unknown%x",
+      "problem": "not among the installed manifolds",
+      "parts": [
+        {
+          "text": "0.3 local/unknown%x",
+          "op": "position",
+          "target": "local/unknown",
+          "coeff": 0.3,
+          "onto": 0.0,
+          "position": "x",
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "expression": "0.3 local/some_vector",
+      "problem": "plain vector",
+      "parts": [
+        {
+          "text": "0.3 local/some_vector",
+          "op": "push",
+          "target": "local/some_vector",
+          "coeff": 0.3,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    },
+    {
+      "expression": "0.5 jlens/storm + 0.5 !jlens/storm{3}",
+      "problem": "twice",
+      "parts": [
+        {
+          "text": "0.5 jlens/storm",
+          "op": "push",
+          "target": "jlens/storm",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": null,
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        },
+        {
+          "text": "0.5 !jlens/storm{3}",
+          "op": "ablate",
+          "target": "jlens/storm",
+          "coeff": 0.5,
+          "onto": 0.0,
+          "position": null,
+          "layers": [
+            3
+          ],
+          "trigger": null,
+          "phase": "both",
+          "first_n": null,
+          "after_n": null,
+          "gate": null,
+          "projection": null
+        }
+      ]
+    }
+  ]
+}

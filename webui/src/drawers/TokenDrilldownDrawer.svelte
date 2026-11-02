@@ -1,36 +1,31 @@
 <script lang="ts">
+  // The selected token, in the Inspector (and the phone's sheet): the token and its probability
+  // line, the alternatives the sampler had, then the readings at this token in one order: the lens
+  // by depth and layer by layer, the probes, the SAE features. Branching from the token is one
+  // quiet action at the end. (The Main and Phone canvases, token selected.)
+  //
+  // Navigation is the shared token cursor (lib/stores/tokenCursor.svelte.ts, walking the
+  // conversation as drawers/token/cursor.ts does): ←/→ step tokens and roll across segment and turn
+  // boundaries, ↑/↓ jump turns, Home/End jump to the segment's ends. The selected token is the
+  // cursor, so a step selects the token it lands on (the thread marks it, and the Units, Lens and
+  // Probes rooms read it). The selection's params are { turnIdx, tokenIdx, isThinking? } into
+  // chatLog.turns. Hidden behind another room, the view replays nothing (the room reads instead).
+  //
+  // Each reading prefers the token's loom-owned measurements envelope (what was captured) and
+  // otherwise replays through the family's token-readout route (keyed and shared, one at a time).
+  // Where the runtime has the node replay, the lens side is the token's anatomy instead (one
+  // request: by depth, layer by layer, the units that pushed it, the top heads' attention); a token
+  // it cannot replay (no lens ready, no replay record) keeps the lens readout's captured view.
+  // "Unsteered" replays everything without the recipe's steering; the alternatives stay as
+  // sampled, since a replay has no sampler.
+  import { IconButton, MorphText, Segmented, expand, tokenParts } from "@stdlogits/ledger";
+  import { onDestroy, onMount, tick, untrack } from "svelte";
+  import { showLoom } from "../lib/stores/workbench.svelte";
+  import { pushLensToken } from "../lib/steerActions";
   import { tokenInspectorSchema } from "../lib/interfaceSchemas";
   import { registerInterfaceController } from "../lib/workspaceController";
   import { ToolError } from "../lib/webmcp/types";
-
-  import MorphText from "../lib/ui/MorphText.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
-  import SidebarIcon from "../lib/ui/SidebarIcon.svelte";
-  import PopoutIcon from "../lib/ui/PopoutIcon.svelte";
-  import { dockTokenDetails, hideTokenDetails, undockTokenDetails } from "../lib/stores/drawers.svelte";
-  import { onDestroy, onMount, tick, untrack } from "svelte";
-  import { fly } from "svelte/transition";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
-  // Per-token drilldown drawer — opens when a chat / raw-buffer token is
-  // clicked.
-  //
-  // The drawer is a shell over four family tabs (drawers/token/):
-  // geometry (Monitor readings), logits (top-K alts + fork), sae (gold),
-  // j-lens (blue) — each speaking one shared grammar: the shell's
-  // identity header (token text + id / raw / logprob chips), the context
-  // ribbon, then a per-tab InstrumentHeader (provenance · source ·
-  // steering · apply-recipe toggle) over the body.  The selected tab is
-  // STICKY while available (drilldown.svelte.ts); otherwise opening the
-  // drawer selects a captured or replayable view.
-  //
-  // Navigation is a conversation-walking cursor (drawers/token/cursor.ts):
-  // ←/→ step tokens and ROLL ACROSS segment + turn boundaries (thinking →
-  // response → next turn), so chat mode walks the same flat stream the
-  // raw buffer shows; ↑/↓ jump turns, Home/End jump segment bounds, and
-  // a fresh token click snaps the cursor back to its anchor.  Drawer
-  // params still come in via openDrawer("token_drilldown", { turnIdx,
-  // tokenIdx, isThinking? }) and index chatLog.turns.
-
+  import { hideTokenDetails } from "../lib/stores/drawers.svelte";
   import {
     closeDrawer,
     chatLog,
@@ -47,55 +42,58 @@
     genStatus,
     sendFork,
     sendTextFork,
+    attachProbe,
+    refreshLensSources,
   } from "../lib/stores.svelte";
+  import {
+    LENS_NAMESPACES,
+    lensNamespaceInUse,
+    lensNamespaceReady,
+    lensPairState,
+    type LensNamespace,
+  } from "../lib/stores/instruments.svelte";
+  import { pushToast } from "../lib/stores/toasts.svelte";
   import type {
     ChatTurn,
     LensTokenReadoutJSON,
     SaeTokenReadoutJSON,
     ScalarReadingJSON,
+    TokenAnatomy as TokenAnatomyRecord,
     TokenScore,
   } from "../lib/types";
-  import SegmentedTabs from "../lib/ui/SegmentedTabs.svelte";
-  import {
-    clampCursor,
-    jumpTurn,
-    segmentTokens,
-    segmentsOf,
-    stepCursor,
-    type SegmentKind,
-    type TokenCursor,
-  } from "./token/cursor";
-  import {
-    ReplayReadout,
-    type GeometryTokenReadout,
-  } from "./token/readout.svelte";
-  import { availableDrilldownTab, drilldownUi, readoutBadge, type DrilldownTab } from "./token/drilldown.svelte";
-  import TokenRibbon from "./token/TokenRibbon.svelte";
-  import GeometryTab from "./token/GeometryTab.svelte";
-  import LogitsTab from "./token/LogitsTab.svelte";
-  import SaeTab from "./token/SaeTab.svelte";
-  import LensTab from "./token/LensTab.svelte";
+  import { replayCapabilities } from "../lib/runtime/contracts";
+  import { getRuntimeClient } from "../lib/runtime/registry";
+  import TokenAnatomy from "./token/TokenAnatomy.svelte";
+  import { UnitLabels } from "./token/labels.svelte";
+  import { branchAfter, clampCursor, jumpTurn, segmentTokens, segmentsOf, stepCursor, type SegmentKind, type TokenCursor } from "./token/cursor";
+  import { moveCursor, turnNodeId } from "../lib/stores/tokenCursor.svelte";
+  import { selectionStep } from "../lib/stores/selection.svelte";
+  import { route } from "../lib/stores/rooms.svelte";
+  import { ReplayReadout, type GeometryTokenReadout } from "./token/readout.svelte";
+  import { drilldownUi, type DrilldownTab } from "./token/drilldown.svelte";
+  import Alternatives from "./token/Alternatives.svelte";
+  import LensReading from "./token/LensReading.svelte";
+  import ProbeReadings from "./token/ProbeReadings.svelte";
+  import FeatureReadings from "./token/FeatureReadings.svelte";
+  import { formatP, lastLayer } from "./token/layers";
+  import { geometryReplayView, lensReplay, replayAnchor, tokenPins } from "./token/readings";
   import { resolveReadoutTopK } from "../lib/readouts";
-  import { selectionIn } from "../lib/motion";
+  import { geometryTracesKept, rowGeometry, wholeEnvelope } from "../lib/tokenRows";
   import { userFacingError } from "../lib/runtime/userFacingError";
-  import {
-    currentCatalogInstrumentAvailability,
-    type CatalogInstrumentAvailability,
-  } from "../lib/runtime/instrumentAvailability";
+  import { currentCatalogInstrumentAvailability, type CatalogInstrumentAvailability } from "../lib/runtime/instrumentAvailability";
 
   interface DrawerParams {
     turnIdx: number;
     tokenIdx: number;
-    /** When true the click came from the thinking-collapsible body, so
-     * the anchor segment is ``turn.thinkingTokens``. */
+    /** The click came from the thinking body, so the anchor segment is ``turn.thinkingTokens``. */
     isThinking?: boolean;
-    /** Loom entry points prioritize replacement over the sticky tab. */
+    /** The section to bring into view (the loom's entry points ask for the alternatives). */
     initialTab?: DrilldownTab;
   }
 
-  // ---- params → anchor cursor -------------------------------------------
-
-  let { params: inputParams, docked = false, active = true, mobile = false, onclose }: { params?: unknown; docked?: boolean; active?: boolean; mobile?: boolean; onclose?: () => void } = $props();
+  let { params: inputParams, docked = false, active: shown = true, mobile = false, onclose }: { params?: unknown; docked?: boolean; active?: boolean; mobile?: boolean; onclose?: () => void } = $props();
+  /** Shown and in the workbench: another room reads the cursor's token itself. */
+  const active = $derived(shown && route.room === "workbench");
   let inspectorEl: HTMLElement | null = $state(null);
   const params = $derived(inputParams as DrawerParams | null);
 
@@ -105,259 +103,181 @@
     else closeDrawer();
   }
 
-  function toggleDock(): void {
-    const position = effCursor ? { turnIdx: effCursor.turnIdx, tokenIdx: effCursor.tokenIdx, isThinking: effCursor.seg === "thinking" } : params;
-    if (docked) undockTokenDetails(position);
-    else dockTokenDetails(position);
-  }
+  // ---- the cursor ---------------------------------------------------------
 
-  /** The position the user actually CLICKED — the drawer's anchor.  A
-   *  fresh click (params object identity changes) snaps the cursor back
-   *  here; the ↩ action does the same. */
+  /** The selected token: the cursor (a step selects the token it lands on). */
   const anchor = $derived.by<TokenCursor | null>(() => {
     if (!params) return null;
-    return {
-      turnIdx: params.turnIdx,
-      seg: params.isThinking ? "thinking" : "response",
-      tokenIdx: params.tokenIdx,
-    };
+    return { turnIdx: params.turnIdx, seg: params.isThinking ? "thinking" : "response", tokenIdx: params.tokenIdx };
   });
+  const cursor = $derived(anchor);
 
-  /** The walking cursor — every view reads the clamped ``effCursor``
-   *  below; mutations write here. */
-  let cursor = $state<TokenCursor | null>(null);
-
-  /** Which branch we're inspecting — "primary" is the steered turn,
-   * "shadow" the unsteered abPair when available.  Applies to the
-   * cursor's current turn; walking into a different turn resets it. */
+  /** "primary" is the turn as generated; "shadow" its A/B twin, when it has one. A fresh selection
+   *  (a click in the thread) or walking into another turn resets it; a step within the turn keeps
+   *  it (``branchAfter``). */
   type Branch = "primary" | "shadow";
   let branch: Branch = $state<Branch>("primary");
 
-  const BRANCH_ITEMS: Array<{ value: Branch; label: string; title: string }> = [
-    { value: "primary", label: "steered", title: "primary turn" },
-    { value: "shadow", label: "unsteered", title: "A/B shadow turn" },
-  ];
-
-  $effect(() => {
-    const a = anchor;
-    cursor = a ? { ...a } : null;
-    branch = "primary";
-  });
-
-  // ---- cursor resolution --------------------------------------------------
-
-  /** The conversation with the shadow turn swapped in at the cursor's
-   *  turn when the unsteered branch is selected. */
   const turnsView = $derived<ChatTurn[]>(
-    chatLog.turns.map((t, i) =>
-      i === (cursor?.turnIdx ?? -1) && branch === "shadow" && t.abPair
-        ? t.abPair
-        : t,
-    ),
+    chatLog.turns.map((t, i) => (i === (cursor?.turnIdx ?? -1) && branch === "shadow" && t.abPair ? t.abPair : t)),
   );
-
   const segments = $derived(segmentsOf(turnsView));
-
-  /** The effective inspected position — the cursor clamped onto the
-   *  current segment list (token lists change while streaming). */
+  /** The cursor clamped onto the current segments (token lists change while streaming). */
   const effCursor = $derived(cursor ? clampCursor(segments, cursor) : null);
 
-  /** Reset the branch when the cursor crosses turns — the shadow pair is
-   *  a per-turn artifact. */
   let lastBranchTurn = -1;
+  let lastBranchParams: unknown = undefined;
   $effect(() => {
     const t = effCursor?.turnIdx ?? -1;
-    if (t !== lastBranchTurn) {
-      lastBranchTurn = t;
-      if (branch !== "primary") branch = "primary";
-    }
+    const p = inputParams;
+    if (t === lastBranchTurn && p === lastBranchParams) return;
+    const sameTurn = t === lastBranchTurn;
+    lastBranchTurn = t;
+    lastBranchParams = p;
+    const next = branchAfter(untrack(() => branch), { sameTurn, stepped: untrack(() => selectionStep.stepped) });
+    if (next !== untrack(() => branch)) branch = next;
   });
 
-  /** The primary turn at the cursor (for abPair detection). */
   const turn = $derived<ChatTurn | null>(
-    effCursor != null &&
-      effCursor.turnIdx >= 0 &&
-      effCursor.turnIdx < chatLog.turns.length
-      ? chatLog.turns[effCursor.turnIdx]
-      : null,
+    effCursor != null && effCursor.turnIdx >= 0 && effCursor.turnIdx < chatLog.turns.length ? chatLog.turns[effCursor.turnIdx] : null,
   );
-
-  /** The turn actually inspected (shadow-swapped when selected). */
-  const inspected = $derived<ChatTurn | null>(
-    effCursor ? (turnsView[effCursor.turnIdx] ?? null) : null,
-  );
-
-  const tokenList = $derived<TokenScore[]>(
-    effCursor ? segmentTokens(inspected, effCursor.seg) : [],
-  );
-
+  /** The turn inspected (the twin, when it is chosen). */
+  const inspected = $derived<ChatTurn | null>(effCursor ? (turnsView[effCursor.turnIdx] ?? null) : null);
+  const tokenList = $derived<TokenScore[]>(effCursor ? segmentTokens(inspected, effCursor.seg) : []);
   const token = $derived<TokenScore | null>(
-    effCursor != null &&
-      effCursor.tokenIdx >= 0 &&
-      effCursor.tokenIdx < tokenList.length
-      ? tokenList[effCursor.tokenIdx]
-      : null,
+    effCursor != null && effCursor.tokenIdx >= 0 && effCursor.tokenIdx < tokenList.length ? tokenList[effCursor.tokenIdx] : null,
   );
+  const identity = $derived(effCursor ? `${effCursor.turnIdx}:${effCursor.seg}:${effCursor.tokenIdx}` : "none");
 
   const loomNodeId = $derived.by(() => {
     if (!effCursor) return null;
-    if (branch === "shadow") {
-      return inspected?.nodeId ?? null;
-    }
-    if (turn?.nodeId) return turn.nodeId;
-    if (effCursor.turnIdx < 0 || loomTree.activePath.length === 0) return null;
-    const visible = loomTree.activePath
-      .map((id) => loomTree.nodes.get(id))
-      .filter(Boolean)
-      .filter((n) => !(n!.parent_id === null && n!.role === "system" && !n!.text));
-    return visible[effCursor.turnIdx]?.id ?? null;
+    if (branch === "shadow") return inspected?.nodeId ?? null;
+    return turnNodeId(effCursor.turnIdx);
   });
 
-  const hasReplayContext = $derived(
-    loomNodeId != null && token?.rawIndex != null,
-  );
-  const canContinueFromToken = $derived(
-    branch === "primary" &&
-      loomNodeId != null &&
-      token?.rawIndex != null &&
-      token?.tokenId != null &&
-      !genStatus.active,
-  );
-  const canReplaceToken = $derived(
-    branch === "primary" &&
-      loomNodeId != null &&
-      token?.rawIndex != null &&
-      !genStatus.active,
-  );
-  let continuingFromToken = $state(false);
-  let continuationError = $state<string | null>(null);
-  let replacementOpen = $state(false);
-  let replacementText = $state("");
-  let replacingToken = $state(false);
-  let replacementInput = $state<HTMLInputElement | null>(null);
+  /** Where the token replays and under which steering (``replayAnchor``): a generated token at
+   *  its raw decode index, a captured prompt token at its place in its node's capture. Only a
+   *  generated token branches (``rawIndex``). */
+  const replayTarget = $derived(replayAnchor(
+    loomNodeId ? loomTree.nodes.get(loomNodeId) : null, token, inspected?.appliedSteering,
+  ));
+  const replayAt = $derived(replayTarget.index);
+  const hasReplayContext = $derived(loomNodeId != null && replayAt != null);
+  const canBranch = $derived(branch === "primary" && loomNodeId != null && token?.rawIndex != null && !genStatus.active);
+
+  // ---- branching ----------------------------------------------------------
+
+  let branchOpen = $state(false);
+  let branchText = $state("");
+  let branching = $state(false);
+  let branchError = $state<string | null>(null);
+  let branchInput = $state<HTMLInputElement | null>(null);
 
   $effect(() => {
     void loomNodeId;
     void token?.rawIndex;
-    continuationError = null;
-    replacementOpen = false;
-    replacementText = "";
+    branchError = null;
+    branchOpen = false;
+    branchText = "";
   });
 
-  async function showReplacement(): Promise<void> {
-    if (!canReplaceToken || !token) return;
-    replacementText = token.text;
-    replacementOpen = true;
-    continuationError = null;
+  async function openBranch(): Promise<void> {
+    if (!canBranch || !token) return;
+    branchText = token.text;
+    branchOpen = true;
+    branchError = null;
     await tick();
-    replacementInput?.focus();
-    const firstContent = replacementText.search(/\S/);
-    const lastContent = replacementText.trimEnd().length;
-    replacementInput?.setSelectionRange(
-      firstContent >= 0 ? firstContent : 0,
-      lastContent > 0 ? lastContent : replacementText.length,
-    );
+    branchInput?.focus();
+    const first = branchText.search(/\S/);
+    const last = branchText.trimEnd().length;
+    branchInput?.setSelectionRange(first >= 0 ? first : 0, last > 0 ? last : branchText.length);
   }
 
-  async function replaceToken(): Promise<void> {
-    if (!canReplaceToken || !loomNodeId || token?.rawIndex == null) return;
-    if (replacementText.length === 0) {
-      continuationError = "Enter replacement text.";
-      replacementInput?.focus();
+  /** After a branch starts, the loom shows it (on the phone the sheet makes way). */
+  function toLoom(): void {
+    if (!docked || mobile) closeDetails();
+    loomUiState.view = "map";
+    showLoom();
+  }
+
+  async function run(start: () => Promise<void>, fallback: string): Promise<void> {
+    branchError = null;
+    branching = true;
+    try {
+      await start();
+      toLoom();
+    } catch (error) {
+      branchError = userFacingError(error, fallback);
+    } finally {
+      branching = false;
+    }
+  }
+
+  /** The token kept as it is continues from here with a fresh seed; edited text replaces it. */
+  async function startBranch(): Promise<void> {
+    if (!canBranch || !loomNodeId || token?.rawIndex == null) return;
+    if (branchText.length === 0) {
+      branchError = "Write the text to branch with";
+      branchInput?.focus();
       return;
     }
-    continuationError = null;
-    replacingToken = true;
-    try {
-      await sendTextFork(loomNodeId, token.rawIndex, replacementText);
-      if (!docked || mobile) closeDetails();
-      loomUiState.view = "map";
-      window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: "branches" }));
-    } catch (error) {
-      continuationError = userFacingError(
-        error,
-        "Unable to replace this token and start a new branch.",
-      );
-    } finally {
-      replacingToken = false;
+    const nodeId = loomNodeId;
+    const rawIndex = token.rawIndex;
+    if (branchText === token.text && token.tokenId != null) {
+      const tokenId = token.tokenId;
+      await run(() => sendFork(nodeId, rawIndex, tokenId, true), "Unable to continue this branch from the selected token.");
+    } else {
+      const text = branchText;
+      await run(() => sendTextFork(nodeId, rawIndex, text), "Unable to replace this token and start a new branch.");
     }
   }
 
-  async function continueFromToken(): Promise<void> {
-    if (!canContinueFromToken || !loomNodeId || token?.rawIndex == null || token.tokenId == null) {
-      return;
-    }
-    continuationError = null;
-    continuingFromToken = true;
-    try {
-      await sendFork(loomNodeId, token.rawIndex, token.tokenId, true);
-      if (!docked || mobile) closeDetails();
-      loomUiState.view = "map";
-      window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: "branches" }));
-    } catch (error) {
-      continuationError = userFacingError(
-        error,
-        "Unable to continue this branch from the selected token.",
-      );
-    } finally {
-      continuingFromToken = false;
-    }
+  /** An alternative swaps in for the token and the rest resamples as a sibling. */
+  async function branchWith(altId: number): Promise<void> {
+    if (!canBranch || !loomNodeId || token?.rawIndex == null) return;
+    const nodeId = loomNodeId;
+    const rawIndex = token.rawIndex;
+    await run(() => sendFork(nodeId, rawIndex, altId), "Unable to create a branch from this word choice. Try another alternative.");
   }
 
-  /** The durable generation record behind the inspected token. The
-   *  detail view keeps this recipe beside the token rather than making
-   *  users reconstruct it from the global controls. */
-  const loomNode = $derived(
-    loomNodeId ? (loomTree.nodes.get(loomNodeId) ?? null) : null,
-  );
+  // ---- the generation recipe ---------------------------------------------
+
+  const loomNode = $derived(loomNodeId ? (loomTree.nodes.get(loomNodeId) ?? null) : null);
   const recipeSampling = $derived(loomNode?.recipe?.sampling ?? null);
-  const recipeSteering = $derived(
-    loomNode?.recipe?.steering ?? inspected?.appliedSteering ?? null,
-  );
+  /** The steering the token was generated under (a prompt token: the steering its capture read it
+   *  under); an empty expression is none. */
+  const recipeSteering = $derived(replayTarget.steering);
   function fmtSetting(value: number | null | undefined): string {
-    if (value == null || !Number.isFinite(value)) return "-";
-    return Number.isInteger(value) ? String(value) : value.toFixed(2);
+    if (value == null || !Number.isFinite(value)) return "–";
+    return String(Number(value.toFixed(2)));
   }
-
-  const recipeChips = $derived.by<string[]>(() => {
+  /** The sampling this token was drawn with, as the composer's sampling line writes it. */
+  const recipeLine = $derived.by<string>(() => {
     const sampling = recipeSampling;
     const recipe = loomNode?.recipe;
-    if (!sampling && !recipe) return [];
-    const chips = [
-      `Temperature ${fmtSetting(sampling?.temperature)}`,
-      `Top P ${fmtSetting(sampling?.top_p)}`,
-      `Top K ${fmtSetting(sampling?.top_k)}`,
-      `Max tokens ${fmtSetting(sampling?.max_tokens)}`,
+    if (!sampling && !recipe) return "";
+    const parts = [
+      `temperature ${fmtSetting(sampling?.temperature)}`,
+      `top-p ${fmtSetting(sampling?.top_p)}`,
+      ...(sampling?.top_k ? [`top-k ${sampling.top_k}`] : []),
+      `${fmtSetting(sampling?.max_tokens)} tokens`,
     ];
     const seed = recipe?.seed ?? sampling?.seed;
-    if (seed != null) chips.push(`Seed ${seed}`);
-    if (sampling?.presence_penalty) chips.push(`Presence penalty ${fmtSetting(sampling.presence_penalty)}`);
-    if (sampling?.frequency_penalty) chips.push(`Frequency penalty ${fmtSetting(sampling.frequency_penalty)}`);
-    if (sampling?.return_top_k != null) chips.push(`Return top K ${sampling.return_top_k}`);
-    if (recipe?.thinking != null) chips.push(recipe.thinking ? "Thinking on" : "Thinking off");
-    if ((recipe?.probes.length ?? 0) > 0) chips.push(`${recipe!.probes.length} recipe probes`);
-    return chips;
+    if (seed != null) parts.push(`seed ${seed}`);
+    if (sampling?.presence_penalty) parts.push(`presence ${fmtSetting(sampling.presence_penalty)}`);
+    if (sampling?.frequency_penalty) parts.push(`frequency ${fmtSetting(sampling.frequency_penalty)}`);
+    if (recipe?.thinking != null) parts.push(recipe.thinking ? "thinking" : "no thinking");
+    if ((recipe?.probes.length ?? 0) > 0) parts.push(`${recipe!.probes.length} probes`);
+    return parts.join(" · ");
   });
 
   // ---- navigation ---------------------------------------------------------
 
   function moveTo(next: TokenCursor | null): void {
-    if (next) cursor = next;
+    moveCursor(next);
   }
-
-  const canStepBack = $derived(
-    effCursor != null && stepCursor(segments, effCursor, -1) !== null,
-  );
-  const canStepFwd = $derived(
-    effCursor != null && stepCursor(segments, effCursor, 1) !== null,
-  );
-  const canPrevTurn = $derived(
-    effCursor != null && jumpTurn(segments, effCursor, -1) !== null,
-  );
-  const canNextTurn = $derived(
-    effCursor != null && jumpTurn(segments, effCursor, 1) !== null,
-  );
-
+  const canStepBack = $derived(effCursor != null && stepCursor(segments, effCursor, -1) !== null);
+  const canStepFwd = $derived(effCursor != null && stepCursor(segments, effCursor, 1) !== null);
   function step(delta: 1 | -1): void {
     if (effCursor) moveTo(stepCursor(segments, effCursor, delta));
   }
@@ -366,156 +286,62 @@
   }
   function segEdge(where: "home" | "end"): void {
     if (!effCursor) return;
-    cursor = {
-      ...effCursor,
-      tokenIdx: where === "home" ? 0 : Math.max(0, tokenList.length - 1),
-    };
+    moveCursor({ ...effCursor, tokenIdx: where === "home" ? 0 : Math.max(0, tokenList.length - 1) });
   }
-
-  const atAnchor = $derived(
-    effCursor != null &&
-      anchor != null &&
-      effCursor.turnIdx === anchor.turnIdx &&
-      effCursor.seg === anchor.seg &&
-      effCursor.tokenIdx === anchor.tokenIdx,
-  );
-
-  function resetToAnchor(): void {
-    if (anchor) cursor = { ...anchor };
-  }
-
-  /** The counterpart segment of the current turn, when it exists —
-   *  clicking the segment badge jumps to its start. */
+  /** The turn's other segment (thinking or response), when it has one. */
   const otherSeg = $derived.by<SegmentKind | null>(() => {
     if (!effCursor) return null;
-    const other: SegmentKind =
-      effCursor.seg === "thinking" ? "response" : "thinking";
-    return segments.some(
-      (s) => s.turnIdx === effCursor.turnIdx && s.seg === other,
-    )
-      ? other
-      : null;
+    const other: SegmentKind = effCursor.seg === "thinking" ? "response" : "thinking";
+    return segments.some((s) => s.turnIdx === effCursor.turnIdx && s.seg === other) ? other : null;
   });
-
   function toggleSeg(): void {
     if (!effCursor || !otherSeg) return;
-    cursor = { turnIdx: effCursor.turnIdx, seg: otherSeg, tokenIdx: 0 };
+    moveCursor({ turnIdx: effCursor.turnIdx, seg: otherSeg, tokenIdx: 0 });
   }
 
   function onKeydown(ev: KeyboardEvent): void {
     if (ev.defaultPrevented || !active) return;
-    if (mobile && !inspectorEl?.contains(ev.target as Node)) return;
-    if (docked && !inspectorEl?.contains(ev.target as Node)) return;
+    if ((mobile || docked) && !inspectorEl?.contains(ev.target as Node)) return;
     if (ev.key === "Escape") {
       ev.preventDefault();
       if (!docked || mobile) closeDetails();
       return;
     }
-    // Never steal keys from a focusable field or the layer-strip
-    // scrubbers (role="slider" owns its own arrow keys).
     const t = ev.target as HTMLElement | null;
-    if (
-      t &&
-      (t.tagName === "INPUT" ||
-        t.tagName === "TEXTAREA" ||
-        t.tagName === "SELECT" ||
-        t.isContentEditable ||
-        t.closest('[role="slider"], [role="listbox"]'))
-    ) {
-      return;
-    }
+    if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.tagName === "SELECT" || t.isContentEditable || t.closest('[role="slider"], [role="listbox"]'))) return;
     switch (ev.key) {
-      case "ArrowLeft":
-        step(-1);
-        break;
-      case "ArrowRight":
-        step(1);
-        break;
-      case "ArrowUp":
-        turnHop(-1);
-        break;
-      case "ArrowDown":
-        turnHop(1);
-        break;
-      case "Home":
-        segEdge("home");
-        break;
-      case "End":
-        segEdge("end");
-        break;
-      default:
-        return;
+      case "ArrowLeft": step(-1); break;
+      case "ArrowRight": step(1); break;
+      case "ArrowUp": turnHop(-1); break;
+      case "ArrowDown": turnHop(1); break;
+      case "Home": segEdge("home"); break;
+      case "End": segEdge("end"); break;
+      default: return;
     }
     ev.preventDefault();
   }
 
-  // ---- identity chips -------------------------------------------------
+  // ---- the probability line ----------------------------------------------
 
-  const roleLabel = $derived(
-    inspected ? (inspected.roleLabel ?? inspected.role) : "",
-  );
-
-  /** Rank of the chosen token within its captured alts, when present. */
+  const named = $derived(tokenParts(token?.text ?? ""));
+  const chosenP = $derived(token?.logprob != null ? Math.exp(token.logprob) : null);
+  /** The chosen token's rank among its captured alternatives. */
   const chosenRank = $derived.by<number | null>(() => {
     const alts = token?.topAlts;
     if (!alts || alts.length === 0 || token?.tokenId == null) return null;
     const i = alts.findIndex((a) => a.id === token.tokenId);
     return i >= 0 ? i + 1 : null;
   });
-
-  function fmtP(p: number): string {
-    if (!Number.isFinite(p)) return "-";
-    if (p >= 0.001) return p.toFixed(3);
-    return p.toExponential(1);
-  }
-
-  // ---- tabs ----------------------------------------------------------
-
-  const tabItems = $derived.by<Array<{
-    value: DrilldownTab;
-    label: string;
-    meta?: string;
-    color?: string;
-    title: string;
-  }>>(() => [
-    {
-      value: "geometry",
-      label: "geometry",
-      meta: readoutBadge(geometryReadout, capturedGeometryData, geometrySteered, data => Object.keys(data.readings).length),
-      color: "var(--fg-dim)",
-      title: "activation geometry",
-    },
-    {
-      value: "logits",
-      label: "logits",
-      meta: token?.topAlts ? String(token.topAlts.length) : undefined,
-      title: "sampling alternatives",
-    },
-    {
-      value: "sae",
-      label: "sae",
-      meta: readoutBadge(saeReadout, capturedSaeData, saeSteered, data => data.features.length),
-      color: "var(--pillar-sae)",
-      title: "sparse features",
-    },
-    {
-      value: "lens",
-      label: "j-lens",
-      meta: readoutBadge(lensReadout, capturedLensData, lensSteered, data => data.layers.length),
-      color: "var(--pillar-lens)",
-      title: "workspace readout",
-    },
-  ]);
-
+  /** A few tokens either side of the cursor, the one inspected marked; a click moves there. */
+  const context = $derived.by(() => {
+    if (!effCursor) return [];
+    const at = effCursor.tokenIdx;
+    const from = Math.max(0, at - 12);
+    return tokenList.slice(from, Math.min(tokenList.length, at + 7)).map((tok, k) => ({ text: tok.text.replace(/\n/g, "⏎"), i: from + k }));
+  });
   const hasAbPair = $derived(turn?.abPair != null);
 
-  // ---- instrument readouts (captured-or-replay) ------------------------
-  //
-  // The token's loom-owned ``measurements`` envelope is authoritative;
-  // replay covers old/missing channels and the explicit unsteered
-  // counterfactual.  One ReplayReadout per family — the shell owns them
-  // (and the steered flags) so tab switches don't lose state; the tabs
-  // are presentational.
+  // ---- the readings (captured, or replayed) -------------------------------
 
   const jlensFitted = $derived(sessionState.info?.jlens_fitted === true);
   const saeResident = $derived(saeLoaded());
@@ -529,112 +355,95 @@
       mounted = false;
     };
   });
-  const lensTokenReplayAvailable = $derived(
-    instrumentFamily("lens")?.capabilities.token_readout === true,
-  );
-  const saeTokenReplayAvailable = $derived(
-    instrumentFamily("sae")?.capabilities.token_readout === true,
-  );
-  const geometryTokenReplayAvailable = $derived(
-    instrumentFamily("geometry")?.capabilities.token_readout === true,
-  );
-  const lensReplayUnavailableReason =
-    "J-lens token replay is unavailable in this runtime. J-lens data captured during generation can still be inspected.";
-  const saeReplayUnavailableReason =
-    "SAE token replay is unavailable in this runtime. Sparse-feature data captured during generation can still be inspected.";
-  const geometryReplayUnavailableReason =
-    "Geometry token replay is unavailable in this runtime. Geometry captured during generation can still be inspected.";
+  const lensTokenReplayAvailable = $derived(instrumentFamily("lens")?.capabilities.token_readout === true);
+  const saeTokenReplayAvailable = $derived(instrumentFamily("sae")?.capabilities.token_readout === true);
+  const geometryTokenReplayAvailable = $derived(instrumentFamily("geometry")?.capabilities.token_readout === true);
 
-  // Share the logit-alternative width. Zero means the ordinary logit
-  // capture is off, so retain the canonical eight-wide read-side view.
+  // The lens and SAE read as wide as the logit alternatives (eight when those are off).
   const readoutTopK = $derived(resolveReadoutTopK(samplingState.return_top_k));
 
   const lensReadout = new ReplayReadout<LensTokenReadoutJSON>();
   const saeReadout = new ReplayReadout<SaeTokenReadoutJSON>();
   const geometryReadout = new ReplayReadout<GeometryTokenReadout>();
-
-  const bodyStateKey = $derived.by(() => {
-    const tab = drilldownUi.tab;
-    if (!token || !effCursor) return params ? "missing:unavailable" : "missing:unselected";
-    if (tab === "logits") return `${tab}:ready`;
-    const readout = tab === "geometry"
-      ? geometryReadout
-      : tab === "sae"
-        ? saeReadout
-        : lensReadout;
-    const state = readout.loading
-      ? "loading"
-      : readout.error
-        ? "error"
-        : readout.data
-          ? "ready"
-          : "empty";
-    return `${tab}:${state}`;
-  });
-
+  /** The token layer by layer (the node replay): one request in place of the lens readout, where
+   *  the runtime has it (drowse.ai does not, and keeps the lens readout). */
+  const anatomyAvailable = replayCapabilities(getRuntimeClient().instruments).tokenAnatomy;
+  const anatomyReadout = new ReplayReadout<TokenAnatomyRecord>();
+  const unitLabels = typeof getRuntimeClient().instruments.unitLabels === "function" ? new UnitLabels() : null;
   onDestroy(() => {
     lensReadout.dispose();
     saeReadout.dispose();
     geometryReadout.dispose();
+    anatomyReadout.dispose();
   });
   let lensSteered = $state(true);
   let saeSteered = $state(true);
   let geometrySteered = $state(true);
 
+  /** Steered or unsteered, for all three at once (an agent may still set one family alone). */
+  const steeredAll = $derived(lensSteered && saeSteered && geometrySteered);
+  /** The lens side replays as the anatomy where the runtime has it, else as the lens readout; it is
+   *  ready with an R lens, or (for the anatomy) any active lens. The anatomy shows where a lens is
+   *  ready and the token has its replay record; otherwise the lens readout's view stands in (the
+   *  capture, or why there is none). The WebMCP inspector gates on the same answer. */
+  const lensGate = $derived(lensReplay({
+    anatomy: anatomyAvailable,
+    tokenReadout: lensTokenReplayAvailable,
+    rLens: jlensFitted,
+    activeLens: lensSourceState.sources.some((source) => source.active),
+    replayContext: hasReplayContext,
+  }));
+  const lensReplayAvailable = $derived(lensGate.available);
+  const anatomyShown = $derived(lensGate.anatomy);
+  const anyReplay = $derived(lensReplayAvailable || saeTokenReplayAvailable || geometryTokenReplayAvailable);
+  const showSteering = $derived(anyReplay && hasReplayContext && (recipeSteering !== null || !steeredAll));
+  function setSteered(next: "steered" | "unsteered"): void {
+    const on = next === "steered";
+    lensSteered = on || !lensReplayAvailable;
+    saeSteered = on || !saeTokenReplayAvailable;
+    geometrySteered = on || !geometryTokenReplayAvailable;
+  }
+
+  // A reply whose steering a replay cannot reproduce (a thinking-phase window on a thinking model)
+  // is read unsteered, the one way it replays: the first refusal switches every family over, and
+  // the view says so once instead of each section printing the server's reason.
+  let unreplayableNode: string | null = $state(null);
+  const steeringUnreplayable = $derived(unreplayableNode !== null && unreplayableNode === loomNodeId);
   $effect(() => {
-    void token;
-    void loomNodeId;
-    void lensSteered;
-    lensReadout.clear();
-  });
-  $effect(() => {
-    void token;
-    void loomNodeId;
-    void saeSteered;
-    saeReadout.clear();
-  });
-  $effect(() => {
-    void token;
-    void loomNodeId;
-    void geometrySteered;
-    geometryReadout.clear();
+    const refused = geometryReadout.refused || anatomyReadout.refused || lensReadout.refused || saeReadout.refused;
+    if (!refused || !loomNodeId || unreplayableNode === loomNodeId) return;
+    unreplayableNode = loomNodeId;
+    setSteered("unsteered");
   });
 
-  /** ≥1 attached Monitor probe (anything in the rack that isn't a lens
-   *  or SAE readout probe) — the geometry replay 400s on an empty roster. */
-  const hasGeometryProbes = $derived(
-    probeRack.active.some((name) => {
-      return probeRack.entries.get(name)?.info.family === "geometry";
-    }),
-  );
+  /** At least one geometry probe on the roster: the geometry replay refuses an empty one. */
+  const hasGeometryProbes = $derived(probeRack.active.some((name) => probeRack.entries.get(name)?.info.family === "geometry"));
 
-  const lensPinned = $derived<Record<string, ScalarReadingJSON> | null>(
-    token?.measurements?.instruments.lens?.readings ?? null,
-  );
-  const saePinned = $derived<Record<string, ScalarReadingJSON> | null>(
-    token?.measurements?.instruments.sae?.readings ?? null,
-  );
+  /** The token's whole envelope (a live token's, or a row kept whole), or null for a generated
+   *  row, which keeps only its scores and geometry shares and coordinates: the rest replays. */
+  const whole = $derived(wholeEnvelope(token?.measurements));
 
   const capturedLensData = $derived.by<LensTokenReadoutJSON | null>(() => {
-    const lens = token?.measurements?.instruments.lens;
+    const lens = whole?.instruments.lens;
     if (!lens?.readout || !token) return null;
     return {
       node_id: loomNodeId ?? "",
-      raw_index: token.rawIndex ?? -1,
+      raw_index: replayAt ?? -1,
       token_id: token.tokenId ?? -1,
       token_text: token.text,
       steering: lens.binding.steering,
       aggregate: lens.readout.aggregate,
-      layers: lens.readout.layers,
+      layers: lens.readout.layers ?? [],
     };
   });
-
+  /** The captured lens readout kept its layer rows (a live token, a row kept whole). */
+  const capturedLensLayers = $derived(whole?.instruments.lens?.readout?.layers !== undefined);
   const capturedSaeData = $derived.by<SaeTokenReadoutJSON | null>(() => {
-    const sae = token?.measurements?.instruments.sae;
+    const sae = whole?.instruments.sae;
     if (!sae?.readout || !token) return null;
     return {
       node_id: loomNodeId ?? "",
-      raw_index: token.rawIndex ?? -1,
+      raw_index: replayAt ?? -1,
       token_id: token.tokenId ?? -1,
       token_text: token.text,
       steering: sae.binding.steering,
@@ -642,177 +451,167 @@
       features: sae.readout.features,
     };
   });
-
   const capturedGeometryData = $derived.by<GeometryTokenReadout | null>(() => {
-    const geometry = token?.measurements?.instruments.geometry;
-    if (!geometry || Object.keys(geometry.readings ?? {}).length === 0) {
-      return null;
-    }
-    return {
-      steering: geometry.binding?.steering ?? null,
-      readings: geometry.readings,
-    };
+    const geometry = whole?.instruments.geometry;
+    if (!geometry || Object.keys(geometry.readings ?? {}).length === 0) return null;
+    return { steering: geometry.binding?.steering ?? null, readings: geometry.readings };
   });
+  /** The captured geometry readings kept their layers (a live token, a row kept whole). */
+  const capturedGeometryLayers = $derived(geometryTracesKept(capturedGeometryData?.readings));
 
-  // Not $state: a $state would hold a proxy of ``params``, so the identity
-  // check below would never match and every dependency change would re-pick
-  // the tab.
-  let selectionAnchor: DrawerParams | null = null;
-  $effect(() => {
-    if (!active || !params || !token || !sessionState.info || selectionAnchor === params) return;
-    drilldownUi.tab = availableDrilldownTab(
-      params.initialTab ?? untrack(() => drilldownUi.tab),
-      {
-        lens: capturedLensData !== null || (hasReplayContext && jlensFitted && lensTokenReplayAvailable),
-        sae: capturedSaeData !== null || (hasReplayContext && saeResident && saeTokenReplayAvailable),
-        geometry: capturedGeometryData !== null || (hasReplayContext && hasGeometryProbes && geometryTokenReplayAvailable),
-      },
-    );
-    selectionAnchor = params;
-  });
+  /** The lens and SAE probes, as the shown reads pinned them (captured with a live token, or
+   *  replayed with the read: a generated row keeps only their values). */
+  const pinned = $derived<Record<string, ScalarReadingJSON>>(tokenPins({
+    anatomy: anatomyShown,
+    steered: lensSteered,
+    captured: whole?.instruments.lens?.readings,
+    anatomyPins: anatomyReadout.pins,
+    lensPins: lensReadout.pins,
+    saePins: saeReadout.pins,
+    saeSteered,
+    scores: token?.measurements?.scores ?? null,
+  }));
 
+  // One effect per family: adopt the capture while steered, else replay. Declared geometry, SAE,
+  // lens: the replay queue runs the newest interactive request first, so the lens reads first.
   $effect(() => {
-    if (!active || drilldownUi.tab !== "lens") return;
-    const captured = capturedLensData;
-    if (!lensTokenReplayAvailable && !lensSteered) lensSteered = true;
-    if ((lensSteered || !lensTokenReplayAvailable) && captured) {
-      lensReadout.adopt(
-        captured,
-        token?.measurements?.instruments.lens?.binding.source ?? null,
-      );
+    if (!active) return;
+    void token;
+    void genStatus.active;
+    void loomNodeId;
+    const captured = capturedGeometryData;
+    if (!geometryTokenReplayAvailable && !geometrySteered) geometrySteered = true;
+    const nodeId = loomNodeId;
+    const rawIndex = replayAt;
+    const canReplay = geometryTokenReplayAvailable && hasGeometryProbes && !!nodeId && rawIndex != null;
+    if ((geometrySteered || !geometryTokenReplayAvailable) && captured && (capturedGeometryLayers || !canReplay)) {
+      geometryReadout.adopt(captured, null);
       return;
     }
-    lensReadout.clear();
-    if (!lensTokenReplayAvailable) return;
-    if (!jlensFitted) return;
-    const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
-    if (!nodeId || rawIndex == null) return;
-    const replayTokenId = token?.tokenId ?? -1;
-    const replayTokenText = token?.text ?? "";
-    const fallbackSource =
-      lensSourceState.sources.find((source) => source.active)?.source ?? null;
-    lensReadout.replay(
-      "lens",
-      nodeId,
-      rawIndex,
-      { topK: readoutTopK, steered: lensSteered, raw: effectiveRawMode(), layers: "all" },
-      (m) => {
-        const lens = m.instruments.lens;
-        if (!lens?.readout) {
-          throw new Error("No J-lens reading was returned. Check the active lens source and try again.");
-        }
-        return {
-          data: {
-            node_id: nodeId,
-            raw_index: rawIndex,
-            token_id: replayTokenId,
-            token_text: replayTokenText,
-            steering: lens?.binding.steering ?? null,
-            aggregate: lens.readout.aggregate,
-            layers: lens.readout.layers,
-          },
-          source:
-            lens?.binding.source ??
-            fallbackSource ??
-            null,
-        };
-      },
-    );
+    geometryReadout.clear();
+    if (!canReplay || !nodeId || rawIndex == null) return;
+    const steered = geometrySteered;
+    // Steered, a saved summary shows while the replay brings its layers, and stays if it fails.
+    const base = steered && captured ? { data: captured, source: null } : null;
+    // The map is bound to this token's row now: the replay may land after the selection moved.
+    const map = geometryReplayView({ steered, captured, row: rowGeometry(token?.measurements) });
+    geometryReadout.replay("geometry", nodeId, rawIndex, { steered, raw: effectiveRawMode() }, map, base);
   });
 
   $effect(() => {
-    if (!active || drilldownUi.tab !== "sae") return;
+    if (!active) return;
+    void token;
+    void genStatus.active;
+    void loomNodeId;
     const captured = capturedSaeData;
     if (!saeTokenReplayAvailable && !saeSteered) saeSteered = true;
     if ((saeSteered || !saeTokenReplayAvailable) && captured) {
-      saeReadout.adopt(
-        captured,
-        token?.measurements?.instruments.sae?.binding.source ?? null,
-      );
+      saeReadout.adopt(captured, whole?.instruments.sae?.binding.source ?? null, whole?.instruments.sae?.readings ?? null);
       return;
     }
     saeReadout.clear();
     if (!saeTokenReplayAvailable) return;
     if (!saeResident) return;
     const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
+    const rawIndex = replayAt;
     if (!nodeId || rawIndex == null) return;
     const replayTokenId = token?.tokenId ?? -1;
     const replayTokenText = token?.text ?? "";
-    const fallbackSource =
-      saeSourceState.sources.find((source) => source.active)?.source ??
-      instrumentFamily("sae")?.source ??
-      null;
-    saeReadout.replay(
-      "sae",
-      nodeId,
-      rawIndex,
-      { topK: readoutTopK, steered: saeSteered, raw: effectiveRawMode() },
-      (m) => {
-        const sae = m.instruments.sae;
-        if (!sae?.readout) {
-          throw new Error("No SAE reading was returned. Check the active feature source and try again.");
-        }
-        return {
-          data: {
-            node_id: nodeId,
-            raw_index: rawIndex,
-            token_id: replayTokenId,
-            token_text: replayTokenText,
-            steering: sae?.binding.steering ?? null,
-            layer: sae?.binding.layer ?? -1,
-            features: sae.readout.features,
-          },
-          source:
-            sae?.binding.source ??
-            fallbackSource ??
-            null,
-        };
-      },
-    );
+    const fallbackSource = saeSourceState.sources.find((source) => source.active)?.source ?? instrumentFamily("sae")?.source ?? null;
+    saeReadout.replay("sae", nodeId, rawIndex, { topK: readoutTopK, steered: saeSteered, raw: effectiveRawMode() }, (m) => {
+      const sae = m.instruments.sae;
+      if (!sae?.readout) throw new Error("No SAE reading came back. Check the active feature source.");
+      return {
+        data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: sae?.binding.steering ?? null, layer: sae?.binding.layer ?? -1, features: sae.readout.features },
+        source: sae?.binding.source ?? fallbackSource ?? null,
+        pins: sae.readings ?? null,
+      };
+    });
   });
 
   $effect(() => {
-    if (!active || drilldownUi.tab !== "geometry") return;
-    const captured = capturedGeometryData;
-    if (!geometryTokenReplayAvailable && !geometrySteered) geometrySteered = true;
-    if ((geometrySteered || !geometryTokenReplayAvailable) && captured) {
-      geometryReadout.adopt(captured, null);
+    if (!active || !anatomyAvailable) return;
+    void token;
+    // A reply ending changes the conversation the replay reads (and drops a replay that was
+    // refused or cut short while it streamed): read the selected token again then.
+    void genStatus.active;
+    const nodeId = loomNodeId;
+    const rawIndex = replayAt;
+    if (!anatomyShown || !nodeId || rawIndex == null) { anatomyReadout.clear(); return; }
+    anatomyReadout.anatomy(nodeId, rawIndex, { k: Math.min(256, Math.max(1, readoutTopK)), units: 8, patterns: 4, steered: lensSteered, raw: effectiveRawMode() }, (m) => {
+      const anatomy = m.anatomy;
+      if (!anatomy) throw new Error("No anatomy came back for this token. Select it again to retry.");
+      return { data: anatomy, source: anatomy.binding.sources.R ?? null, pins: m.instruments.lens?.readings ?? null };
+    });
+  });
+
+  // The lens readout: where the anatomy shows, nothing; where it cannot (no lens ready, or no replay
+  // record), the capture still draws, and only a runtime without the anatomy replays the readout.
+  $effect(() => {
+    if (!active) return;
+    if (anatomyShown) { lensReadout.clear(); return; }
+    void token;
+    void genStatus.active;
+    void loomNodeId;
+    const captured = capturedLensData;
+    if (!lensReplayAvailable && !lensSteered) lensSteered = true;
+    const nodeId = loomNodeId;
+    const rawIndex = replayAt;
+    const canReplay = !anatomyAvailable && lensTokenReplayAvailable && jlensFitted && !!nodeId && rawIndex != null;
+    if ((lensSteered || !lensReplayAvailable) && captured && (capturedLensLayers || !canReplay)) {
+      lensReadout.adopt(captured, whole?.instruments.lens?.binding.sources.R ?? null, whole?.instruments.lens?.readings ?? null);
       return;
     }
-    geometryReadout.clear();
-    if (!geometryTokenReplayAvailable) return;
-    if (!hasGeometryProbes) return;
-    const nodeId = loomNodeId;
-    const rawIndex = token?.rawIndex;
-    if (!nodeId || rawIndex == null) return;
-    geometryReadout.replay(
-      "geometry",
-      nodeId,
-      rawIndex,
-      { steered: geometrySteered, raw: effectiveRawMode() },
-      (m) => {
-        const geometry = m.instruments.geometry;
-        if (!geometry) {
-          throw new Error("No probe readings were returned. Check that the probes are attached and try again.");
-        }
-        return {
-          data: {
-            steering: geometry?.binding?.steering ?? null,
-            readings: geometry?.readings ?? {},
-          },
-          source: null,
-        };
-      },
-    );
+    lensReadout.clear();
+    if (!canReplay || !nodeId || rawIndex == null) return;
+    const replayTokenId = token?.tokenId ?? -1;
+    const replayTokenText = token?.text ?? "";
+    // The readout is the R family's: its source, never an active S lens.
+    const fallbackSource = lensSourceState.sources.find((source) => source.active && source.family !== "S")?.source ?? null;
+    // Steered, the saved chips show while the replay brings the layer rows, and stay if it fails.
+    const base = lensSteered && captured
+      ? { data: captured, source: whole?.instruments.lens?.binding.sources.R ?? null, pins: whole?.instruments.lens?.readings ?? null }
+      : null;
+    lensReadout.replay("lens", nodeId, rawIndex, { topK: readoutTopK, steered: lensSteered, raw: effectiveRawMode(), layers: "all" }, (m) => {
+      const lens = m.instruments.lens;
+      if (!lens?.readout) throw new Error("No lens reading came back. Check the active lens source.");
+      return {
+        data: { node_id: nodeId, raw_index: rawIndex, token_id: replayTokenId, token_text: replayTokenText, steering: lens?.binding.steering ?? null, aggregate: lens.readout.aggregate, layers: lens.readout.layers ?? [] },
+        source: lens?.binding.sources.R ?? fallbackSource ?? null,
+        pins: lens.readings ?? null,
+      };
+    }, base);
+  });
+
+  /** The model's deepest layer, as the lens readout names it (the SAE layer's place on the ramp). */
+  const deepest = $derived(
+    anatomyReadout.data ? anatomyReadout.data.layers.length - 1 : lensReadout.data ? lastLayer(lensReadout.data.layers) : null,
+  );
+
+  // ---- sections, for the WebMCP inspector's "tab" ------------------------
+
+  const sections: Partial<Record<DrilldownTab, HTMLElement>> = {};
+  function sectionRef(node: HTMLElement, tab: DrilldownTab) {
+    sections[tab] = node;
+    return { destroy: () => { if (sections[tab] === node) delete sections[tab]; } };
+  }
+  async function bringIntoView(tab: DrilldownTab): Promise<void> {
+    drilldownUi.tab = tab;
+    await tick();
+    sections[tab]?.scrollIntoView({ block: "nearest" });
+  }
+  let introduced: DrawerParams | null = null;
+  $effect(() => {
+    if (!active || !params || introduced === params || !token) return;
+    introduced = params;
+    if (params.initialTab) void bringIntoView(params.initialTab);
   });
 
   $effect(() => {
     if (!active) return;
     return registerInterfaceController("token_inspector", {
       schema: tokenInspectorSchema,
-      read: () => ({ values: { cursor: effCursor, branch, tab: drilldownUi.tab, apply_recipe: { geometry: geometrySteered, lens: lensSteered, sae: saeSteered }, presentation: docked ? "dock" : "drawer" }, node_id: loomNodeId, raw_index: token?.rawIndex ?? null, shadow_available: hasAbPair, replay: { geometry: geometryTokenReplayAvailable, lens: lensTokenReplayAvailable, sae: saeTokenReplayAvailable } }),
+      read: () => ({ values: { cursor: effCursor, branch, tab: drilldownUi.tab, apply_recipe: { geometry: geometrySteered, lens: lensSteered, sae: saeSteered }, presentation: docked ? "dock" : "drawer" }, node_id: loomNodeId, raw_index: token?.rawIndex ?? null, shadow_available: hasAbPair, replay: { geometry: geometryTokenReplayAvailable, lens: lensReplayAvailable, sae: saeTokenReplayAvailable } }),
       update: async (change) => {
         if (change.move && (change.cursor || change.branch)) throw new ToolError("INVALID_INPUT", "Choose a relative move or an explicit cursor and branch.");
         const target = (change.cursor as TokenCursor | undefined) ?? effCursor;
@@ -824,9 +623,9 @@
         const targetToken = segmentTokens(chosen ?? null, target.seg)[target.tokenIdx];
         if (!targetToken) throw new ToolError("NOT_FOUND", "The requested token is not present on that branch and segment.");
         const recipe = change.apply_recipe as Record<string, boolean> | undefined;
-        for (const [family, supported] of [["geometry", geometryTokenReplayAvailable], ["lens", lensTokenReplayAvailable], ["sae", saeTokenReplayAvailable]] as const) {
+        for (const [family, supported] of [["geometry", geometryTokenReplayAvailable], ["lens", lensReplayAvailable], ["sae", saeTokenReplayAvailable]] as const) {
           if (recipe?.[family] === false && (!supported || targetToken.rawIndex == null)) throw new ToolError("UNAVAILABLE", `Unsteered ${family} inspection requires token replay support and a recorded raw token index.`);
-          if (recipe?.[family] === false && ((family === "geometry" && !hasGeometryProbes) || (family === "lens" && !jlensFitted) || (family === "sae" && !saeResident))) throw new ToolError("UNAVAILABLE", `Prepare the ${family} instrument before requesting an unsteered replay.`);
+          if (recipe?.[family] === false && ((family === "geometry" && !hasGeometryProbes) || (family === "lens" && !lensGate.ready) || (family === "sae" && !saeResident))) throw new ToolError("UNAVAILABLE", `Prepare the ${family} instrument before requesting an unsteered replay.`);
         }
         let moved: TokenCursor | null = null;
         if (change.move) {
@@ -837,691 +636,226 @@
           else if (otherSeg) moved = { ...target, seg: otherSeg, tokenIdx: 0 };
           if (!moved) throw new ToolError("NOT_FOUND", "There is no token in that direction.");
         }
-        if (change.cursor || moved) { cursor = moved ?? { ...target }; await tick(); }
+        if (change.cursor || moved) { moveCursor(moved ?? { ...target }); await tick(); }
         if (change.branch !== undefined) branch = nextBranch;
-        if (change.tab !== undefined) drilldownUi.tab = change.tab as DrilldownTab;
         if (recipe?.geometry !== undefined) geometrySteered = recipe.geometry;
         if (recipe?.lens !== undefined) lensSteered = recipe.lens;
         if (recipe?.sae !== undefined) saeSteered = recipe.sae;
         await tick();
+        if (change.tab !== undefined) await bringIntoView(change.tab as DrilldownTab);
         if (change.presentation === "hide") closeDetails();
-        else if ((change.presentation === "dock" && !docked) || (change.presentation === "drawer" && docked)) toggleDock();
       },
     });
   });
+
+  // ---- the canvas's token actions: a lens probe on it, a lens term toward it ----------------
+  // As said (``jlens/``) or as read (``slens/``), through the pair the Lens panel shares; a model
+  // with one lens family offers it alone. Addressed by id (``jlens/#<id>``): the text may not name
+  // the token (a leading space, a byte piece), and the id always does.
+  const saidReady = $derived(lensNamespaceReady("jlens"));
+  const readReady = $derived(lensNamespaceReady("slens"));
+  const lensAs = $derived(lensNamespaceInUse());
+  const lensPair = $derived(LENS_NAMESPACES.find((row) => row.value === lensAs) ?? LENS_NAMESPACES[0]);
+  onMount(() => {
+    if (lensSourceState.sources.length === 0) void refreshLensSources();
+  });
+  let probing = $state(false);
+  const tokenProbed = $derived(token?.tokenId != null && probeRack.active.some((name) => {
+    const info = probeRack.entries.get(name)?.info;
+    return info?.family === "lens" && info.namespace === lensAs && info.token_id === token?.tokenId;
+  }));
+  async function probeToken(): Promise<void> {
+    const id = token?.tokenId;
+    if (id == null || probing) return;
+    probing = true;
+    const selector = `${lensAs}/#${id}`;
+    try {
+      await attachProbe(selector);
+      pushToast(`Probing ${named.empty ? "∅" : named.text.trim() || JSON.stringify(named.text)}`, { kind: "info" });
+    } catch (e) {
+      pushToast(`Couldn't probe ${selector}: ${userFacingError(e)}`, { kind: "error" });
+    } finally {
+      probing = false;
+    }
+  }
+  function steerTowardToken(): void {
+    const id = token?.tokenId;
+    if (id == null) return;
+    // The atom names the exact id; its chip reads the token's text and opens in the strip.
+    pushLensToken({ id, text: token?.text ?? "" }, lensAs);
+  }
 </script>
 
 <svelte:window onkeydown={onKeydown} />
 
-<aside data-morph-snapshot={effCursor ? `${effCursor.turnIdx}:${effCursor.seg}:${effCursor.tokenIdx}` : "none"}
-  bind:this={inspectorEl}
-  class="drawer"
-  class:docked={docked || mobile}
-  class:mobile
-  data-token-details-scroll
-  aria-label="Token drilldown"
-  tabindex="-1"
->
-  <header class="drawer-header">
-    <div class="heading-row">
-      {#if !mobile}
-      <button type="button" class="dock-toggle" aria-pressed={docked}
-        aria-label={docked ? "Undock token details" : "Dock token details"}
-        {...{ "aria-description": (docked ? "Show token details in a window" : "Keep token details in a sidebar") }}
-        onclick={toggleDock}>{#if docked}<PopoutIcon />{:else}<SidebarIcon side="right" />{/if}</button>
-      {/if}
-      <h2 class="eyebrow">Generated word details</h2>
-      <DrawerCloseButton onclick={closeDetails} />
-    </div>
-    <div class="title">
-      {#if token && effCursor}
-        <div class="name-row">
-          <code class="tok-text">
-            <MorphText text={JSON.stringify(token.text)} numbers={false} identity={`${effCursor.turnIdx}:${effCursor.seg}:${effCursor.tokenIdx}`} />
-          </code>
-          <button
-            type="button"
-            class="kv-chip seg-chip"
-            disabled={!otherSeg}
-            onclick={toggleSeg}
-            {...{ "aria-description": (otherSeg
-              ? `Show the ${otherSeg} tokens from this same turn.`
-              : undefined) }}
-          >
-            {#if sessionState.info?.is_base_model}Completion {effCursor.turnIdx}{:else}turn {effCursor.turnIdx} · {roleLabel} · {effCursor.seg}{/if}
-          </button>
-          {#if token.tokenId != null}
-            <span class="kv-chip" {...{ "aria-description": "This token’s ID in the model’s vocabulary." }}>id {token.tokenId}</span>
-          {/if}
-          {#if token.rawIndex != null}
-            <span class="kv-chip" {...{ "aria-description": "Position in the recorded generation, used to replay or branch from this token." }}>
-              raw {token.rawIndex}
-            </span>
-          {:else}
-            <span
-              class="kv-chip warn"
-              {...{ "aria-description": "The generation record is missing, so this token cannot be replayed or branched." }}
-            >
-              no replay
-            </span>
-          {/if}
-          {#if token.logprob != null}
-            <span
-              class="kv-chip"
-              {...{ "aria-description": "Probability after temperature and Top K / Top P filtering, not the model’s unmodified probability." }}
-            >
-              p <MorphText text={fmtP(Math.exp(token.logprob))} identity={`${effCursor.turnIdx}:${effCursor.seg}:${effCursor.tokenIdx}`} /> · logp <MorphText text={token.logprob.toFixed(3)} identity={`${effCursor.turnIdx}:${effCursor.seg}:${effCursor.tokenIdx}`} />{chosenRank !== null
-                ? ` · rank ${chosenRank}/${token.topAlts?.length ?? 0}`
-                : ""}
-            </span>
-          {/if}
-        </div>
-        <div class="nav-row">
-          <span class="scrub">
-            <button
-              type="button"
-              class="scrub-btn"
-              disabled={!canStepBack}
-              onclick={() => step(-1)}
-              aria-label="Previous token"
-              {...{ "aria-description": "Inspect the previous token" }}
-            ><FluentIcon name="back" /></button>
-            <span class="scrub-pos"><MorphText text={`${effCursor.tokenIdx + 1} / ${tokenList.length}`} /></span>
-            <button
-              type="button"
-              class="scrub-btn"
-              disabled={!canStepFwd}
-              onclick={() => step(1)}
-              aria-label="Next token"
-              {...{ "aria-description": "Inspect the next token" }}
-            ><FluentIcon name="next" /></button>
-          </span>
-          <span class="scrub">
-            <button
-              type="button"
-              class="scrub-btn"
-              disabled={!canPrevTurn}
-              onclick={() => turnHop(-1)}
-              aria-label="Previous turn"
-              {...{ "aria-description": "Inspect the previous turn" }}
-            ><FluentIcon name="up" /></button>
-            <span class="scrub-pos"><MorphText text={`turn ${effCursor.turnIdx}`} /></span>
-            <button
-              type="button"
-              class="scrub-btn"
-              disabled={!canNextTurn}
-              onclick={() => turnHop(1)}
-              aria-label="Next turn"
-              {...{ "aria-description": "Inspect the next turn" }}
-            ><FluentIcon name="down" /></button>
-          </span>
-          {#if !atAnchor}
-            <button
-              type="button"
-              class="scrub-btn scrub-home"
-              onclick={resetToAnchor}
-              aria-label="Return to the token you opened"
-
-            ><FluentIcon name="return" /></button>
-          {/if}
-        </div>
-        <div class="generation-context">
-          <div class="recipe">
-            <span class="recipe-label">generation recipe</span>
-            <code class="recipe-steering" {...{ "aria-description": (recipeSteering ?? "no steering") }}>
-              {recipeSteering ?? "unsteered"}
-            </code>
-            {#each recipeChips as chip (chip)}
-              <span>{chip}</span>
-            {/each}
-          </div>
-        </div>
-      {:else}
-        <div class="name-row">
-          <span class="coord">
-            {params ? "Selected token unavailable" : "No token selected"}
-          </span>
-        </div>
-      {/if}
-    </div>
-  </header>
-
+<div class="token" class:mobile bind:this={inspectorEl} data-morph-snapshot={identity} aria-label="Token" role="region" tabindex="-1">
   {#if token && effCursor}
-    <TokenRibbon
-      tokens={tokenList}
-      index={effCursor.tokenIdx}
-      onjump={(i) => {
-        if (effCursor) cursor = { ...effCursor, tokenIdx: i };
-      }}
-    />
-
-    <section class="branch-point" aria-label="Selected token branch point">
-      <div class="branch-point-copy">
-        <strong>Branch from this token</strong>
-        <span>Keep the text up to here and write a new ending. Your original {sessionState.info?.is_base_model ? "completion" : "response"} stays saved.</span>
+    <section class="dw-sec top" use:sectionRef={"logits"} aria-label="This token">
+      <div class="title-row">
+        <h2 class="dw-title" data-tip={`id ${token.tokenId ?? "–"}${token.rawIndex != null ? ` · position ${token.rawIndex}` : ""}`}>
+          <span class="dw-ws">{named.lead ? "·" : ""}</span><MorphText text={named.empty ? "∅" : named.text} numbers={false} {identity} />
+        </h2>
+        <span class="steps">
+          <IconButton icon="left" label="Previous token" disabled={!canStepBack} onclick={() => step(-1)} />
+          <IconButton icon="right" label="Next token" disabled={!canStepFwd} onclick={() => step(1)} />
+        </span>
       </div>
-      <div class="branch-point-actions">
-        <button
-          type="button"
-          class="secondary-action"
-          disabled={!canReplaceToken || replacingToken}
-          {...{ "aria-description": (canReplaceToken
-            ? undefined
-            : genStatus.active
-              ? "Finish or stop the current generation first"
-              : "This saved token does not have an exact replay boundary") }}
-          onclick={() => {
-            if (replacementOpen) {
-              replacementOpen = false;
-              continuationError = null;
-            } else {
-              void showReplacement();
-            }
-          }}
-        >{replacementOpen ? "Cancel replacement" : "Replace token…"}</button>
-        <button
-          type="button"
-          class="primary-action"
-          disabled={!canContinueFromToken || continuingFromToken}
-          {...{ "aria-description": (canContinueFromToken
-            ? undefined
-            : genStatus.active
-              ? "Finish or stop the current generation first"
-              : "This saved token does not have an exact replay boundary") }}
-          onclick={() => void continueFromToken()}
-        ><MorphText text={continuingFromToken ? "Starting…" : "Continue from here"} numbers={false} /></button>
+      <div class="dw-facts">
+        <span>token <b><MorphText text={String(effCursor.tokenIdx + 1)} /></b> of {tokenList.length}</span>
+        {#if chosenP !== null}<span data-tip={`sampled p · log p ${token.logprob?.toFixed(3)} · after the sampler's temperature and top-k/top-p, not the model's own probability`}>p <b><MorphText text={formatP(chosenP)} {identity} /></b></span>{/if}
+        {#if chosenRank !== null}<span>rank <b>{chosenRank}</b></span>{/if}
+        {#if otherSeg}
+          <button type="button" class="fact" onclick={toggleSeg} aria-label={`Show the ${otherSeg}`}>{effCursor.seg}</button>
+        {:else if effCursor.seg === "thinking"}<span>thinking</span>{/if}
+        {#if hasAbPair}<button type="button" class="fact" aria-pressed={branch === "shadow"} data-tip="The same turn, generated without steering" onclick={() => (branch = branch === "shadow" ? "primary" : "shadow")}>A/B twin</button>{/if}
+        {#if replayAt == null}<span data-tip="The generation record is missing, so this token cannot be replayed or branched">not replayable</span>{/if}
       </div>
-      {#if replacementOpen}
-        <form class="replacement-form" onsubmit={(event) => {
-          event.preventDefault();
-          void replaceToken();
-        }}>
-          <label for="token-replacement">Replacement text</label>
-          <div class="replacement-controls">
-            <input
-              id="token-replacement"
-              bind:this={replacementInput}
-              bind:value={replacementText}
-              aria-describedby="token-replacement-help"
-              autocomplete="off"
-              spellcheck="true"
-            />
-            <button
-              type="submit"
-              class="primary-action"
-              disabled={!canReplaceToken || replacingToken || replacementText.length === 0}
-            ><MorphText text={replacingToken ? "Starting…" : "Start branch"} numbers={false} /></button>
-          </div>
-          <span id="token-replacement-help">
-            Edit this token or replace it with a longer phrase. Spacing is preserved.
-          </span>
-        </form>
+      {#if recipeSteering || recipeLine}
+        <p class="recipe meta">{#if recipeSteering}<span class="expr">{recipeSteering}</span>{/if}{#if recipeSteering && recipeLine}<span aria-hidden="true">{" · "}</span>{/if}{recipeLine}</p>
       {/if}
-      {#if continuationError}
-        <p class="branch-point-error" role="alert">{continuationError}</p>
+      {#if context.length > 1}
+        <!-- Mouse targets only (the arrow keys walk the same tokens), so focus stays on the view. -->
+        <p class="ctx" aria-hidden="true">{#each context as item (item.i)}{#if item.i === effCursor.tokenIdx && item.text.startsWith(" ")}{" "}{/if}<button type="button" class="ctok" class:here={item.i === effCursor.tokenIdx} tabindex="-1" onclick={() => { if (effCursor) moveCursor({ ...effCursor, tokenIdx: item.i }); }}>{item.i === effCursor.tokenIdx && item.text.startsWith(" ") ? item.text.slice(1) : item.text}</button>{/each}</p>
       {/if}
+      <Alternatives {token} canBranch={canBranch} busy={branching} onbranch={(id) => void branchWith(id)} />
     </section>
-  {/if}
 
-  <!-- View tabs + the steered/unsteered branch toggle when this turn has
-       an A/B pair.  Tabs always render so users see the other views
-       exist even when their capture is off. -->
-  <div class="toolbar">
-    <SegmentedTabs items={tabItems} bind:value={drilldownUi.tab} ariaLabel="Token detail view" />
-    {#if hasAbPair}
-      <SegmentedTabs items={BRANCH_ITEMS} bind:value={branch} ariaLabel="Token branch" />
-    {/if}
-  </div>
-
-  <div class="body">
-    {#key bodyStateKey}
-      <div
-        class="tab-content"
-        in:selectionIn
-      >
-    {#if token && effCursor && drilldownUi.tab === "geometry" && !geometryTokenReplayAvailable && (hasGeometryProbes || capturedGeometryData)}
-      <p class="replay-unavailable" role="note">{geometryReplayUnavailableReason}</p>
-    {:else if token && effCursor && drilldownUi.tab === "lens" && !lensTokenReplayAvailable && (jlensFitted || capturedLensData)}
-      <p class="replay-unavailable" role="note">{lensReplayUnavailableReason}</p>
-    {:else if token && effCursor && drilldownUi.tab === "sae" && !saeTokenReplayAvailable && (saeResident || capturedSaeData)}
-      <p class="replay-unavailable" role="note">{saeReplayUnavailableReason}</p>
-    {/if}
-    {#if !token || !effCursor}
-      <div class="empty">{params ? "This token is no longer available. Select another token to inspect it." : "Select a token in your conversation or Loom to see its full details here."}</div>
-    {:else if drilldownUi.tab === "geometry"}
-      <GeometryTab
-        readout={geometryReadout}
-        returnToToken={{ turnIdx: effCursor.turnIdx, tokenIdx: effCursor.tokenIdx, isThinking: effCursor.seg === "thinking" }}
-        bind:steered={geometrySteered}
-        {hasGeometryProbes}
-        {hasReplayContext}
-        replayAvailable={geometryTokenReplayAvailable}
-      />
-    {:else if drilldownUi.tab === "logits"}
-      <LogitsTab {token} nodeId={loomNodeId} />
-    {:else if drilldownUi.tab === "sae"}
-      <SaeTab
-        readout={saeReadout}
-        bind:steered={saeSteered}
-        saeLoaded={saeResident}
-        availability={saeAvailability}
-        {hasReplayContext}
-        pinned={saePinned}
-        replayAvailable={saeTokenReplayAvailable}
-      />
-    {:else}
-      <LensTab
-        readout={lensReadout}
-        bind:steered={lensSteered}
-        {jlensFitted}
-        {hasReplayContext}
-        pinned={lensPinned}
-        modelId={sessionState.info?.model_id ?? null}
-        replayAvailable={lensTokenReplayAvailable}
-      />
-    {/if}
+    {#if steeringUnreplayable}
+      <p class="meta readings-note">A replay can't reproduce where this reply's steering fired, so these readings are replayed without it.</p>
+    {:else if showSteering}
+      <div class="dw-row readings-switch">
+        <Segmented label="Readings" value={steeredAll ? "steered" : "unsteered"} onchange={setSteered}
+          options={[{ value: "steered", label: "Steered", hint: recipeSteering ?? undefined }, { value: "unsteered", label: "Unsteered", hint: "Replayed without the steering" }]} />
       </div>
-    {/key}
-  </div>
+    {/if}
 
-</aside>
+    <div class="part" use:sectionRef={"lens"}>
+      {#if anatomyShown}
+        <TokenAnatomy readout={anatomyReadout} tokenText={token.text} labels={unitLabels} />
+      {:else}
+        <!-- The capture, or why there is none: no lens ready, or no replay record. -->
+        <LensReading readout={lensReadout} tokenText={token.text} jlensFitted={lensGate.ready} {hasReplayContext}
+          modelId={sessionState.info?.model_id ?? null} replayAvailable={lensReplayAvailable} />
+      {/if}
+    </div>
+    <div class="part" use:sectionRef={"geometry"}>
+      <ProbeReadings readout={geometryReadout} {pinned} {hasGeometryProbes} {hasReplayContext}
+        replayAvailable={geometryTokenReplayAvailable}
+        returnToToken={{ turnIdx: effCursor.turnIdx, tokenIdx: effCursor.tokenIdx, isThinking: effCursor.seg === "thinking" }} />
+    </div>
+    <div class="part" use:sectionRef={"sae"}>
+      <FeatureReadings readout={saeReadout} saeLoaded={saeResident} availability={saeAvailability} {hasReplayContext}
+        replayAvailable={saeTokenReplayAvailable} lastLayer={deepest} />
+    </div>
+
+    <section class="dw-sec" aria-label="Act on this token">
+      {#if branchOpen}
+        <form class="branch" transition:expand onsubmit={(event) => { event.preventDefault(); void startBranch(); }}>
+          <label class="sr-only" for="token-branch-text">Branch with</label>
+          <!-- Escape here closes the field, before the window's Escape would close the token. -->
+          <input id="token-branch-text" bind:this={branchInput} bind:value={branchText} autocomplete="off" spellcheck="true"
+            onkeydown={(event) => { if (event.key === "Escape") { event.preventDefault(); branchOpen = false; branchError = null; } }} />
+          <button type="submit" class="dw-button" disabled={!canBranch || branching || branchText.length === 0}><MorphText text={branching ? "Starting…" : "Branch"} numbers={false} /></button>
+          <button type="button" class="dw-text" onclick={() => { branchOpen = false; branchError = null; }}>Cancel</button>
+        </form>
+      {:else}
+        <div class="dw-row">
+          {#if (saidReady || readReady) && token.tokenId != null}
+            {#if saidReady && readReady}
+              <Segmented label="Read this token" value={lensAs} options={[...LENS_NAMESPACES]}
+                onchange={(value: LensNamespace) => (lensPairState.namespace = value)} />
+            {/if}
+            <button type="button" class="dw-quiet" disabled={probing || tokenProbed}
+              data-tip={tokenProbed ? "Already a lens probe" : `Read this token at every layer, every token from now on: ${lensPair.hint}`}
+              onclick={() => void probeToken()}>Probe <span class="dw-ws">{named.lead ? "·" : ""}</span>{named.empty ? "∅" : named.text}</button>
+            <button type="button" class="dw-quiet" data-tip={`Add a lens term that pushes this way: ${lensPair.hint}`}
+              onclick={steerTowardToken}>Steer toward it</button>
+          {/if}
+          <button type="button" class="dw-quiet" disabled={!canBranch || branching}
+            data-tip={canBranch ? "Keep the text up to here and write a new ending; the original stays" : genStatus.active ? "Finish or stop the generation first" : "This token has no replay boundary"}
+            onclick={() => void openBranch()}>Branch here</button>
+        </div>
+      {/if}
+      {#if branchError}<p class="meta" role="alert">{branchError}</p>{/if}
+    </section>
+  {:else}
+    <p class="meta">{params ? "This token is gone; select another" : "Select a token"}</p>
+  {/if}
+</div>
 
 <style>
-  /* v2 sheet interior — the host paints the sheet surface (glass hairline,
-   * radius, --bg-alt fill), so the root is transparent; chrome speaks sans
-   * and every value/token/expression sits in mono. */
-  .drawer {
-    display: block;
-    height: 100%;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior-y: contain;
-    background: transparent;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
-  }
-  .drawer:focus {
-    /* This scroll container is not a control; its children show keyboard focus. */
-    outline: none !important;
-  }
-
-  .tab-content {
+  .token {
+    /* What a piece on this surface fills with: wash on paper, wash2 on the phone's wash sheet. */
+    --token-fill: var(--wash);
+    /* The readings size their columns to the view, not the window: the Inspector is 300 px at a
+     * 768 px window and wider on a phone. */
+    container: token / inline-size;
     display: grid;
-    gap: var(--space-7);
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--s7);
     min-width: 0;
+    align-content: start;
   }
+  .token.mobile { --token-fill: var(--wash2); gap: var(--s6); }
+  .token:focus { outline: none; }
+  .top { gap: var(--s4); }
+  .part { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s7); min-width: 0; }
+  .mobile .part { gap: var(--s6); }
+  /* The switch heads the readings below it. */
+  .readings-switch { margin-bottom: calc(-1 * var(--s4)); }
+  .readings-note { margin: 0; }
 
-  .drawer-header {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .heading-row { display: flex; align-items: center; gap: var(--space-3); width: 100%; min-width: 0; }
-  .heading-row h2 { flex: 1; min-width: 0; margin: 0; }
-  .dock-toggle {
-    display: inline-grid;
-    place-items: center;
-    flex: none;
-    width: var(--control-compact);
-    height: var(--control-compact);
+  .title-row { display: flex; align-items: center; gap: var(--s3); min-width: 0; }
+  .title-row .dw-title { flex: 1 1 auto; min-width: 0; overflow: hidden; white-space: pre; text-overflow: ellipsis; cursor: help; }
+  .steps { display: flex; flex: none; gap: var(--s1); }
+  .fact {
     padding: 0;
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--fg-muted);
-  }
-  .dock-toggle:hover { background: var(--glass); color: var(--fg); }
-  .dock-toggle[aria-pressed="true"] { background: var(--glass-strong); color: var(--accent); }
-  .docked .eyebrow { font-size: var(--text); }
-  .mobile .drawer-header { padding-top: 0; }
-  .mobile :global(.drawer-close) { min-width: 44px; min-height: 44px; }
-  .docked .branch-point { grid-template-columns: minmax(0, 1fr); }
-  .docked .branch-point-actions { align-items: stretch; flex-direction: column; }
-  .docked .replacement-controls { grid-template-columns: minmax(0, 1fr); }
-  .docked .toolbar { align-items: flex-start; flex-direction: column; }
-  .docked .toolbar :global(.sk-tabs) { flex-wrap: wrap; max-width: 100%; }
-  .docked :global(.logit-grid),
-  .docked :global(.geo-list),
-  .docked :global(.aggregate-grid),
-  .docked :global(.sae-list) { grid-template-columns: minmax(0, 1fr); }
-  .title {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    min-width: 0;
-    flex: 1 1 auto;
-  }
-  .eyebrow {
-    color: var(--fg);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0;
-  }
-  .name-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-    flex-wrap: wrap;
-  }
-  .tok-text {
-    color: var(--fg);
-    font-family: var(--font-mono);
-    font-size: var(--text-md);
-    background: var(--glass-strong);
-    border-radius: var(--radius-sm);
-    padding: var(--space-1) var(--space-3);
-    word-break: break-all;
-    max-width: 28ch;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .coord {
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    white-space: nowrap;
-  }
-
-  /* Identity labels — the segment chip doubles as
-   * the thinking/response jump when the turn has both. */
-  .kv-chip {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
-    background: transparent;
     border: 0;
-    border-radius: var(--radius-sm);
-    padding: var(--space-xs) 0;
-    white-space: nowrap;
-  }
-  .kv-chip.warn {
-    color: var(--fg-muted);
-    font-style: italic;
-  }
-  button.seg-chip {
-    min-height: var(--control-target);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    cursor: pointer;
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out);
-  }
-  button.seg-chip:hover:not(:disabled) {
-    color: var(--fg);
-    background: var(--glass-strong);
-  }
-  button.seg-chip:disabled {
-    cursor: default;
-  }
-
-  .nav-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-5);
-    flex-wrap: wrap;
-  }
-  .scrub {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .scrub-btn {
-    min-width: var(--control-target);
-    min-height: var(--control-target);
-    background: var(--glass);
-    color: var(--fg-muted);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    font: inherit;
-    font-size: var(--text-2xs);
-    line-height: 1;
-    padding: var(--space-2) var(--space-4);
-    cursor: pointer;
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out);
-  }
-  .scrub-btn:hover:not(:disabled) {
-    color: var(--fg);
-    background: var(--glass-strong);
-  }
-  .scrub-btn:disabled {
-    color: var(--fg-muted);
-    opacity: var(--disabled-opacity);
-    cursor: default;
-  }
-  .scrub-pos {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .scrub-home {
-    color: var(--accent);
-    font-size: var(--text-xs);
-  }
-
-  .generation-context {
-    min-width: 0;
-  }
-  .recipe {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    flex-wrap: wrap;
-    min-width: 0;
-    margin: 0;
-    padding: 0;
-    border-radius: var(--radius);
     background: transparent;
+    color: var(--ink2);
+    font: inherit;
+    cursor: pointer;
+    transition: color var(--fast) var(--ease);
   }
-  .recipe-label {
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0;
-    white-space: nowrap;
-  }
-  .recipe code {
-    background: transparent;
-    font-family: var(--font-mono);
-  }
-  .recipe {
-    gap: var(--space-2) var(--space-3);
-  }
-  .recipe > span:not(.recipe-label),
-  .recipe-steering {
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
-    white-space: nowrap;
-  }
-  .recipe-steering {
-    color: var(--fg);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 30ch;
-  }
+  .fact:hover, .fact[aria-pressed="true"] { color: var(--ink); }
+  .dw-facts [data-tip] { cursor: help; }
+  .recipe { overflow-wrap: anywhere; }
+  .recipe .expr { color: var(--ink2); }
 
-  /* Toolbar — view tabs left, branch toggle right (when A/B). */
-  .toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--space-5) var(--drawer-gutter-inline);
-  }
-  .branch-point {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-4) var(--space-6);
-    margin: var(--space-4) var(--drawer-gutter-inline) 0;
-    padding: var(--surface-padding);
-    border-radius: var(--radius-lg);
-    background: var(--input-well);
-    box-shadow: var(--shadow-control);
-    min-width: 0;
-  }
-  .branch-point-copy {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .branch-point-copy strong {
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
-  .branch-point-copy span {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-  }
-  .branch-point-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .branch-point-actions button {
-    min-height: var(--control-target);
-    padding: 0 var(--space-4);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    white-space: nowrap;
-  }
-  .branch-point-actions .secondary-action {
-    color: var(--fg-dim);
-    background: var(--glass);
-  }
-  .branch-point-actions .primary-action {
-    color: var(--action-ink);
-    background: var(--action-bg);
-  }
-  .branch-point-actions button:hover:not(:disabled),
-  .branch-point-actions button:focus-visible:not(:disabled) {
-    filter: brightness(1.08);
-    outline: none;
-  }
-  .branch-point-actions button:focus-visible {
-    box-shadow: 0 0 0 2px var(--focus-ring);
-  }
-  .branch-point-actions button:active:not(:disabled) {
-    transform: scale(var(--press-scale));
-  }
-  .branch-point-actions button:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-  .replacement-form {
-    grid-column: 1 / -1;
-    display: grid;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .replacement-form label {
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-  }
-  .replacement-controls {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto;
-    gap: var(--space-2);
-  }
-  .replacement-controls input {
-    min-width: 0;
-    min-height: var(--control-target);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius);
-    padding: 0 var(--space-3);
-    background: var(--input-well);
-    color: var(--fg);
-    font: inherit;
-    font-family: var(--font-mono);
-  }
-  .replacement-controls input:focus-visible {
-    border-color: var(--accent);
-    box-shadow: 0 0 0 2px var(--focus-ring);
-    outline: none;
-  }
-  .replacement-controls .primary-action {
-    min-height: var(--control-target);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: 0 var(--space-4);
-    color: var(--action-ink);
-    background: var(--action-bg);
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-  }
-  .replacement-form > span {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .branch-point-error {
-    grid-column: 1 / -1;
+  /* Around the token: a wash with the token marked in ink, as the page marks it. */
+  .ctx {
     margin: 0;
-    color: var(--accent-red);
-    font-size: var(--text-xs);
+    padding: var(--s2) var(--s3);
+    border-radius: var(--r-box);
+    background: var(--token-fill);
+    color: var(--ink2);
+    font: var(--type-small);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
-  .replay-unavailable {
-    margin: 0 0 var(--space-3);
-    padding: var(--surface-padding);
-    border-radius: var(--radius);
-    background: var(--input-well);
-    color: var(--fg-muted);
-    font-family: var(--font-reading);
-    font-size: var(--text-sm);
-    line-height: 1.5;
-  }
+  .ctok { display: inline; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; white-space: inherit; text-align: inherit; cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  @media (hover: hover) { .ctok:hover { color: var(--ink); } }
+  .ctok.here { background: var(--ink); color: var(--paper); box-shadow: 0 0 0 2px var(--ink); }
 
-  .body {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-6);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .empty {
-    color: var(--fg-muted);
-    padding: var(--space-6) 0;
-    line-height: 1.5;
-    max-width: 62ch;
-  }
+  .branch { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); min-width: 0; }
+  .branch input { flex: 1 1 12rem; min-width: 0; background: var(--token-fill); color: var(--ink); white-space: pre; }
+  /* The field meets the Inspector's scroll edge, so its ring sits inside it. */
+  .branch input:focus-visible { outline-offset: -2px; }
 
-  @media (max-width: 820px) {
-    .branch-point {
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .branch-point-actions {
-      align-items: stretch;
-      flex-direction: column;
-    }
-    .replacement-controls {
-      grid-template-columns: 1fr;
-    }
-    .toolbar {
-      align-items: flex-start;
-      flex-direction: column;
-    }
+  /* On the phone's wash sheet the switch's track steps up to wash2, as the sheet's other pieces do. */
+  .token.mobile .readings-switch :global(.seg) { background: var(--token-fill); }
+
+  @media (max-width: 720px) {
+    /* Phone sizes (the Phone canvas): every target 44 px. */
+    .steps :global(button.icon) { width: 44px; height: 44px; }
+    .readings-switch :global(.seg > button) { position: relative; height: 36px; }
+    .readings-switch :global(.seg > button::after) { content: ""; position: absolute; inset: -4px 0; }
+    .fact { position: relative; }
+    .fact::after { content: ""; position: absolute; inset: -14px -8px; }
+    /* Too small to tap and too close to stretch: on the phone the context is to read, and ‹ ›
+     * (or the page above the sheet) move the token. */
+    .ctok { pointer-events: none; }
+    .branch input { min-height: 44px; }
+    .branch .dw-text { min-height: 44px; }
   }
 </style>

@@ -4,7 +4,10 @@ Startup order: effective config → bind/model checks → parse ``-S`` (YAML
 ``vectors:`` fills an unset flag) → load the session → preflight the default
 steering through the session (a missing concept fails here, with a ``manifold
 extract`` hint, instead of on the first request) → ``create_app`` → warm-up
-(``--compile`` only) → live J-lens → live SAE (dashboard only) → uvicorn.
+(``--compile`` only) → the R-family lens (its live readout) → the S-family
+lens → live SAE (dashboard only) → uvicorn.  The two lens families name the
+6.0 model's two axes: the R family (an R- or J-lens) reads toward what the
+model will say, the S family (an S- or K-lens) toward what it has read.
 """
 
 from __future__ import annotations
@@ -69,15 +72,16 @@ def warm_up(session: Any) -> None:
 
 
 def enable_live_lens(session: Any) -> bool:
-    """Stream the live J-lens readout when a compatible lens is selected.
+    """Stream the R family's live readout when a compatible R-family lens (an
+    R- or J-lens) is selected.
 
     The policy, in full:
 
-    - **An output-side source is selected** (``lens use``): it is the user's
+    - **An R-family source is selected** (``lens use``): it is the user's
       choice and is never rewritten.  Compatible with the loaded weights → live readout on;
       incompatible → live readout off, with a ``lens use`` hint.
     - **Nothing is selected**: serve adopts the best compatible prepared
-      output-side source, in
+      R-family source, in
       :func:`~drowse.lens.sources.lens_source_preference_key` order, and that
       adoption **persists** — the lens runtime reads its
       selection from ``active.json`` only, so there is no in-memory choice to
@@ -89,19 +93,19 @@ def enable_live_lens(session: Any) -> bool:
         from drowse.lens.sources import LENS_SOURCES, list_lens_sources
 
         model_id = session.model_id
-        active = LENS_SOURCES.active(model_id, "output")
+        active = LENS_SOURCES.active(model_id, "R")
         if active is not None:
             if not session.lens.has_compatible():
                 note(
-                    f"Live J-lens readout: off — the active source "
-                    f"{LENS_SOURCES.format(active)} does not match the loaded "
-                    f"weights (`drowse lens use {model_id} <source>` to switch)"
+                    f"R-family lens {LENS_SOURCES.format(active)}: does not match "
+                    f"the loaded weights, live readout off "
+                    f"(`drowse lens use {model_id} <source>` to switch)"
                 )
                 return False
         else:
             compatible = False
             for row in list_lens_sources(model_id):
-                if LensKey(str(row["lens"])).side != "output":
+                if LensKey(str(row["lens"])).family != "R":
                     continue
                 try:
                     session.lens.select_source(str(row["source"]))
@@ -111,15 +115,70 @@ def enable_live_lens(session: Any) -> bool:
                 if compatible:
                     break
             if not compatible:
-                tried = LENS_SOURCES.active(model_id, "output")
+                tried = LENS_SOURCES.active(model_id, "R")
                 if tried is not None:
                     LENS_SOURCES.clear_if_active(model_id, tried)
                 return False
         layers = session.lens.set_live(True).layers or ()
-        note(f"Live J-lens readout: on ({len(layers)} fitted layers)")
+        chosen = LENS_SOURCES.active(model_id, "R")
+        label = "" if chosen is None else f" {LENS_SOURCES.format(chosen)}"
+        note(f"R-family lens{label}: live readout on ({len(layers)} fitted layers)")
         return True
     except Exception as e:  # noqa: BLE001 — never block serve startup
-        note(f"Live J-lens readout: enable failed ({e})")
+        note(f"R-family lens: live readout failed to start ({e})")
+        return False
+
+
+def select_s_lens(session: Any) -> bool:
+    """Select the S-family lens ``slens/`` atoms, probes and reads use.
+
+    :func:`enable_live_lens`'s policy for the other family (there is no live
+    S readout to turn on):
+
+    - **An S-family source is selected** (``lens use``): never rewritten.
+      Compatible with the loaded weights → reported; incompatible → a
+      ``lens use`` hint, and ``slens/`` stays unavailable.
+    - **Nothing is selected**: serve adopts the best compatible prepared
+      S-family source that holds the ``out`` site (``slens/`` atoms and
+      probes read it), in
+      :func:`~drowse.lens.sources.lens_source_preference_key` order, and the
+      adoption persists.  No compatible source → the trial selection is
+      cleared.
+    """
+    try:
+        from drowse.lens.key import LensKey
+        from drowse.lens.sources import LENS_SOURCES, list_lens_sources
+
+        model_id = session.model_id
+        active = LENS_SOURCES.active(model_id, "S")
+        if active is not None:
+            label = LENS_SOURCES.format(active)
+            if not session.lens.has_compatible_input():
+                note(
+                    f"S-family lens {label}: does not match the loaded weights, "
+                    f"slens/ unavailable (`drowse lens use {model_id} <source>` "
+                    f"to switch)"
+                )
+                return False
+            note(f"S-family lens {label}: slens/ reads, probes and atoms")
+            return True
+        for row in list_lens_sources(model_id):
+            if LensKey(str(row["lens"])).family != "S" or "out" not in row["sites"]:
+                continue
+            try:
+                session.lens.select_source(str(row["source"]))
+                compatible = session.lens.has_compatible_input()
+            except Exception:  # noqa: BLE001 — try the next prepared source
+                continue
+            if compatible:
+                note(f"S-family lens {row['source']}: slens/ reads, probes and atoms")
+                return True
+        tried = LENS_SOURCES.active(model_id, "S")
+        if tried is not None:
+            LENS_SOURCES.clear_if_active(model_id, tried)
+        return False
+    except Exception as e:  # noqa: BLE001 — never block serve startup
+        note(f"S-family lens: selection failed ({e})")
         return False
 
 
@@ -186,6 +245,12 @@ def enable_live_sae(session: Any) -> bool:
             release = best_sae_release(list_sae_releases(session.model_id))
             if release is None:
                 return False
+            # A provider SAE's first load downloads its weights (gigabytes at
+            # 8B) before the port binds; say so, or the server looks hung.
+            note(
+                f"Live SAE readout: loading {release} from its provider; a "
+                f"first load downloads its weights before the server starts"
+            )
             info = session.sae.load(release)
         state = session.sae.set_live(True)
         note(f"Live SAE readout: on ({info.get('release', 'active')} at L{state.layer})")
@@ -217,15 +282,20 @@ def run(args: argparse.Namespace) -> None:
     check_steering(args.steer)
 
     with open_session(args, roster=True) as session:
-        # The lens source first: ``jlens/<word>`` atoms in the default
-        # steering resolve against it.
+        # The lens sources first: ``jlens/<word>`` and ``slens/<word>``
+        # atoms in the default steering resolve against them.
         enable_live_lens(session)
+        select_s_lens(session)
         steering = (
             preflight_steering(session, args.steer, args.model)
             if args.steer else None
         )
         from drowse.server import create_app
-        from drowse.server.ws_stream import MAX_WS_MESSAGE_BYTES
+        from drowse.server.ws_stream import (
+            MAX_WS_MESSAGE_BYTES,
+            WS_PING_INTERVAL_SECONDS,
+            WS_PING_TIMEOUT_SECONDS,
+        )
 
         web = not args.no_web
         app = create_app(
@@ -249,6 +319,8 @@ def run(args: argparse.Namespace) -> None:
         uvicorn.run(
             app, host=args.host, port=args.port, log_level="info",
             ws_max_size=MAX_WS_MESSAGE_BYTES,
+            ws_ping_interval=WS_PING_INTERVAL_SECONDS,
+            ws_ping_timeout=WS_PING_TIMEOUT_SECONDS,
         )
 
 
@@ -269,7 +341,7 @@ GROUP = Verb(
         arg("-P", "--port", type=bounded_int(1, 65535), default=8000,
             help="Bind port"),
         STEER.but(help="Default steering expression (overrides YAML "
-                       'vectors:), e.g. "0.5 honest + 0.3 warm"'),
+                       'vectors:), e.g. "-0.5 deceptive + 0.3 warm"'),
         arg("-C", "--cors", action="append", default=[], metavar="ORIGIN",
             help="CORS allowed origin (repeatable)"),
         arg("-k", "--api-key", default=None, metavar="KEY",

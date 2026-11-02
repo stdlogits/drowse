@@ -2,7 +2,10 @@ import { readdir, readFile } from "node:fs/promises";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const sourceRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src");
+const webuiRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const sourceRoot = resolve(webuiRoot, "src");
+// Ledger declares its tokens (and the pieces their own) in the package; they count as declared.
+const ledgerRoot = resolve(webuiRoot, "node_modules", "@stdlogits", "ledger", "src");
 const sourceExtensions = new Set([".css", ".svelte", ".ts"]);
 
 async function sourceFiles(directory) {
@@ -21,6 +24,12 @@ async function sourceFiles(directory) {
 
 const declarations = new Map();
 const references = new Map();
+
+for (const path of await sourceFiles(ledgerRoot)) {
+  for (const match of (await readFile(path, "utf8")).matchAll(/(--[a-zA-Z0-9_-]+)\s*:/g)) {
+    declarations.set(match[1], `@stdlogits/ledger/${path.slice(ledgerRoot.length + 1)}`);
+  }
+}
 
 for (const path of await sourceFiles(sourceRoot)) {
   const source = await readFile(path, "utf8");

@@ -41,12 +41,20 @@ from drowse.geometry.topology import (
 )
 from drowse.geometry.whitener import LayerWhitener
 from drowse.lens.jlens import JacobianLens, aggregate_readout_from_probabilities, token_readout_stats_from_probabilities
-from drowse.loom.recipe import CastMember, Recipe
+from drowse.lens.depth import LensBand, s_weights
+from drowse.lens.footprint import footprint_probe_rows
+from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT, InheritSystemPrompt, SamplingConfig
+from drowse.loom.recipe import CastMember, Recipe, compose_call
 from drowse.loom.tree import LoomTree
-from drowse.readout.measurements import build_measurements
+from drowse.readout.measurements import (
+    aggregate_measurements,
+    build_measurements,
+    token_row_measurements,
+)
 from drowse.readout.monitor import _depth_stats
 from drowse.readout.types import DepthSummary, ProbeReading, ScalarReading
 from drowse.sae.backend import LocalSaeBackend
+from drowse.units.instrument import UnitsInstrument
 from drowse.steering.grammar import SteeringExprError, parse_expr, referenced_selectors
 from drowse.steering.hooks import _lower_affine_subspaces
 from drowse.steering.triggers import TriggerContext
@@ -347,8 +355,7 @@ def test_browser_dls_fixture_matches_python_source_of_truth() -> None:
         layer: values.abs() + 1.0
         for layer, values in centroids.items()
     }
-    with pytest.warns(UserWarning, match="no layers pass"):
-        fallback = compute_dls_axes(positive, bases, means)
+    fallback = compute_dls_axes(positive, bases, means)
     assert {str(layer): sorted(axes) for layer, axes in fallback.items()} == fixture["allFailExpected"]
 
 
@@ -589,13 +596,78 @@ def test_shared_loom_operation_transcript_matches_python_source_of_truth(
 
 
 # ---------------------------------------------------------------------------
+# Recipe composition
+# ---------------------------------------------------------------------------
+
+
+RECIPE_COMPOSE = GOLDENS / "recipe-compose-v1.json"
+
+
+def _golden_sampling(block: dict[str, Any] | None) -> SamplingConfig | None:
+    if block is None:
+        return None
+    values = dict(block)
+    if "stop" in values:
+        values["stop"] = tuple(values["stop"])
+    return SamplingConfig(**values)
+
+
+def _golden_recipe(block: dict[str, Any] | None) -> Recipe | None:
+    if block is None:
+        return None
+    return Recipe(
+        steering=block.get("steering"), thinking=block.get("thinking"),
+        sampling=_golden_sampling(block.get("sampling")),
+        system_prompt=block.get("system_prompt", INHERIT_SYSTEM_PROMPT),
+    )
+
+
+def _set_sampling(sampling: SamplingConfig | None) -> dict[str, Any] | None:
+    """The fields of ``sampling`` that are set (not at their unset default)."""
+    if sampling is None:
+        return None
+    unset = SamplingConfig()
+    out: dict[str, Any] = {}
+    for name in SamplingConfig.__dataclass_fields__:
+        value = getattr(sampling, name)
+        if value != getattr(unset, name):
+            out[name] = list(value) if name == "stop" else value
+    return out
+
+
+def _compose_case(case: dict[str, Any]) -> dict[str, Any]:
+    call = case["call"]
+    anchor = _golden_recipe(case.get("anchor"))
+    modifier = case.get("modifier")
+    out = compose_call(
+        steering=call["steering"], thinking=call["thinking"],
+        sampling=_golden_sampling(call["sampling"]),
+        cast=_golden_recipe(case.get("cast")), anchor=anchor,
+        modifier=(anchor or Recipe()).compose_modifier(modifier) if modifier is not None else None,
+    )
+    expected: dict[str, Any] = {
+        "steering": out.steering, "thinking": out.thinking, "sampling": _set_sampling(out.sampling),
+    }
+    if not isinstance(out.system_prompt, InheritSystemPrompt):
+        expected["system_prompt"] = out.system_prompt
+    return expected
+
+
+@pytest.mark.parametrize(
+    "case", json.loads(RECIPE_COMPOSE.read_text())["cases"], ids=lambda case: case["name"],
+)
+def test_browser_recipe_composition_matches_python(case: dict[str, Any]) -> None:
+    assert _compose_case(case) == case["expected"]
+
+
+# ---------------------------------------------------------------------------
 # Measurement envelope
 # ---------------------------------------------------------------------------
 
 
 MEASUREMENTS = (
     GOLDENS
-    / "measurement-envelope-v1.json"
+    / "measurement-envelope-v2.json"
 )
 
 def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
@@ -708,6 +780,36 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         ),
     )
 
+    # The S family's slens/ probe: per-layer footprint z reduced by the
+    # depth rule's S weights (lens/depth.py, lens/footprint.py).
+    slens = fixture["slens"]
+    s_layers = [int(layer) for layer in slens["layers"]]
+    s_rows = footprint_probe_rows(
+        torch.tensor(slens["z"], dtype=torch.float32).reshape(-1, 1),
+        torch.tensor(
+            [layer / (model_layer_count - 1) for layer in s_layers], dtype=torch.float32,
+        ).reshape(-1, 1),
+        torch.tensor(
+            s_weights(s_layers, model_layer_count, LensBand(*slens["band"])),
+            dtype=torch.float32,
+        ).reshape(-1, 1),
+    )
+    slens_reading = ScalarReading(
+        value=float(s_rows[0, 0]),
+        unit="mean_footprint_z",
+        per_layer={layer: float(s_rows[3 + row, 0]) for row, layer in enumerate(s_layers)},
+        depth=DepthSummary((float(s_rows[1, 0]),), (float(s_rows[2, 0]),), "footprint_z"),
+    )
+
+    # The units family: a neuron's activation over its pole's scale.
+    units = fixture["units"]
+    units_reading = UnitsInstrument.readings(
+        cast(Any, SimpleNamespace(_n_layers=model_layer_count)),
+        {units["name"]: {"layer": units["layer"], "kind": "neuron", "unit": units["unit"]}},
+        {units["name"]: (units["activation"] / units["scale"], units["activation"])},
+        source=units["scaleSource"],
+    )[units["name"]]
+
     sae = fixture["sae"]
     sae_session = SimpleNamespace(
         layers=[object() for _ in range(model_layer_count)],
@@ -733,24 +835,11 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         sae_activations,
     )[sae["name"]]
     assert sae_reading.value == sae["value"]
-    per_layer_scores = {
-        str(layer): {
-            geometry["name"]: row["coords"][0],
-            lens["name"]: probability,
-            **(
-                {sae["name"]: sae["value"]}
-                if layer == sae["layer"]
-                else {}
-            ),
-        }
-        for layer, row, probability in zip(layers, rows, lens["probabilities"])
-    }
     envelope = build_measurements(
         scope="token",
         geometry_readings={geometry["name"]: geometry_reading},
-        lens_readings={lens["name"]: lens_reading},
+        lens_readings={lens["name"]: lens_reading, slens["name"]: slens_reading},
         sae_readings={sae["name"]: sae_reading},
-        per_layer_scores=per_layer_scores,
         lens_readout={
             layer: [(lens["token"], probability)]
             for layer, probability in zip(layers, lens["probabilities"])
@@ -760,9 +849,10 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
             lens_strength,
             lens_center,
             lens_spread,
+            lens["tokenId"],
         )],
         lens_token_ids={layer: [lens["tokenId"]] for layer in layers},
-        lens_source=lens["source"],
+        lens_sources={"R": lens["source"], "S": slens["source"]},
         sae_features=[(
             sae["featureId"],
             sae["activation"],
@@ -771,10 +861,107 @@ def test_browser_measurement_fixture_matches_python_source_of_truth() -> None:
         )],
         sae_source=sae["source"],
         sae_layer=sae["layer"],
+        units_readings={units["name"]: units_reading},
         steering=fixture["steering"],
     )
 
     assert envelope == fixture["expected"]
+    # The loom token row the browser writes for the same token: the generated
+    # row's projection (the scores and each geometry share and coordinates, at
+    # READING_DIGITS significant digits; the token view replays the rest).
+    assert envelope is not None
+    assert token_row_measurements(envelope) == fixture["expectedRow"]
+    # The node the browser finalizes keeps its reply's aggregate envelope as
+    # ``aggregate_measurements``: every reading's summary, no traces, no scores.
+    aggregate = build_measurements(
+        scope="aggregate",
+        geometry_readings={geometry["name"]: geometry_reading},
+        lens_readings={lens["name"]: lens_reading, slens["name"]: slens_reading},
+        sae_readings={sae["name"]: sae_reading},
+        lens_sources={"R": lens["source"], "S": slens["source"]},
+        sae_source=sae["source"],
+        sae_layer=sae["layer"],
+        units_readings={units["name"]: units_reading},
+        steering=fixture["steering"],
+    )
+    assert aggregate is not None
+    assert aggregate_measurements(aggregate) == fixture["expectedNodeAggregate"]
+
+
+def anatomy_envelope(fixture: dict[str, Any]) -> Any:
+    """The replay envelope carrying the golden's token anatomy, built by the
+    node replay's own record builders (``loom/node_replay.py``) from lens
+    reads whose weights follow the depth rule and whose S half of a residual
+    is centred."""
+    from drowse.lens.depth import kind_weights, layer_depth
+    from drowse.lens.read import FamilyRead, LensRead, TokenScore
+    from drowse.loom.node_replay import (
+        anatomy_layer,
+        anatomy_pattern,
+        anatomy_unit,
+        token_anatomy_record,
+    )
+
+    spec = fixture["anatomy"]
+    n_layers = int(fixture["modelLayerCount"])
+    weights = kind_weights(n_layers, LensBand(*spec["band"]))
+
+    def half(family: str, row: dict[str, Any], weight: float, centred: bool) -> FamilyRead:
+        unit = "probability" if family == "R" else "footprint_z"
+        if row.get("absent") is not None:
+            return FamilyRead(
+                cast(Any, family), weight, cast(Any, unit), lens=row["lens"], absent=row["absent"],
+            )
+        return FamilyRead(
+            cast(Any, family), weight, cast(Any, unit), lens=row["lens"],
+            tokens=tuple(TokenScore(int(i), str(t), float(v)) for i, t, v in row["tokens"]),
+            centred=centred,
+        )
+
+    def read(layer: int, row: dict[str, Any] | None) -> LensRead | None:
+        if row is None:
+            return None
+        w_s, w_r = weights[layer]
+        return LensRead(
+            layer, row["site"], layer_depth(layer, n_layers),
+            r=half("R", row["r"], w_r, False),
+            s=half("S", row["s"], w_s, row["of"] == "residual"),
+            of=row["of"],
+        )
+
+    layers = []
+    for row in spec["layers"]:
+        L = int(row["layer"])
+        reads_as, attention, mlp = (read(L, row[key]) for key in ("readsAs", "attention", "mlp"))
+        assert reads_as is not None and attention is not None and mlp is not None
+        layers.append(anatomy_layer(
+            L, reads_as, attention, mlp, read(L, row["steering"]),
+            [anatomy_unit("neuron", L, i, c, a, o) for i, c, a, o in row["neurons"]],
+            [anatomy_unit("head", L, i, c, w, o) for i, c, w, o in row["heads"]],
+        ))
+    token = spec["token"]
+    record = token_anatomy_record(
+        raw_index=token["rawIndex"], token_id=token["tokenId"], token=token["token"],
+        position=token["position"], prompt_length=token["promptLength"],
+        probability=token["probability"], sources=spec["sources"],
+        steering=fixture["steering"], layers=layers,
+        units=[anatomy_unit(kind, L, i, c, None, None) for kind, L, i, c in spec["units"]],
+        units_absent=None,
+        units_scale=spec["unitsScale"],
+        patterns=[
+            anatomy_pattern(p["layer"], p["head"], p["contribution"], p["weights"])
+            for p in spec["patterns"]
+        ],
+        context=spec["context"],
+    )
+    return build_measurements(
+        scope="replay", provenance="replayed", anatomy=record, steering=fixture["steering"],
+    )
+
+
+def test_browser_anatomy_fixture_matches_python_source_of_truth() -> None:
+    fixture = json.loads(MEASUREMENTS.read_text())
+    assert anatomy_envelope(fixture) == fixture["expectedAnatomy"]
 
 
 # ---------------------------------------------------------------------------

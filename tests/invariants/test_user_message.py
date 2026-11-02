@@ -31,6 +31,9 @@ from drowse.errors import (
     SteeringCompositionError,
     UnknownManifoldLabelError,
     UnknownVariantError,
+    UnitRefError,
+    UnsupportedBlockError,
+    NeutralMeansError,
     WhitenerError,
 )
 from drowse.errors import ProfileNotRegisteredError
@@ -64,12 +67,17 @@ _OVERRIDES: list[tuple[type[DrowseError], int]] = [
     (AmbiguousVariantError, 400),
     (UnknownVariantError, 404),
     (WhitenerError, 400),
+    # A residual read with no neutral mean at its site: valid read, unsatisfiable here.
+    (NeutralMeansError, 422),
     (ProfileError, 400),
     # A composition failure is syntactically valid but semantically
     # unsatisfiable — 422, distinct from the parser's 400.
     (SteeringCompositionError, 422),
     (ManifoldArityError, 422),
     (OverlappingManifoldError, 422),
+    # A block the BlockSpec cannot describe: valid model, unsatisfiable request.
+    (UnsupportedBlockError, 422),
+    (UnitRefError, 400),
     (ConcurrentGenerationError, 409),
     (RequestError, 400),
     (GenerationRequestError, 400),

@@ -121,18 +121,98 @@ class TestSessions:
         materialize_bundled_artifacts()
         selectors.invalidate()
 
+        from drowse.steering.composer import TermLayers
+
         session, client = session_and_client
+        session.layers = [object()] * 6
+        scope = session.steering.return_value.__enter__.return_value
+        scope.term_layers.return_value = {
+            "default/deceptive%deceptive": TermLayers((1, 2, 3), (0.5, 1.0, 1.5), (2, 3)),
+        }
         resp = client.post(
             "/drowse/v1/sessions/default/steering/validate",
-            json={"expression": "0.2 default/honest.deceptive@response"},
+            json={"expression": "-0.2 deceptive@response"},
         )
         assert resp.status_code == 200
         assert resp.json() == {
             "valid": True,
-            "expression": "0.2 default/honest.deceptive%honest@response",
+            "expression": "-0.2 default/deceptive%deceptive@response",
             "error": None,
+            "n_layers": 6,
+            "terms": [{
+                "key": "default/deceptive%deceptive",
+                "fitted": [1, 2, 3],
+                "share": [0.5, 1.0, 1.5],
+                "layers": [2, 3],
+            }],
+            "parts": [{
+                "text": "-0.2 default/deceptive%deceptive@response",
+                "op": "position",
+                "target": "default/deceptive",
+                "coeff": -0.2,
+                "onto": 0.0,
+                "position": "deceptive",
+                "layers": None,
+                "trigger": "response",
+                "phase": "response",
+                "first_n": None,
+                "after_n": None,
+                "gate": None,
+                "projection": None,
+            }],
         }
         session.steering.assert_called_once()
+        scope.term_layers.assert_called_once_with()
+
+    def test_validate_steering_reports_each_term_in_order(
+        self, session_and_client: Any,
+    ) -> None:
+        # The recipe row shows a recipe from elsewhere (an agent's, a tree's,
+        # the CLI's) as chips from these fields: one per term, in the order
+        # written, each with its own text, so the client needs no parser: a
+        # trigger comes as its fields too (phase, counted window, gate), a
+        # projection as its base, relation and second concept.
+        session, client = session_and_client
+        session.layers = [object()] * 8
+        scope = session.steering.return_value.__enter__.return_value
+        scope.term_layers.return_value = {}
+        expression = (
+            "0.3 jlens/storm{2-4} - !slens/#12@response + 0.5 !head/L3h1"
+            " + 0.5,0.2 emotions%0.3,-0.8{workspace} + 0.4 a~b@when:jlens/x>0.1"
+            " + 0.2 neuron/L5n7 + 0.1 jlens/a@after:3&when:a.b[1]<=-2"
+        )
+        resp = client.post(
+            "/drowse/v1/sessions/default/steering/validate",
+            json={"expression": expression},
+        )
+        assert resp.status_code == 200
+        body = resp.json()
+        parts = body["parts"]
+        assert " + ".join(part["text"] for part in parts).replace("+ -", "- ") == body["expression"]
+        both = {"phase": "both", "first_n": None, "after_n": None, "gate": None, "projection": None}
+        assert parts == [
+            {"text": "0.3 jlens/storm{2-4}", "op": "push", "target": "jlens/storm",
+             "coeff": 0.3, "onto": 0.0, "position": None, "layers": [2, 3, 4], "trigger": None, **both},
+            {"text": "-!slens/#12@response", "op": "ablate", "target": "slens/#12",
+             "coeff": -1.0, "onto": 0.0, "position": None, "layers": None, "trigger": "response",
+             **both, "phase": "response"},
+            {"text": "0.5 !head/L3h1", "op": "ablate", "target": "head/L3h1",
+             "coeff": 0.5, "onto": 0.0, "position": None, "layers": None, "trigger": None, **both},
+            {"text": "0.5,0.2 emotions%0.3,-0.8{workspace}", "op": "position", "target": "emotions",
+             "coeff": 0.5, "onto": 0.2, "position": [0.3, -0.8], "layers": "workspace", "trigger": None,
+             **both},
+            {"text": "0.4 a~b@when:jlens/x>0.1", "op": "project", "target": "a~b",
+             "coeff": 0.4, "onto": 0.0, "position": None, "layers": None, "trigger": "when:jlens/x>0.1",
+             **both, "phase": "response",
+             "gate": {"probe": "jlens/x", "op": ">", "threshold": 0.1},
+             "projection": {"base": "a", "operator": "~", "onto": "b"}},
+            {"text": "0.2 neuron/L5n7", "op": "push", "target": "neuron/L5n7",
+             "coeff": 0.2, "onto": 0.0, "position": None, "layers": None, "trigger": None, **both},
+            {"text": "0.1 jlens/a@after:3&when:a.b[1]<=-2", "op": "push", "target": "jlens/a",
+             "coeff": 0.1, "onto": 0.0, "position": None, "layers": None,
+             "trigger": "after:3&when:a.b[1]<=-2", **both, "phase": None, "after_n": 3,
+             "gate": {"probe": "a.b[1]", "op": "<=", "threshold": -2.0}},
+        ]
 
     def test_validate_steering_returns_expected_errors_in_band(
         self, session_and_client: Any,
@@ -261,7 +341,7 @@ class TestProbes:
             whitener=isotropic_whitener(means, 2),
         )
         session.add_probe.return_value = "happy"
-        coords = mani.node_coords.tolist()
+        coords = [[float(x) for x in row] for row in mani.node_coords.tolist()]
         session.monitor.attached_probes.return_value = {
             "happy": SimpleNamespace(top_n=3, manifold=mani, node_coords_host=coords),
         }
@@ -271,6 +351,7 @@ class TestProbes:
         assert resp.status_code == 201
         session.add_probe.assert_called_once_with("happy", as_name=None, top_n=3)
         assert resp.json()["name"] == "happy"
+        assert resp.json()["node_coords"] == coords
 
     def test_attach_empty_selector(self, session_and_client: Any) -> None:
         _, client = session_and_client

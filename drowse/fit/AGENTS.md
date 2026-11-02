@@ -19,11 +19,11 @@ the exclusive guard, adopt/evict) is in `session/AGENTS.md`.
 | `pipeline.py` | `ManifoldExtractionPipeline`, `prepare_manifold_capture_identity`/`CaptureIdentity`, `prepare_capture_rows`, `offline_fit_identity`, `FitInputs.accepts` (cache key), `MANIFOLD_CAPTURE_VERSION` |
 | `publish.py` | Folder transactions: `fit_target_lock`, `take_authoring_snapshot`, `load_published_fit`, `publish_fit_if_current`, `ManifoldAuthoringChangedError` (409) |
 | `preflight.py` | `preflight_manifold_fit_noop`: weight-free proof a fit is already exact |
-| `capture.py` | Pooled residual capture, `_LENGTH_DIRECTIVE`, prompt/neutral corpus loaders, `compute_neutral_activations`, `compute_dls_axes` |
+| `capture.py` | Pooled residual capture, `_LENGTH_DIRECTIVE`, prompt/neutral corpus loaders, `compute_neutral_activations` (+ its `ChunkObserver`), `compute_dls_axes` |
 | `node_stats.py` | `compute_manifold_node_stats` (centroids + optional row spool), `compute_store_reduced_covariances` (σ-field input) |
 | `capture_cache.py` | `CaptureCache`: content-addressed per-layer capture shards |
 | `corpus.py` | `CorpusGenerator`, `KIND_TEMPLATES`, `system_for`, `role_for`, `split_composite_source` |
-| `neutral.py` | `load_or_compute_neutral_activations[_with_metadata]` (compute half; `store/neutral.py` is the IO) |
+| `neutral.py` | `load_or_compute_neutral_cache` (activations + unit statistics + sidecar) and its `load_or_compute_neutral_activations[_with_metadata]` views (compute half; `store/neutral.py` is the IO) |
 | `bake.py` | `merge_into_manifold`, `shared_models` |
 | `transfer.py` | `load_or_fit_transfer_alignment` → `TransferAlignment` |
 | `naturalness.py` | `preflight`, `evaluate` (`experiment naturalness`) |
@@ -108,7 +108,7 @@ must stay deterministic.
 | `MANIFOLD_CAPTURE_VERSION = 3` (`pipeline.py`) | all fitted tensors and all cached captures |
 | `MANIFOLD_FIT_POLICY_VERSION = 1` (`geometry/manifold.py`) | fitted tensors only |
 | `CAPTURE_CACHE_FORMAT = "5"` (`capture_cache.py`) | capture shards |
-| `NEUTRAL_CAPTURE_VERSION = 1` (`store/neutral.py`) | neutral caches |
+| `NEUTRAL_CAPTURE_VERSION = 2` (`store/neutral.py`; 2 added the mid means) | neutral caches |
 
 Gotchas: `dls` is not in the key, so toggling `--no-dls` on a fitted target
 returns the cached tensor (and the preflight proves a no-op) unless forced.
@@ -198,9 +198,38 @@ axis `d̂_r` at layer L iff `{(c_i − ν_L)·d̂_r}` straddles zero. Same-side 
 encode intensity, not polarity, and at K=2 this is exactly the bipolar
 opposite-sign test. Edge cases: `layer_means=None` (`dls=False`) keeps every
 axis; a zero-norm axis drops; a layer with no ν keeps every checkable axis; if
-nothing passes anywhere, every checkable axis is kept with a `UserWarning`; a
-layer left empty drops. `tests/fixtures/browser/dls-axes-v1.json` pins this
-and drowse.ai replays it, so a semantic change means regenerating the golden.
+nothing passes anywhere, every checkable axis is kept (silently: the fit's DLS
+line reports it); a layer left empty drops. `tests/fixtures/browser/dls-axes-v1.json`
+pins this and drowse.ai replays it, so a semantic change means regenerating the golden.
+The fit narrates the result through `progress` (`dls_fit_note`: the kept and
+dropped layers, or the all-fail fallback, the one report of a degenerate axis),
+and serve's startup roster repeats
+the kept/dropped line for a cached probe from its sidecar (`dls_load_note`:
+`fitted_layers` against the pre-DLS `node_spread_per_layer`, no tensor read),
+so a probe DLS cut to a few layers is visible (`tests/fit/test_dls_narration.py`).
+
+Default-pole axes: ν is the model's default answers, so on a 2-node axis whose
+one pole is the default answer ν sits on that pole and the near pole's sign is
+noise. A `%pole` push targets the pole's neutral-anchored coordinate, so where
+ν lies past the near pole the push points at the far pole. Measured as ν's
+position s along the axis (0 at the − pole, 1 at the + pole), the old
+`honest.deceptive` sat at 1.01–1.20 on every SmolLM2-360M layer (all-fail
+fallback, and `0.5 honest` pushed deceptive-ward at all 32) and 1.03–1.13 at
+Qwen3-8B L3–35 (DLS kept L1–2); `refusing.compliant` at −0.31–0.02 and
+−0.04–0.06; `sincere.manipulative` at 0.85–1.04 and 0.82–1.03. 6.0 made them
+the one-node `deceptive`, `refusing` and `manipulative` (the default answer is
+their other end): a monopolar fold keeps every layer, and `0.5 deceptive`
+pushes toward its centroid and `-0.5 deceptive` away at every layer (SmolLM2
+32 of 32, Qwen3-8B 36 of 36). The `deceptive` probe reads the model's own
+default replies at −0.11–0.17 on SmolLM2 and 0.38–0.59 on Qwen3-8B (whose
+default style sits away from the bundled neutral corpus, written by another
+model), the old honest pole's corpus at 0.31 and 0.44, and the deceptive
+corpus at 1.01 and 1.20. Of the 14 remaining axes,
+`religious.secular` sits at its secular pole on most layers (median s 0.03,
+19 of 32 SmolLM2 layers at or below 0.05; 0.04, 28 of 36 on Qwen3-8B), which
+is open (ARCHITECTURE.md §17); `humorous.serious` reaches its serious pole on
+half of Qwen3-8B's layers (median 0.05) and `confident.uncertain` its
+confident pole on 12 of SmolLM2's 32.
 
 ## Publish and concurrency
 
@@ -226,13 +255,44 @@ which a real load bound to the source fingerprint.
 
 ## Neutral activations
 
-`load_or_compute_neutral_activations` is single-flight under
-`neutral_fit_lock`, spanning recheck, capture and publish. A stale cache is
-recomputed, and a corrupt one warns and is recomputed. It renders the neutral
-pairs (`response[i] ↔ prompt[i % k]`), captures every layer with the same
-batched path as node capture, and returns fp32 CPU `[N, D]` per layer.
-`session/neutral.py` derives the means and the whitener from it (format and
-the fp32 rationale: `store/AGENTS.md`).
+`load_or_compute_neutral_cache` is single-flight under `neutral_fit_lock`,
+spanning recheck, capture and publish. A stale cache (an older format
+included: neutral cache v5 is never migrated) is recomputed, and a corrupt one
+warns and is recomputed. It renders the neutral pairs (`response[i] ↔
+prompt[i % k]`), captures every layer with the same batched path as node
+capture, and returns fp32 CPU `[N, D]` per layer, the unit statistics and the
+validated sidecar. `session/neutral.py` derives the means, the whitener and
+the resident `UnitStats` from it (format and the fp32 rationale:
+`store/AGENTS.md`).
+
+The same forward measures the **unit statistics**
+(`units/stats.py::UnitStatsAccumulator`, definitions in
+`drowse/units/AGENTS.md`): one down-projection pre-hook and one
+output-projection forward hook per block, fp32 sums and running top-k buffers
+on the device, framed per chunk through `compute_neutral_activations`'
+`observer` (`begin_chunk(lengths)` / `commit_chunk` / `discard_chunk` on an
+out-of-memory retry, `abandon(reason)` when one strikes at batch size 1: the
+hooks come off and the rows re-run without them). Units never fail the pass:
+a model `model_spec` refuses, a hook that raises anything but an
+out-of-memory error, or an out-of-memory error at batch size 1, publishes the
+cache with `units` unavailable and the reason. A cached units record whose tensor
+names are not the current set recomputes.
+
+The same forward also measures each block's **mid mean** (`neutral.py::MidMeans`:
+one forward hook per block on its MLP input norm, gathering each row at its
+pooled position, fp32 sums on the device), framed beside the unit accumulator
+as one observer (`_Observers`). It needs the block description too, so a model
+`model_spec` refuses, or an abandoned observer, publishes `mid` unavailable
+with the reason; a residual S read at `mid` then raises `NeutralMeansError`.
+
+Only the refusal lasts. A cache hit that records units or `mid` unavailable
+runs block discovery (`_failed_on_a_described_model`, memoized per live
+model): when `model_spec` now accepts the model, the record was a failure of
+that pass (an out-of-memory error at batch size 1, a hook that raised), so the
+cache is stale and recomputes rather than refusing every unit and `mid` read
+for its lifetime. A failure that recurs on a described model therefore costs a
+neutral pass per load; the session's `NeutralBaseline` keeps what one load
+settled until it is invalidated.
 
 ## Bake
 
@@ -240,9 +300,10 @@ the fp32 rationale: `store/AGENTS.md`).
 expected_model_fingerprint)` writes `local/<name>` (`fit_mode="baked"`).
 
 - **Grammar.** Only namespace-qualified scalar `+`/`-` terms. `!`, `%`,
-  `~`/`|`, triggers and bare names raise `MergeError` (400): projection is
-  Mahalanobis-only and needs an identity-matched whitener, so an offline
-  stand-in would change semantics.
+  `~`/`|`, triggers, `{…}` layer clauses and bare names raise `MergeError`
+  (400): projection is Mahalanobis-only and needs an identity-matched
+  whitener, so an offline stand-in would change semantics, and a bake is
+  layer-agnostic (scope the baked manifold when steering it).
 - **Components.** Fitted 2-node `pca` manifolds folded to directions.
   `:role-<r>` needs a uniform role, `raw` rejects role fits, and `:from-<src>`
   must match `source_model_id`.
@@ -287,7 +348,7 @@ rejects `baked`, fewer than 3 nodes, and `--compare-linear` without a single
   distributions along its text, scored per step as the Bhattacharyya distance
   to the nearest manifold point (low = natural).
 - **`compare_linear`.** Also scores the node-0→position chord, steered as
-  profile `__manifold_linear_baseline__`.
+  profile `manifold_linear_chord` with the term's coefficient and layer clause.
 
 ## Fit behavior notes
 
@@ -310,7 +371,8 @@ calibration are in `steering/AGENTS.md`. Observed on fitted bundled manifolds
 `ModelHandle`. Elsewhere: extraction glue `tests/support/extraction.py`,
 corpora `tests/session/test_generate_responses.py`, session bake
 `tests/session/test_session_bake.py`, neutral cache
-`tests/store/test_neutral_cache.py`, DLS golden
+`tests/store/test_neutral_cache.py`, neutral unit statistics
+`tests/units/test_unit_stats.py`, DLS golden
 `tests/browser/test_browser_parity.py`, GPU `tests/gpu/test_smoke.py` and
 `tests/gpu/test_session.py`.
 

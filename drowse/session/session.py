@@ -4,6 +4,7 @@ import logging
 import threading
 from contextlib import contextmanager
 from functools import partial
+from pathlib import Path
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Callable, Iterator, Literal, cast, overload
 
@@ -15,6 +16,7 @@ from transformers import (
 
 from drowse.fit.capture import _capture_all_hidden_states
 from drowse.fit.corpus import RESPONSE_MAX_TOKENS, CorpusGenerator
+from drowse.fit.pipeline import dls_load_note
 from drowse.session.extraction import Extraction
 from drowse.errors import GenerationRequestError
 from drowse.events import (
@@ -36,6 +38,7 @@ from drowse.session.neutral import NeutralBaseline
 from drowse.errors import (
     ConcurrentExtractionError,
     ManifoldNotRegisteredError,
+    RequestError,
 )
 from drowse.generation.token_callback import TokenSink
 from drowse.model.scene import TurnGrammar
@@ -66,7 +69,15 @@ from drowse.readout.geometry import GeometryInstrument
 from drowse.lens.instrument import LensInstrument
 from drowse.sae.instrument import SaeInstrument
 from drowse.sae.runtime import SaeRuntime
-from drowse.loom.replay import TokenReplayer
+from drowse.model.fingerprint import loaded_model_fingerprint
+from drowse.units.catalog import CatalogBinding
+from drowse.lens.token_counts import TokenCountSource
+from drowse.units.instrument import UnitsInstrument
+from drowse.units.reads import UnitReader
+from drowse.units.runtime import UnitsRuntime, UnitsUnavailableError
+from drowse.units.stats import UnitStats
+from drowse.loom.replay import TokenReplayer, capture_pooled
+from drowse.loom.node_replay import NodeReplayer, UnitActivityJSON
 from drowse.store.bundled_probes import bootstrap_probe_roster
 from drowse.geometry.profile import Profile
 from drowse.generation.results import (
@@ -75,10 +86,11 @@ from drowse.generation.results import (
 )
 from drowse.generation.sampling import SamplingConfig
 from drowse.session.batch import BatchRunner, FastBatchPath
-from drowse.steering.terms import Steering
+from drowse.steering.terms import Steering, entry_trigger
 from drowse.geometry.manifold import Manifold
 
 if TYPE_CHECKING:
+    from drowse.readout.measurements import MeasurementsEnvelope
     from drowse.readout.protocol import Instrument
     from drowse.generation.scoring import ChoiceScores
     from drowse.store.manifold_folder import DiscoverGenerationPlan
@@ -344,16 +356,33 @@ class DrowseSession:
         self._registry = ArtifactRegistry(ModelBinding(
             model=self._model, tokenizer=self._tokenizer,
             model_id=self.model_id, device=self._device, dtype=self._dtype,
-        ))
+        ), exclusive=self._model_exclusive)
         self._registry.on_swap(lambda swaps: self._roster.swap(swaps))
         self._registry.set_probe_folder(self._fold_profile_probe)
         self._registry.set_atom_resolver("jlens", lambda atom: self._lens_instrument.register_direction(atom))
+        self._registry.set_atom_resolver("slens", lambda atom: self._lens_instrument.register_input_direction(atom))
         self._registry.set_atom_resolver("sae", lambda atom: self._sae_instrument.register_direction(atom))
-        # Neutral means + whitener, built lazily from one neutral load.
+        self._registry.set_atom_resolver("neuron", lambda atom: self._units_instrument.register_direction(atom))
+        # Neutral means + whitener + unit statistics, built lazily from one
+        # neutral load.
         self._neutral = NeutralBaseline(
             model=self._model, tokenizer=self._tokenizer, layers=self._layers,
             model_id=self.model_id, exclusive=self._model_exclusive,
             steered=lambda: self._steering.plan is not None,
+        )
+        # The model's neurons and heads (block description + the neutral
+        # unit statistics): unit probes, gates, pushes and ablations.
+        # The neuron-lens catalog binding (labels, the units' reading scale
+        # and the S mask's token counts when the model has one), and the
+        # S mask's token counts: the catalog's, else the model's corpus counts.
+        self._unit_catalog = CatalogBinding(self.model_id)
+        self._token_counts = TokenCountSource(
+            self.model_id, self._unit_catalog.get, tokenizer=self._tokenizer,
+        )
+        self._units_runtime = UnitsRuntime(
+            model=self._model, device=self._device,
+            exclusive=self._model_exclusive, stats=self._require_unit_stats,
+            catalog=self._unit_catalog.get,
         )
         # Corpus generation and the extract/fit/bake glue.  Wired before the
         # probe bootstrap below, which fits stale bundled axes through ``fit``;
@@ -371,6 +400,7 @@ class DrowseSession:
             lock=self._gen_lock, events=self.events,
             generation_phase=self._mid_generation_phase,
             on_prefill_steering_change=lambda: self._engine.prefix_cache.clear(),
+            units=self._units_runtime,
         )
         self._extraction = Extraction(
             self, self.events, self._corpus,
@@ -399,7 +429,14 @@ class DrowseSession:
             tokenizer=self._tokenizer,
             open_scope=self._steering_composer.open_scope,
             exclusive=self._model_exclusive,
-            capture=partial(_capture_all_hidden_states, self._model, self._layers),
+            capture=partial(capture_pooled, self._model, self._layers),
+            open_triggers=lambda: [
+                entry_trigger(entry)
+                for entry in self._steering_composer.flatten_stack().values()
+            ],
+            trigger_context=self._steering.ctx,
+            # The read plane is built below, once the instruments exist.
+            gate_reads=lambda: self._read_plane.gate_run(),
         )
         self._geometry_instrument = GeometryInstrument(
             monitor=self._monitor,
@@ -428,6 +465,9 @@ class DrowseSession:
             resolve_profile=self._registry.ensure_profile_registered,
             assert_unsteered=self._steering_composer.assert_unsteered,
             replay=self._token_replay,
+            whitener=self._neutral.whitener,
+            neutral_means=self._neutral.site_means,
+            token_counts=self._token_counts.get,
         )
         # The SAE family: resident dictionary + Neuronpedia metadata (the
         # runtime), probes, live discovery and token replay.  ``sae/<id>``
@@ -444,12 +484,49 @@ class DrowseSession:
             evict_directions=lambda: self._registry.evict_prefix("sae/"),
             forget_probe_hashes=lambda names: self._roster.forget(names),
         )
+        # The units family: neuron/head probes and gates through its own tap,
+        # ``neuron/`` steering atoms, token replay, and the static reads
+        # (through the lens instrument's two families) with the catalog.
+        self._unit_reader = UnitReader(
+            self._units_runtime, self._lens_instrument,
+            model_id=self.model_id, n_layers=len(self._layers),
+            exclusive=self._model_exclusive,
+            catalog=self._unit_catalog,
+            weights=lambda: loaded_model_fingerprint(self._model, self.model_id),
+            whitener=self._neutral.whitener,
+        )
+        self._units_instrument = UnitsInstrument(
+            self._units_runtime,
+            model_id=self.model_id,
+            n_layers=len(self._layers),
+            dtype=self._dtype,
+            exclusive=self._model_exclusive,
+            replay=self._token_replay,
+            put_direction=self._registry.put_profile,
+            has_direction=lambda name: name in self._registry.profiles,
+            reader=self._unit_reader,
+            on_change=lambda names: self._roster.changed(names),
+        )
+        # The node replay: one tapped forward over a node's tokens (split
+        # where the open steering's triggers fired differently), read as
+        # token anatomy and unit activity (the lens and units families).
+        self._node_replay = NodeReplayer(
+            replayer=self._token_replay,
+            model=self._model,
+            lens=self._lens_instrument,
+            units=self._units_runtime,
+            tokenizer=self._tokenizer,
+            tree=lambda: self.tree,
+            traits=self._chat,
+            trigger_context=self._steering.ctx,
+        )
         # The probe roster: attach/detach routing by namespace and the
         # transcript probe-hash caches; a roster change drops the analytics.
         self._roster = ProbeRoster(
             geometry=self._geometry_instrument,
             lens=self._lens_instrument,
             sae=self._sae_instrument,
+            units=self._units_instrument,
             on_change=self._on_roster_change,
         )
         # The read plane: capture planning and buffers, the per-token reads,
@@ -460,6 +537,7 @@ class DrowseSession:
             geometry=self._geometry_instrument,
             lens=self._lens_instrument,
             sae=self._sae_instrument,
+            units=self._units_instrument,
             layers=self._layers,
             tokenizer=self._tokenizer,
             gate_refs=self._steering_composer.gate_refs,
@@ -534,15 +612,32 @@ class DrowseSession:
             # bundled multi-node manifolds).  The neutral baseline comes first:
             # fitting needs the whitener.  An explicit ``probes=[]`` skips both.
             self._neutral.ensure(on_progress=on_progress)
+            # A probe DLS left with a few layers is narrated: a fit says so
+            # itself, and a cached load reads it from the sidecar here.
+            fitted_now: set[str] = set()
+
+            def fit_probe(folder: Any, progress: Any) -> Manifold:
+                path = Path(folder)
+                fitted_now.add(f"{path.parent.name}/{path.name}")
+                return self.fit(folder, on_progress=progress)
+
+            def load_probe(key: str) -> Manifold:
+                manifold = self._registry.ensure_manifold_loaded(key)
+                if on_progress is not None and key not in fitted_now:
+                    note = dls_load_note(key, manifold)
+                    if note is not None:
+                        on_progress(note)
+                return manifold
+
             roster = bootstrap_probe_roster(
                 probe_categories, model_id=self.model_id,
-                load=self._registry.ensure_manifold_loaded,
-                fit=lambda folder, progress: self.fit(folder, on_progress=progress),
+                load=load_probe,
+                fit=fit_probe,
                 include_fitted_defaults=probes is None,
                 on_progress=on_progress,
             )
             for name, manifold in roster.items():
-                self._monitor.add_probe(name, manifold)
+                self._geometry_instrument.attach_loaded(name, manifold)
 
         self._sae_instrument.restore_active()
 
@@ -792,10 +887,10 @@ class DrowseSession:
             return phase.name
         return None
 
-    # -- The three read instruments --
+    # -- The four read instruments --
     # Each family owns its own state; there is ONE addressing scheme for
     # it (``self._lens_instrument.<field>`` in-session, ``session.lens``
-    # / ``.sae`` / ``.geometry`` outside).
+    # / ``.sae`` / ``.units`` / ``.geometry`` outside).
 
     def _on_roster_change(self) -> None:
         """A probe was attached, detached or changed: the analytics roster
@@ -811,7 +906,7 @@ class DrowseSession:
     @property
     def instruments(self) -> "dict[InstrumentFamily, Instrument]":
         """THE read-family registry — ``geometry`` (the Monitor adapter),
-        ``lens``, ``sae``.
+        ``lens``, ``sae``, ``units``.
 
         This mapping is the family *enumeration*, not a convenience view:
         the probe-hash roster, the composer's gate preflight, and the
@@ -828,16 +923,91 @@ class DrowseSession:
             "geometry": cast("Instrument", self._geometry_instrument),
             "lens": cast("Instrument", self._lens_instrument),
             "sae": cast("Instrument", self._sae_instrument),
+            "units": cast("Instrument", self._units_instrument),
         }
 
     @property
+    def units(self) -> "UnitsInstrument":
+        """The units instrument — the public face of the units family
+        (``session.instruments["units"]``): ``neuron/…`` and ``head/…``
+        probes and gates, the ``neuron/`` steering atoms, token replay, and
+        its ``runtime`` (block description, unit checks, sites and the
+        neutral unit statistics)."""
+        return self._units_instrument
+
+    def _require_unit_stats(self) -> UnitStats:
+        """The neutral unit statistics, building the neutral baseline when
+        absent (the caller holds the exclusive section); raises
+        :class:`~drowse.units.runtime.UnitsUnavailableError` (422) when the
+        cache has none."""
+        self._neutral.ensure()
+        stats = self._neutral.unit_stats
+        if stats is None:
+            reason = self._neutral.units_unavailable or "the neutral baseline did not load"
+            raise UnitsUnavailableError(
+                f"units are unavailable for {self.model_id}: {reason}"
+            )
+        return stats
+
+    @property
     def lens(self) -> "LensInstrument":
-        """The J-lens instrument — the public face of the lens family
+        """The lens instrument (R and S lenses) — the public face of the lens family
         (``session.instruments["lens"]``): the resident lens and its source
         (``resident`` / ``select_source``), ``fit``, the offline reads
         (``readout`` / ``decompose`` / ``register_direction`` /
         ``token_readout``), probes, and the live readout."""
         return self._lens_instrument
+
+    def token_anatomy(
+        self,
+        node_id: str,
+        raw_index: int,
+        *,
+        k: int = 8,
+        units: int = 8,
+        patterns: int = 4,
+        apply_steering: bool = True,
+        raw: bool = False,
+    ) -> "MeasurementsEnvelope":
+        """One loom token, every layer, as the ``scope="replay"`` measurement
+        envelope's ``anatomy``: what the residual reads as (S centred), what
+        attention and the MLP added, which neurons and heads pushed the token
+        through the R lens, and where the top heads looked.  See
+        :meth:`drowse.loom.node_replay.NodeReplayer.token_anatomy`."""
+        return self._node_replay.token_anatomy(
+            node_id, raw_index, k=k, units=units, patterns=patterns,
+            apply_steering=apply_steering, raw=raw,
+        )
+
+    def unit_activity(
+        self,
+        node_id: str,
+        *,
+        top: int = 32,
+        units: Sequence[str] = (),
+        raw_index: int | None = None,
+        layers: Any = None,
+        apply_steering: bool = True,
+        raw: bool = False,
+    ) -> UnitActivityJSON:
+        """Every neuron's and head's activity over a loom node's tokens: the
+        top units by peak, traces of ``units`` and, with ``raw_index``, that
+        token's whole population.  Each peak carries the bound catalog's
+        label of the pole that peaked (a head's label), or ``None``.  See
+        :meth:`drowse.loom.node_replay.NodeReplayer.unit_activity`."""
+        result = self._node_replay.unit_activity(
+            node_id, top=top, units=units, raw_index=raw_index, layers=layers,
+            apply_steering=apply_steering, raw=raw,
+        )
+        catalog = self._unit_reader.catalog.get()
+        if catalog is not None:
+            for peak in result["top"]:
+                peak["label"] = (
+                    catalog.neuron_label(peak["layer"], peak["index"], 1 if peak["peak"] >= 0 else -1)
+                    if peak["kind"] == "neuron"
+                    else catalog.head_label(peak["layer"], peak["index"])
+                )
+        return result
 
     @property
     def sae(self) -> "SaeInstrument":
@@ -1118,7 +1288,7 @@ class DrowseSession:
     ) -> str:
         """Attach a read-side probe — any shape — and return its name.
 
-        ``jlens/<word>`` reads the J-lens readout channel and ``sae/<id>`` an
+        ``jlens/<word>`` reads the R family's lens readout channel and ``sae/<id>`` an
         SAE feature; any other selector is a geometry probe, one attach for
         vector and manifold probes alike (a vector is the rank-1 case of the
         unified subspace readout).  It rides the ``[ns/]name[:variant]`` shape
@@ -1149,10 +1319,21 @@ class DrowseSession:
         registered ``Profile``, a fold cached by an earlier steer) → folded
         into a 1-node neutral-anchored ray; (2) a fitted manifold on disk
         (``[ns/]name[:variant]``) → loaded directly, so a 2-node ``pca`` reads
-        rank-1 and a discover / curved fit reads rank-R; (3) a bare concept
-        with neither → extracted, then folded.  Folds go through
+        rank-1 and a discover / curved fit reads rank-R; (3) an installed
+        manifold that is not fitted (or is stale) for this model → fitted in
+        place, then loaded as (2), the way serve's startup fits a missing
+        default probe; (4) a bare raw name that names no installed manifold →
+        extracted (authored under ``local/``), then folded.  Folds go through
         :meth:`ArtifactRegistry.fold_probe`, which tracks them, so evicting
         or re-fitting the artifact reaches these probes too.
+
+        The resolver never substitutes another concept: a typed namespace or
+        a variant names an installed artifact, so a miss there raises
+        :class:`ManifoldNotRegisteredError` (404) instead of extracting a slug
+        of the selector, and a variant a fit cannot produce here (``sae-`` or
+        ``from-``) raises :class:`RequestError` (400) naming the command that
+        does.  It runs inside the geometry attach's exclusive section, which
+        the fit re-enters.
 
         ``jlens/<word>`` selectors never reach this resolver — ``add_probe``
         routes them to the lens-probe registry (the readout channel), so the
@@ -1160,12 +1341,48 @@ class DrowseSession:
         nonsense manifold named "jlens/<word>".
         """
         profile = self._registry.profiles.get(selector)
-        if profile is None:
-            try:
+        if profile is not None:
+            return self._registry.fold_probe(selector, profile)
+        try:
+            return self._registry.ensure_manifold_loaded(selector)
+        except ManifoldNotRegisteredError:
+            pass
+        from drowse.session.registry import split_key
+        from drowse.store.selectors import Selector, resolve
+
+        namespace, name, variant = split_key(selector)
+        installed = resolve(Selector(kind="name", value=name, namespace=namespace))
+        if installed:
+            (match,) = installed
+            qualified = f"{match.namespace}/{match.name}"
+            if variant == "raw" or variant.startswith("role-"):
+                self.fit(match.folder)
                 return self._registry.ensure_manifold_loaded(selector)
-            except ManifoldNotRegisteredError:
-                pass
-            _, profile = self.extract(selector)
+            if variant.startswith("sae-"):
+                how = (
+                    f"produce it with `drowse manifold fit {qualified} "
+                    f"-m {self.model_id} --sae {variant[len('sae-'):]}`"
+                )
+            elif variant.startswith("from-"):
+                how = (
+                    f"produce it with `drowse manifold transfer {qualified} "
+                    f"--from <source model> --to {self.model_id}`"
+                )
+            else:
+                how = "name a release or a role (`:sae-<release>`, `:role-<id>`)"
+            raise RequestError(
+                f"probe {selector!r}: manifold {qualified} has no {variant!r} "
+                f"fit for {self.model_id}, and attaching a probe fits only the "
+                f"residual stream; {how}, then attach again"
+            )
+        if namespace is not None or variant != "raw":
+            raise ManifoldNotRegisteredError(
+                f"probe {selector!r}: no manifold "
+                f"{namespace + '/' if namespace else ''}{name} is installed; "
+                f"install it (`drowse pack install`) or attach a bare concept "
+                f"name to extract one"
+            )
+        _, profile = self.extract(selector)
         return self._registry.fold_probe(selector, profile)
 
     def _fold_profile_probe(self, name: str, profile: Any) -> "Manifold":
@@ -1363,7 +1580,7 @@ class DrowseSession:
         monitor_active: bool,
         lens_active: bool,
         sae_active: bool,
-        persist_per_layer_scores: bool,
+        per_layer: bool = False,
     ) -> AuthoredPromptCapture | None:
         """This generation's authored-prefill capture policy, or ``None``.
 
@@ -1372,6 +1589,8 @@ class DrowseSession:
         the generation prompt, so a target never matches inside the
         generation header; see
         :func:`drowse.session.authored_capture.plan_authored_capture`.
+        ``per_layer`` (the call's ``persist_per_layer_scores``) keeps the
+        rows whole.
         """
         return plan_authored_capture(
             self.tree, self._tokenizer, assistant_node_id, raw=spec.raw,
@@ -1382,7 +1601,9 @@ class DrowseSession:
             lens_active=lens_active,
             sae_active=sae_active,
             readout_top_k=spec.readout_top_k,
-            persist_per_layer_scores=persist_per_layer_scores,
+            system_prompt=self._renderer.resolve_system_prompt(spec.system_prompt),
+            thinking=use_thinking,
+            per_layer=per_layer,
             content_end=lambda: int(self._renderer.prepare_input(
                 spec.input,
                 raw=False,
@@ -1460,7 +1681,7 @@ class DrowseSession:
 
         Args:
             input: prompt string or list of message dicts.
-            steering: expression string (e.g. ``"0.5 honest + 0.3 warm"``)
+            steering: expression string (e.g. ``"-0.5 deceptive + 0.3 warm"``)
                 or a pre-built :class:`Steering`.  Pole aliases resolve at
                 parse time via ``store.selectors.resolve_bare_atom``.  ``None`` =
                 no steering.
@@ -1660,7 +1881,7 @@ class DrowseSession:
 
         ``sweep`` maps ``concept_name -> [alpha_0, alpha_1, ...]``; one row per
         element of the product, in ``itertools.product`` order over
-        ``sweep.items()`` (``{"honest": [-0.4, 0.0, 0.4], "warm": [0.0, 0.3]}``
+        ``sweep.items()`` (``{"deceptive": [-0.4, 0.0, 0.4], "warm": [0.0, 0.3]}``
         gives six rows).  Each row runs under ``base_steering + " + ".join(
         f"{alpha} {name}")`` with a derived per-row seed.  Stateful sweeps land
         every row as a sibling under one shared user turn.  :meth:`stop` ends
@@ -1736,6 +1957,7 @@ class DrowseSession:
         self._sae_instrument.probes.clear()
         self._sae_instrument.live = None
         self._sae_instrument.runtime.close()
+        self._units_instrument.close()
         self._geometry_instrument.clear()
 
         # The artifact registry, its derived caches, the neutral baseline.

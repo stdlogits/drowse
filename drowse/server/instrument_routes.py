@@ -1,17 +1,22 @@
 """Native ``/instruments`` routes — the unified read-side surface.
 
-One route tree under ``/drowse/v1/sessions/{id}/instruments`` over the three
+One route tree under ``/drowse/v1/sessions/{id}/instruments`` over the four
 read families ``session.instruments`` registers (``geometry`` / ``lens`` /
-``sae``):
+``sae`` / ``units``; the units' own reads are :mod:`drowse.server.unit_routes`):
 
 - ``POST {family}/live`` — uniform live toggle.
 - ``GET {family}/sources`` — prepared sources (lens) / prepared sources plus
   provider release candidates (sae).
 - ``PUT {family}/source`` — synchronous source switch (lens only).
 - ``POST/GET/DELETE {family}/preparations`` — polled background preparations
-  (lens ``fetch``/``fit``, sae ``fetch``/``train``), one status shape.
+  (lens ``fetch``/``fit``, sae ``fetch``/``train``, units ``fetch``: the
+  neuron-lens catalog), one status shape.
 - ``GET {family}/token-readout`` — the loom token-drilldown replay, wrapped in
   the ``measurements`` replay envelope the instrument builds.
+- ``GET token-anatomy`` — one loom token, every layer (the node replay's
+  ``anatomy`` in the replay envelope): the lens families and the units.
+- ``GET units/activity`` — every neuron's and head's activity over a loom
+  node's tokens (top units by peak, traces, one token's population).
 - Family extras: ``lens/token/validate``, ``sae/features/validate``,
   ``sae/features/metadata``.
 
@@ -31,6 +36,8 @@ from fastapi import FastAPI, HTTPException
 from pydantic import Field
 
 from drowse.lens.jlens import JacobianLensCancelled, LensNotFittedError
+from drowse.lens.key import DEFAULT_FIT_DOCUMENTS
+from drowse.loom.node_replay import UnitActivityJSON
 from drowse.model.layers import parse_layer_selector
 from drowse.readout.measurements import MeasurementsEnvelope
 from drowse.sae.training import SaeTrainingCancelled
@@ -40,6 +47,7 @@ from drowse.server.response_models import (
     InstrumentFamilyBlock,
     InstrumentLiveState,
     InstrumentSourceJSON,
+    LensProviderJSON,
     LensTokenValidationJSON,
     PreparationStatusJSON,
     SaeFeatureMetaResponse,
@@ -47,6 +55,7 @@ from drowse.server.response_models import (
     SaeReleaseJSON,
     SourceSwitchResponse,
     SourcesResponse,
+    TokenMaskJSON,
 )
 from drowse.server.runtime import NativeRequest, run_in_thread, session_lock, session_router
 
@@ -107,6 +116,18 @@ CAPABILITIES: dict[str, FamilyCapabilities] = {
             "switching the SAE source loads weights — run it as a background "
             "preparation (POST .../instruments/sae/preparations with operation='fetch')",
         ),
+    ),
+    "units": FamilyCapabilities(
+        sources=False,
+        preparations=("fetch",),
+        token_readout=True,
+        source_switch=False,
+        sources_error=(
+            404,
+            "units have no source lifecycle (neurons and heads are the model's "
+            "own parts; their statistics ride the neutral cache)",
+        ),
+        source_switch_error=(404, "units have no source to switch"),
     ),
 }
 
@@ -202,19 +223,20 @@ class LensFetchRequest(NativeRequest):
 
 
 class LensFitRequest(NativeRequest):
-    """Defaults mirror CLI ``lens fit``.  ``kind`` is the estimator (``r`` =
-    the RelP R-lens at ``local:r``, ``j`` = the standard J-lens at
-    ``local:j``).  A matching partial fit resumes unless ``force``;
-    ``hf_corpus`` lists ``REPO[:CONFIG][@REV][,KEY=VALUE…]`` sources (several
-    make a weighted mix), else the default web-text sample."""
+    """Defaults mirror CLI ``lens fit``.  ``kind`` is the lens (``r`` the RelP
+    R-lens, ``j`` the standard J-lens, ``s``/``k`` the S family's S and K),
+    fitted at ``local:<kind>``; ``sites`` picks ``out``, ``mid`` or both.  A
+    matching partial fit resumes unless ``force``; ``hf_corpus`` lists
+    ``REPO[:CONFIG][@REV][,KEY=VALUE…]`` sources (several make a weighted
+    mix), else the default web-text sample."""
 
-    prompts: int = Field(default=100, ge=1, le=5000)
+    prompts: int = Field(default=DEFAULT_FIT_DOCUMENTS, ge=1, le=5000)
     hf_corpus: list[str] | None = Field(default=None, min_length=1, max_length=16)
     seq_len: int | None = Field(default=None, ge=32, le=4096)
-    prompt_batch: int | None = Field(default=None, ge=1, le=64)
     layers: str = "all"
+    sites: list[Literal["out", "mid"]] = Field(default=["out", "mid"], min_length=1, max_length=2)
     force: bool = False
-    kind: Literal["r", "j"] = "r"
+    kind: Literal["r", "j", "s", "k"] = "r"
 
 
 class SaeFetchRequest(NativeRequest):
@@ -237,7 +259,7 @@ class SaeTrainRequest(NativeRequest):
     force: bool = False
 
 
-#: ``fit_jacobian_lens`` per-prompt progress — "prompt 12/100 (…)".
+#: ``fit_lens`` per-document progress — "prompt 12/100 (…)".
 _FIT_PROGRESS_RE = re.compile(r"prompt (\d+)/(\d+)")
 #: ``train_residual_sae`` token progress — "trained 12,345/1,000,000 tokens".
 _TRAIN_PROGRESS_RE = re.compile(r"trained ([\d,]+)/([\d,]+) tokens")
@@ -247,9 +269,12 @@ def register_instrument_routes(app: FastAPI) -> None:
     session = app.state.session
     router = session_router()
 
-    lens_fetch = Preparation("fetch", label="J-lens fetch", fields=("source", "live_layers"))
+    lens_fetch = Preparation("fetch", label="lens fetch", fields=("source", "live_layers"))
+    # ``replaceable`` marks a fit refused only because it would replace the
+    # artifact at its name (``LensReplaceRefused``): the same request with
+    # ``force`` is the one way on, and no other failure offers it.
     lens_fit = Preparation(
-        "fit", label="lens fit", fields=("live_layers",),
+        "fit", label="lens fit", fields=("source", "live_layers", "replaceable"),
         cancel_exc=JacobianLensCancelled, progress_unit="prompts", progress_pattern=_FIT_PROGRESS_RE,
     )
     sae_fetch = Preparation("fetch", label="SAE fetch", fields=("release", "info"))
@@ -257,9 +282,11 @@ def register_instrument_routes(app: FastAPI) -> None:
         "train", label="SAE training", fields=("name", "info"),
         cancel_exc=SaeTrainingCancelled, progress_unit="tokens", progress_pattern=_TRAIN_PROGRESS_RE,
     )
+    unit_fetch = Preparation("fetch", label="unit catalog fetch", fields=("slug",))
     preparations = {
-        "lens": PreparationGroup("a J-lens artifact operation is already running", lens_fetch, lens_fit),
+        "lens": PreparationGroup("a lens artifact operation is already running", lens_fetch, lens_fit),
         "sae": PreparationGroup("an SAE artifact operation is already running", sae_fetch, sae_train),
+        "units": PreparationGroup("a unit catalog fetch is already running", unit_fetch),
     }
 
     async def stop_preparations() -> None:
@@ -283,12 +310,14 @@ def register_instrument_routes(app: FastAPI) -> None:
         except Exception:  # noqa: BLE001 - the artifact is in place; live is optional
             log.exception("could not enable live readout after %s", preparation.label)
 
-    async def select_lens_source(source: str) -> None:
-        """Make ``source`` the lens's runtime source with live readout off.
+    async def select_lens_source(source: str, *, live_off: bool = True) -> None:
+        """Make ``source`` its family's runtime source, with the live readout
+        off unless ``live_off`` is false (an S-family switch).
 
         The caller holds the session lock.
         """
-        session.lens.set_live(False)
+        if live_off:
+            session.lens.set_live(False)
         try:
             await run_in_thread(session.lens.select_source, source)
         except FileNotFoundError as exc:
@@ -298,7 +327,25 @@ def register_instrument_routes(app: FastAPI) -> None:
             raise HTTPException(404, str(exc)) from None
 
     async def activate_lens_source(source: str) -> list[int]:
+        """Select ``source`` in its family's slot.  An R-family source turns
+        the live readout back on over it; an S-family source only selects
+        (there is no live S readout), leaving the R family's live state and
+        source alone, and answers the current live layers.  Either way a
+        source that cannot load for this model's weights raises
+        ``LensNotFittedError`` (the caller's 409), as the R family's live
+        enable does."""
+        from drowse.lens.sources import LENS_SOURCES, lens_source_family
+
         async with session_lock(app):
+            if lens_source_family(LENS_SOURCES.parse(source)) == "S":
+                await select_lens_source(source, live_off=False)
+                if await run_in_thread(session.lens.resident_input) is None:
+                    raise LensNotFittedError(
+                        f"S-family lens source {source} is selected but cannot "
+                        f"load for {session.model_id}: its artifact is missing "
+                        f"or does not match the loaded weights"
+                    )
+                return list(session.lens.live_layers or ())
             await select_lens_source(source)
             return await enable_lens_live()
 
@@ -327,12 +374,28 @@ def register_instrument_routes(app: FastAPI) -> None:
         if not caps.sources:
             _refuse(caps.sources_error, f"{family} has no source lifecycle")
         if family == "lens":
-            from drowse.lens.sources import list_lens_sources
+            from drowse.lens.depth import kind_weights
+            from drowse.lens.sources import lens_providers, list_lens_sources
 
             rows = list_lens_sources(session.model_id)
-            return {"sources": [
-                cast(InstrumentSourceJSON, {k: v for k, v in row.items() if k != "path"}) for row in rows
-            ]}
+            # Each family's active row says whether it matches the loaded
+            # weights (checked, never paged in), as ``jlens_fitted`` does
+            # for the R family.
+            checks = {"R": session.lens.has_compatible, "S": session.lens.has_compatible_input}
+            for row in rows:
+                if row.get("active") and row.get("family") in checks:
+                    row["compatible"] = await run_in_thread(checks[row["family"]])
+            band = session.lens.band
+            weights = kind_weights(len(session.layers), band)
+            return {
+                "sources": [
+                    cast(InstrumentSourceJSON, {k: v for k, v in row.items() if k != "path"}) for row in rows
+                ],
+                "providers": cast(list[LensProviderJSON], lens_providers()),
+                "band": {"lo": band.lo, "hi": band.hi, "weights": [[w_s, w_r] for w_s, w_r in weights]},
+                "fit_documents": DEFAULT_FIT_DOCUMENTS,
+                "token_mask": cast(TokenMaskJSON, session.lens.token_mask_info()),
+            }
         from drowse.sae.backend import list_sae_releases
         from drowse.sae.sources import list_sae_sources
 
@@ -371,7 +434,9 @@ def register_instrument_routes(app: FastAPI) -> None:
         lens_fetch.report("activating…")
         lens_fetch.state["live_layers"] = await activate_lens_source(binding.name)
         lens_fetch.report(
-            f"active: {binding.name} ({len(binding.files[binding.key].layers)} layers)"
+            f"active: {binding.name} ("
+            + ", ".join(f"{site} {len(binding.file(site).layers)} layers" for site in binding.sites)
+            + ")"
         )
 
     def start_lens_fetch(fields: dict[str, Any]) -> None:
@@ -380,14 +445,22 @@ def register_instrument_routes(app: FastAPI) -> None:
         body = LensFetchRequest(**fields)
         if body.source not in LENS_PROVIDERS:
             raise HTTPException(
-                400, "J-lens source must be one of " + ", ".join(sorted(LENS_PROVIDERS)),
+                400, "lens fetch source must be one of " + ", ".join(sorted(LENS_PROVIDERS)),
             )
         lens_fetch.start(lambda: lens_fetch_body(body), message="starting…", source=body.source, live_layers=None)
 
-    async def lens_fit_body(body: LensFitRequest, source_layers: list[int] | str, corpus: Any) -> None:
+    async def lens_fit_body(body: LensFitRequest, layers: list[int] | str, corpus: Any) -> None:
         from drowse.lens.corpus import pin_lens_corpus, stream_lens_corpus
+        from drowse.lens.key import LensKey, lens_selectable
+        from drowse.lens.lifecycle import LensReplaceRefused
 
         kind = body.kind.upper()
+        source = f"local:{kind.lower()}"
+        # A fit selects its own family only, and only when it holds ``out``
+        # (``key.lens_selectable``); a ``mid``-only fit leaves the family's
+        # source and resident lens alone.  The live readout is the R family's.
+        selects = lens_selectable(body.sites)
+        reads_out = selects and LensKey(kind).family == "R"
 
         async def enable() -> None:
             lens_fit.state["live_layers"] = await enable_lens_live()
@@ -402,18 +475,22 @@ def register_instrument_routes(app: FastAPI) -> None:
         )
         if not body.force and await run_in_thread(
             session.lens.fit_is_noop, body.prompts,
-            kind=kind, corpus_spec=corpus.spec,
-            source_layers=source_layers, seq_len=body.seq_len,
+            kind=kind, sites=body.sites, corpus_spec=corpus.spec,
+            layers=layers, seq_len=body.seq_len,
         ) is not None:
-            # Nothing to fit: skip the stream and make the proven artifact
-            # the source, as a publishing fit leaves it; live readout is the
-            # same best-effort step as after a fit.
+            # Nothing to fit: skip the stream and select the proven artifact
+            # as a publishing fit would, in its own family's slot (evicting
+            # that family's resident only).  An R-family fit makes it the
+            # live source (live readout is the same best-effort step as after
+            # a fit); a ``mid``-only fit selects nothing.
             lens_fit.report(
                 "already fitted for this corpus and exact model source — nothing to do",
             )
-            async with session_lock(app):
-                await select_lens_source(f"local:{kind.lower()}")
-            await enable_live_after(lens_fit, enable)
+            if selects:
+                async with session_lock(app):
+                    await select_lens_source(source, live_off=reads_out)
+            if reads_out:
+                await enable_live_after(lens_fit, enable)
             lens_fit.report("done")
             return
         lens_fit.report(f"streaming {body.prompts} documents from {corpus}…")
@@ -421,14 +498,19 @@ def register_instrument_routes(app: FastAPI) -> None:
             stream_lens_corpus, body.prompts, corpus, cancel_event=lens_fit.cancel_event,
         )
         lens_fit.report("fitting…")
-        await run_in_thread(
-            session.lens.fit, docs,
-            kind=kind,
-            corpus_spec=spec, source_layers=source_layers, seq_len=body.seq_len,
-            prompt_batch=body.prompt_batch, force=body.force,
-            on_progress=lens_fit.report, cancel_event=lens_fit.cancel_event,
-        )
-        await enable_live_after(lens_fit, enable)
+        try:
+            await run_in_thread(
+                session.lens.fit, docs,
+                kind=kind, sites=body.sites,
+                corpus_spec=spec, layers=layers, seq_len=body.seq_len,
+                force=body.force,
+                on_progress=lens_fit.report, cancel_event=lens_fit.cancel_event,
+            )
+        except LensReplaceRefused:
+            lens_fit.state["replaceable"] = True
+            raise
+        if reads_out:
+            await enable_live_after(lens_fit, enable)
         lens_fit.report("done")
 
     def start_lens_fit(fields: dict[str, Any]) -> None:
@@ -436,16 +518,17 @@ def register_instrument_routes(app: FastAPI) -> None:
 
         body = LensFitRequest(**fields)
         corpus = parse_lens_corpus(body.hf_corpus)
-        source_layers = _parse_layers(body.layers) or "workspace"
-        if source_layers == "sample":
+        layers = _parse_layers(body.layers) or "workspace"
+        if layers == "sample":
             raise HTTPException(
                 400,
                 "layers='sample' is not fittable (debug readout only) — "
                 "use 'workspace', 'all', or an explicit csv list",
             )
         lens_fit.start(
-            lambda: lens_fit_body(body, source_layers, corpus),
+            lambda: lens_fit_body(body, layers, corpus),
             message="starting…", current=0, total=body.prompts,
+            source=f"local:{body.kind}", replaceable=False,
         )
 
     async def sae_fetch_body(body: SaeFetchRequest, source: str, release: str) -> None:
@@ -506,12 +589,30 @@ def register_instrument_routes(app: FastAPI) -> None:
             message="starting…", name=body.name, current=0, total=body.tokens, info=None,
         )
 
+    async def unit_fetch_body(body: Any) -> None:
+        record = await run_in_thread(
+            session.units.fetch_catalog, force=body.force, on_progress=unit_fetch.report,
+        )
+        unit_fetch.state["slug"] = record["slug"]
+
+    def start_unit_fetch(fields: dict[str, Any]) -> None:
+        """The units ``fetch``: bind the neuron-lens catalog (network and
+        disk, no session lock).  An uncatalogued model is a 404 at POST."""
+        from drowse.server.unit_routes import UnitCatalogFetchRequest
+
+        body = UnitCatalogFetchRequest(**fields)
+        status = session.units.catalog_status()
+        if not status["available"]:
+            raise HTTPException(404, status["reason"])
+        unit_fetch.start(lambda: unit_fetch_body(body), message="starting…", slug=status["slug"])
+
     #: Starters keyed by ``(family, operation)`` — the CLI verbs on both surfaces.
     starters = {
         ("lens", "fetch"): start_lens_fetch,
         ("lens", "fit"): start_lens_fit,
         ("sae", "fetch"): start_sae_fetch,
         ("sae", "train"): start_sae_train,
+        ("units", "fetch"): start_unit_fetch,
     }
 
     def preparation_group(family: str) -> PreparationGroup:
@@ -537,8 +638,11 @@ def register_instrument_routes(app: FastAPI) -> None:
 
     @router.delete("/instruments/{family}/preparations")
     async def preparations_cancel(family: str) -> PreparationStatusJSON:
-        """lens: cancel a running fit.  sae: cancel a running train, else unload the resident SAE."""
+        """lens: cancel a running fit.  sae: cancel a running train, else
+        unload the resident SAE.  units: a catalog fetch is not cancellable."""
         group = preparation_group(family)
+        if family == "units":
+            raise HTTPException(409, "a unit catalog fetch is not cancellable")
         if family == "lens":
             lens_fit.request_cancel()
         elif sae_train.running:
@@ -570,6 +674,49 @@ def register_instrument_routes(app: FastAPI) -> None:
                 session.instruments[family].token_readout,
                 node_id, raw_index,
                 top_k=top_k, layers=_parse_layers(layers), apply_steering=steered, raw=raw,
+            )
+
+    # -- node replay: token anatomy and unit activity ------------------------
+
+    @router.get("/instruments/token-anatomy")
+    async def instrument_token_anatomy(
+        node_id: str,
+        raw_index: int,
+        k: int = 8,
+        units: int = 8,
+        patterns: int = 4,
+        steered: bool = True,
+        raw: bool = False,
+    ) -> MeasurementsEnvelope:
+        """One loom token, every layer: the replay envelope's ``anatomy``.
+        ``k`` tokens per lens read, ``units`` neurons and heads per layer,
+        ``patterns`` top heads' attention (0: none)."""
+        async with session_lock(app):
+            return await run_in_thread(
+                session.token_anatomy, node_id, raw_index,
+                k=k, units=units, patterns=patterns, apply_steering=steered, raw=raw,
+            )
+
+    @router.get("/instruments/units/activity")
+    async def instrument_unit_activity(
+        node_id: str,
+        top: int = 32,
+        units: str | None = None,
+        raw_index: int | None = None,
+        layers: str | None = None,
+        steered: bool = True,
+        raw: bool = False,
+    ) -> UnitActivityJSON:
+        """Every unit's activity over a node's tokens: the ``top`` units by
+        peak, the traces of ``units`` (comma-separated ``neuron/…``,
+        ``head/…``) and, with ``raw_index``, that token's population at
+        ``layers``."""
+        names = [name.strip() for name in (units or "").split(",") if name.strip()]
+        async with session_lock(app):
+            return await run_in_thread(
+                session.unit_activity, node_id,
+                top=top, units=names, raw_index=raw_index, layers=_parse_layers(layers),
+                apply_steering=steered, raw=raw,
             )
 
     # -- family extras ---------------------------------------------------------

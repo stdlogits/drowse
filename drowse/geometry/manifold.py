@@ -334,8 +334,9 @@ class Manifold:
                     f"{sorted(self.node_labels)}"
                 ) from None
         # Coerce + embed both sides through the domain so the metric is
-        # consistent.  CPU/fp32 — this runs once per scope entry, off
-        # the hot path; we don't need to chase the model's device.
+        # consistent.  This runs on node_coords' device (the model's, for a
+        # resident manifold) and syncs once, so a caller holding a resident
+        # manifold runs it inside the exclusive section (``open_scope``).
         ref_dtype = self.node_coords.dtype
         pos = self._position_tensor(
             position, device=self.node_coords.device, dtype=ref_dtype,

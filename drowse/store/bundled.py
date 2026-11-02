@@ -13,7 +13,9 @@ The process scope exists because drift detection cannot tell "the bundle
 changed under the user" from "the user overrode a default manifold's
 hyperparameters via the CLI earlier in this invocation"; bundle updates ship
 via pip and need a restart anyway.  :func:`refresh_bundled_manifold` is the
-explicit, unguarded re-copy behind ``drowse pack refresh default/<name>``.
+explicit, unguarded re-copy behind ``drowse pack refresh default/<name>``.  A
+``default/`` copy of a bundled manifold the package no longer ships is
+removed, fits and all.
 
 A manifold is copied through stage-and-swap, so a crash never leaves a
 half-copied folder in ``default/``.  Fitted tensor pairs are local state and
@@ -73,6 +75,7 @@ def materialize_bundled_artifacts() -> None:
     _materialize_templates()
     for name in bundled_manifold_names():
         _materialize_manifold(name, force=False)
+    _retire_unshipped_manifolds()
     # The installed roster may have changed; the resolver's memo must not
     # serve the pre-materialization walk.
     invalidate_selector_index()
@@ -230,6 +233,51 @@ def _materialize_manifold(name: str, *, force: bool) -> None:
             stacklevel=3,
         )
         _log.warning("refreshed bundled manifold default/%s — %s", name, reason)
+
+
+def _retire_unshipped_manifolds() -> None:
+    """Remove ``default/<name>`` copies of bundled manifolds that no longer ship.
+
+    A bundled manifold the package dropped (``honest.deceptive`` became the
+    one-node ``deceptive`` in 6.0) would otherwise linger in ``default/``,
+    still resolve as a bare atom and still join the probe roster.  Only a
+    folder whose manifest says ``source: "bundled"`` goes; anything else under
+    ``default/`` is left alone.  A package folder that is still incomplete
+    (a regen in progress) counts as shipped, so its copy is kept.
+    """
+    from drowse.errors import ManifoldNotFoundError
+    from drowse.store.manifold_lifecycle import remove_manifold_folder
+
+    default_dir = manifolds_dir() / "default"
+    try:
+        root = _resources.files("drowse.data.manifolds")
+        shipped = {p.name for p in root.iterdir() if p.is_dir()}
+    except (ModuleNotFoundError, FileNotFoundError):
+        return
+    if not shipped or not default_dir.is_dir():
+        return
+    for folder in sorted(default_dir.iterdir()):
+        if folder.name in shipped or not (folder / "manifold.json").is_file():
+            continue
+        try:
+            payload = json.loads((folder / "manifold.json").read_bytes())
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("source") != "bundled":
+            continue
+        try:
+            remove_manifold_folder("default", folder.name)
+        except ManifoldNotFoundError:
+            # Another drowse process materializing this home retired it
+            # between the scan and the lock (and said so).
+            continue
+        warnings.warn(
+            f"removed bundled manifold default/{folder.name}: it no longer "
+            f"ships with drowse (its fits went with it)",
+            UserWarning,
+            stacklevel=3,
+        )
+        _log.warning("removed retired bundled manifold default/%s", folder.name)
 
 
 def refresh_bundled_manifold(name: str) -> None:

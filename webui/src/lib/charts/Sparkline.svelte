@@ -19,7 +19,7 @@
      * so a single outlier doesn't squash the rest of the trace.  Probe
      * scores live in [-1, 1] so 1 is a sensible default. */
     cap?: number;
-    /** Stroke color override; defaults to fg-dim. */
+    /** Stroke colour; ink2 by default (a caller drawing a depth passes --tint). */
     color?: string;
     percentage?: boolean;
   }
@@ -33,7 +33,7 @@
     percentage = false,
   }: Props = $props();
 
-  const stroke = $derived(color ?? "var(--fg-dim)");
+  const stroke = $derived(color ?? "var(--ink2)");
 
   const paths = $derived(sparklinePaths(points, width, height, cap));
   const tip = $derived.by(() => {
@@ -92,7 +92,10 @@
     stroke-dashoffset: 0;
   }
   .sparkline-line.draw {
-    animation: sparkline-draw var(--dur-draw) var(--ease-out);
+    animation: sparkline-draw var(--glide) var(--ease);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .sparkline-line.draw { animation: none; }
   }
   @keyframes sparkline-draw {
     from {

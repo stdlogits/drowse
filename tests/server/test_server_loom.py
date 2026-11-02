@@ -23,6 +23,7 @@ from fastapi.testclient import TestClient
 
 from drowse.loom.recipe import Recipe
 from drowse.generation.results import GenerationResult
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from tests.support.server import StubSession
 
 @pytest.fixture
@@ -71,7 +72,7 @@ class TestTreeGet:
             "/drowse/v1/sessions/default/tree",
             json={"tree": saved},
         )
-        assert restored.status_code == 200
+        assert restored.status_code == 200, restored.json()
         body = restored.json()
         assert body["nodes"] == 3
         assert body["active_node_id"] == assistant_id
@@ -91,6 +92,44 @@ class TestTreeGet:
         )
         assert restored.status_code == 400
         assert "does not match loaded model" in str(restored.json())
+
+    def test_full_tree_restore_refuses_a_previous_measurement_envelope(
+        self, session_and_client: Any,
+    ):
+        """Regression: the lens binding went from ``{source}`` to
+        ``{sources}`` with the envelope still at version 1, so a 5.x
+        dashboard save restored cleanly and the token drawer threw on its
+        lens rows.  The restore now refuses another envelope version."""
+        session, client = session_and_client
+        user_id = session.tree.add_user_turn("saved branch")
+        assistant_id = session.tree.begin_assistant(user_id, recipe=Recipe())
+        session.tree.finalize_assistant(assistant_id, text="saved reply")
+        saved = client.get("/drowse/v1/sessions/default/tree").json()
+        node = next(n for n in saved["nodes"] if n["id"] == assistant_id)
+        row = {
+            "token_id": 7, "text": "x",
+            "measurements": {
+                "version": 1, "scope": "token", "provenance": "captured",
+                "instruments": {"lens": {
+                    "binding": {"source": "local:r", "steering": None},
+                    "readings": {},
+                }},
+            },
+        }
+        node["tokens"] = [row]
+        node["thinking_tokens"] = None
+        node["raw_token_ids"] = [7]
+        refused = client.put("/drowse/v1/sessions/default/tree", json={"tree": saved})
+        assert refused.status_code == 400
+        assert "measurements version 1" in str(refused.json())
+        assert not session.tree.nodes[assistant_id].tokens  # the live tree is kept
+
+        row["measurements"]["version"] = MEASUREMENTS_VERSION
+        row["measurements"]["instruments"]["lens"]["binding"] = {
+            "sources": {"R": "local:r"}, "steering": None,
+        }
+        accepted = client.put("/drowse/v1/sessions/default/tree", json={"tree": saved})
+        assert accepted.status_code == 200
 
     def test_full_tree_restore_emits_snapshot_barrier(self, session_and_client: Any):
         session, client = session_and_client
@@ -139,18 +178,17 @@ class TestTreeGet:
         u1 = session.tree.add_user_turn("hi")
         a1 = session.tree.begin_assistant(u1)
         # Two response tokens carrying the same per-token shape the
-        # engine's ``_token_tap`` stamps: token_id + text + logprob +
-        # the probe / per-layer blobs the highlight tint depends on.
+        # engine's ``TokenTap`` stamps: token_id + text + logprob + the
+        # row envelope whose flat scores the highlight tint depends on.
         session.tree.append_token(a1, {
             "token_id": 100,
             "text": "he",
             "logprob": -1.5,
-            "probes": {"calm": 0.42},
-            "per_layer_scores": {"5": {"calm": 0.38}, "10": {"calm": 0.45}},
             "measurements": {
-                "version": 1,
+                "version": MEASUREMENTS_VERSION,
                 "scope": "token",
                 "provenance": "captured",
+                "scores": {"calm": 0.42},
                 "instruments": {
                     "lens": {
                         "readout": {
@@ -162,7 +200,9 @@ class TestTreeGet:
                             }],
                             "aggregate": [],
                         },
-                        "binding": {"source": "local:default", "steering": None},
+                        "binding": {
+                            "sources": {"R": "local:default"}, "steering": None,
+                        },
                     },
                 },
             },
@@ -171,7 +211,6 @@ class TestTreeGet:
             "token_id": 101,
             "text": "llo",
             "logprob": -0.9,
-            "probes": {"calm": 0.39},
         })
         session.tree.finalize_assistant(
             a1, text="hello", aggregate_readings={"calm": 0.40},
@@ -187,10 +226,8 @@ class TestTreeGet:
         assert first["text"] == "he"
         assert first["token_id"] == 100
         assert first["logprob"] == -1.5
-        assert first["probes"] == {"calm": 0.42}
-        assert first["per_layer_scores"] == {
-            "5": {"calm": 0.38}, "10": {"calm": 0.45},
-        }
+        assert set(first) == {"token_id", "text", "logprob", "measurements"}
+        assert first["measurements"]["scores"] == {"calm": 0.42}
         lens_readout = (
             first["measurements"]["instruments"]["lens"]["readout"]
         )
@@ -434,7 +471,7 @@ class TestTranscript:
         # to_yaml uses pyyaml's safe_dump; safe-scalar strings like
         # ``test/model`` and ``hello`` come back unquoted (valid YAML).  We
         # check substrings rather than exact quoting form.
-        assert "drowse_transcript: 2" in text
+        assert "drowse_transcript: 3" in text
         assert "model_id:" in text and "test/model" in text
         # Probes block exists (empty in this stub)
         assert "probes:" in text
@@ -446,7 +483,7 @@ class TestTranscript:
         # Round-trip via the YAML loader to confirm structural shape.
         import yaml
         parsed = yaml.safe_load(text)
-        assert parsed["drowse_transcript"] == 2
+        assert parsed["drowse_transcript"] == 3
         assert parsed["model_id"] == "test/model"
         assert len(parsed["turns"]) == 2
         assert parsed["turns"][0]["role"] == "user"
@@ -496,11 +533,11 @@ class TestWebSocketLoom:
             assert session.tree.get(source_id).text == original["text"] + "tok0"
 
     def test_user_stop_is_distinct_from_natural_completion(self, session_and_client: Any):
-        """The native stream labels an explicit user cancellation distinctly.
+        """A client stop that cuts the reply finishes it ``cancelled``.
 
-        The engine and stored loom node retain the protocol-compatible
-        ``stop`` reason; only the dashboard-facing done frame says
-        ``cancelled``.
+        Regression (decision 5): the loom node kept ``stop``, so a cut reply
+        read as a natural end after a reload.  The done frame, the node and
+        the tree payload now all say ``cancelled``.
         """
         session, client = session_and_client
         session._block_until_stop = True
@@ -519,7 +556,10 @@ class TestWebSocketLoom:
                     break
 
         assert done["result"]["finish_reason"] == "cancelled"
-        assert session.tree.get(done["node_id"]).finish_reason == "stop"
+        assert session.tree.get(done["node_id"]).finish_reason == "cancelled"
+        tree = client.get("/drowse/v1/sessions/default/tree").json()
+        node = next(n for n in tree["nodes"] if n["id"] == done["node_id"])
+        assert node["finish_reason"] == "cancelled"
 
     def test_generate_with_parent_node_id(self, session_and_client: Any):
         """Result attaches under the supplied parent_node_id."""
@@ -647,7 +687,7 @@ class TestWebSocketLoom:
         )
         session.monitor.probe_names = ["calm"]
         session.lens.names = ["jlens/fake"]
-        session.lens.live = {"source": "local:default"}
+        session.lens.measurement_sources = lambda: {"R": "local:default", "S": "rs-s"}
         session.stub_probe_readings = {"calm": reading}
         session.stub_lens_readings = {
             "jlens/fake": ScalarReading(
@@ -666,7 +706,8 @@ class TestWebSocketLoom:
         assert result["measurements"]["scope"] == "aggregate"
         assert set(instruments["geometry"]["readings"]) == {"calm"}
         assert set(instruments["lens"]["readings"]) == {"jlens/fake"}
-        assert instruments["lens"]["binding"]["source"] == "local:default"
+        # Only the family that produced readings is named.
+        assert instruments["lens"]["binding"]["sources"] == {"R": "local:default"}
 
     def test_done_omits_measurements_without_probes(
         self, session_and_client: Any,

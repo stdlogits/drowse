@@ -12,13 +12,13 @@ security boundary.
 | Module | Owns |
 |---|---|
 | `app.py` | `create_app(session, default_steering, cors_origins, api_key, *, web, max_request_bytes)`, the only export of `server/__init__.py` |
-| `runtime.py` | `session_lock(app)` (503 on timeout), `refuse_if_busy` (409), `run_in_thread` / `finish_worker` / `stream_events`, `ClosingStreamingResponse`, `NativeRequest`, `session_router()` |
+| `runtime.py` | `session_lock(app)` (503 on timeout), `refuse_if_busy` (409), `attached_probe_names` (every family's roster), `run_in_thread` / `finish_worker` / `stream_events`, `ClosingStreamingResponse`, `NativeRequest`, `session_router()` |
 | `errors.py` | `describe_error` (the one classifier), `protocol_error` (the three envelopes), `validation_message` |
 | `security.py` | `HttpSecurityMiddleware`, `ws_auth_ok` |
 | `operations.py` | `run_operation` (SSE-or-JSON jobs), `OperationLedger` (receipts), `Preparation` / `PreparationGroup` (polled jobs) |
 | `request_helpers.py` | `build_sampling_config` (the one `SamplingConfig` construction site for all protocols), `compose_request_steering`, `flatten_content`, `validate_logit_bias` |
 | `compat/` | `__init__`: `CompatGeneration` + the shared driver; `openai.py`, `ollama.py`: request models and formatters; `model_names.py`: Ollama aliases (`_HF_TO_OLLAMA_ALIASES` wins, else `<family>:<size>`) |
-| `*_routes.py` + `*_models.py` | Native REST: sessions, profiles, probes, tree, manifolds, templates, instruments |
+| `*_routes.py` + `*_models.py` | Native REST: sessions, profiles, probes, tree, manifolds, templates, instruments, units (`unit_routes.py`) |
 | `ws_stream.py`, `ws_models.py`, `ws_events.py` | `WS /sessions/{id}/stream`, its frame schemas, `GET /sessions/{id}/requests/{id}` |
 | `response_models.py` | Response `TypedDict`s for every non-streaming native route |
 
@@ -196,12 +196,22 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
 - **Sessions.** `session_info` (`GET /drowse/v1/sessions`, `GET S`) carries
   `instruments`, one `{family, live, source, probes, capabilities}` block per
   family: the read plane's only listing. `jlens_fitted` uses
-  `session.lens.has_compatible()`, which never pages a lens in. `PATCH S`:
+  `session.lens.has_compatible()`, a metadata check that never pages in, evicts or rebuilds a lens. `PATCH S`:
   explicit `null` clears `top_k` or `system_prompt`; `null` elsewhere
   preserves. `POST S/steering/validate` enters and exits
-  `session.steering(parsed)` under the lock, so a green result composes
-  exactly as a generation would; a rejection is in band (`{valid: false,
-  error}`), not a failed request.
+  `session.steering(parsed)` under the lock, in a worker thread holding the
+  model lock non-blocking (`runtime.py::exclusive_or_busy`: 409 while a
+  generation, fit or training holds the model, never a wait on the event
+  loop), so a green result composes exactly as a generation would; a rejection is in band (`{valid: false,
+  error}`), not a failed request. A valid, non-empty expression also carries
+  `n_layers` and `terms` (`SteeringScope.term_layers`: each term's key, fitted
+  layers, share and selected layers), which the term editor draws its depth
+  strip from, and `parts` (`grammar.term_parts`: each term in parse order with
+  its own `format_expr` text, op, target, coefficient(s), position, clause and
+  trigger, the trigger also as `phase`, `first_n`, `after_n` and `gate`, and a
+  projection's `projection`), from which the dashboard shows a recipe from
+  elsewhere as chips without a parser of its own. A lens probe row names its `namespace`
+  (`jlens` or `slens`).
 - **Profiles.** `pairwise` and `correlation` read `session.analytics_profile`,
   CPU snapshots built inside the exclusive-GPU section, so a polled read never
   copies off the device during a model op. Both are Mahalanobis-only and 409
@@ -211,12 +221,11 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
 - **Probes.** One collection over the Monitor and the lens/SAE readout
   registries. Each row has a `family` and only fields that family produces;
   clients key on `family`. The listing and `GET S/probes/{name}/geometry`
-  are lock-free and never touch the device: a geometry row's `node_coords`
-  and the geometry payload (in the whitened read frame) are host copies
-  taken at attach (`AttachedManifoldProbe.node_coords_host`, `.geometry`),
-  since copying a resident MPS tensor there raced the model op holding the
-  GPU and aborted the server, and holding the lock instead would stall the
-  inspector for a whole reply. Readout probes have no subspace and 404.
+  (in the whitened read frame) are lock-free and never touch the device: they
+  answer from host copies taken at attach (`AttachedManifoldProbe.node_coords_host`
+  and `.geometry`). Copying the resident MPS tensors there raced the model op
+  holding the GPU and aborted the server, and holding the lock instead stalled
+  the inspector for a whole reply. Readout probes have no subspace and 404.
 - **Tree.** Conflicts come from the tree's own reservation; navigate, star,
   note, branch, and cast edits never conflict. `PUT S/tree` restores
   atomically and refuses another model's tree. `cast_json` gives each label an
@@ -251,7 +260,17 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   | geometry | 404 | 404 | yes | 404 |
   | lens | yes | `fetch`, `fit` | yes | yes |
   | sae | yes | `fetch`, `train` | yes | 409: loading weights is the `fetch` preparation |
+  | units | 404 | `fetch` (the neuron-lens catalog) | yes | 404 |
 
+  The lens `sources` answer also carries what the dashboard's setup draws
+  (the Artifacts room's Lenses, the Model room's lens rows): the fetchable
+  `providers`, the session's crossover `band` (`lo`,
+  `hi`, `[w_S, w_R]` per layer) and `fit_documents`, the fit's default
+  documents, and each family's active row says whether it matches the
+  loaded weights (`compatible`, checked as `jlens_fitted` is). A lens fit's
+  status names its target (`source`, `local:<kind>`) and sets `replaceable`
+  only when the fit failed as a `LensReplaceRefused`: the same request with
+  `force` is then the way on.
   `POST live` forwards extras to `instrument.set_live`, whose `TypeError` is
   the one rejection rule (400); `top_k` is refused for every family because
   readout width is the generation's `return_top_k`. `PUT source` (lens) is
@@ -260,6 +279,33 @@ templates are top-level artifacts under `/drowse/v1/{manifolds,templates}`.
   `instrument.token_readout`, which builds the whole `scope="replay"`
   envelope and rejects knobs it can't honor (400); the route reshapes nothing.
   `sae/features/metadata` is network and disk cache only and takes no lock.
+  Beside it, the node replay (`loom/node_replay.py`), under the session lock:
+  `GET token-anatomy` (`node_id`, `raw_index`, `k`, `units`, `patterns`,
+  `steered`, `raw`) returns the replay envelope with `anatomy`
+  (`session.token_anatomy`), and `GET units/activity` (`node_id`, `top`,
+  `units` comma-separated, `raw_index`, `layers` a selector, `steered`, `raw`)
+  returns `UnitActivityJSON` (`session.unit_activity`; units unavailable is
+  the family's 422). Both answer 422 (`SteeringCompositionError`) for steered
+  thinking-phase terms the replay cannot reproduce (a probe gate replays one
+  position a forward). On an authored node (no recipe) the token readouts'
+  and the anatomy's `raw_index` addresses its captured prompt rows (thinking
+  rows, then visible rows) and replays through the node's `prompt_capture`
+  (`raw` does not apply); a prompt whose earlier turns changed since the
+  capture answers 400. `units/activity` on an authored node reads its captured
+  rows (one prefill through the same anchor; `raw_index` indexes them).
+- **Units** (`unit_routes.py`, under `S/instruments/units/`; the CLI's
+  `drowse unit`). `GET read?unit=&k=&hide_hubs=` is the unit view
+  (`NeuronReadJSON | HeadReadJSON`, discriminated by `kind`), `GET
+  top?token=&by=writes|fires&layers=&k=` (`UnitTopJSON`), `POST find {selector
+  | vector + layer, k, layers}` (`UnitFindJSON`; exactly one target, else 400),
+  all model work under the session lock; `GET catalog` (`UnitCatalogJSON`) and
+  `GET labels?units=a,b` (`UnitLabelsJSON`: both poles of each neuron, a head
+  once, at most 128 units; unbound, no rows and the reason) are disk only. The
+  catalog fetch is the units `fetch` preparation (no session
+  lock, network and disk; an uncatalogued model is 404 at POST; `DELETE` is
+  409, a fetch is not cancellable). The node replay's `GET units/activity`
+  (above) sits beside these. The paths are literal segments beside the
+  `{family}` routes, which name other segments.
 
 ## Long-running operations (`operations.py`)
 
@@ -303,12 +349,17 @@ cancels a running lens fit (else 409; a fetch is not cancellable) or SAE train
 
 - Lens `fetch` takes a provider from `LENS_PROVIDERS` (400 at POST),
   downloads into the HF cache without the lock, then selects it and goes live.
-- Lens `fit {kind: r|j = r, ...}`: `kind` picks the estimator and destination
-  `local:<kind>`; `layers=sample` is 400. The corpus is pinned in the isolated
+- Lens `fit {kind: r|j|s|k = r, sites: [out, mid], prompts = 64, ...}`:
+  `kind` picks the lens and destination `local:<kind>`, `sites` the residual
+  sites; `layers=sample` is 400. The corpus is pinned in the isolated
   spawned corpus worker (cancellable, never resolved in the server process).
   Unless `force`, a proven no-op (`session.lens.fit_is_noop`) only selects
-  `local:<kind>`; otherwise documents stream in the worker and
-  `session.lens.fit` runs.
+  `local:<kind>` as a publishing fit would; otherwise documents stream in the
+  worker and `session.lens.fit` runs. A fit or no-op that includes the
+  `out` site selects through `select_source` in its own family's slot
+  (evicting only that family's resident); an R-family (r/j) one turns the
+  live readout on afterwards, an S-family (s/k) one leaves it alone. A
+  `mid`-only fit of either family selects nothing (`key.lens_selectable`).
 - SAE `fetch` takes `local:<name>` or `saelens:<release>` (a bare release is
   400) and loads under the lock. SAE `train` streams `ceil(tokens / seq_len)`
   default-corpus documents, then trains.
@@ -345,20 +396,32 @@ Outbound frames:
   sibling.
 - `token {text, thinking, token_id, node_id, raw_index?, logprob?,
   perplexity?, top_alts?, measurements?}`. `measurements` is the token-scope
-  envelope the tap built and stored on the loom row, forwarded verbatim
-  (`ws_events.build_token_event`), so live and rehydrated tokens share one
-  authority. The consumer opts into every live channel; each family's live
+  envelope the tap built, forwarded verbatim and whole
+  (`ws_events.build_token_event`); a generated loom row keeps its scores and
+  each geometry share and coordinates
+  (`readout/measurements.py::token_row_measurements`), every reading whole
+  with its traces only under `persist_per_layer_scores`
+  (`summary_measurements`). The consumer opts into every live channel; each family's live
   toggle decides what appears.
 - `done {result: {text, tokens, finish_reason, applied_steering, usage,
-  measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,
-  sibling_count}`, with the engine's aggregate-scope envelope. After a client
-  `stop`, `finish_reason: "stop"` reads `"cancelled"` on the wire only; the
-  loom recipe keeps the engine's reason. A commit-only `submit` sends one
+  tok_per_sec, elapsed, measurements?, mean_logprob, mean_surprise}, node_id, sibling_index,
+  sibling_count}`, with the engine's aggregate-scope envelope and its own
+  decode rate and seconds (a page that read slower than the model wrote, and
+  resynced, cannot measure the rate from frame arrivals). A client
+  `stop` or a disconnect that cuts the reply ends it `finish_reason:
+  "cancelled"`, which the engine reports and the loom node records; a stop
+  that races the reply's own end keeps its natural reason, and the request's
+  `request_complete` still says `cancelled`. A commit-only `submit` sends one
   `started` and one `done` (`{role, text, node_id, ...}`), no tokens.
 - `tree_mutated {op, rev, added, removed, updated, active_node_id, cast}`
-  forwards every `LoomMutated`, from any source. `done` waits until its node's
-  `finalize_assistant` delta is sent, so a client never sees a finished but
-  empty node.
+  forwards every `LoomMutated`, from any source. Every frame rides one ordered
+  buffer, so a reply's `finalize_assistant` delta precedes its `done` and a
+  client never sees a finished but empty node.
+- `resync {dropped}`: the client read slower than the connection produced, and
+  `dropped` token and `tree_mutated` frames were never sent. Frames after it are
+  live; the client rebuilds the rest from `GET /tree` (the streaming node's rows
+  past its last `raw_index`, and any tree delta it missed). It always precedes a
+  `done` whose reply it affects.
 - `error {message, code, status, node_id, sibling_index}` on a connection that
   stays open: FastAPI's handlers don't reach WebSockets, so the handler
   classifies with `describe_error`. Schema failures, bad JSON, and unknown
@@ -382,9 +445,23 @@ Concurrency and limits:
   frame (close 1009; the CLI passes the same `ws_max_size`) and 16 pending
   frames / 4 MiB (close 1013). `stop` is a coalesced control outside that
   budget. Turns run one at a time per connection.
-- Sends share one lock with a 30 s timeout. Token and tree queues each bound
-  256 outstanding events, counting callbacks still pending on the loop;
-  overflow closes 1013.
+- One sender task writes one ordered outbound buffer (`_OutboundQueue`);
+  producers (the worker's token callback, EventBus callbacks on any thread,
+  the turn's control frames) never wait on it. `token` and `tree_mutated`
+  frames bound at 256 queued (`MAX_WS_OUTBOUND_EVENTS`, counting callbacks
+  still pending on the loop); past it the buffer lags, drops them until the
+  sender has taken what it holds, then sends one `resync`. Control frames
+  (`started`, `done`, `error`, `request_complete`) are never dropped, and a
+  turn ends only once its frames are written, so a stalled reader holds at
+  most 256 droppable frames plus one turn's controls. A slow reader never
+  slows or cancels generation, and the session lock is released when the last
+  sibling's worker ends, not when its frames are written. A send the peer
+  accepts nothing of for 30 s closes 1013, which is a disconnect, and that is
+  the one dead-peer rule: `drowse serve` pings every 20 s with no pong timeout
+  (`WS_PING_INTERVAL_SECONDS`, `WS_PING_TIMEOUT_SECONDS = None`), because a
+  slow reader answers a ping only after the backlog queued ahead of it, and
+  uvicorn's default 20 s timeout closed such a page (1011) about 40 s into a
+  long reply and recorded it `cancelled`.
 - A turn runs in a worker thread under
   `session.generation_state.cancellation_scope`. `n > 1` fans siblings
   serially under seeds from `loom.recipe.derive_seed_schedule`, holding the

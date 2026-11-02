@@ -51,7 +51,9 @@ def test_disconnected_active_request_preserves_cancelled_result_without_reexecut
         assert receipt["results"][0]["result"]["finish_reason"] == "cancelled"
         node_id = receipt["results"][0]["node_id"]
         assert node_id is not None
-        assert session.tree.get(node_id).finish_reason == "stop"
+        # Regression (decision 5): a disconnect that cuts the reply records
+        # ``cancelled`` on the node, not a natural ``stop``.
+        assert session.tree.get(node_id).finish_reason == "cancelled"
         tree_revision = session.tree.rev
         with client.websocket_connect(STREAM) as ws:
             ws.send_json(payload)

@@ -85,7 +85,7 @@ def _save_checkpoint(
     }
     consumed = kwargs.pop("consumed_prefix_sha256", _digest("consumed-prefix"))
     return save_lens_checkpoint(
-        sums, partial.n_prompts, partial.d_model, model_id,
+        {"out": sums}, partial.n_prompts, partial.d_model, model_id,
         LensProvenance(**kwargs), kind=partial.key.kind,
         consumed_prefix_sha256=consumed,
     )
@@ -366,7 +366,7 @@ def test_checkpoint_promotion_sidecar_failure_preserves_both_artifacts(
     monkeypatch.setattr(lens_io, "write_json_atomic", _fail_final_pointer)
     with pytest.raises(OSError, match="pointer failure"):
         promote_lens_checkpoint(
-            _MODEL, name="j", n_prompts=5, source_layers=[0, 1],
+            _MODEL, name="j", n_prompts=5, site_layers={"out": [0, 1]},
             corpus_sha256=_digest("new-sha"), corpus_hash_kind="token_ids_v1",
             seq_len=128, d_model=_D, model_fingerprint="weights",
         )
@@ -396,7 +396,7 @@ def test_checkpoint_promotion_rejects_corrupt_shard_and_keeps_pointers() -> None
     checkpoint_ts.write_bytes(payload)
 
     assert not promote_lens_checkpoint(
-        _MODEL, name="j", n_prompts=5, source_layers=[0, 1],
+        _MODEL, name="j", n_prompts=5, site_layers={"out": [0, 1]},
         corpus_sha256=_digest("new-sha"), corpus_hash_kind="token_ids_v1",
         seq_len=128, d_model=_D, model_fingerprint="weights",
     )
@@ -631,16 +631,16 @@ def test_remove_lens_keeps_a_different_active_local_lens() -> None:
         corpus_spec="test-corpus", corpus_sha256=_digest("abc123"),
         seq_len=128, dim_batch=8, skip_first=16,
     )
-    active = LENS_SOURCES.active(_MODEL, "output")
+    active = LENS_SOURCES.active(_MODEL, "R")
     assert active is not None and active.name == "r"
 
     assert remove_lens(_MODEL, "j") is True
-    active = LENS_SOURCES.active(_MODEL, "output")
+    active = LENS_SOURCES.active(_MODEL, "R")
     assert active is not None and active.name == "r"
     assert load_lens(_MODEL) is not None
 
     assert remove_lens(_MODEL, "r") is True
-    assert LENS_SOURCES.active(_MODEL, "output") is None
+    assert LENS_SOURCES.active(_MODEL, "R") is None
 
 
 def test_remove_lens_reaps_crash_left_streaming_temp() -> None:
@@ -915,7 +915,7 @@ def test_checkpoint_promotion_directory_barrier_precedes_pointer(
     )
 
     assert promote_lens_checkpoint(
-        _MODEL, name="j", n_prompts=5, source_layers=[0, 1],
+        _MODEL, name="j", n_prompts=5, site_layers={"out": [0, 1]},
         corpus_sha256=_digest("new-sha"), corpus_hash_kind="token_ids_v1",
         seq_len=128, d_model=_D, model_fingerprint="weights",
     )

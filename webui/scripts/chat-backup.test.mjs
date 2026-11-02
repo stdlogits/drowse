@@ -91,11 +91,19 @@ try {
     tree => { tree.nodes[1].parent_id = "alternate"; },
     tree => { tree.nodes[2].tokens[0].top_alts[0].logprob = "invalid"; },
     tree => { tree.tree_format = 999; },
+    // The finish reason is a closed set, as the loom reader's is.
+    tree => { tree.nodes[2].finish_reason = "eos"; },
   ]) {
     const malformed = structuredClone(original.snapshot);
     mutate(malformed.tree);
     await assert.rejects(importChatBackup(file(JSON.stringify(malformed)), library));
   }
+  // A reply a Stop cut short keeps its ``cancelled`` reason through a backup.
+  const cut = structuredClone(original.snapshot);
+  cut.tree.nodes[2].finish_reason = "cancelled";
+  const cutCopy = await importChatBackup(file(JSON.stringify(cut)), library);
+  assert.equal(cutCopy.snapshot.tree.nodes[2].finish_reason, "cancelled");
+  await library.delete(cutCopy.id);
   failWrites = true;
   await assert.rejects(importChatBackup(file(encoded), library), /Storage full/);
   assert.deepEqual([...rows], before, "all rejected imports leave existing records unchanged");
@@ -105,7 +113,7 @@ try {
 function file(text) { return { size: Buffer.byteLength(text), async text() { return text; } }; }
 
 function node(id, parent_id, role, text) {
-  return { id, parent_id, role, text, role_label: null, thinking_text: null, aggregate_readings: {}, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null };
+  return { id, parent_id, role, text, role_label: null, thinking_text: null, aggregate_readings: {}, aggregate_measurements: null, applied_steering: null, finish_reason: null, starred: false, notes: "", created_at: 100, edited_at: null, edit_count: 0, mean_logprob: null, mean_surprise: null, recipe: null, tokens: null, thinking_tokens: null, raw_token_ids: null, prompt_capture: null };
 }
 
 function snapshot() {
@@ -122,21 +130,28 @@ function snapshot() {
     text: "Marmots", token_id: 5, raw_index: 1, logprob: -0.2, sampler_entropy: 1.1,
     top_alts: [{ id: 5, text: "Marmots", logprob: -0.2 }, { id: 6, text: "They", logprob: -2.4 }],
     measurements: {
-      version: 1, scope: "token", provenance: { source: "recorded" },
-      instruments: {
-        lens: { readout: { layers: [{ layer: 0, tokens: [{ id: 5, token: "Marmots", logprob: -1.2 }] }], aggregate: [{ token: "Marmots", strength: 0.3 }] } },
-        sae: { readout: { layer: 13, features: [{ id: 396, activation: 975.08 }] } },
-        geometry: { readings: { calm: { coords: [0.2], per_layer: { 13: [0.3] } } } },
-      },
+      // A 6.0 generated row (token_row_measurements): the snapshot validator refuses any other shape.
+      version: 2, scope: "token", provenance: "captured",
+      instruments: { geometry: { readings: { calm: { fraction: 0.4, coords: [0.2] } } } },
+      scores: { calm: 0.2, "jlens/calm": 3.2e-5 },
     },
   }];
+  // The reply's settled aggregate, as the node keeps it (aggregate_measurements).
+  reply.aggregate_readings = { calm: 0.21, "jlens/calm": 3.1e-5 };
+  reply.aggregate_measurements = {
+    version: 2, scope: "aggregate", provenance: "captured",
+    instruments: {
+      geometry: { readings: { calm: { fraction: 0.4, nearest: [["calm", 1]], coords: [0.21], residual: 0, assignment: [["calm", 0.9]], membership: 1, depth_com: [0.5], depth_spread: [0.1] } } },
+      lens: { binding: { sources: { R: "local:r" }, steering: "0.3 jlens/calm" }, readings: { "jlens/calm": { value: 3.1e-5, unit: "mean_token_probability", per_layer: { 20: 4.1e-5 }, depth: null } } },
+    },
+  };
   reply.recipe = { steering: "0.3 jlens/calm", sampling: null, thinking: true, seed: 42, probes: ["jlens/calm"], probe_hashes: { "jlens/calm": "source-hash" } };
   alternate.edited_at = 110;
   alternate.edit_count = 1;
   return {
-    version: 7, savedAt: "2026-09-05T12:00:00.000Z", model_id: "fixture/model", session_id: "default",
+    version: 8, savedAt: "2026-09-05T12:00:00.000Z", model_id: "fixture/model", session_id: "default",
     tree: { tree_format: 2, drowse_version: "0.1", model_id: "fixture/model", session_id: "default", name: "Research", rev: 4, root_id: "root", active_node_id: "reply", nodes: [root, user, reply, alternate], children_of: { root: ["user"], user: ["reply", "alternate"], reply: [], alternate: [] }, cast: {} },
-    steerRack: [{ name: "jlens/calm", mode: "jlens", alpha: 0.3, trigger: "RESPONSE", enabled: true }], subspaceAlong: 0.5, customSteeringExpression: null,
+    steerRack: [{ name: "jlens/calm", mode: "jlens", ablate: false, alpha: 0.3, trigger: "RESPONSE", enabled: true }], subspaceAlong: 0.5, readOnlyRecipe: null,
     probeRack: { sortMode: "name", active: ["jlens/calm"], entries: [{ name: "jlens/calm", request: { selector: "jlens/calm", name: "jlens/calm" }, sparkline: [0.1, 0.2], current: 0.2, previous: 0.1 }] },
     highlightState: { target: "jlens/calm", compareTarget: null, compareTwo: false, smoothBlend: true },
     samplingState: { temperature: 0.7, top_p: 0.95, top_k: null, max_tokens: 256, seed: 42, system_prompt: "Be precise", stop_sequences: "", logit_bias_text: "", presence_penalty: 0, frequency_penalty: 0, thinking: true, return_top_k: 8, user_role: "user", assistant_role: "assistant" },

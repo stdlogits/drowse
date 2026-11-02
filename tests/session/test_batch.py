@@ -478,6 +478,20 @@ class TestBatchHelpers:
         )
         assert (tokens, finish) == ([15], "stop")
 
+    def test_trim_marks_a_row_the_user_stop_cut_cancelled(self) -> None:
+        """Regression (decision 5): a stop that cut a row read as ``stop``."""
+        tokens, finish = trim_generated(
+            torch.tensor([15, 0, 0]), eos_ids={99}, pad_id=0, max_new_tokens=3,
+            cancelled=True,
+        )
+        assert (tokens, finish) == ([15], "cancelled")
+        # A row that already ended on EOS finished on its own.
+        tokens, finish = trim_generated(
+            torch.tensor([15, 99, 0]), eos_ids={99}, pad_id=0, max_new_tokens=3,
+            cancelled=True,
+        )
+        assert (tokens, finish) == ([15], "stop")
+
     def test_left_pad(self) -> None:
         ids, attention, lengths = left_pad(
             [torch.tensor([1, 2]), torch.tensor([3, 4, 5]), torch.tensor([6])], 0,
@@ -746,7 +760,7 @@ class TestFastBatchOnTinySession:
         _assert_rows_match_serial(session, batch, prompts, "jlens/e")
         for row in batch:
             lens = cast(dict[str, Any], row.measurements)["instruments"]["lens"]
-            assert lens["binding"] == {"source": "local:j", "steering": None}
+            assert lens["binding"] == {"sources": {"R": "local:j"}, "steering": None}
             assert lens["readings"]["jlens/e"]["unit"] == "mean_token_probability"
 
     def test_sae_probe_row_aggregates_match_a_serial_generation(
@@ -857,6 +871,29 @@ class TestFastBatchOnTinySession:
         session, _script = make_tiny_session.scripted(_reply)
         calls = _spy_model_generate(monkeypatch, session)
         runset = session.generate_batch(["alpha", "beta"], sampling=sampling, thinking=False)
+        assert calls == []
+        assert [r.text for r in runset] == ["re alpha", "re beta"]
+
+    @pytest.mark.parametrize("scoped", [False, True])
+    def test_unit_ablation_runs_serially(
+        self,
+        scoped: bool,
+        make_tiny_session: TinySessionFactory,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A unit ablation leaves each row's attention sink alone, which sits
+        in a different column per row of a left-padded batch: the serial loop
+        runs it, whether the ablation is the call's or an open scope's."""
+        import contextlib
+
+        session, _script = make_tiny_session.scripted(_reply)
+        calls = _spy_model_generate(monkeypatch, session)
+        expr = "!neuron/L1n3"
+        scope = session.steering(expr) if scoped else contextlib.nullcontext()
+        with scope:
+            runset = session.generate_batch(
+                ["alpha", "beta"], steering=None if scoped else expr, thinking=False,
+            )
         assert calls == []
         assert [r.text for r in runset] == ["re alpha", "re beta"]
 

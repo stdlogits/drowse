@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, untrack } from "svelte";
-  import { captureConversationSnapshot } from "../conversationWorkspace";
+  import { captureConversationSnapshot, captureWorkspaceSnapshot } from "../conversationWorkspace";
   import { loomTree } from "../stores/loom.svelte";
   import { genStatus } from "../stores/chat.svelte";
   import { sessionState } from "../stores/session.svelte";
@@ -10,7 +10,7 @@
   import { conversationLibrary, savedConversationState, registerConversationAutosave } from "../stores/savedConversations.svelte";
   import { userFacingError } from "../runtime/userFacingError";
   import { openDrawer, drawerState } from "../stores/drawers.svelte";
-  import Button from "./Button.svelte";
+  import { clearWorkspaceDraft, saveWorkspaceDraft } from "../workspaceDraft";
 
   let timer: ReturnType<typeof setTimeout> | null = null;
   let tail: Promise<void> = Promise.resolve();
@@ -33,6 +33,10 @@
     const task = tail.catch(() => undefined).then(async () => {
       try {
         const record = await conversationLibrary.autosave(snapshot, requestedId, modelType);
+        // A tree with no turns gets no record: its workspace (a recipe built before the first
+        // message) is kept as the draft instead, until a record takes over.
+        if (record === null) saveWorkspaceDraft(snapshot);
+        else clearWorkspaceDraft();
         if (disposed || loomTree.root_id !== snapshot.tree.root_id || savedConversationState.activeId !== requestedId) return;
         savedConversationState.activeId = record?.id ?? null;
         savedConversationState.avatarSeed = record?.avatarSeed ?? null;
@@ -61,7 +65,7 @@
     JSON.stringify(samplingState);
     JSON.stringify([...steerRack.entries]);
     void steerRack.subspaceAlong;
-    void steerRack.customExpression;
+    void steerRack.readOnlyRecipe;
     JSON.stringify(probeRack.active.map(name => probeRack.entries.get(name)?.request));
     void probeRack.sortMode;
     JSON.stringify(highlightState);
@@ -69,16 +73,31 @@
     timer = setTimeout(() => { void flush().catch(() => undefined); }, 600);
   });
 
+  /** A change autosave has not written yet (its debounce, or a write in flight) would be lost if
+   *  the page went now: keep the workspace synchronously as the draft, which the next load takes
+   *  over the older record. */
+  function keepPendingWorkspace(): void {
+    if (timer === null && savedConversationState.status !== "saving") return;
+    if (!loomTree.loaded || genStatus.active) return;
+    try { saveWorkspaceDraft(captureWorkspaceSnapshot()); } catch {}
+  }
+
   onMount(() => {
     disposed = false;
     const unregister = registerConversationAutosave(flush);
-    const saveWhenHidden = () => { if (document.hidden) void flush().catch(() => undefined); };
+    const saveWhenHidden = () => {
+      if (!document.hidden) return;
+      keepPendingWorkspace();
+      void flush().catch(() => undefined);
+    };
     document.addEventListener("visibilitychange", saveWhenHidden);
+    window.addEventListener("pagehide", keepPendingWorkspace);
     return () => {
       void flush().catch(() => undefined);
       disposed = true;
       unregister();
       document.removeEventListener("visibilitychange", saveWhenHidden);
+      window.removeEventListener("pagehide", keepPendingWorkspace);
     };
   });
 </script>
@@ -86,12 +105,16 @@
 {#if savedConversationState.status === "error"}
   <div class="autosave-error" role="alert">
     <span>{savedConversationState.error}</span>
-    <Button onclick={() => void flush().catch(() => undefined)}>Retry autosave</Button>
-    <Button variant="solid" onclick={() => openDrawer("save_conversation")}>Save chat / backup</Button>
+    <button type="button" class="dw-text" onclick={() => void flush().catch(() => undefined)}>Retry</button>
+    <button type="button" class="dw-quiet" onclick={() => openDrawer("save_conversation")}>Save or back up</button>
   </div>
 {/if}
 
 <style>
-  .autosave-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); padding: var(--surface-padding); color: var(--error-text); background: var(--danger-bg); font-size: var(--text-sm); }
-  .autosave-error span { flex: 1 1 20rem; min-width: 0; overflow-wrap: anywhere; }
+  /* An autosave that failed: one wash line under the header, the fixes beside it. */
+  .autosave-error { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); margin: 0 var(--s6) var(--s2); padding: var(--s2) var(--s2) var(--s2) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); font: var(--type-small); }
+  .autosave-error span { flex: 1 1 280px; min-width: 0; overflow-wrap: anywhere; }
+  .autosave-error .dw-quiet { background: var(--wash2); }
+  @media (max-width: 720px) { .autosave-error { margin: 0 var(--s4) var(--s2); } }
+  @media (pointer: coarse) { .dw-text { min-height: 44px; } }
 </style>

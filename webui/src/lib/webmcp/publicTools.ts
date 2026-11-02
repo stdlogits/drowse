@@ -44,9 +44,9 @@ export function createPublicTools(hostedSite: boolean): AppTool[] {
     }),
     tool({
       name: "drowse_set_theme", title: "Set theme", annotations: { readOnlyHint: false },
-      description: "Set the visible light or dark theme. This changes presentation only.",
-      inputSchema: objectSchema({ theme: { type: "string", enum: ["light", "dark"] } }, ["theme"]),
-      execute: input => { setTheme(input.theme as "light" | "dark"); return { theme: input.theme }; },
+      description: "Set the theme: auto follows the system, light or dark holds. This changes presentation only.",
+      inputSchema: objectSchema({ theme: { type: "string", enum: ["auto", "light", "dark"] } }, ["theme"]),
+      execute: input => { setTheme(input.theme as "auto" | "light" | "dark"); return { theme: input.theme }; },
     }),
     tool({
       name: "drowse_contact_draft", title: "Read or edit contact draft", group: "contact", annotations: { readOnlyHint: false, untrustedContentHint: true },

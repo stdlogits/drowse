@@ -1,9 +1,15 @@
 import {
   validateConversationSnapshot,
-  type ConversationSnapshotV7,
+  type ConversationSnapshotV8,
 } from "./conversationSnapshot";
 import { migrateLegacyDatabase } from "./brandMigration";
-import { isChatAccent, type ChatAccent } from "./chatAccent";
+
+/** The accent ids a saved record may carry. The dashboard no longer colours chats, but the record
+ *  format keeps the field, so saved chats and backups round-trip unchanged. */
+export const CONVERSATION_ACCENTS = ["purple", "blue", "mint", "rose", "peach", "periwinkle"] as const;
+export type ConversationAccent = typeof CONVERSATION_ACCENTS[number];
+const isConversationAccent = (value: unknown): value is ConversationAccent =>
+  CONVERSATION_ACCENTS.some(accent => accent === value);
 
 const DATABASE_NAME = "drowse-saved-conversations";
 const DATABASE_VERSION = 1;
@@ -20,12 +26,12 @@ export interface SavedConversationRecord {
   id: string;
   name: string;
   avatarSeed: string;
-  accent?: ChatAccent;
+  accent?: ConversationAccent;
   modelId: string;
   modelType?: "chat" | "base";
   createdAt: number;
   updatedAt: number;
-  snapshot: ConversationSnapshotV7;
+  snapshot: ConversationSnapshotV8;
 }
 
 export type SavedConversationSummary = Omit<SavedConversationRecord, "snapshot"> & {
@@ -210,9 +216,9 @@ export class ConversationLibrary {
   async create(input: {
     name: string;
     avatarSeed?: string;
-    accent?: ChatAccent;
+    accent?: ConversationAccent;
     modelType?: "chat" | "base";
-    snapshot: ConversationSnapshotV7;
+    snapshot: ConversationSnapshotV8;
     createdAt?: number;
     updatedAt?: number;
   }): Promise<SavedConversationRecord> {
@@ -311,7 +317,7 @@ export class ConversationLibrary {
     });
   }
 
-  async autosave(snapshot: ConversationSnapshotV7, activeId: string | null, modelType?: "chat" | "base"): Promise<SavedConversationRecord | null> {
+  async autosave(snapshot: ConversationSnapshotV8, activeId: string | null, modelType?: "chat" | "base"): Promise<SavedConversationRecord | null> {
     validateConversationSnapshot(snapshot, this.samplingKeys);
     await this.initialize();
     return this.runExclusive(async () => {
@@ -592,7 +598,7 @@ export function validateSavedConversationRecord(
   validateIdentifier(value.id, "saved conversation id");
   normalizeName(value.name);
   normalizeAvatarSeed(value.avatarSeed);
-  if ("accent" in value && !isChatAccent(value.accent)) throw invalid("Chat accent color is invalid");
+  if ("accent" in value && !isConversationAccent(value.accent)) throw invalid("Chat accent color is invalid");
   validateIdentifier(value.modelId, "model id", 512);
   if ("modelType" in value && value.modelType !== "base" && value.modelType !== "chat") throw invalid("Model type is invalid");
   validateTimestamp(value.createdAt, "creation time");
@@ -628,17 +634,10 @@ export function defaultConversationName(timestamp = Date.now()): string {
   return `New Chat - ${parts.month} ${parts.day} - ${Number(parts.hour)}:${parts.minute} ${parts.timeZoneName}`;
 }
 
+/** A model's name as the rest of the dashboard writes it: the repository's own name, verbatim
+ *  (``HuggingFaceTB/SmolLM2-360M-Instruct`` → ``SmolLM2-360M-Instruct``). */
 export function displayModelName(modelId: string): string {
-  const raw = modelId.split("/").at(-1) ?? modelId;
-  return raw
-    .replace(/[-_]+/gu, " ")
-    .replace(/\b(qwen|gemma|llama|mistral)(\d)/giu, (_, name: string, digit: string) =>
-      `${name.charAt(0).toUpperCase()}${name.slice(1).toLowerCase()}${digit}`)
-    .replace(/\b(qwen|gemma|llama|mistral)\b/giu, (name) =>
-      `${name.charAt(0).toUpperCase()}${name.slice(1).toLowerCase()}`)
-    .replace(/\b(\d+(?:\.\d+)?)b\b/giu, "$1B")
-    .replace(/\s+/gu, " ")
-    .trim();
+  return modelId.split("/").at(-1) || modelId;
 }
 
 export function randomAvatarSeed(): string {

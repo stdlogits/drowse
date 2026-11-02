@@ -9,6 +9,7 @@ from __future__ import annotations
 import gzip
 import json
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import pytest
@@ -26,7 +27,13 @@ from drowse import (
 )
 from drowse.loom.errors import LoomTreeError
 from drowse.loom.ops import append_turn, check_user_send_target
-from drowse.loom.tree import TOKEN_SIDECAR_FORMAT_VERSION, TREE_FORMAT_VERSION
+from drowse.loom.tree import (
+    TOKEN_SIDECAR_FORMAT_VERSION,
+    TREE_FORMAT_VERSION,
+    PromptCapture,
+    prompt_digest,
+)
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 from drowse.loom import tree as loom
 
 
@@ -98,7 +105,31 @@ def test_begin_and_finalize_assistant():
     assert t.nodes[aid].finish_reason == "stop"
 
 
-def test_set_authored_token_scores_is_one_tree_mutation():
+def _capture(**overrides: Any) -> PromptCapture:
+    fields: dict[str, Any] = {
+        "steering": None, "system_prompt": None, "thinking": False, "raw": False,
+        "start": 3, "thinking_start": None, "digest": prompt_digest([1, 2, 3]),
+    }
+    fields.update(overrides)
+    return PromptCapture(**fields)
+
+
+_SLIM_ROW: dict[str, Any] = {
+    "token_id": 7,
+    "text": "hello",
+    "measurements": {
+        "version": MEASUREMENTS_VERSION,
+        "scope": "token",
+        "provenance": "captured",
+        "instruments": {
+            "geometry": {"readings": {"formal": {"fraction": 1.0, "coords": [0.25]}}},
+        },
+        "scores": {"formal": 0.25},
+    },
+}
+
+
+def test_set_authored_capture_is_one_tree_mutation():
     bus = EventBus()
     seen: list[LoomMutated] = []
     bus.subscribe(lambda e: seen.append(e) if isinstance(e, LoomMutated) else None)
@@ -106,21 +137,7 @@ def test_set_authored_token_scores_is_one_tree_mutation():
     uid = t.add_user_turn("hello")
     before = t.rev
 
-    t.set_authored_token_scores(uid, [
-        {
-            "token_id": 7,
-            "text": "hello",
-            "measurements": {
-                "version": 1,
-                "scope": "token",
-                "provenance": "captured",
-                "instruments": {
-                    "geometry": {"readings": {"formal": {"coords": [0.25]}}},
-                },
-                "scores": {"formal": 0.25},
-            },
-        },
-    ])
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
 
     assert t.rev == before + 1
     tokens = t.nodes[uid].tokens
@@ -128,8 +145,102 @@ def test_set_authored_token_scores_is_one_tree_mutation():
     assert tokens[0]["measurements"]["scores"] == {
         "formal": 0.25,
     }
+    assert t.nodes[uid].prompt_capture == _capture()
     assert seen[-1].op == "capture_authored"
     assert seen[-1].updated == (uid,)
+
+
+def test_set_authored_capture_is_one_shot_and_authored_only():
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    with pytest.raises(InvalidNodeOperationError, match="already captured"):
+        t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    reply = t.begin_assistant(uid, recipe=Recipe())
+    with pytest.raises(InvalidNodeOperationError, match="requires an authored node"):
+        t.set_authored_capture(reply, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    other = t.add_user_turn("again", parent_id=t.root_id)
+    # Rows exactly where the capture places a channel.
+    with pytest.raises(InvalidNodeOperationError, match="exactly when"):
+        t.set_authored_capture(
+            other, _capture(), tokens=None, thinking_tokens=[dict(_SLIM_ROW)],
+        )
+    with pytest.raises(InvalidNodeOperationError, match="no raw_index"):
+        t.set_authored_capture(
+            other, _capture(), tokens=[{**_SLIM_ROW, "raw_index": 0}], thinking_tokens=None,
+        )
+
+
+def test_append_authored_clears_the_prompt_capture():
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    t.append_authored(uid, " more")
+    node = t.nodes[uid]
+    assert node.tokens is None and node.prompt_capture is None
+
+
+def test_an_authored_node_round_trips_its_capture_through_the_sidecar(tmp_path: Path):
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    capture = _capture(thinking_start=1, start=3, steering="0.3 formal")
+    t.set_authored_capture(
+        uid, capture, tokens=[dict(_SLIM_ROW)], thinking_tokens=[dict(_SLIM_ROW)],
+    )
+    path = tmp_path / "tree.json"
+    t.save(path)
+    loaded = LoomTree.load(path)
+    assert loaded.nodes[uid].prompt_capture == capture
+    assert loaded.nodes[uid].tokens == [_SLIM_ROW]
+
+
+def _authored_node_dict(**overrides: Any) -> dict[str, Any]:
+    t = LoomTree()
+    uid = t.add_user_turn("hello")
+    t.set_authored_capture(uid, _capture(), tokens=[dict(_SLIM_ROW)], thinking_tokens=None)
+    data = t.nodes[uid].to_dict(include_tokens=True)
+    data.update(overrides)
+    return data
+
+
+def test_the_reader_refuses_authored_rows_without_their_capture():
+    """Regression: authored prompt rows were stored whole (summary and every
+    trace, ~45 kB a token) because nothing could replay them.  The node now
+    carries their replay anchor; a node with authored rows and no anchor (the
+    old whole rows) is refused."""
+    from drowse.readout.measurements import GEOMETRY_SUMMARY_KEYS, GEOMETRY_TRACE_KEYS
+
+    whole_reading: dict[str, Any] = {key: 0.5 for key in GEOMETRY_SUMMARY_KEYS}
+    whole_reading.update({key: [0.5] for key in GEOMETRY_TRACE_KEYS})
+    old_row = {
+        "token_id": 7, "text": "hello", "logprob": None, "perplexity": None,
+        "measurements": {
+            "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+            "instruments": {"geometry": {"readings": {"formal": whole_reading}}},
+            "scores": {"formal": 0.5},
+        },
+    }
+    with pytest.raises(LoomTreeError, match="replay anchor"):
+        LoomNode.from_dict(_authored_node_dict(tokens=[old_row], prompt_capture=None))
+    # The anchored node reads, slim or (persist_per_layer_scores) whole.
+    assert LoomNode.from_dict(_authored_node_dict()).prompt_capture == _capture()
+    assert LoomNode.from_dict(_authored_node_dict(tokens=[old_row])).tokens == [old_row]
+    for bad in (
+        {"digest": "nope"},
+        {"start": None, "thinking_start": None},
+        {"thinking": 1},
+        {"start": -1},
+    ):
+        capture = {**_capture().to_dict(), **bad}
+        with pytest.raises(LoomTreeError, match="prompt capture"):
+            LoomNode.from_dict(_authored_node_dict(prompt_capture=capture))
+    # A generated node never carries one.
+    t = LoomTree()
+    reply = t.begin_assistant(t.add_user_turn("hi"), recipe=Recipe())
+    generated = t.nodes[reply].to_dict(include_tokens=True)
+    generated["prompt_capture"] = _capture().to_dict()
+    with pytest.raises(LoomTreeError, match="generated loom node has no prompt capture"):
+        LoomNode.from_dict(generated)
 
 
 def test_messages_for_active_path():
@@ -1164,6 +1275,24 @@ def test_loom_node_to_from_dict_round_trip():
     assert n2.edit_count == n.edit_count
 
 
+@pytest.mark.parametrize("reason", ["stop", "length", "stop_sequence", "cancelled", None])
+def test_loom_node_reads_every_finish_reason(reason: str | None):
+    n = LoomNode(id="n1", parent_id="p1", role="assistant")
+    data = {**n.to_dict(), "finish_reason": reason}
+    assert LoomNode.from_dict(data).finish_reason == reason
+
+
+@pytest.mark.parametrize("reason", ["eos", "abort", "", 3, [], {}, ["stop"]])
+def test_loom_node_refuses_an_unknown_finish_reason(reason: object):
+    """The finish reason is a closed set; ``cancelled`` marks a cut reply.
+
+    Regression: an unhashable value (a list, an object) raised TypeError from
+    the set membership test, a 500 on PUT /tree instead of the reader's 400."""
+    n = LoomNode(id="n1", parent_id="p1", role="assistant")
+    with pytest.raises(LoomTreeError, match="finish_reason"):
+        LoomNode.from_dict({**n.to_dict(), "finish_reason": reason})
+
+
 def test_loom_node_tokens_omitted_by_default():
     n = LoomNode(id="n1", parent_id="p1", role="assistant",
                  tokens=[{"id": 5, "text": "hi"}])
@@ -1223,6 +1352,217 @@ def test_sidecar_preserves_explicit_null_raw_token_ids(tmp_path: Path):
         payload = json.load(f)
     assert payload["nodes"][node.id]["raw_token_ids"] is None
     assert LoomTree.load(path).nodes[node.id].raw_token_ids is None
+
+
+def test_load_refuses_a_previous_token_sidecar_format(tmp_path: Path):
+    """5.x sidecars (format 2) carry measurement envelope v1 rows, whose lens
+    binding has another shape; the reader takes only the current format."""
+    tree = _seed_tree()
+    node = tree.nodes[tree.active_node_id]
+    node.tokens = [{"token_id": 7, "text": "x"}]
+    path = tmp_path / "tree.json"
+    tree.save(path)
+    sidecar = tmp_path / "tree.tokens.json.gz"
+    with gzip.open(sidecar, "rt", encoding="utf-8") as f:
+        payload = json.load(f)
+    assert payload["token_sidecar_format"] == 3
+    payload["token_sidecar_format"] = 2
+    with gzip.open(sidecar, "wt", encoding="utf-8") as f:
+        json.dump(payload, f)
+    with pytest.raises(LoomTreeError, match="unsupported token_sidecar_format 2"):
+        LoomTree.load(path)
+
+
+@pytest.mark.parametrize("field", ["tokens", "thinking_tokens"])
+def test_node_reader_refuses_rows_of_another_measurement_version(field: str):
+    tree = _seed_tree()
+    raw = tree.to_dict(include_tokens=True)
+    node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token",
+        "provenance": "captured", "instruments": {},
+    }
+    node[field] = [{"token_id": 7, "text": "x", "measurements": envelope}]
+    node["raw_token_ids"] = [7]
+    assert LoomTree.from_dict(raw).nodes[tree.active_node_id].to_dict(
+        include_tokens=True,
+    )[field][0]["measurements"] == envelope
+    envelope["version"] = 1
+    with pytest.raises(LoomTreeError, match="measurements version 1"):
+        LoomTree.from_dict(raw)
+    node[field] = [{"token_id": 7, "text": "x", "measurements": "v1"}]
+    with pytest.raises(LoomTreeError, match="'measurements' must be an object"):
+        LoomTree.from_dict(raw)
+
+
+
+@pytest.mark.parametrize("where", ["aggregate", "layers"])
+def test_node_reader_refuses_lens_readout_rows_without_ids(where: str):
+    """Regression: the aggregate chip gained ``id`` under envelope version 2,
+    and the reader checked only the version, so a pre-6.0 row (or an outdated
+    producer's ``PUT /tree``) loaded and the dashboard keyed every chip
+    ``aggregate:undefined``."""
+    tree = _seed_tree()
+    raw = tree.to_dict(include_tokens=True)
+    node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)
+    readout = {
+        "layers": [{"layer": 0, "tokens": [{"token": "a", "id": 5, "logprob": -0.1}]}],
+        "aggregate": [{"token": "a", "id": 5, "strength": 0.8, "com": 0.0, "spread": 0.0}],
+    }
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+        "instruments": {"lens": {
+            "binding": {"sources": {"R": "local:r"}, "steering": None}, "readout": readout,
+        }},
+    }
+    node["tokens"] = [{"token_id": 7, "text": "x", "measurements": envelope}]
+    node["raw_token_ids"] = [7]
+    assert LoomTree.from_dict(raw)
+    entry = readout["aggregate"][0] if where == "aggregate" else readout["layers"][0]["tokens"][0]
+    del entry["id"]
+    with pytest.raises(LoomTreeError, match="no vocabulary id"):
+        LoomTree.from_dict(raw)
+
+
+def _geometry_row_reading() -> dict[str, Any]:
+    return {
+        "fraction": 0.5, "nearest": [["calm", 1.0]], "coords": [0.25],
+        "residual": 0.0, "assignment": [["calm", 0.9]], "membership": 1.0,
+        "depth_com": [0.5], "depth_spread": [0.1],
+    }
+
+
+def _row_tree(row: dict[str, Any]) -> tuple[LoomTree, dict[str, Any]]:
+    tree = _seed_tree()
+    raw = tree.to_dict(include_tokens=True)
+    node = next(n for n in raw["nodes"] if n["id"] == tree.active_node_id)
+    node["tokens"] = [row]
+    node["raw_token_ids"] = [7]
+    return tree, raw
+
+
+def test_node_reader_reads_the_6_0_row_shape():
+    """A generated row (scores, each geometry share and coordinates) and a
+    row kept whole (every reading with its per-layer traces) both load."""
+    envelope: dict[str, Any] = {
+        "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+        "scores": {"calm": 0.25},
+        "instruments": {"geometry": {"readings": {"calm": {"fraction": 0.5, "coords": [0.25]}}}},
+    }
+    row = {"token_id": 7, "text": "x", "logprob": -0.1, "perplexity": 1.1,
+           "raw_index": 0, "measurements": envelope}
+    _tree, raw = _row_tree(row)
+    assert LoomTree.from_dict(raw)
+    reading = _geometry_row_reading()
+    reading.update({
+        "fraction_per_layer": {"0": 0.5}, "coords_per_layer": {"0": [0.25]},
+        "residual_per_layer": {"0": 0.0},
+    })
+    envelope["instruments"]["geometry"]["readings"]["calm"] = reading
+    assert LoomTree.from_dict(raw)
+
+
+@pytest.mark.parametrize(
+    ("mutate", "message"),
+    [
+        (lambda row: row.update(probes={"calm": 0.25}), "pre-6.0 shape.*'probes'"),
+        (
+            lambda row: row.update(per_layer_scores={"0": {"calm": 0.25}}),
+            "pre-6.0 shape.*'per_layer_scores'",
+        ),
+        (
+            lambda row: row["measurements"].update(per_layer_scores={"0": {"calm": 0.25}}),
+            "pre-6.0 shape.*envelope per_layer_scores",
+        ),
+        (
+            lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
+            .update(subspace_coords_per_layer={"0": [0.1]}),
+            "pre-6.0 shape.*subspace coordinates on reading 'calm'",
+        ),
+        (
+            lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
+            .update(fraction_per_layer={"0": 0.5}),
+            "pre-6.0 shape.*keeps its summary without all its traces",
+        ),
+        (
+            lambda row: row["measurements"]["instruments"]["geometry"]["readings"]["calm"]
+            .update(fraction_per_layer={"0": 0.5}, coords_per_layer={"0": [0.25]},
+                    residual_per_layer={"0": 0.0}) or row["measurements"]["instruments"][
+                        "geometry"]["readings"].update(months={"fraction": 0.3, "coords": [1.0]}),
+            "mixes a generated row's geometry readings",
+        ),
+        (lambda row: row.update(hidden={"0": [1.0]}), "unknown loom token row field 'hidden'"),
+    ],
+)
+def test_node_reader_refuses_pre_6_0_token_rows(
+    mutate: Callable[[dict[str, Any]], None], message: str,
+):
+    """Regression: a 6.0 generated row keeps its scores and each geometry
+    share and coordinates (``token_row_measurements``), a row kept whole
+    every reading with its traces.  The unreleased earlier shapes of token
+    sidecar 3 / envelope 2 (a row-level score copy, the layer-major
+    ``per_layer_scores`` map, the inspector's subspace coordinates on every
+    token, a reading's summary without its traces) are refused with a plain
+    error rather than handed to readers that no longer expect them."""
+    envelope = {
+        "version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+        "scores": {"calm": 0.25},
+        "instruments": {"geometry": {"readings": {"calm": _geometry_row_reading()}}},
+    }
+    row: dict[str, Any] = {"token_id": 7, "text": "x", "measurements": envelope}
+    mutate(row)
+    _tree, raw = _row_tree(row)
+    with pytest.raises(LoomTreeError, match=message):
+        LoomTree.from_dict(raw)
+
+
+_TOKEN_ROWS = json.loads(
+    (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "token_rows.json").read_text(),
+)
+
+
+@pytest.mark.parametrize("case", _TOKEN_ROWS["accepted"], ids=lambda case: case["name"])
+def test_shared_token_row_fixture_loads(case: dict[str, Any]):
+    """``tests/fixtures/token_rows.json`` is shared with the dashboard's
+    ``tokenRowProblem`` (conversation-snapshot.test.mjs): a row the reader
+    loads is one the browser's snapshot validator keeps."""
+    _tree, raw = _row_tree(json.loads(json.dumps(case["row"])))
+    assert LoomTree.from_dict(raw)
+
+
+@pytest.mark.parametrize("case", _TOKEN_ROWS["refused"], ids=lambda case: case["name"])
+def test_shared_token_row_fixture_refuses(case: dict[str, Any]):
+    """Regression: the browser's row check was looser than this reader (no
+    envelope version, summary key set or lens ids), so a snapshot the server
+    refuses was stored and listed as valid. Both sides run this table."""
+    _tree, raw = _row_tree(json.loads(json.dumps(case["row"])))
+    with pytest.raises(LoomTreeError):
+        LoomTree.from_dict(raw)
+
+
+def _authored_tree(fields: dict[str, Any]) -> dict[str, Any]:
+    tree = LoomTree()
+    uid = tree.add_user_turn("x")
+    raw = tree.to_dict(include_tokens=True)
+    next(n for n in raw["nodes"] if n["id"] == uid).update(fields)
+    return raw
+
+
+@pytest.mark.parametrize(
+    "case", _TOKEN_ROWS["authored"]["accepted"], ids=lambda case: case["name"],
+)
+def test_shared_authored_fixture_loads(case: dict[str, Any]):
+    """``token_rows.json``'s authored nodes, shared with the dashboard's
+    ``promptCaptureProblem``: a captured prompt turn reads with its anchor."""
+    assert LoomTree.from_dict(_authored_tree(json.loads(json.dumps(case["node"]))))
+
+
+@pytest.mark.parametrize(
+    "case", _TOKEN_ROWS["authored"]["refused"], ids=lambda case: case["name"],
+)
+def test_shared_authored_fixture_refuses(case: dict[str, Any]):
+    with pytest.raises(LoomTreeError):
+        LoomTree.from_dict(_authored_tree(json.loads(json.dumps(case["node"]))))
 
 
 def test_sidecar_token_rows_are_type_checked_by_the_node_reader(tmp_path: Path):
@@ -1425,3 +1765,46 @@ def test_loom_import_reports_corrupt_token_sidecars(tmp_path: Path, compressed: 
     (tmp_path / "tree.tokens.json.gz").write_bytes(compressed)
     with pytest.raises(loom.LoomTreeError, match="complete gzip"):
         loom.LoomTree.load(path)
+
+
+@pytest.mark.parametrize(
+    ("aggregate", "message"),
+    [
+        ([], "must be an object or null"),
+        ({"version": 1, "scope": "aggregate", "provenance": "captured", "instruments": {}},
+         "unsupported aggregate measurements version 1"),
+        ({"version": MEASUREMENTS_VERSION, "scope": "token", "provenance": "captured",
+          "instruments": {}}, "aggregate envelope without scores"),
+        ({"version": MEASUREMENTS_VERSION, "scope": "aggregate", "provenance": "captured",
+          "instruments": {}, "scores": {"calm": 0.25}}, "aggregate envelope without scores"),
+        ({"version": MEASUREMENTS_VERSION, "scope": "aggregate", "provenance": "captured",
+          "instruments": {"geometry": {"readings": {"calm": {"fraction": 0.5, "coords": [0.25]}}}}},
+         "aggregate reading 'calm' must carry exactly"),
+    ],
+)
+def test_node_reader_checks_the_aggregate_measurements(aggregate: Any, message: str):
+    """A node keeps its reply's aggregate envelope (each reading's summary, no
+    scores, ``aggregate_readings`` being its flat view); another shape is
+    refused."""
+    _tree, raw = _row_tree({"token_id": 7, "text": "x"})
+    node = next(n for n in raw["nodes"] if n.get("tokens"))
+    node["aggregate_measurements"] = {
+        "version": MEASUREMENTS_VERSION, "scope": "aggregate", "provenance": "captured",
+        "instruments": {"geometry": {"readings": {"calm": _geometry_row_reading()}}},
+    }
+    loaded = LoomTree.from_dict(raw)
+    assert loaded.get(node["id"]).aggregate_measurements == node["aggregate_measurements"]
+    node["aggregate_measurements"] = aggregate
+    with pytest.raises(LoomTreeError, match=message):
+        LoomTree.from_dict(raw)
+
+
+def test_the_dashboard_tree_fixture_is_a_current_tree():
+    """``tests/fixtures/loom_tree_v2.json`` is the tree save the dashboard's
+    snapshot tests restore; it stays a tree this reader loads (its nodes
+    carry ``aggregate_measurements``)."""
+    raw = json.loads(
+        (Path(__file__).resolve().parents[2] / "tests" / "fixtures" / "loom_tree_v2.json").read_text(),
+    )
+    tree = LoomTree.from_dict(raw)
+    assert all(node.aggregate_measurements is None for node in tree.nodes.values())

@@ -226,3 +226,9 @@ def test_steering_delta_manifold_label_term():
         "0.3 personas%hacker", "0.6 personas%hacker",
     )
     assert "0.3" in label  # 0.6 − 0.3
+
+
+def test_steering_delta_unit_ablation_term():
+    # ``!neuron/…`` lands as a UnitAblationTerm; the label reads its .coeff.
+    label = steering_delta("!neuron/L1n2", "0.5 !neuron/L1n2")
+    assert "-0.5" in label and "neuron/L1n2" in label

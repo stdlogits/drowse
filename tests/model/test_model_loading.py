@@ -424,7 +424,7 @@ def test_get_memory_gb_returns_zero_when_mps_backend_unavailable(monkeypatch: py
     """``device='mps'`` on a host without an MPS backend (e.g. Linux CI)
     must not crash.  The CUDA branch already gates on
     ``torch.cuda.is_available()``; the MPS branch must mirror that — the
-    bare ``torch.mps.current_allocated_memory()`` call raises RuntimeError
+    bare ``torch.mps.driver_allocated_memory()`` call raises RuntimeError
     rather than AttributeError when the backend isn't actually present,
     so a plain ``except AttributeError`` is insufficient.
     """
@@ -432,8 +432,17 @@ def test_get_memory_gb_returns_zero_when_mps_backend_unavailable(monkeypatch: py
     # Make the underlying call raise to prove the gate fires before it.
     def _raise():
         raise RuntimeError("Cannot execute getCurrentAllocatedMemory() without MPS backend.")
-    monkeypatch.setattr(torch.mps, "current_allocated_memory", _raise)
+    monkeypatch.setattr(torch.mps, "driver_allocated_memory", _raise)
     assert model_mod.memory_gb("mps") == 0.0
+
+
+def test_get_memory_gb_reports_the_mps_driver_allocation(monkeypatch: pytest.MonkeyPatch):
+    """Regression: the banner read ``current_allocated_memory()``, which
+    is 0 with memory-mapped weights, so an 8B model on MPS read 0.0 GB."""
+    monkeypatch.setattr(torch.backends.mps, "is_available", lambda: True)
+    monkeypatch.setattr(torch.mps, "current_allocated_memory", lambda: 0)
+    monkeypatch.setattr(torch.mps, "driver_allocated_memory", lambda: 16.4 * 1024**3)
+    assert model_mod.memory_gb("mps") == 16.4
 
 
 # ---------------------------------------------------------------------------

@@ -40,26 +40,22 @@
   .pin {
     display: inline-grid;
     place-items: center;
-    inline-size: var(--control-target);
-    block-size: var(--control-target);
+    inline-size: 36px;
+    block-size: 36px;
     padding: 0;
-    color: var(--fg-muted);
+    color: var(--ink3);
     background: transparent;
     border: 0;
-    border-radius: var(--radius-sm);
-    flex: 0 0 var(--control-target);
+    border-radius: var(--r-pill);
+    flex: 0 0 36px;
     cursor: pointer;
     transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out),
-      scale var(--dur-fast) var(--ease-out);
+      color var(--fast) var(--ease),
+      background-color var(--fast) var(--ease),
+      scale var(--fast) var(--ease);
   }
   .pin:active:not(:disabled) {
-    scale: var(--press-scale);
-  }
-  .pin:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
+    scale: 0.97;
   }
   .pin-icon {
     grid-area: 1 / 1;
@@ -67,30 +63,26 @@
     pointer-events: none;
     opacity: 0;
     scale: 0.25;
-    filter: blur(4px);
     transition:
-      opacity var(--dur-slow) cubic-bezier(0.2, 0, 0, 1),
-      scale var(--dur-slow) cubic-bezier(0.2, 0, 0, 1),
-      filter var(--dur-slow) cubic-bezier(0.2, 0, 0, 1);
+      opacity var(--glide) var(--ease),
+      scale var(--glide) var(--ease);
   }
   .pin-icon.visible {
     opacity: 1;
     scale: 1;
-    filter: blur(0);
   }
   .pin.pinned {
-    color: var(--card-accent);
+    color: var(--ink);
   }
   .pin:hover:not(:disabled) {
-    color: var(--card-accent);
-    background: color-mix(in srgb, var(--card-accent) 8%, transparent);
-  }
-  .pin.pinned:hover:not(:disabled) {
-    color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 8%, transparent);
+    color: var(--ink);
+    background: var(--wash2);
   }
   .pin:disabled {
     cursor: default;
-    opacity: var(--disabled-opacity);
+    opacity: 0.4;
+  }
+  @media (pointer: coarse) {
+    .pin { inline-size: 44px; block-size: 44px; flex-basis: 44px; }
   }
 </style>

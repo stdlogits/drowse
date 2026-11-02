@@ -394,6 +394,7 @@ def _prefill_kwargs(input_ids: torch.Tensor) -> dict[str, Any]:
 
 
 def _teacher_forced_pools(
+    ctx: Any,
     model: Any,
     full: torch.Tensor,
     first_row: int,
@@ -405,32 +406,41 @@ def _teacher_forced_pools(
 
     Valid only for position-independent steering: every forced token runs
     through the same hooks whether it is prefill or decode.  A model that
-    returns no cache re-feeds the prefix per chunk.
+    returns no cache re-feeds the prefix per chunk.  ``ctx`` is the trigger
+    context, whose ``sink_column`` this driver sets per chunk: a chunk fed
+    on a cache never carries the attention sink.
     """
     end = int(full.shape[1]) - 1
     keep_kwarg = logits_keep_kwarg(model)
     pools: list[tuple[torch.Tensor, torch.Tensor]] = []
     past: Any = None
-    for start in range(first_row, end, _REPLAY_CHUNK):
-        stop = min(start + _REPLAY_CHUNK, end)
-        if past is None:
-            kwargs = _prefill_kwargs(full[:, :stop])
-        else:
-            kwargs = {
-                "input_ids": full[:, start:stop],
-                "past_key_values": past,
-                "use_cache": True,
-            }
-        if keep_kwarg is not None:
-            kwargs[keep_kwarg] = stop - start
-        out = model(**kwargs)
-        past = getattr(out, "past_key_values", None)
-        logits = adjust(out.logits[0, -(stop - start):, :])
-        pools.extend(
-            _sampler_pool(logits[r:r + 1], config)
-            for r in range(stop - start)
-        )
-        del out, logits
+    try:
+        for start in range(first_row, end, _REPLAY_CHUNK):
+            stop = min(start + _REPLAY_CHUNK, end)
+            # A (re-)prefill from position 0 carries the attention sink in
+            # column 0; a chunk fed on the cache does not.
+            ctx.sink_column = 0 if past is None else None
+            if past is None:
+                kwargs = _prefill_kwargs(full[:, :stop])
+            else:
+                kwargs = {
+                    "input_ids": full[:, start:stop],
+                    "past_key_values": past,
+                    "use_cache": True,
+                }
+            if keep_kwarg is not None:
+                kwargs[keep_kwarg] = stop - start
+            out = model(**kwargs)
+            past = getattr(out, "past_key_values", None)
+            logits = adjust(out.logits[0, -(stop - start):, :])
+            pools.extend(
+                _sampler_pool(logits[r:r + 1], config)
+                for r in range(stop - start)
+            )
+            del out, logits
+    finally:
+        # Back to the rest state, even when a forward raises.
+        ctx.sink_column = 0
     return pools
 
 
@@ -453,35 +463,42 @@ def _stepwise_pools(
     pools: list[tuple[torch.Tensor, torch.Tensor]] = []
     past: Any = None
     cached = True
-    for step, token_id in enumerate(forced):
-        ctx.is_prefill = step == 0
-        ctx.thinking = step < n_thinking
-        ctx.gen_step = step
-        stop = prompt_len + step
-        if past is None:
-            kwargs = _prefill_kwargs(full[:, :stop])
-        else:
-            kwargs = {
-                "input_ids": full[:, stop - 1:stop],
-                "past_key_values": past,
-                "use_cache": True,
-            }
-        if keep_kwarg is not None:
-            kwargs[keep_kwarg] = 1
-        out = model(**kwargs)
-        if gating_callback is not None:
-            # The replay's forward index IS the step identity the live
-            # decode loop threads to the gate sink.
-            ctx.probe_scores = gating_callback(step)
-        if cached:
-            past = getattr(out, "past_key_values", None)
-            cached = past is not None
-        logits = adjust(out.logits[:, -1, :])
-        if step >= n_thinking:
-            pools.append(_sampler_pool(logits, config))
-        if adjust.penalties is not None:
-            adjust.penalties.add(token_id)
-        del out, logits
+    try:
+        for step, token_id in enumerate(forced):
+            ctx.is_prefill = step == 0
+            ctx.thinking = step < n_thinking
+            ctx.gen_step = step
+            stop = prompt_len + step
+            # A (re-)prefill from position 0 carries the attention sink in
+            # column 0; an incremental step does not.
+            ctx.sink_column = 0 if past is None else None
+            if past is None:
+                kwargs = _prefill_kwargs(full[:, :stop])
+            else:
+                kwargs = {
+                    "input_ids": full[:, stop - 1:stop],
+                    "past_key_values": past,
+                    "use_cache": True,
+                }
+            if keep_kwarg is not None:
+                kwargs[keep_kwarg] = 1
+            out = model(**kwargs)
+            if gating_callback is not None:
+                # The replay's forward index IS the step identity the live
+                # decode loop threads to the gate sink.
+                ctx.probe_scores = gating_callback(step)
+            if cached:
+                past = getattr(out, "past_key_values", None)
+                cached = past is not None
+            logits = adjust(out.logits[:, -1, :])
+            if step >= n_thinking:
+                pools.append(_sampler_pool(logits, config))
+            if adjust.penalties is not None:
+                adjust.penalties.add(token_id)
+            del out, logits
+    finally:
+        # Back to the rest state, even when a forward raises.
+        ctx.sink_column = 0
     return pools
 
 
@@ -681,39 +698,16 @@ class JointLogprobReplayer:
                 manager.all_fast_path() or manager.static_steerable()
             ):
                 pools = _teacher_forced_pools(
-                    model, full,
+                    manager.ctx, model, full,
                     len(branch.prompt_ids) + len(branch.thinking_ids) - 1,
                     adjust=adjust, config=config,
                 )
             elif self._needs_probe_gating():
-                reads = self._reads
-                gate_only = reads.resolve_demand(
-                    want_hidden=False, live_scores_on=False,
-                    has_monitor_probes=False, loom_attached=False,
-                    wants_live_token_scores=False, persists_layer_scores=False,
-                    persists_probe_row=False, persists_subspace_coords=False,
-                    live_lens_active=False, live_sae_active=False,
-                    final_probe_aggregate=False, capture_prompt=False,
-                )
-                try:
-                    # Inside the try: ``begin`` binds every family's
-                    # per-generation run, so a partial-bind failure must
-                    # still reach the teardown below.
-                    reads.begin(gate_only)
+                with self._reads.gate_run() as gate:
                     pools = _stepwise_pools(
                         manager.ctx, model, full, branch,
-                        adjust=adjust, config=config,
-                        gating_callback=reads.gate_score_callback(),
+                        adjust=adjust, config=config, gating_callback=gate,
                     )
-                finally:
-                    # A bound run must not leak past the request (a stale
-                    # lens pin suppresses disk refresh between generations;
-                    # a stale SAE binding keeps serving frozen units to idle
-                    # reads) — even when the hook detach itself raises.
-                    try:
-                        reads.end()
-                    finally:
-                        reads.close_runs()
             else:
                 pools = _stepwise_pools(
                     manager.ctx, model, full, branch,

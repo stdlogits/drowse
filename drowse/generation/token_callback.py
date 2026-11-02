@@ -33,15 +33,14 @@ class StepTokenCallback(Protocol):
 class TokenConsumerOptions:
     """What an internal consumer wants computed per token.
 
-    ``live_scores`` / ``per_layer_scores`` ask for per-token monitor readings
-    (and their per-layer rows); ``lens_readout`` / ``sae_readout`` for the live
+    ``live_scores`` asks for per-token monitor readings (the full reading,
+    per-layer traces included); ``lens_readout`` / ``sae_readout`` for the live
     instrument readouts; ``perplexity`` for the sampler perplexity on stateless
     generations; ``probe_readings`` for the cross-family
     :attr:`TokenEvent.probe_readings` compat projection.
     """
 
     live_scores: bool = False
-    per_layer_scores: bool = False
     lens_readout: bool = False
     sae_readout: bool = False
     perplexity: bool = False

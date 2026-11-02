@@ -4,7 +4,7 @@ Covers:
 * ``drowse.web.register_web_routes`` mounts the SPA bundle at ``/`` with
   a fallback to index.html for client-side routes.
 * GET /drowse/v1/sessions/{id}/correlation returns the right matrix shape.
-* The WS token event surfaces per_layer_scores when probes are loaded.
+* A full single-token reading carries each probe's per-layer trace.
 
 CPU-only.  No npm build runs here — the committed dist/ bundle is the
 artifact under test.
@@ -84,9 +84,11 @@ def web_client():
 
 
 @pytest.mark.parametrize("path,content_type", [
-    ("/icons/tab-home.png", "image/png"),
-    ("/icons/apple-touch-icon.png", "image/png"),
-    ("/theme-init.js", "javascript"),
+    ("/drowse-mark-light.svg", "image/svg+xml"),
+    ("/drowse-mark-dark.svg", "image/svg+xml"),
+    # Browsers ask for it whatever the page links.
+    ("/favicon.ico", "icon"),
+    ("/theme-preflight.js", "javascript"),
     # Offline feature labels for local SAELens gemma-scope-2 releases.
     ("/assets/gemma-3-1b-it.json", "json"),
 ])
@@ -100,9 +102,30 @@ def test_dashboard_public_assets_are_served_as_files(
     assert not response.content.lstrip().lower().startswith(b"<!doctype html")
 
 
-def test_missing_dashboard_icon_is_not_an_html_fallback(web_client: Any) -> None:
+def test_missing_dashboard_asset_is_not_an_html_fallback(web_client: Any) -> None:
     _, client = web_client
-    assert client.get("/icons/nonexistent.png").status_code == 404
+    assert client.get("/assets/nonexistent.png").status_code == 404
+
+
+@pytest.mark.parametrize("path", [
+    "/favicon.png",
+    "/favicon.svg",  # the hosted site's, not the dashboard's
+    "/apple-touch-icon.png",
+    "/manifest.webmanifest",
+    "/robots.txt",
+    "/icons/drowse-192.png",
+    "/.env",
+    "/favicon.png/",  # a trailing slash still names the file
+])
+def test_a_file_the_bundle_lacks_is_a_404_not_the_shell(web_client: Any, path: str) -> None:
+    """Regression: the SPA fallback answered any unknown path, files included,
+    with index.html and a 200, so a browser's probe for /favicon.png or a web
+    manifest read the dashboard's HTML as the file.  The dashboard routes by
+    hash; a path that names a file the bundle lacks is a 404."""
+    _, client = web_client
+    response = client.get(path)
+    assert response.status_code == 404
+    assert b'id="app"' not in response.content
 
 
 @pytest.fixture
@@ -164,13 +187,32 @@ class TestWebMount:
             # Vite chunk weighs in at hundreds of bytes.
             assert len(r.content) > 0
 
+    def test_every_dashboard_file_revalidates(self, web_client: Any) -> None:
+        """Regression: ``assets/drowse.js`` and the stylesheets keep fixed
+        names and were served with an ETag but no ``Cache-Control``, so after
+        an upgrade a browser could reuse the old dashboard on heuristic
+        freshness instead of revalidating."""
+        _session, client = web_client
+        index = client.get("/")
+        for path in ("/", "/lab", "/theme-preflight.js", *_index_asset_paths(index.content)):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert r.headers.get("cache-control") == "no-cache", path
+        etag = client.get("/assets/drowse.js").headers["etag"]
+        again = client.get("/assets/drowse.js", headers={"If-None-Match": etag})
+        assert again.status_code == 304
+        assert again.headers.get("cache-control") == "no-cache"
+
     def test_unknown_route_falls_back_to_index(self, web_client: Any) -> None:
         _session, client = web_client
         # SPA fallback: /lab is a client-side route the SPA owns; the
         # server returns index.html so the SPA can take over routing.
-        r = client.get("/lab")
-        assert r.status_code == 200
-        assert b'id="app"' in r.content
+        # Regression: a bipolar concept's dotted name read as a file
+        # extension and an old bookmark to it answered 404.
+        for path in ("/lab", "/manifolds/emotions", "/manifolds/default/happy.sad", "/icons/"):
+            r = client.get(path)
+            assert r.status_code == 200, path
+            assert b'id="app"' in r.content
 
     def test_dashboard_shell_is_public_when_an_api_key_is_set(self) -> None:
         """Regression: an app-level auth dependency 401'd the SPA shell itself,
@@ -273,16 +315,19 @@ class TestRemovedDashboardSurfaces:
         assert set(data) == {"name", "layers", "metadata"}
 
 # ---------------------------------------------------------------------------
-# The un-aggregated per-layer heatmap view: the token payload's
-# ``per_layer_scores``, derived from a full reading's ``coords_per_layer``.
+# The un-aggregated per-layer view: each reading's own ``coords_per_layer``
+# (there is no layer-major copy beside it).
 # ---------------------------------------------------------------------------
 
 
 def _per_layer_scores(monitor: Any, hidden: dict[int, Any]) -> dict[str, Any]:
-    """The heatmap row the token tap writes, from a live single-token read."""
-    from drowse.generation.token_payloads import _per_layer_axis0
-
-    return _per_layer_axis0(monitor.score_single_token(hidden)) or {}
+    """Axis 0 of each probe's per-layer trace, layer-major, from a live
+    single-token read."""
+    by_layer: dict[str, dict[str, float]] = {}
+    for name, reading in monitor.score_single_token(hidden).items():
+        for layer, coords in reading.coords_per_layer.items():
+            by_layer.setdefault(str(layer), {})[name] = coords[0]
+    return by_layer
 
 
 class TestPerLayerScores:

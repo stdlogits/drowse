@@ -32,21 +32,56 @@ import type {
   SaeLiveState,
   SaeProbeInfo,
   ScalarReadingJSON,
+  UnitsProbeInfo,
 } from "./types.gen";
+
+/** Why a generation ended, the server's ``generation.results.FinishReason``.
+ *  ``cancelled`` is a reply a Stop or a disconnect cut short; the loom node
+ *  records it and the chat marks the reply. */
+export type FinishReason = NonNullable<LoomNodeJSON["finish_reason"]>;
+export const FINISH_REASONS: readonly FinishReason[] = ["stop", "length", "stop_sequence", "cancelled"];
 
 // ---------------------------------------------------------- triggers --
 
-/** Per-term trigger keyword from the steering-expression grammar.
+/** Per-term trigger window from the steering-expression grammar.
  *
- * Wire/UI form mirrors the canonical presets of ``_TRIGGER_PRESETS`` in
- * steering/grammar.py (``both``/``before``/``after``/``thinking``/``response``).
- * The grammar's ``prompt``/``generated`` aliases are not UI values. */
+ * The five presets mirror the canonical names of ``_TRIGGER_CANONICAL`` in
+ * steering/grammar.py (``both``/``before``/``after``/``thinking``/``response``);
+ * the grammar's ``prompt``/``generated`` aliases are not UI values. The two
+ * counted windows are ``@first:N`` (``FIRST_N``) and ``@after:N`` (``AFTER_N``),
+ * their count on the term's ``tokens``. A term's probe gate (``&when:…``) is
+ * its own field, ``gate``. */
 export type Trigger =
   | "BOTH"
   | "BEFORE" // prompt prefill only
   | "AFTER" // reply after thinking
   | "THINKING"
-  | "RESPONSE"; // every generated token
+  | "RESPONSE" // every generated token
+  | "FIRST_N" // the first ``tokens`` generated tokens
+  | "AFTER_N"; // every generated token after the first ``tokens``
+
+/** A probe gate's comparison. */
+export type GateOp = ">" | ">=" | "<" | "<=";
+
+/** A term's probe gate (``@when:<probe><op><threshold>``, or ``@<phase>&when:…``): the term acts
+ *  only on generated tokens where the probe's last reading passes. ``probe`` is the scalar key
+ *  verbatim: an attached probe's name (its main reading) or one of its channels. A gate never
+ *  reads the prompt (there is no reading yet), so a gated term never acts there. */
+export interface SteerGate {
+  probe: string;
+  op: GateOp;
+  threshold: number;
+}
+
+/** When a term acts: its window, the count a counted window takes, and its probe gate. Every
+ *  rack entry carries it. */
+export interface SteerTiming {
+  trigger: Trigger;
+  /** The count of a ``FIRST_N`` or ``AFTER_N`` window (a whole number); absent otherwise. */
+  tokens?: number;
+  /** Its probe gate; absent or ``null`` for none. */
+  gate?: SteerGate | null;
+}
 
 /** Tensor variant suffix from the shared steering grammar. */
 export type Variant =
@@ -85,7 +120,9 @@ export interface LensTokenReadoutJSON {
  *  reports. */
 export type PreparationOp = "fetch" | "fit" | "train";
 
-export type InstrumentFamily = "geometry" | "lens" | "sae";
+/** The read families. ``units`` (MLP neurons and attention heads) has probes, a node replay and
+ *  the catalog fetch, but no live switch of its own beside the probes'. */
+export type InstrumentFamily = "geometry" | "lens" | "sae" | "units";
 
 /** Live-readout state, discriminated by family: geometry is an
  *  all-or-nothing switch, the lens resolves a layer list, the SAE reports
@@ -111,12 +148,11 @@ export interface SaeTokenReadoutJSON {
 
 // --------------------------------- 5.x measurement envelope (token wire) --
 //
-// The single JSON-safe read-side record — the same object on the WS ``token``
-// frame, the loom token row (``measurements`` key), and the token-readout
-// replay endpoint (wrapped in ``{measurements}``).  It replaces the former
-// ``captured`` record and the six top-level per-token aliases (``scores`` /
-// ``per_layer_scores`` / ``probe_readings`` / ``lens_readout`` /
-// ``lens_aggregate`` / ``sae_readout``); see drowse.readout.measurements.
+// The single JSON-safe read-side record on the WS ``token`` frame (whole),
+// the loom token row (``measurements`` key: its ``token_row_measurements``
+// projection, each reading's summary at 6 significant digits and no per-layer traces
+// unless the call persisted them), and the token-readout replay endpoint
+// (wrapped in ``{measurements}``); see drowse.readout.measurements.
 
 /** Either family's reading shape, as it arrives inside the envelope. */
 export type AnyReadingJSON = ProbeReadingJSON | ScalarReadingJSON;
@@ -398,7 +434,7 @@ export interface ExtractRequest {
 /** One attached probe row, discriminated by ``family`` — the unified
  *  read-side collection under ``/probes`` (the pre-4.0 split of vector vs
  *  manifold probes collapsed onto one route). */
-export type ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo;
+export type ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo | UnitsProbeInfo;
 
 /** Body for ``POST /drowse/v1/sessions/{id}/probes`` — attach any probe
  *  shape by selector (the same ``[ns/]name[:variant]`` the ``%`` steering
@@ -601,17 +637,17 @@ export interface WSTokenEvent {
    * sibling render during n-way regen.  Optional. */
   node_id: string | null;
   /** The 5.x measurement envelope — the single read-side record carrying the
-   *  per-family ``instruments`` (geometry / lens / sae ``readings`` +
-   *  ``readout``) plus the flat ``scores`` / ``per_layer_scores`` views.  The
-   *  identical object is persisted on the loom token row.  Omitted when
-   *  nothing was measured, so clients read it defensively. */
+   *  per-family ``instruments`` (``readings`` + ``readout``) plus the flat
+   *  ``scores`` view, whole: every per-layer trace.  The loom token row keeps
+   *  its projection.  Omitted when nothing was measured, so clients read it
+   *  defensively. */
   measurements?: MeasurementsEnvelopeJSON;
 }
 
 export interface WSDoneResult {
   text: string;
   tokens: number;
-  finish_reason: string;
+  finish_reason: FinishReason;
   applied_steering?: string | null;
   terminal_reason?: "eos" | "stop_sequence" | "external_stop" | "length";
   usage: {
@@ -624,6 +660,11 @@ export interface WSDoneResult {
    *  logprob capture wasn't live (replay / no on_token consumer). */
   mean_logprob?: number | null;
   mean_surprise?: number | null;
+  /** The runtime's own decode rate and elapsed seconds for this reply. A page that read the
+   *  stream slower than it was written (a resync) shows these, not its frame arrival rate.
+   *  Optional: a runtime that omits them leaves the page's own measure. */
+  tok_per_sec?: number;
+  elapsed?: number;
   /** End-of-generation measurement envelope, ``scope: "aggregate"`` — the
    *  same shape the ``token`` frame carries, pooled at the last-content
    *  token.  The per-attached-probe readings live under
@@ -656,14 +697,11 @@ export interface WSErrorEvent {
 
 /** Wire-shape mirror of drowse.loom.tree.LoomNode.  Optional fields are
  * absent on the wire when null/empty server-side to keep payloads slim. */
-/** One token-row inside a node's ``tokens`` / ``thinking_tokens`` array.
- *  Server-side token rows have required identity/score fields plus
- *  feature-dependent optional capture channels; the
- *  fields below are the ones the engine's ``TokenTap`` stamps and the
- *  ones the webui knows how to consume.  All optional because the engine
- *  legitimately omits some on certain paths (e.g. ``top_alts`` only when
- *  ``return_top_k > 0``; ``probes`` / ``per_layer_scores`` only when the
- *  monitor has probes loaded; ``raw_index`` is stamped at finalize and
+/** One token-row inside a node's ``tokens`` / ``thinking_tokens`` array:
+ *  exactly these keys (the loom reader refuses any other, and the earlier
+ *  row-level ``probes`` / ``per_layer_scores`` copies; ``lib/tokenRows.ts``
+ *  is the client's check).  All optional because the engine legitimately
+ *  omits some (``top_alts`` only when ``return_top_k > 0``; ``raw_index`` is
  *  absent for transcript-imported nodes). */
 export interface LoomTokenRowJSON {
   token_id?: number | null;
@@ -673,20 +711,35 @@ export interface LoomTokenRowJSON {
   perplexity: number | null;
   top_alts?: { id: number; text: string; logprob: number }[];
   raw_index?: number | null;
-  /** Per-token magnitude-weighted aggregate probe score
-   *  (``score_single_token``), persisted at append time.  Drives the
-   *  highlight tint when the user rehydrates a tree across page refresh. */
-  probes?: Record<string, number>;
-  /** Per-layer × per-probe heatmap — each reading's ``coords_per_layer``
-   *  axis 0, flattened server-side by ``token_payloads._per_layer_axis0``
-   *  and keyed by stringified layer index.  Drives the token-drilldown
-   *  drawer's heatmap on rehydrated turns. */
-  per_layer_scores?: Record<string, Record<string, number>>;
-  /** The 5.x measurement envelope captured by the original generation. This
-   * survives tree rehydration and explicit loom save/load without replaying
-   * the model. Replaces the pre-5.x ``captured`` record. */
-  measurements?: MeasurementsEnvelopeJSON;
+  /** A generated row keeps what the thread's tint, the rack's trace and the tree filter read
+   *  (``token_row_measurements``: the flat ``scores`` and each geometry reading's ``fraction``
+   *  and ``coords``, at 6 significant digits); the token view and the hover replay the rest. A
+   *  row kept whole (authored capture, or a call that set ``persist_per_layer_scores``) carries
+   *  every reading with its traces (``summary_measurements``). */
+  measurements?: TokenRowEnvelopeJSON;
 }
+
+/** A generated row's geometry reading (``readout/measurements.py::RowProbeReadingDict``): the
+ *  share on the probe's subspace and its domain coordinates. */
+export interface RowProbeReadingJSON {
+  fraction: number;
+  coords: number[];
+}
+
+/** A generated loom token row's ``measurements`` (``TokenRowMeasurements``): the envelope
+ *  header, the flat ``scores`` and each geometry probe's share and coordinates; no other
+ *  channel. */
+export interface TokenRowMeasurementsJSON {
+  version: number;
+  scope: MeasurementsEnvelopeJSON["scope"];
+  provenance: MeasurementsEnvelopeJSON["provenance"];
+  instruments: { geometry?: { readings: Record<string, RowProbeReadingJSON> } };
+  scores?: Record<string, number>;
+}
+
+/** What a token's ``measurements`` holds: a live frame's whole envelope or a row kept whole,
+ *  or a generated row's projection. ``wholeEnvelope`` tells them apart. */
+export type TokenRowEnvelopeJSON = MeasurementsEnvelopeJSON | TokenRowMeasurementsJSON;
 
 /** Per-op delta sent on every tree mutation.  Clients apply in-place
  * keyed by ``rev`` continuity; full re-fetch on gap.
@@ -733,7 +786,19 @@ export type WSServerMessage =
   | WSDoneEvent
   | WSErrorEvent
   | WSRequestCompleteEvent
-  | WSTreeMutatedEvent;
+  | WSTreeMutatedEvent
+  | WSResyncEvent;
+
+/** The client read slower than the runtime produced, and ``dropped`` token and
+ *  ``tree_mutated`` frames were never sent (``ws_stream._OutboundQueue``).
+ *  Generation went on into the tree; frames after this one are live.  The
+ *  client rebuilds what it missed from the authoritative tree: the streaming
+ *  node's rows past its last ``raw_index``, and any tree delta.  It always
+ *  precedes a ``done`` whose reply it affects. */
+export interface WSResyncEvent {
+  type: "resync";
+  dropped: number;
+}
 
 export interface WSRequestCompleteEvent {
   type: "request_complete";
@@ -763,9 +828,6 @@ export interface TokenScore {
   coordsByProbe?: Record<string, number[]>;
   /** Token-id from the WS event when available — useful for debugging. */
   tokenId?: number | null;
-  /** Per-layer × per-probe heatmap data captured during streaming.
-   * Drives the click-token drilldown drawer. */
-  perLayerScores?: Record<string, Record<string, number>>;
   /** Logit-pass: chosen-token post-sampler logprob. Absent on imported
    *  turns and when no consumer requested log-softmax capture. Drives the inline ``surprise`` highlight
    *  mode and the token drilldown's logits tab. */
@@ -782,8 +844,15 @@ export interface TokenScore {
    *  transcript-imported nodes (engine pre-dates raw-id capture),
    *  in which case the token can't be forked. */
   rawIndex?: number | null;
-  /** Loom-owned 5.x measurement envelope from the original decode step. */
-  measurements?: MeasurementsEnvelopeJSON;
+  /** An authored (prompt) token's index into its node's captured rows, thinking rows then
+   *  visible rows: its replay address (the ``raw_index`` an authored node's token readouts and
+   *  anatomy take, through the node's ``prompt_capture``). A prompt token has no ``rawIndex``,
+   *  so it is never forked. ``replayIndex`` reads either. */
+  promptIndex?: number | null;
+  /** The measurements from the original decode step: the live frame's whole envelope while the
+   *  reply is in this page, else its loom row's (a generated or captured prompt row keeps its
+   *  scores and each geometry share and coordinates; ``wholeEnvelope`` says which). */
+  measurements?: TokenRowEnvelopeJSON;
 }
 
 export interface ChatTurn {
@@ -807,12 +876,12 @@ export interface ChatTurn {
   thinkingTokens?: TokenScore[];
   /** A/B-mode pair: the unsteered same-seat shadow turn. */
   abPair?: ChatTurn;
-  /** Steering expression applied — round-trips through parseExpression. */
+  /** Steering expression applied: the server's ``format_expr`` text. Only the server parses it (``steering/validate`` answers its parts); the dashboard has no grammar of its own. */
   appliedSteering?: string | null;
   /** Aggregate probe readings for the turn (mean per probe). */
   aggregateReadings?: Record<string, number>;
-  /** Generation timing summary, populated at done. */
-  finishReason?: string;
+  /** Why the reply ended, set at done and from the loom node. */
+  finishReason?: FinishReason;
   tokensSoFar?: number;
   perplexity?: number;
   /** Logit-pass: per-turn mean chosen-token logprob (response span only,
@@ -849,7 +918,7 @@ export interface ChatTurn {
  *  subspace term — the merged affine subspace slides once), so this entry
  *  carries no per-card coefficient; relative weight between subspace terms is
  *  expressed by how far each position sits from neutral. */
-export interface SubspaceSteerEntry {
+export interface SubspaceSteerEntry extends SteerTiming {
   mode: "subspace";
   /** Mean-ablate a rank-one concept instead of steering toward a position. */
   ablate: boolean;
@@ -863,6 +932,8 @@ export interface SubspaceSteerEntry {
    *  the card today (kept for round-trip of pasted/legacy expressions). */
   variant: Variant;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   /** When false, the term is excluded from serialization (visual but
    * not active). */
   enabled: boolean;
@@ -870,7 +941,7 @@ export interface SubspaceSteerEntry {
 
 /** Manifold (curved) steering term — a placement on a curved fit with its own
  *  per-card ``along`` + ``onto`` (each curved term is its own injection). */
-export interface ManifoldSteerEntry {
+export interface ManifoldSteerEntry extends SteerTiming {
   mode: "manifold";
   /** ``along`` blend fraction in [0, 1] — how far to slide the in-subspace
    *  foot toward the position.  Serializes as the first value of the ``%``
@@ -887,6 +958,8 @@ export interface ManifoldSteerEntry {
   /** Tensor variant — rides the atom (``name:sae%pos``). */
   variant: Variant;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
@@ -896,42 +969,102 @@ export interface ManifoldSteerEntry {
  *  shared ``subspaceAlong`` master): lens atoms run hotter than concept
  *  vectors — α≈0.3 is the coherent sweet spot, α≥0.5 over-steers into
  *  repetition — so each token needs its own dial. */
-export interface JLensSteerEntry {
+export interface JLensSteerEntry extends SteerTiming {
   mode: "jlens";
   /** Mean-ablate the token direction instead of pushing along it. */
   ablate: boolean;
   /** Push coefficient (the plain-atom α slot). */
   alpha: number;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
+  enabled: boolean;
+}
+
+/** S-lens token steering term (``α slens/<word>``): pushes along the S lens's direction
+ *  for the token, toward having read it (``jlens/`` pushes toward saying it), over the S lens's
+ *  fitted layers.  The same shape and dial as a ``jlens/`` term; the rack key is the full atom. */
+export interface SLensSteerEntry extends SteerTiming {
+  mode: "slens";
+  /** Mean-ablate the token direction instead of pushing along it. */
+  ablate: boolean;
+  alpha: number;
+  trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
 /** Resident SAE decoder-row steering term (``α sae/<id>``). */
-export interface SaeSteerEntry {
+export interface SaeSteerEntry extends SteerTiming {
   mode: "sae";
   /** Mean-ablate the decoder-row direction instead of pushing along it. */
   ablate: boolean;
   alpha: number;
   trigger: Trigger;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
   enabled: boolean;
 }
 
-/** The two single-direction *atom* families — a J-lens token direction
- *  and an SAE decoder row.  Both rack as ``α <prefix><id>`` with one
- *  per-card coefficient and no geometry, so they share a card and a
- *  mutator set; only the key prefix, the accent hue, and the marker
- *  glyph differ. */
-export type AtomMode = "jlens" | "sae";
+/** One MLP neuron or attention head (``neuron/L31n4410``, ``head/L28h12``: the rack key).  A
+ *  unit carries its own layer, so it takes no layer clause.  A neuron pushes along its write (the
+ *  sign of ``alpha`` picks the pole) or is silenced; a head has no single write direction and is
+ *  only ever silenced (``ablate`` is always true).  Silencing replaces the unit's activation by
+ *  its neutral mean, blended by ``alpha`` (1 = fully). */
+export interface UnitSteerEntry extends SteerTiming {
+  mode: "unit";
+  ablate: boolean;
+  /** Signed push strength (a neuron's − pole below zero); an ablation's blend, never negative
+   *  (1 is exact mean-ablation; lib/unitTerms.ts holds the rule). */
+  alpha: number;
+  trigger: Trigger;
+  enabled: boolean;
+}
 
-export type AtomSteerEntry = JLensSteerEntry | SaeSteerEntry;
+/** A projection (``α base~onto``, ``α base|onto``): a flat concept pushed by only the part of it
+ *  that lies along a second concept (``~``), or by all of it but that part (``|``). The rack key is
+ *  the selector ``base~onto``; its own signed ``alpha``, since a projection is a plain push and not
+ *  a position on the shared flat slide. */
+export interface ProjectionSteerEntry extends SteerTiming {
+  mode: "projection";
+  /** The concept pushed (a flat concept's name, ``ns/name``). */
+  base: string;
+  /** ``~`` keeps the part along ``onto``; ``|`` removes it. */
+  operator: "~" | "|";
+  /** The second concept. */
+  onto: string;
+  /** Signed push strength (below zero, toward the base's second pole). */
+  alpha: number;
+  /** The term's layer clause (absent = every fitted layer). */
+  layers?: LayerScope;
+  enabled: boolean;
+}
+
+/** The single-direction *atom* families — a lens token direction (toward
+ *  saying it, ``jlens/``, or toward having read it, ``slens/``) and an SAE
+ *  decoder row.  All rack as ``α <prefix><id>`` with one coefficient and
+ *  no geometry, so they share a mutator set; only the key prefix differs.  A unit (``UnitSteerEntry``) is its own mode: it
+ *  carries its layer and follows lib/unitTerms.ts. */
+export type AtomMode = "jlens" | "slens" | "sae";
+
+export type AtomSteerEntry = JLensSteerEntry | SLensSteerEntry | SaeSteerEntry;
 
 /** A racked steering term — subspace (flat), manifold (curved), or a
  *  single-direction atom. */
 export type SteerEntry =
   | SubspaceSteerEntry
   | ManifoldSteerEntry
+  | ProjectionSteerEntry
   | JLensSteerEntry
-  | SaeSteerEntry;
+  | SLensSteerEntry
+  | SaeSteerEntry
+  | UnitSteerEntry;
+
+/** A term's ``{…}`` layer clause: ``null`` (or absent) acts at every layer the term is fitted at;
+ *  ``"workspace"`` at the workspace band; a sorted index list at exactly those layers, and the
+ *  empty list at none (the term is left out of the expression until it has a layer again). */
+export type LayerScope = null | "workspace" | number[];
 
 // ----------------------------------------------------- probe rack --
 
@@ -967,6 +1100,11 @@ export interface ProbeRackEntry {
   savedAggregate: number | null;
   savedCoordinates?: number[];
   savedFraction?: number | null;
+  /** The selected saved node's reading of this probe on its last measured row (the token its
+   *  aggregate reads), as the row keeps it: a geometry summary without per-layer traces, a scalar
+   *  reading whole. The rack, the Lens panel and the inspector read it after a reload where the
+   *  live ``aggregate`` is gone, so they show what the live view showed (but the trail). */
+  savedReading?: AnyReadingJSON | null;
   /** Most-recent per-token nearest list (ascending distance).  Drives the
    *  inline nearest readout + mini-map hover; empty until the first token. */
   nearest: [string, number][];
@@ -1005,11 +1143,12 @@ export interface GenStatus {
   maxTokens: number;
   /** Wall-clock start (``performance.now()`` ms). */
   startedAt: number | null;
-  /** Wall-clock completion, retained so the final elapsed time stays frozen. */
+  /** Completion (``performance.now()`` ms), retained so the final elapsed time stays frozen: the
+   *  runtime's ``elapsed`` after ``startedAt`` when the done frame carries it, else wall clock. */
   finishedAt: number | null;
   tokPerSec: number;
   ppl: PerplexityAccumulator;
-  finishReason: string | null;
+  finishReason: FinishReason | null;
 }
 
 // ----------------------------------------------------- pending actions --
@@ -1060,8 +1199,8 @@ export type DrawerName =
    *  Opened from both rack "+ add" buttons. */
   | "subspace"
   /** Shared rack browser, manifold (curved) family — curved fits only
-   *  (``fit_mode`` spectral / authored), e.g. ``emotions``.  Purple
-   *  ``--pillar-manifold``.  Same layout as the subspace half, with a
+   *  (``fit_mode`` spectral / authored), e.g. ``emotions``, in the depth
+   *  tint.  Same layout as the subspace half, with a
    *  "+ build manifold" launcher.  ``RackDrawer`` with
    *  ``family: "manifold"``. */
   | "manifolds"
@@ -1089,7 +1228,6 @@ export type DrawerName =
   | "probe_inspector"
   | "advanced_sampling"
   | "health"
-  | "appearance"
   | "session_admin"
   | "local_runtime"
   | "help"

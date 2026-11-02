@@ -1,5 +1,5 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Canonical SOURCE section for the SAE and J-LENS pillars. Prepared and
   // provider-backed artifacts share one selector. Local authoring is an
   // explicit selector mode: its fields stay out of the way until chosen, and
@@ -239,9 +239,8 @@
     display: flex;
     flex: 0 0 auto;
     flex-direction: column;
-    gap: var(--space-3);
+    gap: var(--s3);
     min-width: 0;
-    padding: var(--surface-padding);
   }
   .setup-stack,
   .setup-group,
@@ -250,45 +249,38 @@
   .messages {
     display: flex;
     flex-direction: column;
-    gap: var(--space-2);
+    gap: var(--s2);
     min-width: 0;
   }
   .source-unavailable {
     margin: 0;
-    color: var(--fg-muted);
-    font-family: var(--font-reading);
-    font-size: var(--text-sm);
-    line-height: 1.45;
+    color: var(--ink3);
+    font: var(--type-small);
   }
   .setup-group {
-    gap: var(--space-1);
+    gap: var(--s2);
   }
   .setup-label {
     margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-family: var(--font-ui);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0.06em;
-    text-transform: uppercase;
+    color: var(--ink3);
+    font: var(--type-head);
   }
   .setup-row {
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
-    align-items: stretch;
-    gap: var(--space-2);
+    align-items: end;
+    gap: var(--s2);
     min-width: 0;
   }
-  .local-row {
-    grid-template-columns: minmax(0, 1fr);
-  }
+  .local-row,
   .supplemental-row {
     grid-template-columns: minmax(0, 1fr);
   }
   .setup-controls {
     display: flex;
-    align-items: stretch;
-    gap: var(--space-2);
+    flex-wrap: wrap;
+    align-items: end;
+    gap: var(--s2);
     min-width: 0;
   }
   .setup-action {
@@ -296,7 +288,7 @@
     align-items: flex-end;
   }
   .setup-action :global(button) {
-    height: var(--control-compact);
+    height: 36px;
   }
   .setup-controls :global(input),
   .setup-controls :global(.source-field) {
@@ -306,41 +298,61 @@
     display: flex;
     flex: 1 1 0;
     flex-direction: column;
-    gap: var(--space-1);
+    gap: var(--s1);
     min-width: 0;
   }
   .setup-controls :global(.setup-field-narrow) {
-    flex: 0.65 1 4.5rem;
+    flex: 0.65 1 72px;
   }
   .setup-controls :global(.setup-field-medium) {
-    flex: 0.85 1 6.5rem;
+    flex: 0.85 1 104px;
   }
   .setup-controls :global(.setup-field-wide) {
-    flex: 1.3 1 8rem;
+    flex: 1.3 1 128px;
   }
   .setup-controls :global(.setup-field-label) {
-    color: var(--fg-muted);
-    font-family: var(--font-ui);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-medium);
-    letter-spacing: 0.06em;
-    line-height: 1;
-    text-transform: uppercase;
+    color: var(--ink3);
+    font: var(--type-meta);
   }
-  .setup-controls :global(.setup-field input) {
+  /* A field is a wash well, no line; a toggle in a field's place reads the same. */
+  .setup-controls :global(.setup-field input),
+  .setup-controls :global(.setup-field button) {
     box-sizing: border-box;
-    min-height: var(--control-compact);
     width: 100%;
+    height: 36px;
+    padding: 0 var(--s3);
+    border: 0;
+    border-radius: var(--r-col);
+    background: var(--wash);
+    color: var(--ink);
+    font: var(--type-small);
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+    transition: background-color var(--fast) var(--ease);
+  }
+  .setup-controls :global(.setup-field input::placeholder) {
+    color: var(--ink3);
+  }
+  .setup-controls :global(.setup-field input:hover),
+  .setup-controls :global(.setup-field button:hover),
+  .setup-controls :global(.setup-field button[aria-pressed="true"]) {
+    background: var(--wash2);
   }
   .source-error {
     margin: 0;
-    color: var(--accent-red);
-    font-size: var(--text-sm);
+    color: var(--ink);
+    font: var(--type-small);
   }
-  /* Optional snippets often render no DOM at all. Empty flex children still
-     consumed a section gap, producing the large SOURCE→STEER void. */
+  /* Optional snippets often render no DOM at all; an empty one takes no gap. */
   .warning:empty,
   .messages:empty {
     display: none;
+  }
+  @media (max-width: 720px) {
+    .setup-action :global(button),
+    .setup-controls :global(.setup-field input),
+    .setup-controls :global(.setup-field button) {
+      height: 44px;
+    }
   }
 </style>

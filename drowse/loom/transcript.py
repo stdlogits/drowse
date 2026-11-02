@@ -9,9 +9,9 @@ aggregate readings.  Serializes to YAML; round-trips through
 The per-node thing remains :class:`Recipe`; the file/export concept is
 :class:`Transcript` so docs and CLI do not overload the two artifacts.
 
-Schema (v2 — the cast model)::
+Schema (v3 — the cast model plus each generated turn's finish reason)::
 
-    drowse_transcript: 2
+    drowse_transcript: 3
     model_id: <hf-id>            # optional
     system_prompt: <str>         # optional
     cast:                        # optional; the tree's cast roster
@@ -26,10 +26,12 @@ Schema (v2 — the cast model)::
         thinking: <str>          # optional; the turn's thinking block
         recipe: {...}            # generated turns (either seat); provenance
         readings: {...}          # generated turns
+        finish_reason: <reason>  # generated turns; ``cancelled`` = cut short
 
 The reader is strict like the tree's: a missing ``role``/``text``, an unknown
-key, a speaker or cast label that is not a role slug, or a reading that is
-not a finite number raises :class:`TranscriptFormatError`.
+key, a speaker or cast label that is not a role slug, a reading that is not a
+finite number, or a ``finish_reason`` outside ``FINISH_REASONS`` or on a turn
+without a recipe raises :class:`TranscriptFormatError`.
 
 On import, a turn with a ``recipe`` re-attaches as a *generated* node in its
 recorded seat (provenance = recipe presence, the cast model's invariant); a
@@ -69,9 +71,10 @@ import math
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, cast
 
 from drowse.errors import DrowseError
+from drowse.generation.results import FINISH_REASONS, FinishReason
 from drowse.loom.diff import NodeDiff, node_diff
 from drowse.loom.errors import LoomTreeError
 from drowse.loom.recipe import CastMember, Recipe
@@ -79,7 +82,7 @@ from drowse.loom.tree import LoomNode, LoomTree
 from drowse.model.role_templates import InvalidRoleError, validate_role
 
 
-DROWSE_TRANSCRIPT_VERSION = 2
+DROWSE_TRANSCRIPT_VERSION = 3
 
 # ---------------------------------------------------------------------------
 # Errors
@@ -110,7 +113,7 @@ ImportMode = Literal["default", "here", "merge"]
 _ROOT_REQUIRED = frozenset({"drowse_transcript", "turns"})
 _ROOT_OPTIONAL = frozenset({"model_id", "system_prompt", "cast", "probes"})
 _TURN_REQUIRED = frozenset({"role", "text"})
-_TURN_OPTIONAL = frozenset({"speaker", "thinking", "recipe", "readings"})
+_TURN_OPTIONAL = frozenset({"speaker", "thinking", "recipe", "readings", "finish_reason"})
 _PROBE_FIELDS = frozenset({"name", "sha256"})
 
 
@@ -160,7 +163,8 @@ class Turn:
     ``role`` is the *seat*; ``speaker`` the cast label the turn was
     rendered with (``None`` = the family's standard label).  Provenance
     is recipe presence — a generated turn carries its :class:`Recipe`
-    whatever its seat.
+    whatever its seat, and its ``finish_reason`` (``"cancelled"`` when a
+    Stop or disconnect cut it short).
     """
 
     role: Literal["user", "assistant", "system"]
@@ -169,6 +173,7 @@ class Turn:
     thinking: str | None = None
     recipe: Recipe | None = None
     readings: dict[str, float] = field(default_factory=dict)
+    finish_reason: FinishReason | None = None
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {"role": self.role, "text": self.text}
@@ -180,6 +185,8 @@ class Turn:
             out["recipe"] = self.recipe.to_dict()
         if self.readings:
             out["readings"] = dict(self.readings)
+        if self.finish_reason is not None:
+            out["finish_reason"] = self.finish_reason
         return out
 
     @classmethod
@@ -219,6 +226,16 @@ class Turn:
                     f"{label}.readings must map probe names to finite numbers"
                 )
             readings[name] = float(value)
+        finish_reason = data.get("finish_reason")
+        if finish_reason is not None:
+            if not isinstance(finish_reason, str) or finish_reason not in FINISH_REASONS:
+                raise TranscriptFormatError(
+                    f"{label}.finish_reason must be one of {', '.join(sorted(FINISH_REASONS))}"
+                )
+            if recipe is None:
+                raise TranscriptFormatError(
+                    f"{label}.finish_reason needs a recipe: only a generated turn has one"
+                )
         return cls(
             role=role,
             text=text,
@@ -226,6 +243,7 @@ class Turn:
             thinking=_optional_str(data, "thinking", label),
             recipe=recipe,
             readings=readings,
+            finish_reason=cast("FinishReason | None", finish_reason),
         )
 
 
@@ -276,7 +294,7 @@ class Transcript:
     system_prompt: str | None
     probes: list[ProbeRef]
     turns: list[Turn]
-    # Cast roster (v2): label → member, mirrored from the tree at export.
+    # Cast roster: label → member, mirrored from the tree at export.
     cast: dict[str, CastMember] = field(default_factory=dict)
 
     # ------------------------------------------------------------------
@@ -301,6 +319,7 @@ class Transcript:
                 thinking=node.thinking_text,
                 recipe=node.recipe,
                 readings=dict(node.aggregate_readings or {}),
+                finish_reason=node.finish_reason if node.recipe is not None else None,
             )
             for node in session.tree.path_to(target)
             if node.id != session.tree.root_id
@@ -703,6 +722,7 @@ class Transcript:
                 recipe=turn.recipe,
                 aggregate_readings=dict(turn.readings),
                 applied_steering=turn.recipe.steering if turn.recipe else None,
+                finish_reason=turn.finish_reason,
             ))
         return chain
 

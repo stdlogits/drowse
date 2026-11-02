@@ -1,13 +1,13 @@
 <script lang="ts">
+  import { Switch, Tabs } from "@stdlogits/ledger";
   import { onMount as onInterfaceMount } from "svelte";
   import { registerInterfaceController } from "../../lib/workspaceController";
   import { authoredDraftSchema } from "../../lib/interfaceSchemas";
   import { ToolError } from "../../lib/webmcp/types";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import { slide } from "svelte/transition";
-  import { collapseIn, collapseOut } from "../../lib/motion";
+  import { MorphText } from "@stdlogits/ledger";
+  import { Icon } from "@stdlogits/ledger";
+  import { expand } from "@stdlogits/ledger";
   // Custom-nodes authoring — the historical path.
   //
   // The user brings labelled corpora.  The ``auto-domain`` switch decides
@@ -38,7 +38,6 @@
     ManifoldDomain,
   } from "../../lib/types";
   import Select from "../../lib/Select.svelte";
-  import Checkbox from "../../lib/Checkbox.svelte";
   import NumberInput from "../../lib/NumberInput.svelte";
   import AdvancedSection from "../../lib/builder/AdvancedSection.svelte";
   import ValidationBlock from "../../lib/builder/ValidationBlock.svelte";
@@ -115,6 +114,24 @@
     domainKind = "sphere";
     reshapeNodeCoords();
   }
+  type DomainChoice = "box1" | "box2" | "box3" | "sphere" | "klein" | "projective";
+  const domainChoice = $derived<DomainChoice>(domainKind === "box" ? `box${boxDim}` as DomainChoice : domainKind);
+  const DOMAIN_CHOICES: { value: DomainChoice; label: string }[] = [
+    { value: "box1", label: "Line" },
+    { value: "box2", label: "Plane" },
+    { value: "box3", label: "Box" },
+    { value: "sphere", label: "Sphere" },
+    ...(browserMode ? [] : [
+      { value: "klein" as const, label: "Klein bottle" },
+      { value: "projective" as const, label: "Projective plane" },
+    ]),
+  ];
+  function pickDomain(choice: DomainChoice): void {
+    if (choice === "box1" || choice === "box2" || choice === "box3") pickBoxDim(Number(choice.slice(3)));
+    else if (choice === "sphere") pickSphere();
+    else { domainKind = choice; reshapeNodeCoords(); }
+  }
+
   function onSphereDim(d: number): void {
     sphereDim = d;
     reshapeNodeCoords();
@@ -304,9 +321,7 @@
 
   function sharedNameInput(): HTMLInputElement | null {
     const body = formRegion?.closest(".mb-form");
-    return body?.querySelector<HTMLInputElement>(
-      ":scope > .grid2 > .field:nth-child(2) input",
-    ) ?? null;
+    return body?.querySelector<HTMLInputElement>('input[data-identity="name"]') ?? null;
   }
 
   function tuningInput(label: string): HTMLInputElement | null {
@@ -364,8 +379,8 @@
     advancedOpen = true;
     await tick();
     const label = tuning.maxDim < 1 || maxDimLimit !== null && tuning.maxDim > maxDimLimit
-      ? "max dim"
-      : "variance";
+      ? "Dimensions at most"
+      : "Variance kept";
     tuningInput(label)?.focus();
   }
 
@@ -482,70 +497,24 @@
 </script>
 
 <div class="form-stack" bind:this={formRegion}>
-  <!-- auto-domain switch: when on, skip the box/sphere picker and the
-       per-node coord inputs; the fitter derives the layout per-model
-       via pca / spectral.  When off, hand-author coords as before. -->
-  <span class="auto-domain-toggle">
-    <Checkbox bind:checked={autoDomain} label="auto-domain" />
-  </span>
-
-  {#if autoDomain}
-    <!-- fit-method picker — mirrors the auto-generated tab's choice. -->
-    <FitMethodPicker
-      {tuning}
-      linearOnly={browserMode}
-      spectralNote="curved · best with ≥50 nodes"
-      onchange={(fitMode) => (tuning.fitMode = fitMode)}
-    />
-  {:else}
-    <section class="step">
-      <h2 class="step-title">domain</h2>
-      <div class="domain-kind" role="group" aria-label="Domain shape">
-        <button
-          type="button"
-          class="kind-btn"
-          class:active={domainKind === "box" && boxDim === 1}
-          aria-pressed={domainKind === "box" && boxDim === 1}
-          onclick={() => pickBoxDim(1)}
-        >box 1D</button>
-        <button
-          type="button"
-          class="kind-btn"
-          class:active={domainKind === "box" && boxDim === 2}
-          aria-pressed={domainKind === "box" && boxDim === 2}
-          onclick={() => pickBoxDim(2)}
-        >box 2D</button>
-        <button
-          type="button"
-          class="kind-btn"
-          class:active={domainKind === "box" && boxDim === 3}
-          aria-pressed={domainKind === "box" && boxDim === 3}
-          onclick={() => pickBoxDim(3)}
-        >box 3D</button>
-        <button
-          type="button"
-          class="kind-btn"
-          class:active={domainKind === "sphere"}
-          aria-pressed={domainKind === "sphere"}
-          onclick={pickSphere}
-        >sphere</button>
-        {#if !browserMode}
-          <button type="button" class="kind-btn" class:active={domainKind === "klein"}
-            aria-pressed={domainKind === "klein"} onclick={() => { domainKind = "klein"; reshapeNodeCoords(); }}>Klein bottle</button>
-          <button type="button" class="kind-btn" class:active={domainKind === "projective"}
-            aria-pressed={domainKind === "projective"} onclick={() => { domainKind = "projective"; reshapeNodeCoords(); }}>Projective plane (RP²)</button>
-        {/if}
-      </div>
+  <section class="step" aria-label="Layout">
+    <h3 class="step-title"><span class="n">2</span>Layout</h3>
+    <span class="auto-domain-toggle">
+      <Switch checked={autoDomain} onchange={(on) => (autoDomain = on)} label="Find the layout"
+        hint="Skip the coordinates: the fit derives the layout per model" />
+    </span>
+    {#if !autoDomain}
+      <Tabs label="Domain shape" value={domainChoice} onchange={pickDomain} options={DOMAIN_CHOICES} scroll />
 
       {#if domainKind === "box"}
         <div class="axes">
           {#each axisDrafts.slice(0, boxDim) as axis, i (i)}
             <div class="axis-card">
               <label class="axis-field name-field">
-                <span class="mini-label">axis</span>
+                <span class="mini-label">Axis</span>
                 <input
                   type="text"
-                  class="input mini"
+                  class="input"
                   value={axis.name}
                   oninput={(ev) => {
                     axisDrafts[i].name = (ev.currentTarget as HTMLInputElement).value;
@@ -554,7 +523,7 @@
                 />
               </label>
               <label class="axis-field">
-                <span class="mini-label">lo</span>
+                <span class="mini-label">From</span>
                 <NumberInput
                   value={axis.lo}
                   step={0.1}
@@ -564,7 +533,7 @@
                 />
               </label>
               <label class="axis-field">
-                <span class="mini-label">hi</span>
+                <span class="mini-label">To</span>
                 <span id={`authored-axis-${i}-hi`}>
                   <NumberInput
                     value={axis.hi}
@@ -579,9 +548,10 @@
                 </span>
               </label>
               <span class="axis-check">
-                <Checkbox
+                <Switch
                   checked={axis.periodic}
-                  label="periodic"
+                  label="Wraps"
+                  hint="Periodic: the far end meets the near one"
                   onchange={(v) => {
                     axisDrafts[i].periodic = v;
                   }}
@@ -595,10 +565,9 @@
             </div>
           {/each}
         </div>
-      {:else}
-        {#if domainKind === "sphere"}
+      {:else if domainKind === "sphere"}
         <label class="field sphere-field">
-          <span class="label">sphere dim</span>
+          <span class="label">Dimension</span>
           <Select
             value={sphereDim}
             options={[
@@ -610,25 +579,27 @@
             onchange={onSphereDim}
           />
         </label>
-        {:else}
-          <p class="dim-note">{quotientDescription(buildDomain())} Spread nodes across the whole surface; the minimum count alone does not guarantee a stable fit.</p>
-        {/if}
+      {:else}
+        <p class="dim-note" data-tip="Spread nodes across the whole surface; the minimum count alone does not guarantee a stable fit.">{quotientDescription(buildDomain())}</p>
       {/if}
       <p class="dim-note">
-        dim <strong><MorphText text={intrinsicDim} /></strong> · min <strong><MorphText text={minNodes} /></strong> nodes
+        <strong><MorphText text={intrinsicDim} /></strong> dimensions · at least <strong><MorphText text={minNodes} /></strong> nodes
       </p>
-    </section>
-  {/if}
-
-  <!-- node editor -->
-  <section class="step">
-    <h2 class="step-title">nodes</h2>
-    <p class="dim-note"><MorphText text={`${nodes.length} ${nodes.length === 1 ? "node" : "nodes"} · ${autoDomain ? "coordinates derived at fit" : `${intrinsicDim} dimensions`}`} /></p>
-    {#if nodes.length === 0}
-      <p class="muted">
-        add ≥{autoDomain ? 2 : minNodes} nodes
-      </p>
+    {:else}
+      <FitMethodPicker
+        {tuning}
+        linearOnly={browserMode}
+        spectralNote="curved · best with ≥50 nodes"
+        onchange={(fitMode) => (tuning.fitMode = fitMode)}
+      />
     {/if}
+  </section>
+
+  <section class="step" aria-label="Nodes">
+    <div class="mf-sec-head">
+      <h3 class="step-title"><span class="n">3</span>Nodes</h3>
+      <span class="meta"><MorphText text={`${nodes.length} ${nodes.length === 1 ? "node" : "nodes"}${autoDomain ? "" : ` · ${intrinsicDim}D`}`} /></span>
+    </div>
     <div class="node-list">
       {#each nodes as node, idx (idx)}
         <div class="node-card" data-node-index={idx}>
@@ -641,15 +612,15 @@
               aria-controls={`authored-node-${idx}-details`}
               aria-label={`${node.expanded ? "Collapse" : "Expand"} node ${node.label || idx + 1}`}
             >
-              <span class="caret">{node.expanded ? "▾" : "▸"}</span>
+              <span class="chev"><Icon name="down" /></span>
             </button>
             <input
               type="text"
-              class="input mini node-label"
+              class="input node-label"
               value={node.label}
               oninput={(ev) =>
                 setNodeField(idx, "label", (ev.currentTarget as HTMLInputElement).value)}
-              placeholder="label"
+              placeholder="Label"
               spellcheck="false"
               aria-label={`Node ${idx + 1} label`}
               aria-invalid={nodeLabelError(idx) !== null}
@@ -676,8 +647,8 @@
               class="node-remove"
               onclick={() => removeNode(idx)}
               aria-label="remove node {node.label}"
-              {...{ "aria-description": "remove node" }}
-            ><FluentIcon name="dismiss" /></button>
+              data-tip="Remove"
+            ><Icon name="close" /></button>
           </div>
           {#if nodeLabelError(idx)}
             <p id={`authored-node-${idx}-label-error`} class="field-error">
@@ -700,12 +671,12 @@
             </p>
           {/if}
           {#if node.expanded}
-            <div id={`authored-node-${idx}-details`} class="node-details" in:slide={collapseIn()} out:slide={collapseOut()}>
-            <label class="node-role">
-              <span class="label">role</span>
+            <div id={`authored-node-${idx}-details`} class="node-details" transition:expand>
+            <label class="node-role" data-tip={PER_NODE_ROLE_HELP}>
+              <span class="label">Role</span>
               <input
                 type="text"
-                class="input mini"
+                class="input"
                 value={node.role}
                 oninput={(ev) =>
                   setNodeField(
@@ -721,7 +692,7 @@
               />
             </label>
             <textarea
-              class="node-statements"
+              class="input node-statements"
               rows="4"
               value={node.statements}
               oninput={(ev) =>
@@ -730,7 +701,7 @@
                   "statements",
                   (ev.currentTarget as HTMLTextAreaElement).value,
                 )}
-              placeholder="one statement per line"
+              placeholder="One statement per line"
               aria-label={`Statements for node ${node.label || idx + 1}`}
               aria-invalid={nodeStatementError(idx) !== null}
               aria-describedby={nodeStatementError(idx) ? `authored-node-${idx}-statements-error` : undefined}
@@ -740,15 +711,12 @@
         </div>
       {/each}
     </div>
-    <button bind:this={addNodeButton} type="button" class="add-node" onclick={addNode}>
-      + add node
-    </button>
+    <button bind:this={addNodeButton} type="button" class="add-node" onclick={addNode}>Add node</button>
     {#if nodeCountError()}
       <p class="field-error">{nodeCountError()}</p>
+    {:else if nodes.length === 0}
+      <p class="muted">At least {autoDomain ? 2 : minNodes} nodes</p>
     {/if}
-    <p class="muted" {...{ "aria-description": (PER_NODE_ROLE_HELP) }}>
-      Roles are optional. When nodes use different roles, Drowse follows the role of the nearest node.
-    </p>
   </section>
 
   {#if autoDomain}
@@ -762,30 +730,15 @@
     messages={validationAttempted ? validation.messages : []}
   />
 
-  <button
-    type="button"
-    class="save-btn"
-    disabled={submitting}
-    onclick={save}
-  >
-    <MorphText text={submitting ? "building…" : autoDomain ? `build · ${tuning.fitMode}` : "build"} numbers={false} />
-  </button>
+  <div class="submit">
+    <button
+      type="button"
+      class="dw-button"
+      disabled={submitting}
+      onclick={save}
+    >
+      <MorphText text={submitting ? "Building…" : "Build"} numbers={false} />
+    </button>
+    {#if autoDomain}<span class="meta">{tuning.fitMode === "pca" ? "PCA" : tuning.fitMode === "auto" ? "Auto" : "Spectral"} fit</span>{/if}
+  </div>
 </div>
-
-<style>
-  .field-error {
-    margin: var(--space-1) 0 0;
-    color: var(--accent-red);
-    font-size: var(--text-xs);
-    line-height: 1.4;
-  }
-
-  .axis-error {
-    grid-column: 1 / -1;
-  }
-
-  input[aria-invalid="true"],
-  textarea[aria-invalid="true"] {
-    border-color: var(--accent-red);
-  }
-</style>

@@ -16,11 +16,13 @@ difference-of-means steering vector is the 2-node flat case and a monopolar
 concept the 1-node case; `personas` is a 107-node flat fan, `emotions` a
 20-node affect manifold, `months` an authored periodic ring. Every steering
 term (vectors, poles, `~`/`|` projections, `!` ablations, `%` manifold
-positions, J-lens and SAE atoms) lowers at generation time to one per-layer
-injection whose semantics are `geometry/inject.py::subspace_inject`.
-Coefficients are per call; the model is never mutated. Three read families
+positions, lens, SAE and neuron atoms) lowers at generation time to one
+per-layer injection whose semantics are `geometry/inject.py::subspace_inject`;
+the one exception is a unit mean-ablation (`!neuron/…`, `!head/…`), which
+rewrites a projection's input (`UnitOp`) instead of the residual.
+Coefficients are per call; the model is never mutated. Four read families
 measure the same forward: geometry probes (the whitened `Monitor`), the
-Jacobian lens and SAEs.
+Jacobian lens, SAEs and units (MLP neurons and attention heads).
 
 Read `ARCHITECTURE.md` before touching the engine: it is the cross-cutting
 design. Every package has its own `AGENTS.md`, auto-loaded when you work in
@@ -50,7 +52,7 @@ drowse manifold generate NAME --concepts C... -m MODEL [--kind K] [--system T] [
                          [--seed S] [--role-per-node] [--description TEXT] [-f]
 drowse manifold from-template TEMPLATE [--name N] [--fit-mode pca|spectral|auto] [--max-dim N]
                               [--var-threshold T] [--description TEXT] [-f]
-drowse manifold fit TARGET -m MODEL [--layers L1,L2|workspace|all] [--sae REL] [--method pca|spectral|auto]
+drowse manifold fit TARGET -m MODEL [--layers L1,L2-L3|workspace|all] [--sae REL] [--method pca|spectral|auto]
                     [--max-dim N] [--min-dim N] [--var-threshold T] [--k-nn K] [--bandwidth S]
                     [--max-subspace-dim R] [--smoothing auto|0|LAMBDA] [--persistence-frac F] [--no-dls] [-f]
 drowse manifold bake NAME "0.3 ns/a + 0.5 ns/b" [-m MODEL] [-s] [-f]   # offline, writes local/NAME
@@ -68,16 +70,20 @@ drowse experiment transcript run PATH.yaml [MODEL] [--max-tokens N]
 drowse experiment naturalness MODEL PROMPT --manifold NAME -S EXPR [--compare-linear]
 drowse template create NAME --slot TOKEN --values V... --contexts PATH [--description TEXT] [-f]
 drowse template ls | show NAME | rm NAME [-y] | score NAME -m MODEL [-S EXPR] [--by sum|mean]
-drowse lens fit MODEL [--kind r|j] [--corpus FILE | --hf-corpus REPO[:CFG][@REV][,K=V...]...] [--prompts N]
-                [--seq-len T] [--dim-batch K] [--prompt-batch B] [--checkpoint-every N] [--layers L] [-f]
-drowse lens fetch MODEL [neuronpedia|workspace-r|workspace-j] [--repo R] [--revision REV] [-f]
+drowse lens fit MODEL [--kind r|j|s|k] [--sites out,mid] [--corpus FILE | --hf-corpus REPO[:CFG][@REV][,K=V...]...]
+                [--prompts N] [--seq-len T] [--dim-batch K] [--checkpoint-every N] [--no-split-half] [--layers L] [-f]
+drowse lens fetch MODEL [rs-r|rs-s|neuronpedia|workspace-r|workspace-j] [--repo R] [--revision REV] [-f]
+drowse lens counts MODEL [--corpus FILE | --hf-corpus SPEC...] [--documents N] [--remove] [-f]   # S mask counts
 drowse lens ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
-drowse lens top MODEL "PROMPT" [-k K] [--layers L|sample|workspace|all] [--position P]
-drowse lens decompose SELECTOR -m MODEL [-k K] [--layers L]
+drowse lens top MODEL "PROMPT" [-k K] [--layers L|sample|workspace|all] [--position P] [--site out|mid]
+drowse lens decompose SELECTOR -m MODEL [-k K] [--dictionary tokens-out|tokens-in|neurons] [--layers L]
 drowse sae train MODEL NAME [--corpus FILE] [--layer L] [--tokens N] [...training knobs]
 drowse sae fetch MODEL saelens:RELEASE [--layer L] [--revision REV]
 drowse sae ls MODEL | show MODEL [SRC] | use MODEL SRC | rm MODEL [SRC] [-y]
 drowse config show [-c PATH...] [--no-default] [-m MODEL] | validate FILE
+drowse unit read UNIT -m MODEL [-k K] [--hide-hubs] | stats UNIT -m MODEL      # neuron/L8n344, head/L20h17
+drowse unit top TOKEN -m MODEL [--by writes|fires] [--layers L] [-k K] | find SELECTOR -m MODEL [-k K] [--layers L]
+drowse unit fetch MODEL [-f] | ls [MODEL] | rm MODEL -y        # neuron-lens catalog: Qwen3-8B, Gemma 4 12B
 
 pytest -q -m "not gpu"             # the CI suite (CPU)
 pytest -q -n auto -m "not perf"    # everything this machine can run
@@ -90,7 +96,7 @@ python scripts/regenerate_bundled.py [TARGETS...]         # bundled corpora + ne
 ```
 
 Model-loading verbs also take `-d/--device` and `-q/--quantize 4bit|8bit`;
-most read verbs take `-j/--json`. The root parser has exactly these eight
+most read verbs take `-j/--json`. The root parser has exactly these nine
 verbs; a bare verb or group prints its help and exits 0, and `drowse MODEL` is
 an argparse error. Precedence is CLI > YAML > runner default; every verb with
 `-c` composes `$DROWSE_HOME/config.yaml` first. Flags, config keys, the serve
@@ -121,14 +127,14 @@ no code reads a session private (`session._x`, `sess._x`, `<x>.session._x`,
 
 | Layer | Package | Owns | Doc |
 |---|---|---|---|
-| 0 | `errors.py`, `naming.py`, `events.py` | the error family; canonical names and `RESERVED_NAMESPACES`; the synchronous `EventBus` | below |
+| 0 | `errors.py`, `naming.py`, `events.py` | the error family; canonical names, `RESERVED_NAMESPACES` and unit references; the synchronous `EventBus` | below |
 | 1 | `base/` | torch-free primitives: paths and `$DROWSE_HOME`, atomic writes and artifact locks, integrity, shards, staging, Hub access, `SourceFamily`, `ExclusiveGuard`, LRU | below |
 | 2 | `geometry/` | pure tensor math: frames, domains, RBF, the kernel, whitener, topology, fold/`Profile`, transfer | `drowse/geometry/AGENTS.md` |
 | 3 | `model/` | loading, fingerprints, layer discovery, logits path, layer selectors, chat traits, roles, scene grammar, compile/StaticCache | `drowse/model/AGENTS.md` |
 | 4 | `store/` | manifold folders and schema, selectors and the bare-atom ladder, templates, bundled materialization, archive, install, Hub, GGUF export, neutral/alignment caches | `drowse/store/AGENTS.md` |
 | 5 | `steering.grammar`, `.terms`, `.triggers` | the expression language and its IR | `drowse/steering/AGENTS.md` |
 | 6 | `readout/` | instrument contract, read vocabulary, `Monitor`/`GeometryInstrument`, capture planner and buffers, roster, measurement envelope | `drowse/readout/AGENTS.md` |
-| 7 | `lens/`, `sae/` | the Jacobian lens and SAE families: sources, fits, runtimes, instruments | `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md` |
+| 7 | `lens/`, `sae/`, `units/` | the Jacobian lens, SAE and units families: sources, fits, runtimes, unit statistics and tap, instruments | `drowse/lens/AGENTS.md`, `drowse/sae/AGENTS.md`, `drowse/units/AGENTS.md` |
 | 8 | `steering.composer`, `.hooks` | scopes, resolution, composition, lowering, gains, hooks | `drowse/steering/AGENTS.md` |
 | 9 | `generation/` | decode loop and sampler, rendering, prefix cache, compile routing, `ReadPlane`, results, completion scoring | `drowse/generation/AGENTS.md` |
 | 10 | `fit/` | the one extraction pipeline, corpora, capture, publish, preflight, neutral compute, bake, transfer, naturalness | `drowse/fit/AGENTS.md` |
@@ -140,14 +146,16 @@ Two placements are easy to get wrong. `store` sits below the grammar because
 `parse_expr` resolves bare atoms against installed manifolds
 (`store.selectors`). `steering` spans two layers: the grammar, IR and triggers
 sit low, while the composer and hooks sit above `readout` (gate references)
-and `lens`/`sae`; a lower layer that must refuse work under steering takes
+and `lens`/`sae`/`units` (unit sites for ablation); a lower layer that must
+refuse work under steering takes
 `SteeringComposer.assert_unsteered` as an injected callable. A new subpackage
 needs a `LAYERS` entry.
 
 Unlisted homes: `errors.py` holds the cross-module errors (subsystem-local ones
 live beside their code); `naming.py` holds `canonical_concept_name`,
-`BIPOLAR_SEP = "."` and `RESERVED_NAMESPACES` (`jlens`, `slens`, `sae`,
-`neuron`, `head`); `base/exclusive.py::ExclusiveGuard` is the one
+`BIPOLAR_SEP = "."`, `RESERVED_NAMESPACES` (`jlens`, `slens`, `sae`,
+`neuron`, `head`) and the unit references (`NeuronRef`, `HeadRef`,
+`parse_unit_ref`: `L8n344` / `L20h17`); `base/exclusive.py::ExclusiveGuard` is the one
 exclusive-section type; `base/source_registry.py::SourceFamily` is the shared
 per-model source shape for lens and SAE. `notebook/` (optional `[notebook]`
 extra) holds plotly/pandas helpers over the public result types. `drowse/data/`
@@ -169,7 +177,8 @@ one measurement envelope (`readout/measurements.py`). Replace or delete the old
 path when you add a new one; breaking compatibility is acceptable.
 
 **Mahalanobis only.** Every activation-space metric (fit basis, share, steering
-synthesis, `~`/`|`, monitor reads, `manifold compare`, transfer) needs a
+synthesis, `~`/`|`, monitor reads, `manifold compare`, transfer, the lens
+decompositions) needs a
 `LayerWhitener` covering every touched layer (`covers_all`) and raises
 `WhitenerError` otherwise. On real LMs the Euclidean metric is dominated by a
 few massive-activation channels, so a fallback would be a wrong answer, not a
@@ -198,9 +207,15 @@ other 4xx → 2, 5xx → 1. `tests/invariants/test_user_message.py` enforces the
 family.
 
 **Persisted formats are exact.** Readers accept only the current version and
-never migrate (a derived cache recomputes instead): `manifold.json` v10,
-`template.json` v2, `.drowse` v1, loom `tree_format` 2 with token sidecar 2,
-transcripts v2, lens format v7, neutral cache v4.
+never migrate (a derived cache recomputes instead). These froze at 6.0.0:
+`manifold.json` v10, `template.json` v2, `.drowse` v1, loom `tree_format` 2
+with token sidecar 3 (token rows carry measurement envelope v2; a node's
+`finish_reason` is one of `stop`, `length`, `stop_sequence`, `cancelled`),
+transcripts v3, the dashboard's conversation snapshot v8, lens format v7 (an
+optional per-site `split_half`; `odd` only inside `checkpoint.json`), the lens
+selection (`active.json`, slots keyed `output`/`input`) and binding v2, the
+neuron-lens catalog binding v2, lens token counts v1, and neutral cache v5
+(activations plus the unit statistics and mid means, capture version 2).
 `MANIFOLD_FIT_POLICY_VERSION` (`geometry/manifold.py`) stamps every fit, and
 bumping it makes every fitted tensor refuse to load. Every `SamplingConfig`
 field is persisted in recipes and required on read, so adding one breaks saved
@@ -225,21 +240,33 @@ interface here:
 - names it mirrors: `RESERVED_NAMESPACES`, `store/manifold_schema.py`
   `METHOD_FIT_MODES`, the manifold sidecar and `.drowse` formats, lens format
   v7 (`sites.out`, `out.layer-L` shards);
-- Python it calls: `lens.fit.fit_jacobian_lens` and
-  `lens.store.save_lens_at`/`LensProvenance`.
+- Python it calls: `lens.store.save_lens_at`/`LensProvenance`, and the
+  lens estimator (today the removed `lens.fit.fit_jacobian_lens`; its hosted
+  fit moving to `lens.fit.fit_lens(kind=, sites=("out",))` is a pending
+  follow-up, `drowse/lens/AGENTS.md`).
 
 A semantic change to any of these regenerates the golden in the same change
 and is an interface change for drowse.ai. A refactor that would need a golden
 regenerated is not a refactor.
 
 **Performance invariants.** `tests/gpu/test_smoke.py` gates steered ≥ 85% of
-vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%.
+vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%, and the
+served dashboard's decode ≥ 50% of vanilla
+(`test_throughput_with_dashboard_instruments`: the default probe roster scored
+every token with subspace coordinates, the R lens's live readout at every
+fitted layer, eight alternatives, a loom row and a serialized WebSocket frame
+per token; SmolLM2 on MPS measures about 63%).  Where a dashboard token's time
+goes (SmolLM2 on MPS, vanilla 8.1 ms): the live R readout about 3 ms, the 17
+flat probes about 2, the envelope, row and frame about 1.5; a curved probe
+about 6 more.  On Qwen3-8B (vanilla 36 ms) the live R readout is about 11.5 ms
+a token: it reads every layer's fp32 transport (2.4 GB) and the unembedding
+(1.2 GB) per token, so it is bandwidth, not overhead.
 
 - Hooks write in place, never `.item()` or sync the host, allocate nothing per
   call beyond their own tensors; validation and constants belong in
   compose/lower (`drowse/steering/AGENTS.md`).
-- Generation runs under `torch.inference_mode()`; the J-lens fit is the only
-  backward pass in drowse.
+- Generation runs under `torch.inference_mode()`. Nothing in drowse runs a
+  backward pass: the lens fit is transport, its maps written out by hand.
 - Norms, covariances and fit-time math are fp32.
 - One device→host transfer per decoded token; per-token scoring runs after the
   forward, never inside a capture hook, and only when a consumer needs it
@@ -261,8 +288,8 @@ vanilla tok/s (`test_throughput_regression`) and ablation ≥ 80%.
 `torch.mps.empty_cache()` between extraction batches; `torch.mps.synchronize()` at the end of every decode, or a
 rapid regenerate recommits an in-flight Metal command buffer. Metal reports
 queue exhaustion as an asynchronous error that silently zeroes work, so long
-MPS loops drain the queue periodically and guard against zero rows (the J-lens
-fit loop is the reference pattern).
+MPS loops drain the queue periodically and guard against zero rows (the lens
+fit loop, `lens/fit.py`, is the reference pattern).
 
 **Testing.** Most of the suite runs on CPU against a real `DrowseSession` on a
 tiny generated checkpoint (`tiny_session`); route tests that need no behavior
@@ -279,9 +306,11 @@ with a dist-drift check. Details: `tests/AGENTS.md`.
 All state lives under `$DROWSE_HOME` (default `~/.drowse`): `config.yaml`,
 prompt/neutral overrides, `templates/`, `manifolds/<ns>/<name>/` and
 `models/<safe_model_id>/` (neutral activations, alignments, capture cache,
-`lens/`, `sae/`). The full tree is in `drowse/store/AGENTS.md`; the lens and
-SAE subtrees in their packages. Conversations are never autosaved; they are
-browser downloads or explicit `LoomTree.save(path)` targets.
+`lens/`, `sae/`, `units/`: the contrast cache and the catalog binding). The
+full tree is in `drowse/store/AGENTS.md`; the lens, SAE and units subtrees in
+their packages. No conversation lives there: the dashboard keeps its library
+in the browser (IndexedDB, autosaved between generations) and as backup
+downloads, and Python saves only to an explicit `LoomTree.save(path)`.
 
 | Variable | Effect |
 |---|---|

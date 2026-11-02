@@ -125,3 +125,13 @@ export function clampCursor(
     segs.find((s) => s.turnIdx > cursor.turnIdx) ?? segs[segs.length - 1];
   return { turnIdx: fallback.turnIdx, seg: fallback.seg, tokenIdx: 0 };
 }
+
+/** The A/B side the token view shows after its token changes: a fresh selection (a click in the
+ *  thread, not a step of the cursor) or another turn opens the turn as generated ("primary"); a
+ *  step within the turn (an arrow, Home/End, a context token) keeps the side it was on. */
+export function branchAfter<B extends string>(
+  branch: B | "primary",
+  change: { sameTurn: boolean; stepped: boolean },
+): B | "primary" {
+  return change.sameTurn && change.stepped ? branch : "primary";
+}

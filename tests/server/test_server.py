@@ -16,6 +16,7 @@ from drowse.generation.results import GenerationResult, RunSet, TokenEvent
 from tests.support.streams import FakeGenerationStream
 from tests.support.server import mock_session
 from drowse.errors import ConcurrentGenerationError, ProfileNotRegisteredError
+from drowse.readout.measurements import MEASUREMENTS_VERSION
 
 
 # ---------------------------------------------------------------------------
@@ -1128,6 +1129,19 @@ class TestSessionInfoInstrumentFields:
         got = client.get("/drowse/v1/sessions/default").json()
         assert got["jlens_fitted"] is True
 
+    def test_architecture_describes_the_model_for_the_model_room(
+        self, session_and_client: Any,
+    ) -> None:
+        """Wave 2 finding 27: the Model room shows layers, neurons and heads a
+        layer; session info carries them from the load-time model info."""
+        _session, client = session_and_client
+        info = client.get("/drowse/v1/sessions/default").json()
+        assert info["architecture"] == {
+            "model_type": "gemma2", "layers": 26, "hidden_size": 2304,
+            "neurons_per_layer": 9216, "heads_per_layer": 8,
+            "parameters": 2_614_000_000,
+        }
+
     @staticmethod
     def _families(client: Any) -> dict[str, Any]:
         info = client.get("/drowse/v1/sessions/default").json()
@@ -1142,7 +1156,7 @@ class TestSessionInfoInstrumentFields:
         _session, client = session_and_client
         info = client.get("/drowse/v1/sessions/default").json()
         assert {row["family"] for row in info["instruments"]} == {
-            "geometry", "lens", "sae",
+            "geometry", "lens", "sae", "units",
         }
         for gone in (
             "live_lens_layers", "live_sae", "live_probe_scores",
@@ -1206,11 +1220,10 @@ class TestWSTokenEventLens:
         """The envelope forwards by identity — the token tap is the single
         authority; event shaping never rebuilds or reshapes channels."""
         measurements = {
-            "version": 1,
+            "version": MEASUREMENTS_VERSION,
             "scope": "token",
             "provenance": "captured",
             "scores": {"calm": 0.424243},
-            "per_layer_scores": {"5": {"calm": 0.38}},
             "instruments": {
                 "geometry": {"readings": {"calm": {"coords": [0.424243]}}},
                 "lens": {
@@ -1304,7 +1317,7 @@ class TestWSTokenEventLens:
 class TestLensProbeRoutes:
     """Lens (readout-channel) probes on the unified ``/probes`` routes."""
 
-    _SPEC = {"word": "fake", "token_id": 42, "layers": [12, 14, 18]}
+    _SPEC = {"word": "fake", "token_id": 42, "layers": [12, 14, 18], "family": "R"}
 
     def test_list_includes_lens_probes(self, session_and_client: Any) -> None:
         session, client = session_and_client
@@ -1317,6 +1330,7 @@ class TestLensProbeRoutes:
         # actually produce — no invented manifold/domain/node geometry.
         assert row == {
             "family": "lens",
+            "namespace": "jlens",
             "name": "jlens/fake",
             "layers": [12, 14, 18],
             "intrinsic_dim": 1,  # the one strength axis
@@ -1324,6 +1338,18 @@ class TestLensProbeRoutes:
             "word": "fake",
             "token_id": 42,
         }
+
+    def test_slens_probe_names_its_namespace(self, session_and_client: Any) -> None:
+        # The client re-attaches a probe from its row and reads its unit from
+        # it: an slens/ probe must not come back as jlens/<word> (a percent).
+        session, client = session_and_client
+        session.monitor.attached_probes.return_value = {}
+        session.lens.specs.return_value = {
+            "slens/fake": {**self._SPEC, "family": "S"},
+        }
+        (row,) = client.get("/drowse/v1/sessions/default/probes").json()["probes"]
+        assert row["namespace"] == "slens"
+        assert row["name"] == "slens/fake"
 
     def test_attach_returns_lens_info(self, session_and_client: Any) -> None:
         session, client = session_and_client

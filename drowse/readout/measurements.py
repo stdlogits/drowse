@@ -7,34 +7,69 @@ token-replay endpoints — carries this single versioned shape.
 Shape::
 
     {
-      "version": 1,
+      "version": 2,
       "scope": "token" | "aggregate" | "replay",
       "provenance": "captured" | "replayed",
       "scores": {probe: axis0, ...},              # flat cross-family view
-      "per_layer_scores": {layer: {probe: v}},    # optional heatmap view
       "instruments": {
         "geometry": {"readings": {name: ProbeReading.to_dict()}},
         "lens": {
-          "binding": {"source": ..., "steering": ...},
-          "readings": {name: ...},                # attached jlens/<word> probes
-          "readout": {"layers": [...], "aggregate": [...]}   # native top-k
+          "binding": {"sources": {"R": ..., "S": ...}, "steering": ...},
+          "readings": {name: ...},                # attached jlens/ and slens/ probes
+          "readout": {"layers": [...], "aggregate": [...]}   # native top-k (R)
         },
         "sae": {
           "binding": {"source": ..., "steering": ..., "layer": N},
           "readings": {name: ...},                # attached sae/<id> probes
           "readout": {"features": [...]}          # native top-k discovery
+        },
+        "units": {
+          "binding": {"source": null, "steering": ...},
+          "readings": {name: ...}                 # attached neuron/… head/… probes
+                                                  # (meta.scale: "catalog" | "neutral")
         }
-      }
+      },
+      "anatomy": {...}                            # replay only: token anatomy
     }
 
 A family's ``readings`` are its *attached probes'* values; its
 ``readout`` is the *native discovery* surface (per-layer top-k matrix / feature list).  ``scores``
-and ``per_layer_scores`` stay envelope-level because their consumers
-(transcript tinting, the loom heatmap) key probes across families by
-name — they are flat views derived from the same readings, never extra
-data.  ``binding`` records what the family was measuring (source
+stays envelope-level because its consumers (transcript tinting, the tree
+filter, the reply trace) key probes across families by name — a flat view
+of each reading's primary scalar, never extra data.  A reading's per-layer
+trace lives in the reading alone (``coords_per_layer`` / ``per_layer``):
+there is no second, layer-major copy.  ``binding`` records what the family was measuring (source
 identity + recipe steering) so historical rows stay interpretable after
-a source switch.
+a source switch.  The lens channel carries two lens families, so its
+binding names a source per family that produced its data
+(``sources.R``: the ``jlens/`` readings and the native readout;
+``sources.S``: the ``slens/`` readings), told apart by the reading's unit.
+
+A loom token row persists the token envelope through
+:func:`token_row_measurements`, the generated row's projection: what the
+transcript's tint, the reply trace and the tree filter read per token and
+nothing else, the flat ``scores`` and each geometry reading's ``fraction``
+and ``coords`` (:class:`TokenRowMeasurements`), every float rounded to
+:data:`~drowse.readout.types.READING_DIGITS` significant digits, the
+envelope's own precision (a probability of 3e-05 keeps its value).  The rest
+of a token's reading (a geometry reading's nearest nodes, assignment,
+residual, membership and depth; the lens and SAE readings, readouts and
+bindings; the unit readings) is the token view's, which replays the token
+(``token_readout``, ``token_anatomy``) while a model is loaded; an authored
+prompt row is the same projection, replayed through its node's
+``prompt_capture``.  A row whose generation set
+``persist_per_layer_scores`` keeps :func:`summary_measurements` with its
+traces instead: every reading whole but the inspector's live trail.  The node keeps its reply's settled aggregate
+once (:func:`aggregate_measurements`), which the rack and the probe inspector
+read.  The live ``token`` frame carries the whole envelope.
+
+``anatomy`` rides only a ``replay`` envelope (``session.token_anatomy``,
+:mod:`drowse.loom.node_replay`): one token's layers read through both lens
+families (``reads_as``, ``attention``, ``mlp``, ``steering``, each a lens
+read with its halves), the units that pushed the token and the top heads'
+attention.  It is a record of the replay forward, not of a probe, so it sits
+beside ``instruments`` rather than in a family channel; its ``binding``
+names the lens sources it read through.
 """
 
 from __future__ import annotations
@@ -44,12 +79,25 @@ from typing import Any, Literal, Mapping, cast
 
 from typing_extensions import NotRequired, TypedDict
 
-from drowse.readout.types import Reading, ScalarReading, reading_axis0
-from drowse.readout.types import ProbeReading
+from drowse.readout.types import (
+    UNIT_MEAN_FOOTPRINT_Z,
+    READING_DIGITS,
+    UNIT_MEAN_TOKEN_PROBABILITY,
+    ProbeReading,
+    Reading,
+    ScalarReading,
+    reading_axis0,
+    round_reading,
+)
 
-MEASUREMENTS_VERSION = 1
+MEASUREMENTS_VERSION = 2
 
 MeasurementScope = Literal["token", "aggregate", "replay"]
+
+#: One layer-aggregated lens chip, ``(token, strength, com, spread, token_id)``:
+#: the decoded token and its vocabulary id (two ids can decode to the same
+#: text, e.g. byte pieces that both render as U+FFFD; consumers key by the id).
+LensAggregateRow = tuple[str, float, float, float, int]
 MeasurementProvenance = Literal["captured", "replayed"]
 
 
@@ -67,6 +115,23 @@ class MeasurementBinding(TypedDict):
     source: str | None
     steering: str | None
     layer: NotRequired[int | None]
+
+
+class LensBinding(TypedDict):
+    """What the lens channel was measuring: the source of each lens family
+    that produced its data, keyed ``R`` (``jlens/`` readings, the native
+    readout) and ``S`` (``slens/`` readings), present only for a family that
+    did; and the recipe steering."""
+
+    sources: dict[str, str | None]
+    steering: str | None
+
+
+#: Which lens family produced a lens-channel reading, by its unit.
+LENS_FAMILY_BY_UNIT = {
+    UNIT_MEAN_TOKEN_PROBABILITY: "R",
+    UNIT_MEAN_FOOTPRINT_Z: "S",
+}
 
 
 class DepthSummaryDict(TypedDict):
@@ -103,22 +168,24 @@ class ProbeReadingDict(TypedDict):
     here (rather than as an anonymous ``dict[str, Any]`` on the channel)
     is what lets the generated dashboard types name the geometry reading
     instead of falling back to an opaque record.
+
+    :func:`summary_measurements` keeps the summary, plus the three per-layer
+    traces on request, and never ``subspace_coords_per_layer`` (the probe
+    inspector's live trail); a generated token row keeps only
+    :class:`RowProbeReadingDict`.
     """
 
     fraction: float
     nearest: list[tuple[str, float]]
     coords: list[float]
     residual: float
-    fraction_per_layer: dict[str, float]
-    coords_per_layer: dict[str, list[float]]
-    residual_per_layer: dict[str, float]
-    # The live serializer always emits these five, but a *persisted* loom
-    # row written before they existed does not, and the same wire type
-    # covers both — so they are optional on read.
-    assignment: NotRequired[list[tuple[str, float]]]
-    membership: NotRequired[float]
-    depth_com: NotRequired[list[float]]
-    depth_spread: NotRequired[list[float]]
+    fraction_per_layer: NotRequired[dict[str, float]]
+    coords_per_layer: NotRequired[dict[str, list[float]]]
+    residual_per_layer: NotRequired[dict[str, float]]
+    assignment: list[tuple[str, float]]
+    membership: float
+    depth_com: list[float]
+    depth_spread: list[float]
     subspace_coords_per_layer: NotRequired[dict[str, list[float]]]
 
 
@@ -134,14 +201,22 @@ class LensReadoutLayer(TypedDict):
 
 
 class LensAggregateToken(TypedDict):
+    """One layer-aggregated chip; ``id`` is its vocabulary id (two ids may
+    decode to the same ``token`` text)."""
+
     token: str
+    id: int
     strength: float
     com: float
     spread: float
 
 
 class LensReadout(TypedDict):
-    layers: list[LensReadoutLayer]
+    """The native readout: the per-layer top-k matrix and its
+    layer-aggregated chips.  :func:`summary_measurements` keeps ``layers``
+    only on request."""
+
+    layers: NotRequired[list[LensReadoutLayer]]
     aggregate: list[LensAggregateToken]
 
 
@@ -165,7 +240,7 @@ class GeometryChannel(TypedDict):
 
 
 class LensChannel(TypedDict):
-    binding: MeasurementBinding
+    binding: LensBinding
     readings: NotRequired[dict[str, ScalarReadingDict]]
     readout: NotRequired[LensReadout]
 
@@ -176,10 +251,131 @@ class SaeChannel(TypedDict):
     readout: NotRequired[SaeReadout]
 
 
+class UnitsChannel(TypedDict):
+    """The units family: attached ``neuron/…`` / ``head/…`` probe readings.
+    ``binding.source`` is always ``None`` (units are the model's own parts);
+    each reading's ``meta.scale`` names its reading scale's source
+    (``"catalog"``: the bound neuron-lens catalog's ``act_top``;
+    ``"neutral"``: the neutral statistics', relative to the neutral text)."""
+
+    binding: MeasurementBinding
+    readings: dict[str, ScalarReadingDict]
+
+
+class TokenScoreDict(TypedDict):
+    """One ranked token of a lens read half (``lens.read.TokenScore``)."""
+
+    token_id: int
+    token: str
+    value: float
+
+
+class FamilyReadDict(TypedDict):
+    """One family's half of a lens read (``lens.read.FamilyRead``):
+    ``weight`` is the depth rule's, ``centred`` whether it read ``x − μ``
+    (the S half of a residual), ``absent`` why it was not read."""
+
+    family: Literal["R", "S"]
+    weight: float
+    unit: Literal["probability", "footprint_z"]
+    lens: str | None
+    centred: bool
+    tokens: list[TokenScoreDict]
+    absent: str | None
+
+
+class LensReadDict(TypedDict):
+    """The read of one vector at ``(layer, site)`` (``lens.read.LensRead``);
+    ``of`` is ``residual`` or ``direction``."""
+
+    layer: int
+    site: Literal["out", "mid"]
+    depth: float
+    of: Literal["residual", "direction"]
+    r: FamilyReadDict
+    s: FamilyReadDict
+
+
+class AnatomyUnit(TypedDict):
+    """A unit's direct contribution to the anatomy token's logit through the
+    R lens; ``activation`` is a neuron's raw activation or a head's write
+    norm, and ``activation_over_scale`` the same over the unit's reading
+    scale (the units family's unit: the number its probe, unit activity and
+    the unit view show; :attr:`TokenAnatomy.units_scale` names its source),
+    ``None`` without unit statistics.  Both are ``None``
+    in the cross-layer list."""
+
+    unit: str
+    kind: Literal["neuron", "head"]
+    layer: int
+    index: int
+    contribution: float
+    activation: float | None
+    activation_over_scale: float | None
+
+
+class AnatomyLayer(TypedDict):
+    """One layer of a token's anatomy: the residual at ``out`` (``reads_as``,
+    S centred), the attention write at ``mid``, the MLP write and the
+    steering injection (``None`` when none) at ``out``, read as directions;
+    the layer's top neurons and heads by contribution."""
+
+    layer: int
+    depth: float
+    reads_as: LensReadDict
+    attention: LensReadDict
+    mlp: LensReadDict
+    steering: LensReadDict | None
+    neurons: list[AnatomyUnit]
+    heads: list[AnatomyUnit]
+
+
+class AnatomyPattern(TypedDict):
+    """A top head's attention from the token's producing position over the
+    context (``weights[j]`` for position ``j``; position 0 is the sink)."""
+
+    unit: str
+    layer: int
+    head: int
+    contribution: float
+    weights: list[float]
+
+
+class AnatomyToken(TypedDict):
+    """The anatomy's token: raw index, id and piece, its producing
+    ``position`` in the replayed sequence, the prompt render's length and the
+    model's probability of it there."""
+
+    raw_index: int
+    token_id: int
+    token: str
+    position: int
+    prompt_length: int
+    probability: float
+
+
+class TokenAnatomy(TypedDict):
+    """One token, every layer (``session.token_anatomy``).  ``units_scale``
+    names where the unit rows' ``activation_over_scale`` divides by: the
+    bound neuron-lens catalog's ``act_top`` (``"catalog"``) or the neutral
+    statistics' (``"neutral"``, relative to the neutral text); ``None``
+    without unit statistics."""
+
+    token: AnatomyToken
+    binding: LensBinding
+    layers: list[AnatomyLayer]
+    units: list[AnatomyUnit]
+    units_absent: str | None
+    units_scale: Literal["catalog", "neutral"] | None
+    patterns: list[AnatomyPattern] | None
+    context: list[str] | None
+
+
 class Instruments(TypedDict):
     geometry: NotRequired[GeometryChannel]
     lens: NotRequired[LensChannel]
     sae: NotRequired[SaeChannel]
+    units: NotRequired[UnitsChannel]
 
 
 class Measurements(TypedDict):
@@ -190,7 +386,41 @@ class Measurements(TypedDict):
     provenance: MeasurementProvenance
     instruments: Instruments
     scores: NotRequired[dict[str, float]]
-    per_layer_scores: NotRequired[dict[str, dict[str, float]]]
+    anatomy: NotRequired[TokenAnatomy]
+
+
+class RowProbeReadingDict(TypedDict):
+    """A generated token row's geometry reading: the share on the probe's
+    subspace and its domain coordinates, what the transcript's tint (a
+    multi-axis probe's ``name[i]``) and the reply trace (a curved probe's
+    share) read per token.  The rest of the reading replays."""
+
+    fraction: float
+    coords: list[float]
+
+
+class RowGeometryChannel(TypedDict):
+    readings: dict[str, RowProbeReadingDict]
+
+
+class RowInstruments(TypedDict):
+    """A generated token row's channels: geometry only.  Every other
+    family's per-token value is its ``scores`` entry; its readings, readout
+    and binding replay."""
+
+    geometry: NotRequired[RowGeometryChannel]
+
+
+class TokenRowMeasurements(TypedDict):
+    """A generated loom token row's ``measurements``
+    (:func:`token_row_measurements`): the envelope header, the flat
+    ``scores`` and each geometry probe's share and coordinates."""
+
+    version: int
+    scope: MeasurementScope
+    provenance: MeasurementProvenance
+    instruments: RowInstruments
+    scores: NotRequired[dict[str, float]]
 
 
 class MeasurementsEnvelope(TypedDict):
@@ -201,7 +431,7 @@ class MeasurementsEnvelope(TypedDict):
 
 def _axis0(readings: Mapping[str, Reading]) -> dict[str, float]:
     return {
-        str(name): round(reading_axis0(reading), 6)
+        str(name): round_reading(reading_axis0(reading))
         for name, reading in readings.items()
     }
 
@@ -232,24 +462,31 @@ def build_measurements(
     geometry_binding: Mapping[str, Any] | None = None,
     lens_readings: Mapping[str, ScalarReading] | None = None,
     sae_readings: Mapping[str, ScalarReading] | None = None,
-    per_layer_scores: Mapping[str, Mapping[str, float]] | None = None,
     lens_readout: Mapping[int, list[tuple[str, float]]] | None = None,
-    lens_aggregate: list[tuple[str, float, float, float]] | None = None,
+    lens_aggregate: list[LensAggregateRow] | None = None,
     lens_token_ids: Mapping[int, list[int]] | None = None,
-    lens_source: str | None = None,
+    lens_sources: Mapping[str, str | None] | None = None,
     sae_features: list[tuple[int, float, str | None, float | None]] | None = None,
     sae_source: str | None = None,
     sae_layer: int | None = None,
+    units_readings: Mapping[str, ScalarReading] | None = None,
+    anatomy: TokenAnatomy | None = None,
     steering: str | None = None,
 ) -> Measurements | None:
     """Build one measurement envelope; ``None`` when nothing measured.
 
     JSON-safe throughout (floats rounded/floored exactly as the historical
     ``captured`` serializers did, so persisted loom rows stay comparable
-    across the 5.x boundary).
+    across the 5.x boundary).  ``lens_sources`` is ``{"R": label, "S":
+    label}``; the lens binding keeps the families that produced data.
+    ``anatomy`` (built by :mod:`drowse.loom.node_replay`) rides a replay
+    envelope only.
     """
+    if anatomy is not None and scope != "replay":
+        raise ValueError("a token anatomy rides a replay envelope only")
     instruments: dict[str, Any] = {}
     scores: dict[str, float] = {}
+    lens_families: set[str] = set()
 
     if geometry_readings:
         scores.update(_axis0(geometry_readings))
@@ -268,7 +505,13 @@ def build_measurements(
     if lens_readings:
         scores.update(_axis0(lens_readings))
         lens_channel["readings"] = _readings_dict(lens_readings)
+        for reading in lens_readings.values():
+            family = LENS_FAMILY_BY_UNIT.get(reading.unit)
+            if family is None:
+                raise ValueError(f"no lens family reads unit {reading.unit!r}")
+            lens_families.add(family)
     if lens_readout or lens_aggregate:
+        lens_families.add("R")
         id_rows = lens_token_ids or {}
         layers: list[dict[str, Any]] = []
         for layer, row in sorted(lens_readout.items() if lens_readout else ()):
@@ -292,16 +535,18 @@ def build_measurements(
             "aggregate": [
                 {
                     "token": str(token),
+                    "id": int(token_id),
                     "strength": float(strength),
                     "com": float(com),
                     "spread": float(spread),
                 }
-                for token, strength, com, spread in (lens_aggregate or ())
+                for token, strength, com, spread, token_id in (lens_aggregate or ())
             ],
         }
     if lens_channel:
+        known = lens_sources or {}
         lens_channel["binding"] = {
-            "source": lens_source,
+            "sources": {family: known.get(family) for family in sorted(lens_families)},
             "steering": steering,
         }
         instruments["lens"] = lens_channel
@@ -334,7 +579,14 @@ def build_measurements(
         }
         instruments["sae"] = sae_channel
 
-    if not instruments:
+    if units_readings:
+        scores.update(_axis0(units_readings))
+        instruments["units"] = {
+            "binding": {"source": None, "steering": steering},
+            "readings": _readings_dict(units_readings),
+        }
+
+    if not instruments and anatomy is None:
         return None
 
     envelope: Measurements = {
@@ -345,57 +597,302 @@ def build_measurements(
     }
     if scores:
         envelope["scores"] = scores
-    if per_layer_scores:
-        envelope["per_layer_scores"] = {
-            str(layer): dict(row) for layer, row in per_layer_scores.items()
-        }
+    if anatomy is not None:
+        envelope["anatomy"] = anatomy
     return envelope
 
 
-class LiveSources(TypedDict):
-    """The source fields a live lens / SAE readout binds into an envelope:
-    :func:`build_measurements`' ``lens_source`` / ``sae_source`` /
-    ``sae_layer`` keywords."""
+# --------------------------------------------------------------------------
+# The loom token row's projection
+# --------------------------------------------------------------------------
 
-    lens_source: str | None
+#: A geometry reading's per-layer traces, kept on a row only on request.
+GEOMETRY_TRACE_KEYS = ("fraction_per_layer", "coords_per_layer", "residual_per_layer")
+
+#: The keys a row's geometry reading carries without its traces.
+GEOMETRY_SUMMARY_KEYS = (
+    "fraction", "nearest", "coords", "residual", "assignment", "membership",
+    "depth_com", "depth_spread",
+)
+
+
+def _r(value: Any) -> float:
+    return round_reading(value)
+
+
+def _row_ranked(pairs: list[Any]) -> list[list[Any]]:
+    return [[str(label), _r(value)] for label, value in pairs]
+
+
+def _row_probe_reading(reading: Mapping[str, Any], per_layer: bool) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "fraction": _r(reading["fraction"]),
+        "nearest": _row_ranked(reading["nearest"]),
+        "coords": [_r(c) for c in reading["coords"]],
+        "residual": _r(reading["residual"]),
+        "assignment": _row_ranked(reading["assignment"]),
+        "membership": _r(reading["membership"]),
+        "depth_com": [_r(c) for c in reading["depth_com"]],
+        "depth_spread": [_r(s) for s in reading["depth_spread"]],
+    }
+    if per_layer:
+        out["fraction_per_layer"] = {
+            layer: _r(v) for layer, v in reading["fraction_per_layer"].items()
+        }
+        out["coords_per_layer"] = {
+            layer: [_r(c) for c in v] for layer, v in reading["coords_per_layer"].items()
+        }
+        out["residual_per_layer"] = {
+            layer: _r(v) for layer, v in reading["residual_per_layer"].items()
+        }
+    return out
+
+
+def _row_scalar_reading(reading: Mapping[str, Any]) -> dict[str, Any]:
+    # A scalar reading's trace is a handful of values (a lens probe's band, a
+    # unit's or SAE feature's one layer), and no replay returns a lens
+    # probe's: the row keeps it.
+    depth = reading["depth"]
+    out: dict[str, Any] = {
+        "value": _r(reading["value"]),
+        "unit": reading["unit"],
+        "per_layer": {layer: _r(v) for layer, v in reading["per_layer"].items()},
+        "depth": None if depth is None else {
+            "center": [_r(c) for c in depth["center"]],
+            "spread": [_r(s) for s in depth["spread"]],
+            "basis": depth["basis"],
+        },
+    }
+    if "meta" in reading:
+        out["meta"] = {
+            key: _r(v) if isinstance(v, float) else v
+            for key, v in reading["meta"].items()
+        }
+    return out
+
+
+def summary_measurements(
+    envelope: Measurements, *, per_layer: bool,
+) -> Measurements:
+    """An envelope's persisted summary: every reading whole but its traces.
+
+    Each geometry reading's summary (:data:`GEOMETRY_SUMMARY_KEYS`), each
+    scalar reading whole (its trace is a few values), the lens readout's
+    layer-aggregated chips, the SAE features, the bindings and the flat
+    ``scores``, every float at ``READING_DIGITS`` significant digits (the
+    envelope's own rounding, so a scalar is never rounded twice into a
+    different value).  ``per_layer`` also keeps the geometry traces and the
+    lens readout's ``layers``.  The probe inspector's
+    ``subspace_coords_per_layer`` is a live trail and is never kept.
+
+    A row of a generation that set ``persist_per_layer_scores`` (generated,
+    or an authored prompt row it captured) keeps this with
+    ``per_layer=True``; a node keeps its aggregate through
+    :func:`aggregate_measurements`.
+    """
+    instruments = envelope["instruments"]
+    out: dict[str, Any] = {}
+    geometry = instruments.get("geometry")
+    if geometry is not None:
+        channel: dict[str, Any] = {
+            "readings": {
+                name: _row_probe_reading(reading, per_layer)
+                for name, reading in geometry["readings"].items()
+            },
+        }
+        if "binding" in geometry:
+            channel["binding"] = dict(geometry["binding"])
+        out["geometry"] = channel
+    lens = instruments.get("lens")
+    if lens is not None:
+        lens_row: dict[str, Any] = {
+            "binding": {
+                "sources": dict(lens["binding"]["sources"]),
+                "steering": lens["binding"]["steering"],
+            },
+        }
+        if "readings" in lens:
+            lens_row["readings"] = {
+                name: _row_scalar_reading(reading)
+                for name, reading in lens["readings"].items()
+            }
+        if "readout" in lens:
+            readout = lens["readout"]
+            readout_row: dict[str, Any] = {
+                "aggregate": [
+                    {
+                        "token": chip["token"],
+                        "id": chip["id"],
+                        "strength": _r(chip["strength"]),
+                        "com": _r(chip["com"]),
+                        "spread": _r(chip["spread"]),
+                    }
+                    for chip in readout["aggregate"]
+                ],
+            }
+            if per_layer and "layers" in readout:
+                readout_row["layers"] = [
+                    {
+                        "layer": row["layer"],
+                        "tokens": [
+                            {"token": t["token"], "id": t["id"], "logprob": _r(t["logprob"])}
+                            for t in row["tokens"]
+                        ],
+                    }
+                    for row in readout["layers"]
+                ]
+            lens_row["readout"] = readout_row
+        out["lens"] = lens_row
+    sae = instruments.get("sae")
+    if sae is not None:
+        sae_row: dict[str, Any] = {"binding": dict(sae["binding"])}
+        if "readings" in sae:
+            sae_row["readings"] = {
+                name: _row_scalar_reading(reading)
+                for name, reading in sae["readings"].items()
+            }
+        if "readout" in sae:
+            sae_row["readout"] = {
+                "features": [
+                    {
+                        "id": feature["id"],
+                        "activation": _r(feature["activation"]),
+                        "label": feature["label"],
+                        "max_act": (
+                            None if feature["max_act"] is None
+                            else _r(feature["max_act"])
+                        ),
+                    }
+                    for feature in sae["readout"]["features"]
+                ],
+            }
+        out["sae"] = sae_row
+    units = instruments.get("units")
+    if units is not None:
+        out["units"] = {
+            "binding": dict(units["binding"]),
+            "readings": {
+                name: _row_scalar_reading(reading)
+                for name, reading in units["readings"].items()
+            },
+        }
+    row: Measurements = {
+        "version": envelope["version"],
+        "scope": envelope["scope"],
+        "provenance": envelope["provenance"],
+        "instruments": cast(Instruments, out),
+    }
+    if "scores" in envelope:
+        row["scores"] = {name: _r(v) for name, v in envelope["scores"].items()}
+    return row
+
+
+#: The keys a generated token row's geometry reading keeps
+#: (:class:`RowProbeReadingDict`).
+ROW_GEOMETRY_KEYS = ("fraction", "coords")
+
+
+def token_row_measurements(envelope: Measurements) -> TokenRowMeasurements:
+    """A loom token row's form of its token envelope (a generated row, and
+    an authored prompt row the first prefill that read it captured).
+
+    The row keeps what the transcript's tint, the reply trace and the tree
+    filter read per token without a model: the flat ``scores`` (every
+    family's axis 0) and each geometry reading's ``fraction`` and ``coords``
+    (a curved probe's trace reads its share, a multi-axis probe's tint its
+    other coordinates), at ``READING_DIGITS`` significant digits.  Everything
+    else is the token view's, which replays the token
+    (``token_readout``, ``token_anatomy``; a prompt token through its node's
+    ``prompt_capture``); the reply's settled reading rides the node
+    (:func:`aggregate_measurements`).
+    """
+    instruments: dict[str, Any] = {}
+    geometry = envelope["instruments"].get("geometry")
+    if geometry is not None:
+        instruments["geometry"] = {
+            "readings": {
+                name: {
+                    "fraction": _r(reading["fraction"]),
+                    "coords": [_r(c) for c in reading["coords"]],
+                }
+                for name, reading in geometry["readings"].items()
+            },
+        }
+    row: TokenRowMeasurements = {
+        "version": envelope["version"],
+        "scope": envelope["scope"],
+        "provenance": envelope["provenance"],
+        "instruments": cast(RowInstruments, instruments),
+    }
+    if "scores" in envelope:
+        row["scores"] = {name: _r(v) for name, v in envelope["scores"].items()}
+    return row
+
+
+def aggregate_measurements(envelope: Measurements) -> Measurements:
+    """What a loom node keeps of its reply's aggregate envelope: the reply's
+    settled reading, as the rack and the probe inspector draw it after a
+    reload.  :func:`summary_measurements` without the traces and without
+    ``scores``: the node's ``aggregate_readings`` is its flat view."""
+    out = summary_measurements(envelope, per_layer=False)
+    out.pop("scores", None)
+    return out
+
+
+class EnvelopeSources(TypedDict):
+    """The source fields an envelope binds: :func:`build_measurements`'
+    ``lens_sources`` / ``sae_source`` / ``sae_layer`` keywords."""
+
+    lens_sources: dict[str, str | None]
     sae_source: str | None
     sae_layer: int | None
 
 
-def live_sources(
-    lens_live: Mapping[str, Any] | None,
+def envelope_sources(
+    lens_sources: Mapping[str, str | None] | None,
     sae_live: Mapping[str, Any] | None,
     *,
     lens: bool = True,
     sae: bool = True,
-) -> LiveSources:
-    """The envelope source fields of the live lens and SAE readouts.
+) -> EnvelopeSources:
+    """The envelope source fields of the lens families and the live SAE.
 
-    ``lens_live`` / ``sae_live`` are the instruments' live configs (``None``
-    while that readout is off).  ``lens`` / ``sae`` gate each family: the
-    aggregate envelope binds a family's source only when it carries that
-    family's readings.  An inactive or gated-off family binds nothing.
+    ``lens_sources`` is the lens instrument's
+    ``measurement_sources()`` (``{"R": label, "S": label}``, the lenses its
+    run pinned); ``sae_live`` the SAE's live config (``None`` while off).
+    ``lens`` / ``sae`` gate each family: the aggregate envelope binds a
+    family's sources only when it carries that family's readings.  An
+    inactive or gated-off family binds nothing.
     """
-    lens_cfg = lens_live if lens and isinstance(lens_live, Mapping) else None
     sae_cfg = sae_live if sae and isinstance(sae_live, Mapping) else None
     layer = sae_cfg.get("layer") if sae_cfg is not None else None
     return {
-        "lens_source": lens_cfg.get("source") if lens_cfg is not None else None,
+        "lens_sources": dict(lens_sources or {}) if lens else {},
         "sae_source": sae_cfg.get("source") if sae_cfg is not None else None,
         "sae_layer": int(layer) if layer is not None else None,
     }
 
 
 __all__ = [
+    "AnatomyLayer",
+    "AnatomyPattern",
+    "AnatomyToken",
+    "AnatomyUnit",
     "DepthSummaryDict",
+    "FamilyReadDict",
+    "EnvelopeSources",
+    "GEOMETRY_SUMMARY_KEYS",
+    "GEOMETRY_TRACE_KEYS",
     "GeometryChannel",
     "Instruments",
+    "LENS_FAMILY_BY_UNIT",
     "LensAggregateToken",
+    "LensBinding",
     "LensChannel",
+    "LensReadDict",
     "LensReadout",
     "LensReadoutLayer",
     "LensReadoutToken",
-    "LiveSources",
     "MEASUREMENTS_VERSION",
     "MeasurementBinding",
     "MeasurementProvenance",
@@ -403,10 +900,22 @@ __all__ = [
     "Measurements",
     "MeasurementsEnvelope",
     "ProbeReadingDict",
+    "READING_DIGITS",
+    "ROW_GEOMETRY_KEYS",
+    "RowGeometryChannel",
+    "RowInstruments",
+    "RowProbeReadingDict",
     "SaeChannel",
     "SaeFeature",
     "SaeReadout",
     "ScalarReadingDict",
+    "TokenAnatomy",
+    "TokenRowMeasurements",
+    "TokenScoreDict",
+    "UnitsChannel",
+    "aggregate_measurements",
     "build_measurements",
-    "live_sources",
+    "envelope_sources",
+    "summary_measurements",
+    "token_row_measurements",
 ]

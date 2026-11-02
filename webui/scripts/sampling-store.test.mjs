@@ -57,6 +57,7 @@ async function samplingFor(
       "/src/lib/stores/session.svelte.ts",
     );
     const {
+      buildObservationSampling,
       buildSamplingPayload,
       hydrateSamplingFromInfo,
       samplingState,
@@ -91,6 +92,7 @@ async function samplingFor(
       assistantRole: samplingState.assistant_role,
       maxTokens: samplingState.max_tokens,
       payload: buildSamplingPayload(),
+      observation: buildObservationSampling(),
     };
   } finally {
     await server.close();
@@ -175,7 +177,8 @@ const hostedProbe = await samplingFor("browser", 8, {
   activeProbe: true,
   probeSubspaceTrails: false,
 });
-assert.equal(hostedProbe.payload.persist_per_layer_scores, true);
+assert.equal("persist_per_layer_scores" in hostedProbe.payload, false,
+  "a loom row keeps each reading's summary; the per-layer views replay the token");
 assert.equal("persist_subspace_coords" in hostedProbe.payload, false);
 
 const hostedProbeWithExactTrails = await samplingFor("browser", 8, {
@@ -186,6 +189,9 @@ assert.equal(hostedProbeWithExactTrails.payload.persist_subspace_coords, true);
 
 const httpProbe = await samplingFor("http", 8, { activeProbe: true });
 assert.equal(httpProbe.payload.persist_subspace_coords, true);
+// A comparison sends the observation knobs only: a generation field it set would outrank the
+// compared turn's own (compose_call ranks the call's sampling above the anchor's).
+assert.deepEqual(httpProbe.observation, { persist_subspace_coords: true, return_top_k: 8 });
 
 const gemma = await samplingFor("browser", 8, {
   defaultAssistantRole: "model",
@@ -261,7 +267,7 @@ async function queuedSamplingAndReset() {
     assert.equal(current.config.top_p, 0.7);
     assert.equal(sampling.modelDefaultsState.info.config.temperature, 0.9);
     Object.assign(sampling.samplingState, { seed: 42, stop_sequences: "STOP", logit_bias_text: "123: 2", presence_penalty: 1, frequency_penalty: 1, assistant_role: "pirate" });
-    steerRack.customExpression = "0.3 jlens/orange";
+    steerRack.readOnlyRecipe = "0.3 jlens/orange";
     await resetSettings();
     assert.deepEqual(current.config, original.config);
     assert.equal(sampling.samplingState.seed, null);
@@ -270,7 +276,7 @@ async function queuedSamplingAndReset() {
     assert.equal(sampling.samplingState.presence_penalty, 0);
     assert.equal(sampling.samplingState.frequency_penalty, 0);
     assert.equal(sampling.samplingState.assistant_role, "pirate", "generation-only reset preserves role changes");
-    assert.equal(steerRack.customExpression, "0.3 jlens/orange");
+    assert.equal(steerRack.readOnlyRecipe, "0.3 jlens/orange");
     probeRack.active = ["jlens/orange"];
     current.instruments[0].live.enabled = false;
     current.instruments[1].source = "changed-lens";
@@ -280,7 +286,7 @@ async function queuedSamplingAndReset() {
     assert.deepEqual(detached, ["jlens/orange"]);
     assert.deepEqual(probeRack.active, []);
     assert.deepEqual(current.instruments, original.instruments);
-    assert.equal(steerRack.customExpression, null);
+    assert.equal(steerRack.readOnlyRecipe, null);
     assert.equal(sampling.samplingState.assistant_role, "model");
     genStatus.active = true;
     const before = calls.length;

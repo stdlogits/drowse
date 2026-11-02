@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import math
+import re
 import threading
 import time
-from typing import Any
+import typing
+from pathlib import Path
+from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
@@ -36,6 +39,7 @@ class _FakeLens(LensInstrument):
         self.fit = MagicMock()  # type: ignore[method-assign]
         self.select_source = MagicMock()  # type: ignore[method-assign]
         self._require = MagicMock(return_value=object())  # type: ignore[method-assign]
+        self.resident_input = MagicMock(return_value=object())  # type: ignore[method-assign]
         self.runtime.resolve_layers = MagicMock(  # type: ignore[method-assign]
             return_value=[12, 18],
         )
@@ -394,6 +398,73 @@ class TestSources:
         assert rows[0]["source"] == "local:j"
         assert "path" not in rows[0]  # path stripped
 
+    def test_active_lens_rows_say_whether_they_load(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """Each family's active row carries ``compatible`` (its own family's
+        check, never paged in); an inactive row carries nothing."""
+        session, client = session_and_client
+        monkeypatch.setattr(
+            "drowse.lens.sources.list_lens_sources",
+            lambda _m: [
+                {"source": "rs-r", "kind": "huggingface", "family": "R", "active": True},
+                {"source": "local:r", "kind": "local", "family": "R", "active": False},
+                {"source": "rs-s", "kind": "huggingface", "family": "S", "active": True},
+            ],
+        )
+        session.lens.has_compatible = MagicMock(return_value=False)
+        session.lens.has_compatible_input = MagicMock(return_value=True)
+        rows = {row["source"]: row for row in client.get(f"{_BASE}/lens/sources").json()["sources"]}
+        assert rows["rs-r"]["compatible"] is False
+        assert rows["rs-s"]["compatible"] is True
+        assert "compatible" not in rows["local:r"]
+
+    def test_lens_sources_carry_the_band_providers_and_fit_default(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """The Artifacts room's lenses: the session's crossover band as ``[w_S, w_R]``
+        at every layer, the fetchable providers per family, and the server's
+        default fit documents (the dashboard takes it from here)."""
+        from drowse.lens.depth import LensBand, kind_weights
+        from drowse.lens.key import DEFAULT_FIT_DOCUMENTS
+
+        session, client = session_and_client
+        monkeypatch.setattr("drowse.lens.sources.list_lens_sources", lambda _m: [])
+        session.lens.band = LensBand(0.2, 0.4)
+        body = client.get(f"{_BASE}/lens/sources").json()
+        band = body["band"]
+        assert (band["lo"], band["hi"]) == (0.2, 0.4)
+        assert len(band["weights"]) == len(session.layers)
+        expected = kind_weights(len(session.layers), LensBand(0.2, 0.4))
+        flat = [w for pair in band["weights"] for w in pair]
+        assert flat == pytest.approx([w for pair in expected for w in pair])
+        assert all(w_s + w_r == pytest.approx(1.0) for w_s, w_r in band["weights"])
+        assert body["fit_documents"] == DEFAULT_FIT_DOCUMENTS
+        # The S read's token mask and where it comes from (decision 2).
+        mask = {"source": "tokenizer", "detail": "the tokenizer's rules only", "kept": None}
+        session.lens.token_mask_info = MagicMock(return_value=mask)
+        assert client.get(f"{_BASE}/lens/sources").json()["token_mask"] == mask
+        providers = {row["source"]: row for row in body["providers"]}
+        assert providers["rs-r"] == {
+            "source": "rs-r", "lens": "R", "family": "R",
+            "sites": ["out", "mid"], "repo_id": "stdlogits/rs-lenses",
+        }
+        assert providers["rs-s"]["family"] == "S"
+        assert providers["neuronpedia"]["sites"] == ["out"]
+        # R family first, in picker order.
+        assert [row["source"] for row in body["providers"]] == [
+            "rs-r", "workspace-r", "neuronpedia", "workspace-j", "rs-s",
+        ]
+
+    def test_sae_sources_carry_no_lens_extras(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        _session, client = session_and_client
+        monkeypatch.setattr("drowse.sae.sources.list_sae_sources", lambda _m: [])
+        monkeypatch.setattr("drowse.sae.backend.list_sae_releases", lambda _m: [])
+        body = client.get(f"{_BASE}/sae/sources").json()
+        assert not {"band", "providers", "fit_documents", "token_mask"} & set(body)
+
     def test_sae_merges_prepared_and_releases(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
@@ -440,34 +511,58 @@ class TestSourceSwitch:
         assert session.lens.disable_calls == 1
         session.lens.select_source.assert_called_once_with("neuronpedia")
 
+    def test_s_family_switch_selects_without_touching_live(self, session_and_client: Any) -> None:
+        """An S-family source only selects: there is no live S readout, so the
+        R family's live readout stays as it was."""
+        session, client = session_and_client
+        session.lens.layers = [3, 4]
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "rs-s"})
+        assert resp.status_code == 200
+        assert resp.json() == {"source": "rs-s", "live_layers": [3, 4]}
+        assert session.lens.disable_calls == 0 and session.lens.enable_calls == []
+        session.lens.select_source.assert_called_once_with("rs-s")
+
+    def test_s_family_switch_to_an_unloadable_source_is_a_409(
+        self, session_and_client: Any,
+    ) -> None:
+        """Regression: an S-family switch only selected, so a source that
+        cannot load for these weights answered 200 and failed on first use;
+        it now answers 409 like an unloadable R-family switch."""
+        session, client = session_and_client
+        session.lens.resident_input.return_value = None
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "rs-s"})
+        assert resp.status_code == 409
+        assert "cannot load" in resp.json()["detail"]
+        session.lens.select_source.assert_called_once_with("rs-s")
+
     def test_unfitted_lens_switch_is_a_409(self, session_and_client: Any) -> None:
         """Regression: the error-policy collapse turned this route's 409 into
         ``LensNotFittedError``'s generic 404."""
         from drowse.lens.jlens import LensNotFittedError
 
         session, client = session_and_client
-        session.lens.enable_error = LensNotFittedError("no fitted J-lens for test/model")
-        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:default"})
+        session.lens.enable_error = LensNotFittedError("no R-lens available for test/model")
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:j"})
         assert resp.status_code == 409
-        assert resp.json() == {"detail": "no fitted J-lens for test/model"}
+        assert resp.json() == {"detail": "no R-lens available for test/model"}
 
     def test_unavailable_source_keeps_its_message(self, session_and_client: Any) -> None:
         """Regression: the registry's path-free "not available" text was
         scrubbed to the generic filesystem message."""
         session, client = session_and_client
         session.lens.select_source.side_effect = FileNotFoundError(
-            "J-lens source local:gone is not available",
+            "lens source local:r-gone is not available",
         )
-        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:gone"})
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:r-gone"})
         assert resp.status_code == 404
-        assert resp.json() == {"detail": "J-lens source local:gone is not available"}
+        assert resp.json() == {"detail": "lens source local:r-gone is not available"}
 
     def test_os_level_miss_on_switch_stays_scrubbed(self, session_and_client: Any) -> None:
         session, client = session_and_client
         session.lens.select_source.side_effect = FileNotFoundError(
             2, "No such file or directory", "/secret/home/.drowse/models/x/jlens/active.json",
         )
-        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:default"})
+        resp = client.put(f"{_BASE}/lens/source", json={"source": "local:j"})
         assert resp.status_code == 404
         assert "/secret" not in resp.text
 
@@ -485,6 +580,80 @@ class TestSourceSwitch:
         assert resp.status_code == 404
 
 
+#: The dashboard's WebMCP tools, whose ``drowse_prepare_instrument`` schema
+#: advertises each preparation's fields to agents.
+_SERVICE_TOOLS = Path(__file__).resolve().parents[2] / "webui/src/lib/webmcp/serviceTools.ts"
+_OPENERS = {"(": ")", "{": "}", "[": "]"}
+_QUOTES = "\"'`"
+
+
+def _close_of(text: str, start: int) -> int:
+    """The index of the bracket closing ``text[start]``, skipping strings."""
+    stack: list[str] = []
+    i = start
+    while i < len(text):
+        char = text[i]
+        if char in _QUOTES:
+            i = text.index(char, i + 1)
+        elif char in _OPENERS:
+            stack.append(_OPENERS[char])
+        elif stack and char == stack[-1]:
+            stack.pop()
+            if not stack:
+                return i
+        i += 1
+    raise AssertionError(f"unbalanced bracket at {start}")
+
+
+def _top_level_entries(body: str) -> dict[str, str]:
+    """``{key: value text}`` of an object literal's body (a shorthand key
+    maps to itself)."""
+    entries: dict[str, str] = {}
+    start = i = 0
+    while i <= len(body):
+        if i == len(body) or body[i] == ",":
+            entry = body[start:i].strip()
+            if entry:
+                key, sep, value = entry.partition(":")
+                entries[key.strip()] = value.strip() if sep else key.strip()
+            start = i + 1
+        elif body[i] in _QUOTES:
+            i = body.index(body[i], i + 1)
+        elif body[i] in _OPENERS:
+            i = _close_of(body, i)
+        i += 1
+    return entries
+
+
+def _choices(value: str) -> tuple[str, ...]:
+    """The string choices a schema value offers (its ``choices(...)``)."""
+    found = re.search(r"choices\(([^)]*)\)", value)
+    return () if found is None else tuple(re.findall(r'"([^"]*)"', found.group(1)))
+
+
+def _webmcp_preparation_schemas() -> dict[tuple[str, str], dict[str, str]]:
+    """Each ``(family, operation)`` schema's top-level properties, read from
+    ``preparationSchemas()`` in serviceTools.ts."""
+    text = _SERVICE_TOOLS.read_text()
+    head = text.index("function preparationSchemas()")
+    body_start = text.index("{", head)
+    body = text[body_start:_close_of(text, body_start)]
+    schemas: dict[tuple[str, str], dict[str, str]] = {}
+    for match in re.finditer(r"objectSchema\(\{", body):
+        brace = match.end() - 1
+        props = _top_level_entries(body[brace + 1:_close_of(body, brace)])
+        key = (_choices(props["family"])[0], _choices(props["operation"])[0])
+        schemas[key] = {k: v for k, v in props.items() if k not in ("family", "operation")}
+    return schemas
+
+
+def _literals(annotation: Any) -> tuple[Any, ...]:
+    """Every ``Literal`` value inside a field annotation."""
+    if typing.get_origin(annotation) is typing.Literal:
+        return typing.get_args(annotation)
+    return tuple(value for arg in typing.get_args(annotation) for value in _literals(arg))
+
+
 # ---------------------------------------------------------------------------
 # POST/GET/DELETE /instruments/{family}/preparations
 # ---------------------------------------------------------------------------
@@ -495,12 +664,45 @@ class TestPreparations:
 
         from drowse.server.instrument_routes import LensFitRequest
 
-        assert LensFitRequest().kind == "r"
-        assert LensFitRequest(kind="j").kind == "j"
-        stale_bodies: list[dict[str, Any]] = [{"kind": "k"}, {"relp": True}]
+        body = LensFitRequest()
+        assert body.kind == "r" and body.sites == ["out", "mid"] and body.prompts == 64
+        for kind in ("j", "s", "k"):
+            assert LensFitRequest(kind=kind).kind == kind
+        assert LensFitRequest(sites=["mid"]).sites == ["mid"]
+        stale_bodies: list[dict[str, Any]] = [
+            {"kind": "q"}, {"relp": True}, {"prompt_batch": 2}, {"sites": []},
+            {"sites": ["top"]},
+        ]
         for stale in stale_bodies:
             with pytest.raises(ValidationError):
                 LensFitRequest(**stale)
+
+    def test_the_webmcp_preparation_schemas_match_the_request_models(self) -> None:
+        """The dashboard's ``drowse_prepare_instrument`` tool advertises each
+        operation's fields, and the request models forbid extras: a stale
+        field (``prompt_batch``) or a missing choice fails every agent call."""
+        from drowse.server.instrument_routes import (
+            LensFetchRequest, LensFitRequest, SaeFetchRequest, SaeTrainRequest,
+        )
+
+        models: dict[tuple[str, str], Any] = {
+            ("lens", "fetch"): LensFetchRequest, ("lens", "fit"): LensFitRequest,
+            ("sae", "fetch"): SaeFetchRequest, ("sae", "train"): SaeTrainRequest,
+        }
+        schemas = _webmcp_preparation_schemas()
+        assert set(schemas) == set(models)
+        for key, props in schemas.items():
+            fields = models[key].model_fields
+            assert set(props) <= set(fields), (key, sorted(set(props) - set(fields)))
+            for name, value in props.items():
+                if _literals(fields[name].annotation):
+                    assert set(_choices(value)) == set(_literals(fields[name].annotation)), (key, name)
+        lens_fit = schemas[("lens", "fit")]
+        assert {"kind", "sites"} <= set(lens_fit)
+        for kind in _choices(lens_fit["kind"]):
+            LensFitRequest.model_validate(
+                {"kind": kind, "sites": list(_choices(lens_fit["sites"])), "seq_len": None},
+            )
 
     def test_geometry_404(self, session_and_client: Any) -> None:
         _session, client = session_and_client
@@ -572,6 +774,8 @@ class TestPreparations:
             "current": 0, "total": 1, "unit": "prompts",
         }
         assert body["cancellable"] is True
+        # The status names the fit's target, so a resumed client knows its family.
+        assert body["source"] == "local:r"
 
         assert started.wait(timeout=2.0)
         try:
@@ -739,6 +943,64 @@ class TestPreparations:
         assert session.lens.live_layers is None
         session.lens.fit.assert_not_called()
 
+    def test_input_kind_noop_selects_only_its_own_family(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """An S/K no-op selects as a publishing S fit does: through
+        ``select_source`` into its own family's slot (which evicts only that
+        family's resident), never turning the R family's live readout off."""
+        session, client = session_and_client
+        monkeypatch.setattr(
+            "drowse.lens.lifecycle.prove_lens_fit_noop",
+            lambda *_a, **_k: {"n_prompts": 1},
+        )
+        session.lens.set_live(True)
+        for kind in ("s", "k"):
+            resp = client.post(
+                f"{_BASE}/lens/preparations",
+                json={"operation": "fit", "prompts": 1, "kind": kind},
+            )
+            assert resp.status_code == 202
+            _wait_idle(client, "lens")
+            assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
+        assert [c.args for c in session.lens.select_source.call_args_list] == [
+            ("local:s",), ("local:k",),
+        ]
+        session.lens.fit.assert_not_called()
+        assert session.lens.disable_calls == 0
+        assert session.lens.enable_calls == [None]
+        assert session.lens.live_layers == session.lens.default_layers
+
+    def test_mid_only_output_fit_leaves_the_output_source_and_live_alone(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """Probes, atoms and the live readout read ``out``: a fit of either
+        family at ``mid`` only, proven or fitted, selects nothing and never
+        toggles live readout."""
+        session, client = session_and_client
+        proofs: list[Any] = [{"n_prompts": 1}, None, {"n_prompts": 1}]
+        monkeypatch.setattr(
+            "drowse.lens.lifecycle.prove_lens_fit_noop",
+            lambda *_a, **_k: proofs.pop(0),
+        )
+        monkeypatch.setattr(
+            "drowse.lens.corpus.stream_lens_corpus",
+            lambda _n, _corpus, *, cancel_event=None: (["a long enough prompt."], "spec"),
+        )
+        for kind in ("r", "r", "s"):
+            resp = client.post(
+                f"{_BASE}/lens/preparations",
+                json={"operation": "fit", "prompts": 1, "sites": ["mid"], "kind": kind},
+            )
+            assert resp.status_code == 202
+            _wait_idle(client, "lens")
+            assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
+        assert proofs == []
+        session.lens.fit.assert_called_once()
+        assert session.lens.fit.call_args.kwargs["sites"] == ["mid"]
+        session.lens.select_source.assert_not_called()
+        assert session.lens.enable_calls == [] and session.lens.disable_calls == 0
+
     def test_forced_lens_fit_skips_the_noop_proof(
         self, session_and_client: Any, monkeypatch: Any,
     ) -> None:
@@ -760,6 +1022,34 @@ class TestPreparations:
         _wait_idle(client, "lens")
         assert client.get(f"{_BASE}/lens/preparations").json()["state"] == "done"
         assert session.lens.fit.call_args.kwargs["force"] is True
+
+    def test_only_a_replace_refusal_marks_the_fit_replaceable(
+        self, session_and_client: Any, monkeypatch: Any,
+    ) -> None:
+        """The dashboard offers the forced fit only for the refusal to replace
+        an artifact; any other failure (and the next start) clears the mark."""
+        from drowse.lens.jlens import JacobianLensError
+        from drowse.lens.lifecycle import LensReplaceRefused
+
+        session, client = session_and_client
+        monkeypatch.setattr(
+            "drowse.lens.corpus.stream_lens_corpus",
+            lambda _n, _corpus, *, cancel_event=None: (["a long enough prompt."], "spec"),
+        )
+
+        def _fit(error: BaseException) -> dict[str, Any]:
+            session.lens.fit.side_effect = error
+            resp = client.post(f"{_BASE}/lens/preparations", json={"operation": "fit", "prompts": 1})
+            assert resp.status_code == 202
+            assert resp.json()["replaceable"] is False
+            _wait_idle(client, "lens")
+            return client.get(f"{_BASE}/lens/preparations").json()
+
+        refused = _fit(LensReplaceRefused("local:r already holds an R lens over 25 documents"))
+        assert refused["state"] == "error" and refused["replaceable"] is True
+        assert "already holds" in refused["error"]
+        other = _fit(JacobianLensError("no usable prompts were fitted"))
+        assert other["state"] == "error" and other["replaceable"] is False
 
     def test_lens_fit_rejects_a_malformed_hub_corpus(
         self, session_and_client: Any,
@@ -923,7 +1213,8 @@ class TestTokenReadout:
             18: [(" b", 0.6, 7), (" c", 0.3, 9)],
             12: [(" a", 0.78, 5), (" d", 0.13, 3)],
         },
-        [(" a", 0.41, 0.31, 0.05), (" b", 0.2, 0.8, 0.1)],
+        [(" a", 0.41, 0.31, 0.05, 7), (" b", 0.2, 0.8, 0.1, 8)],
+        {},  # the attached lens probes' readings (none here)
     )
 
     @staticmethod
@@ -1017,7 +1308,7 @@ class TestTokenReadout:
 
     def test_lens_replay_envelope(self, session_and_client: Any) -> None:
         session, client = session_and_client
-        session.lens.source = "local:default"
+        session.lens.runtime.source = "local:default"
         session.lens_replay.return_value = (
             self._token("0.3 formal.casual"), self._LENS_READ,
         )
@@ -1033,13 +1324,15 @@ class TestTokenReadout:
         assert m["scope"] == "replay"
         assert m["provenance"] == "replayed"
         lens = m["instruments"]["lens"]
-        assert lens["binding"]["source"] == "local:default"
+        assert lens["binding"]["sources"] == {"R": "local:default"}
         assert lens["binding"]["steering"] == "0.3 formal.casual"
         assert [row["layer"] for row in lens["readout"]["layers"]] == [12, 18]
         assert lens["readout"]["aggregate"][0]["token"] == " a"
         assert session.lens.token_readout.call_args.kwargs["top_k"] == 2
-        # The replay captures the layers the lens resolved.
-        assert session.lens_replay.call_args.kwargs["layers"] == [12, 18]
+        # The replay captures the layers the lens resolved (and the attached
+        # probes', none here), resolved inside the section.
+        layers = session.lens_replay.call_args.kwargs["layers"]
+        assert callable(layers) and list(cast(Any, layers)()) == [12, 18]
         # ONE conversion on the whole path: the read's p_l reaches the
         # envelope untouched and ``build_measurements`` logs it exactly once,
         # so exponentiating the wire value returns the original probability.
@@ -1086,7 +1379,7 @@ class TestTokenReadout:
             layer=14,
             feature_meta={"42": {"label": "fruit", "max_act": 121.1}},
         )
-        session.sae_replay.return_value = (self._token(None), [(42, 3.5)])
+        session.sae_replay.return_value = (self._token(None), ([(42, 3.5)], {}))
         resp = client.get(
             f"{_BASE}/sae/token-readout",
             params={"node_id": "n1", "raw_index": 2},

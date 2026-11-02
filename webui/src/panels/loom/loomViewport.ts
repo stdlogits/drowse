@@ -58,6 +58,47 @@ export function centerLoomRect(
   };
 }
 
+export type LoomRect = LoomPoint & LoomSize;
+
+/** What ``settleLoomCenter`` needs from the map. */
+export interface LoomCenterHost {
+  /** The target's placement now, or null when it is gone (or a newer move superseded this one). */
+  placement(): LoomRect | null;
+  /** Move the camera onto a placement and return the camera that move set. */
+  center(rect: LoomRect): LoomCamera;
+  /** The camera now: a pan, zoom or pinch since ``center`` shows up here. */
+  camera(): LoomCamera;
+  /** Resolves once the turns the last move brought into view have measured themselves. */
+  remeasured(): Promise<void>;
+}
+
+const sameRect = (a: LoomRect, b: LoomRect) =>
+  Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 &&
+  Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+const sameCamera = (a: LoomCamera, b: LoomCamera) =>
+  Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.zoom - b.zoom) < 1e-6;
+
+/** Centre the camera on a turn and keep it there while the map settles. Turns enter the layout at
+ *  an estimated height and take their measured one once drawn, so the turns a move brings into view
+ *  can shift the target; each time they do, the camera follows, until the placement holds, someone
+ *  else moves the camera, or ``passes`` run out. Returns how many moves it made. */
+export async function settleLoomCenter(host: LoomCenterHost, passes = 4): Promise<number> {
+  let rect = host.placement();
+  if (!rect) return 0;
+  let set = host.center(rect);
+  let moves = 1;
+  for (let pass = 0; pass < passes; pass += 1) {
+    await host.remeasured();
+    if (!sameCamera(host.camera(), set)) break;
+    const next = host.placement();
+    if (!next || sameRect(next, rect)) break;
+    rect = next;
+    set = host.center(rect);
+    moves += 1;
+  }
+  return moves;
+}
+
 export function resizeLoomCamera(
   camera: LoomCamera,
   previous: LoomSize,

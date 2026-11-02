@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator, Callable, Iterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager
 from typing import TYPE_CHECKING, Any, ParamSpec, TypeVar, cast
 
 from anyio import CancelScope
@@ -93,6 +93,34 @@ async def session_lock(app: FastAPI) -> AsyncIterator[None]:
         lock.release()
 
 
+@asynccontextmanager
+async def session_lock_or_busy(app: FastAPI) -> AsyncIterator[None]:
+    """Hold the session lock if it is free now, else raise
+    :class:`EngineBusyError` (409) without queueing.
+
+    For a quick check that is worthless once stale (steering validation):
+    the session lock is held for a whole generation, so waiting for it would
+    answer only after the reply ends.  ``locked()`` alone is not enough: a
+    lock just released to a queued waiter (a second reply, woken but not yet
+    running) reads unlocked, yet ``acquire()`` queues behind that waiter's
+    whole hold.  A zero timeout takes the lock only on ``acquire()``'s
+    no-wait path (free, nobody queued) and cancels the wait otherwise, which
+    the lock unwinds cleanly.
+    """
+    lock: asyncio.Lock = app.state.session_lock
+    if lock.locked():
+        raise EngineBusyError()
+    try:
+        async with asyncio.timeout(0):
+            await lock.acquire()
+    except TimeoutError:
+        raise EngineBusyError() from None
+    try:
+        yield
+    finally:
+        lock.release()
+
+
 def refuse_if_busy(session: "DrowseSession") -> None:
     """Raise :class:`EngineBusyError` (409) while the engine gen-lock is held.
 
@@ -104,6 +132,35 @@ def refuse_if_busy(session: "DrowseSession") -> None:
     if not session.gen_lock.acquire(blocking=False):
         raise EngineBusyError()
     session.gen_lock.release()
+
+
+@contextmanager
+def exclusive_or_busy(session: "DrowseSession") -> Iterator[None]:
+    """Hold the engine gen-lock for a short model op, or raise
+    :class:`EngineBusyError` (409) when another thread holds it.
+
+    Run it in the worker thread that does the work (the lock is reentrant
+    and per-thread), never on the event loop: a route that waited on the
+    lock there would stall every other request until the holder finished.
+    """
+    if not session.gen_lock.acquire(blocking=False):
+        raise EngineBusyError()
+    try:
+        yield
+    finally:
+        session.gen_lock.release()
+
+
+def attached_probe_names(session: "DrowseSession") -> set[str]:
+    """Every attached probe's name, across every read family.
+
+    The Monitor's roster (the geometry family's names) plus each family in
+    ``session.instruments``, so a new family is covered by its registry entry.
+    """
+    attached = set(session.monitor.probe_names)
+    for instrument in session.instruments.values():
+        attached.update(instrument.names)
+    return attached
 
 
 async def finish_worker(task: asyncio.Future[_T]) -> _T:

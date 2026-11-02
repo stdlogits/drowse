@@ -38,7 +38,7 @@ from collections.abc import Callable, Generator, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
@@ -68,7 +68,12 @@ from drowse.generation.token_callback import (
     consumer_options,
 )
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import live_sources
+from drowse.readout.measurements import (
+    Measurements,
+    envelope_sources,
+    summary_measurements,
+    token_row_measurements,
+)
 from drowse.generation.types import (
     CallSpec,
     GenerationStream,
@@ -108,8 +113,13 @@ class ConsumerPlan:
     """Which per-token consumers one generation feeds, decided once.
 
     ``live_scores_on`` is the geometry instrument's live toggle (off masks
-    every per-token monitor consumer at the source).  ``lens`` / ``sae`` mean
-    the family's live readout is on and the callback asked for it.
+    every per-token monitor consumer at the source).  ``persists_layer_scores``
+    is the call's ``persist_per_layer_scores``: the loom rows keep every
+    reading whole with its per-layer traces and the lens readout's layers
+    (:func:`~drowse.readout.measurements.summary_measurements`) instead of
+    the generated row's scalars (``token_row_measurements``).  ``lens`` / ``sae`` mean
+    the family's live readout is on and the callback asked for it; ``units``
+    that attached unit probes tick per token (loom row or live scores).
     ``need_tap`` is false when nothing would consume a per-token callback, so
     the decode loop skips the tap (and the per-step log-softmax it forces).
     """
@@ -124,6 +134,7 @@ class ConsumerPlan:
     sae: bool
     perplexity_requested: bool
     need_tap: bool
+    units: bool = False
 
 
 class TokenTap:
@@ -194,8 +205,11 @@ class TokenTap:
         self._sae = sae
         self._lens_step = lens.live_readout_step if plan.lens else None
         self._sae_step = sae.live_readout_step if plan.sae else None
+        # Unit probes: the units run's reading for this forward (the gate
+        # callback's step-keyed stash when it already read it).
+        self._units_step = reads.units_step_readings if plan.units else None
         self._readout_top_k = readout_top_k
-        self._sources = live_sources(lens.live, sae.live)
+        self._sources = envelope_sources(lens.measurement_sources(), sae.live)
         self._recipe_steering = recipe_steering
 
     def mean_logprob(self) -> tuple[float | None, float | None]:
@@ -235,9 +249,7 @@ class TokenTap:
         if self._needs_scores:
             readings = self._geometry_readings(step_id)
             if readings:
-                payload = TokenProbePayload.from_geometry(
-                    readings, per_layer=self._per_layer,
-                )
+                payload = TokenProbePayload.from_geometry(readings)
         lens_step = (
             self._lens_step(top_k=self._readout_top_k, step_id=step_id)
             if self._lens_step is not None else None
@@ -252,17 +264,17 @@ class TokenTap:
         if lens_step is not None and self._lens.last_step_readings:
             if payload is None:
                 payload = TokenProbePayload()
-            payload.merge_readings(
-                self._lens.last_step_readings, family="lens",
-                per_layer=self._per_layer,
-            )
+            payload.merge_readings(self._lens.last_step_readings, family="lens")
         if sae_step is not None and self._sae.last_step_readings:
             if payload is None:
                 payload = TokenProbePayload()
-            payload.merge_readings(
-                self._sae.last_step_readings, family="sae",
-                per_layer=self._per_layer,
-            )
+            payload.merge_readings(self._sae.last_step_readings, family="sae")
+        if self._units_step is not None:
+            units_readings = self._units_step(step_id)
+            if units_readings:
+                if payload is None:
+                    payload = TokenProbePayload()
+                payload.merge_readings(units_readings, family="units")
 
         lens_payload = lens_step[0] if lens_step is not None else None
         lens_aggregate = lens_step[1] if lens_step is not None else None
@@ -273,7 +285,7 @@ class TokenTap:
             or sae_step
             or (
                 payload is not None
-                and (payload.scores or payload.per_layer_scores or payload.has_readings)
+                and (payload.scores or payload.has_readings)
             )
         ):
             if payload is None:
@@ -310,15 +322,15 @@ class TokenTap:
                     {"id": int(a.id), "text": a.text, "logprob": float(a.logprob)}
                     for a in top_alts
                 ]
-            if payload is not None and payload.scores:
-                row["probes"] = {
-                    name: round(float(value), 6)
-                    for name, value in payload.scores.items()
-                }
-            if payload is not None and payload.per_layer_scores:
-                row["per_layer_scores"] = payload.per_layer_scores
             if measurements:
-                row["measurements"] = measurements
+                # The row keeps what the transcript, the reply trace and the
+                # filter read (the token view replays the rest); a call that
+                # persists the traces keeps every reading whole.
+                envelope = cast(Measurements, measurements)
+                row["measurements"] = (
+                    summary_measurements(envelope, per_layer=True)
+                    if self._per_layer else token_row_measurements(envelope)
+                )
             self._append_token(row, thinking=bool(is_thinking))
 
         if self._on_event is not None:
@@ -475,7 +487,8 @@ class GenerationEngine:
         ``PREAMBLE`` transition.  On exit, whatever raised: pop any steering
         scope the body left open, run the session's generation release (detach
         capture, close the instrument runs, reset the read plane, free the
-        loom reservation), and release the phase and the lock.
+        loom reservation), drop a reply node a failure left without a token
+        (``txn.provisional_node``), and release the phase and the lock.
 
         The body owns the steering scope through ``txn.steering_cm``: it
         assigns the scope when it enters one and clears the slot if it pops
@@ -506,11 +519,28 @@ class GenerationEngine:
                         self._release()
                     finally:
                         self.compiled_clean_eligible = False
+                        if txn.failed and txn.provisional_node is not None:
+                            self._discard_unanswered(txn.provisional_node)
             finally:
                 # Unconditional: an earlier teardown exception must not leave
                 # the session phase-wedged or the lock held.
                 self.phase = GenState.IDLE
                 self._lock.release()
+
+    def _discard_unanswered(self, node_id: str) -> None:
+        """Remove the reply node a failed generation opened when it holds no
+        token (the reservation is released, so the delete is free).  A reply
+        cut after some tokens keeps them."""
+        tree = self._session.tree
+        if not tree.has(node_id):
+            return
+        node = tree.get(node_id)
+        if node.tokens or node.thinking_tokens or node.text or tree.children(node_id):
+            return
+        try:
+            tree.delete_subtree(node_id)
+        except Exception:  # noqa: BLE001 - never mask the generation's failure
+            _log.exception("could not remove the empty reply node %s", node_id)
 
     def stop(self) -> None:
         """Ask the in-flight decode loop to stop after its current step."""
@@ -758,18 +788,22 @@ class GenerationEngine:
             live and spec.return_probe_readings and not spec.stateless
             and has_monitor_probes
         )
+        # Unit probes tick per token for the loom row or a live-scores
+        # consumer, behind the units family's own live switch.
+        units = bool(
+            session.units.is_live and session.units.names
+            and (
+                (spec.return_probe_readings and not spec.stateless)
+                or (on_token is not None and options.live_scores)
+            )
+        )
         return ConsumerPlan(
             live_scores_on=live,
             has_monitor_probes=has_monitor_probes,
             wants_live_token_scores=bool(
                 live and on_token is not None and options.live_scores
             ),
-            persists_layer_scores=bool(
-                live and (
-                    spec.persist_per_layer_scores
-                    or (on_token is not None and options.per_layer_scores)
-                )
-            ),
+            persists_layer_scores=bool(spec.persist_per_layer_scores),
             persists_subspace_coords=bool(live and spec.persist_subspace_coords),
             persists_probe_row=persists_probe_row,
             lens=bool(
@@ -780,6 +814,7 @@ class GenerationEngine:
                 session.sae.live is not None
                 and on_token is not None and options.sae_readout
             ),
+            units=units,
             perplexity_requested=bool(on_token is not None and options.perplexity),
             # Without a consumer, logprobs, a loom probe row or a stop list
             # the tap would be a no-op whose presence still forces the
@@ -789,6 +824,7 @@ class GenerationEngine:
                 on_token is not None
                 or spec.collect_logprobs
                 or persists_probe_row
+                or units
                 or spec.stop_list is not None
             ),
         )
@@ -838,6 +874,8 @@ class GenerationEngine:
                 system_prompt=spec.system_prompt,
                 continuation_node_id=spec.continuation_node_id,
             )
+            if spec.continuation_node_id is None:
+                txn.provisional_node = assistant_node_id
             if txn.steering_cm is not None:
                 txn.steering_cm.__enter__()
             use_thinking = spec.use_thinking_req and session.chat_traits.supports_thinking
@@ -872,6 +910,7 @@ class GenerationEngine:
                     demand,
                     widen=spec.want_hidden,
                     persistent_buffers=self._persistent_capture_buffers(),
+                    units_live=plan.units,
                 )
                 if plan.need_tap:
                     tap = TokenTap(
@@ -934,6 +973,7 @@ class GenerationEngine:
                 mean_logprob=mean_logprob,
                 mean_surprise=mean_surprise,
             )
+            txn.provisional_node = None
             session.events.emit(GenerationFinished(result=result))
             return result
 
@@ -961,7 +1001,7 @@ class GenerationEngine:
             monitor_active=monitor_active,
             lens_active=plan.lens,
             sae_active=plan.sae,
-            persist_per_layer_scores=plan.persists_layer_scores,
+            per_layer=plan.persists_layer_scores,
         )
         demand = self._reads.resolve_demand(
             want_hidden=spec.want_hidden,
@@ -969,7 +1009,9 @@ class GenerationEngine:
             has_monitor_probes=plan.has_monitor_probes,
             loom_attached=assistant_node_id is not None,
             wants_live_token_scores=plan.wants_live_token_scores,
-            persists_layer_scores=plan.persists_layer_scores,
+            persists_layer_scores=bool(
+                plan.live_scores_on and plan.persists_layer_scores
+            ),
             persists_probe_row=plan.persists_probe_row,
             persists_subspace_coords=plan.persists_subspace_coords,
             live_lens_active=plan.lens,
@@ -1057,14 +1099,15 @@ class GenerationEngine:
         # Compiled routing (CUDA/MPS).  The graph was traced with only the
         # persistent offset + capture hooks attached, so the compiled module
         # is correct exactly when the live hook topology matches: no
-        # transient capture hooks and either unsteered or steering lowered to
-        # the persistent offsets.  Everything else runs the eager original
-        # (same persistent hooks, so offsets and capture still apply) on a
-        # DynamicCache, which also avoids a Dynamo retrace per hook topology.
+        # transient capture or unit-tap hooks and either unsteered or
+        # steering lowered to the persistent offsets.  Everything else runs
+        # the eager original (same persistent hooks, so offsets and capture
+        # still apply) on a DynamicCache, which also avoids a Dynamo retrace
+        # per hook topology.
         gen_model: Any = session.model
         uses_offsets = bool(steering.uses_compiled_offsets)
         if runtime.compiled_on(session.device):
-            compiled_clean = not capture.is_transient() and (
+            compiled_clean = not reads.transient_hooks and (
                 uses_offsets or steering.all_fast_path()
             )
             if compiled_clean and runtime.graph_thread_safe():
@@ -1116,7 +1159,7 @@ class GenerationEngine:
             step_callback=step_callback,
             use_static_cache=use_static_cache,
             forced_prefix=spec.forced_prefix,
-            steering_active=bool(steering.hooks or uses_offsets),
+            steering_active=bool(steering.hooks or steering.unit_hooks or uses_offsets),
             want_perplexity=want_perplexity,
             traits=session.chat_traits,
         )

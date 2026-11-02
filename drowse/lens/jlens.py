@@ -17,8 +17,8 @@ The J-space decomposition lives in :mod:`drowse.lens.decompose`.  It imports
 nothing beyond torch and the error taxonomy, so a per-step import costs a
 ``sys.modules`` lookup.
 
-The **estimator** — the only backward pass through the language model — lives
-in :mod:`drowse.lens.fit`; importing this module never drags it in.
+The **estimator** (transport, :mod:`drowse.lens.transport`, driven by
+:mod:`drowse.lens.fit`) lives apart; importing this module never drags it in.
 
 One unit runs through every readout surface: the per-layer softmax probability
 ``p_l(v)``.  ``readout_probabilities`` is the single calibration primitive; a
@@ -29,15 +29,14 @@ and the layer aggregate are all apples-to-apples.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from typing import Any
 
 import torch
 
 from drowse.errors import DrowseError, RequestError
-from drowse.lens.decompose import token_atom_norms
-from drowse.lens.key import LensKey
+from drowse.lens.key import LENS_SITES, LensKey
 
 #: Positions before this index are excluded from the Jacobian average — early
 #: positions act as attention sinks with atypical residual statistics.  Part of
@@ -45,20 +44,18 @@ from drowse.lens.key import LensKey
 #: rather than the estimator.
 SKIP_FIRST_POSITIONS = 16
 DEFAULT_SEQ_LEN = 128
-#: Output dims per backward pass. Total backward FLOPs are dim_batch-invariant
-#: (pass count halves as pass width doubles), so this knob trades memory for
-#: per-pass overhead and barely moves wall time — measured on an M5 Max /
-#: gemma-3-4b, 8 is the sweet spot (93.6s/prompt vs 96.9s at 32, 102.5s at
-#: 64, identical output). Halves automatically on OOM.
-DEFAULT_DIM_BATCH = 8
-# Consecutive corpus prompts per autograd graph on CPU/CUDA.  Their Jacobians
-# remain equal-prompt weighted (not equal-token weighted).  MPS defaults to two
-# after the M5 Max / gemma-3-4b sweep measured 1.72x over one with unchanged
-# peak RSS. OOM backoff reduces this independently of ``dim_batch``.
-DEFAULT_PROMPT_BATCH = 4
-DEFAULT_MPS_PROMPT_BATCH = 2
+#: Basis seeds per transport pass: one pass carries this many tangents (or
+#: cotangents) through every block, so a document costs ``ceil(d_model /
+#: dim_batch)`` passes.  The work is width-invariant; the width trades memory
+#: for per-pass overhead (neuron-lens's transport runs 256).  Halves on OOM.
+DEFAULT_DIM_BATCH = 256
 #: Checkpoint cadence (prompts) for resumable fits.
 DEFAULT_CHECKPOINT_EVERY = 25
+#: A fit also checkpoints at the first document boundary this many seconds
+#: after its last checkpoint (or its start), whatever the count: at 8B on MPS
+#: a document takes about four minutes, so 25 documents would be 1.7 hours of
+#: unsaved work.  A fixed rule, not a knob.
+CHECKPOINT_SECONDS = 600.0
 
 # The fit-configuration defaults above stay with the artifact: io/cli/session
 # read them to stamp and validate sidecars without wanting the estimator, and
@@ -142,50 +139,160 @@ def resolve_word_token(tokenizer: Any, word: str) -> int:
 
 
 class JacobianLens:
-    """One lens's fitted per-layer matrices plus the readout primitives.
+    """One lens: its kind and fp32 per-layer matrices at one or both sites.
 
-    ``jacobians`` maps layer index → ``[d_model, d_model]`` fp32 matrix.
-    ``key`` names what they are (:class:`~drowse.lens.key.LensKey`): for an
-    output-side kind (J/R) each matrix transports that layer's residual into
-    the final-layer basis, which every readout surface below assumes.
+    ``key`` names the kind (:class:`~drowse.lens.key.LensKey`; its site is
+    ``out``, since the object can hold both).  ``jacobians`` are the ``out``
+    site's matrices and ``mid`` the ``mid`` site's; either may be absent, and
+    :meth:`matrices` / :meth:`layers` read a site explicitly.  Orientation
+    follows the kind:
+
+    - **Output kinds (J/R)** hold ``J_L = E[Σ ∂h_final/∂h_L]``, ``[d, d]``.
+      :meth:`transport` maps a residual ``h`` to ``h @ J_Lᵀ`` (into the final
+      basis), the front half of every vocabulary readout.
+    - **Input kinds (K/S)** hold ``K_L = E[Σ ∂h_L/∂e]``, ``[d, d_emb]``, as
+      rs-lenses' ``s-lens/{out,mid}.pt`` store them.  :meth:`pullback` maps a
+      residual covector ``c`` to ``c @ K_L`` (into the embedding basis) and
+      :meth:`footprint` an embedding-space vector ``ẽ`` to ``K_L ẽ`` (the
+      residual direction a token leaves at layer ``L``).
+
+    ``source_layers`` and the token-direction / atom-norm readers default to
+    the ``out`` site, so the R family's readout code keeps reading ``out``.
+    A read at a site the lens does not hold raises
+    :class:`LensNotFittedError`; it never falls back to the other site.
     """
 
     def __init__(
         self,
-        jacobians: Mapping[int, torch.Tensor],
+        jacobians: Mapping[int, torch.Tensor] | None = None,
         *,
         n_prompts: int,
         d_model: int,
         key: LensKey = LensKey("J"),
+        mid: Mapping[int, torch.Tensor] | None = None,
+        d_emb: int | None = None,
     ) -> None:
-        self.jacobians = {int(l): j.to(torch.float32) for l, j in jacobians.items()}
-        self.source_layers = sorted(self.jacobians)
+        if key.site != "out":
+            raise ValueError(
+                f"a lens's key names its kind (site 'out'); pass {key.label} "
+                "matrices as mid="
+            )
+        self.key = key
         self.n_prompts = int(n_prompts)
         self.d_model = int(d_model)
-        self.key = key
-        self._atom_norm_cache: dict[tuple[int, str, str, int, tuple[int, ...]], torch.Tensor] = {}
+        self.d_emb = self.d_model if d_emb is None else int(d_emb)
+        if key.family == "R" and self.d_emb != self.d_model:
+            raise ValueError(f"an output-kind ({key.kind}) lens has no separate d_emb")
+        self._sites: dict[str, dict[int, torch.Tensor]] = {}
+        for site, given in (("out", jacobians), ("mid", mid)):
+            if given is None:
+                continue
+            matrices = {int(l): m.to(torch.float32) for l, m in given.items()}
+            for layer, matrix in matrices.items():
+                if tuple(matrix.shape) != self.matrix_shape:
+                    raise ValueError(
+                        f"{key.kind}:{site} layer {layer} has shape "
+                        f"{tuple(matrix.shape)}; a {key.kind} lens holds "
+                        f"{list(self.matrix_shape)} matrices"
+                    )
+            self._sites[site] = matrices
+
+    # -- identity and layout ------------------------------------------------
+
+    @property
+    def kind(self) -> str:
+        """``J``, ``R``, ``K`` or ``S``."""
+        return self.key.kind
+
+    @property
+    def sites(self) -> tuple[str, ...]:
+        """The sites this lens holds, in ``LENS_SITES`` order."""
+        return tuple(site for site in LENS_SITES if site in self._sites)
+
+    def site_key(self, site: str) -> LensKey:
+        """The per-site key (``R:mid``) bindings and logs use."""
+        return LensKey(self.kind, site)
+
+    @property
+    def matrix_shape(self) -> tuple[int, int]:
+        """``(d, d)`` for an output kind, ``(d, d_emb)`` for an input kind."""
+        return (self.d_model, self.d_model if self.key.family == "R" else self.d_emb)
+
+    def matrices(self, site: str = "out") -> dict[int, torch.Tensor]:
+        """``{layer: matrix}`` at ``site`` (the live dict, not a copy)."""
+        LensKey(self.kind, site)
+        found = self._sites.get(site)
+        if found is None:
+            held = ", ".join(self.sites) or "none"
+            raise LensNotFittedError(
+                f"this {self.kind} lens has no {site!r} site (it holds: {held}); "
+                f"fit or fetch a {self.kind} lens that carries {site}"
+            )
+        return found
+
+    def layers(self, site: str = "out") -> list[int]:
+        """The fitted layers at ``site``, sorted."""
+        return sorted(self.matrices(site))
+
+    def matrix(self, layer: int, site: str = "out") -> torch.Tensor:
+        """One layer's matrix at ``site``."""
+        matrices = self.matrices(site)
+        if layer not in matrices:
+            fitted = sorted(matrices)
+            raise LensNotFittedError(
+                f"layer {layer} not in fitted {self.kind}:{site} lens layers "
+                f"{fitted[:3]}..{fitted[-3:]}"
+            )
+        return matrices[layer]
+
+    @property
+    def jacobians(self) -> dict[int, torch.Tensor]:
+        """The ``out`` site's matrices."""
+        return self.matrices("out")
+
+    @property
+    def source_layers(self) -> list[int]:
+        """The ``out`` site's fitted layers."""
+        return self.layers("out")
 
     def __repr__(self) -> str:
-        span = (
-            f"[{self.source_layers[0]}..{self.source_layers[-1]}]"
-            if self.source_layers
-            else "[]"
-        )
+        spans = []
+        for site in self.sites:
+            layers = self.layers(site)
+            span = f"[{layers[0]}..{layers[-1]}]" if layers else "[]"
+            spans.append(f"{site}={span} ({len(layers)} layers)")
         return (
-            f"JacobianLens({self.key.label}, d_model={self.d_model}, "
-            f"n_prompts={self.n_prompts}, "
-            f"source_layers={span} ({len(self.source_layers)} layers))"
+            f"JacobianLens({self.kind}, d_model={self.d_model}, "
+            f"n_prompts={self.n_prompts}, {', '.join(spans) or 'no sites'})"
         )
 
-    def transport(self, hidden: torch.Tensor, layer: int) -> torch.Tensor:
-        """Map a layer-``layer`` residual ``[..., d]`` into the final basis."""
-        if layer not in self.jacobians:
-            raise LensNotFittedError(
-                f"layer {layer} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
+    # -- reads ----------------------------------------------------------------
+
+    def _require_family(self, family: str, read: str) -> None:
+        if self.key.family != family:
+            other = "pullback or footprint" if family == "R" else "transport"
+            raise JacobianLensError(
+                f"{read} reads an {family}-family lens; this is a {self.kind} lens "
+                f"(read it by {other})"
             )
-        J = self.jacobians[layer].to(hidden.device)
+
+    def transport(self, hidden: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
+        """Output kinds: map a residual ``[..., d]`` into the final basis, ``h @ J_Lᵀ``."""
+        self._require_family("R", "transport")
+        J = self.matrix(layer, site).to(hidden.device)
         return hidden.to(torch.float32) @ J.T
+
+    def pullback(self, covector: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
+        """Input kinds: a residual covector ``[..., d]`` into the embedding basis, ``c @ K_L``."""
+        self._require_family("S", "pullback")
+        K = self.matrix(layer, site).to(covector.device)
+        return covector.to(torch.float32) @ K
+
+    def footprint(self, embedding: torch.Tensor, layer: int, site: str = "out") -> torch.Tensor:
+        """Input kinds: an embedding-space ``[..., d_emb]`` into the residual, ``K_L ẽ``."""
+        self._require_family("S", "footprint")
+        K = self.matrix(layer, site).to(embedding.device)
+        return embedding.to(torch.float32) @ K.T
 
     def token_direction(
         self,
@@ -194,78 +301,76 @@ class JacobianLens:
         *,
         layers: Sequence[int] | None = None,
         output_projection: torch.Tensor | None = None,
+        site: str = "out",
     ) -> dict[int, torch.Tensor]:
-        """Per-layer J-lens direction for one vocab id: ``W_U[v] @ J_l``.
+        """Output kinds: per-layer direction for one vocab id, ``W_U[v] @ J_l``.
 
         Returns fp32 CPU tensors in the ``dict[int, Tensor]`` shape every
         drowse profile consumer (``fold_directions_to_subspace``,
         ``Profile``) expects. With an output projection P (OPT), use
         ``W_U[v] @ P @ J_l`` without materializing the full vocabulary map.
         """
+        self._require_family("R", "a token direction")
         w = unembed[token_id].detach().to(torch.float32).cpu()
         if output_projection is not None:
             w = w @ output_projection.detach().to(device="cpu", dtype=torch.float32)
-        requested = self.source_layers if layers is None else [int(l) for l in layers]
-        missing = [l for l in requested if l not in self.jacobians]
+        matrices = self.matrices(site)
+        requested = sorted(matrices) if layers is None else [int(l) for l in layers]
+        missing = [l for l in requested if l not in matrices]
         if missing:
+            fitted = sorted(matrices)
             raise LensNotFittedError(
-                f"layers {missing} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
+                f"layers {missing} not in fitted {self.kind}:{site} lens layers "
+                f"{fitted[:3]}..{fitted[-3:]}"
             )
-        return {l: w @ self.jacobians[l] for l in requested}
+        return {l: w @ matrices[l] for l in requested}
 
-    def select_layers(self, layers: Sequence[int]) -> "JacobianLens":
-        """Return a view-like lens containing only ``layers``.
+    def select_layers(self, layers: Mapping[str, Iterable[int]]) -> "JacobianLens":
+        """Return a view-like lens holding exactly ``layers``, per site.
 
-        The tensors are shared with ``self``; callers that persist the result
-        will materialize their own fp32 shard through ``save_lens``.
+        ``layers`` maps each kept site to its layers (``{"out": [0, 1],
+        "mid": [0, 1, 2]}``); sites it does not name are dropped.  Sites carry
+        different layer sets by design (the R family's ``out`` stops below
+        the last layer, its ``mid`` covers it), so each site is asked only
+        for its own.  A site or layer the lens lacks raises
+        :class:`LensNotFittedError`.  The tensors are shared with ``self``;
+        callers that persist the result materialize their own fp32 shards
+        through ``save_lens``.
         """
-        requested = sorted(set(int(l) for l in layers))
-        missing = [l for l in requested if l not in self.jacobians]
-        if missing:
-            raise LensNotFittedError(
-                f"layers {missing} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
-            )
+        kept: dict[str, dict[int, torch.Tensor]] = {}
+        for site, wanted in layers.items():
+            matrices = self.matrices(site)
+            requested = sorted({int(l) for l in wanted})
+            missing = [l for l in requested if l not in matrices]
+            if missing:
+                fitted = sorted(matrices)
+                raise LensNotFittedError(
+                    f"layers {missing} not in fitted {self.kind}:{site} lens layers "
+                    f"{fitted[:3]}..{fitted[-3:]}"
+                )
+            kept[site] = {layer: matrices[layer] for layer in requested}
+        if not any(kept.values()):
+            raise ValueError("select_layers() needs at least one layer")
+        return self._with_sites(kept)
+
+    def _with_sites(self, sites: Mapping[str, Mapping[int, torch.Tensor]]) -> "JacobianLens":
         return JacobianLens(
-            {layer: self.jacobians[layer] for layer in requested},
+            sites.get("out"),
+            mid=sites.get("mid"),
             n_prompts=self.n_prompts,
             d_model=self.d_model,
+            d_emb=self.d_emb,
             key=self.key,
         )
 
-    def atom_norms(self, layer: int, unembed: torch.Tensor) -> torch.Tensor:
-        """Cached per-token norms of the layer's J-lens dictionary atoms."""
-        if layer not in self.jacobians:
-            raise LensNotFittedError(
-                f"layer {layer} not in fitted lens layers "
-                f"{self.source_layers[:3]}..{self.source_layers[-3:]}"
-            )
-        key = (
-            int(layer),
-            str(unembed.device),
-            str(unembed.dtype),
-            int(unembed.data_ptr()),
-            tuple(int(x) for x in unembed.shape),
-        )
-        cached = self._atom_norm_cache.get(key)
-        if cached is not None:
-            return cached
-        norms = token_atom_norms(
-            self.jacobians[layer].to(device=unembed.device, dtype=torch.float32),
-            unembed,
-        )
-        self._atom_norm_cache[key] = norms
-        return norms
-
     @classmethod
     def union_layers(cls, lenses: Sequence["JacobianLens"]) -> "JacobianLens":
-        """Combine same-corpus lenses that cover different source layers.
+        """Combine same-corpus lenses that cover different layers, site by site.
 
         This is not a prompt-weighted average; every input must describe the
-        same prompt set, ``d_model``, and key.  Later inputs replace
-        duplicate layers, which lets a missing-layer top-up overwrite a stale
-        partial layer cleanly.
+        same prompt set, ``d_model``, ``d_emb`` and kind.  Later inputs
+        replace duplicate layers, which lets a missing-layer top-up overwrite
+        a stale partial layer cleanly.
         """
         if not lenses:
             raise ValueError("union_layers() needs at least one lens")
@@ -274,16 +379,15 @@ class JacobianLens:
             if (
                 other.n_prompts != first.n_prompts
                 or other.d_model != first.d_model
+                or other.d_emb != first.d_emb
                 or other.key != first.key
             ):
-                raise ValueError("lenses disagree on n_prompts / d_model / key")
-        union: dict[int, torch.Tensor] = {}
+                raise ValueError("lenses disagree on n_prompts / d_model / d_emb / key")
+        union: dict[str, dict[int, torch.Tensor]] = {}
         for lens in lenses:
-            union.update(lens.jacobians)
-        return cls(
-            union, n_prompts=first.n_prompts, d_model=first.d_model,
-            key=first.key,
-        )
+            for site in lens.sites:
+                union.setdefault(site, {}).update(lens.matrices(site))
+        return first._with_sites(union)
 
 
 @contextmanager
@@ -588,6 +692,70 @@ def _token_id_tensor(
     return ids
 
 
+def _token_rows_from_probability_columns(
+    p: torch.Tensor,
+    depths: "Sequence[float]",
+    *,
+    depth_tensor: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """Device ``[3 + L, K]``: strength, depth center, spread, then ``p_l``,
+    for selected token probability columns ``p`` ``[L, K]``."""
+    _check_rows(p, depths, "token readout stats")
+    strength = p.mean(dim=0)                                    # [K]
+    d = _depth_column(
+        depths,
+        device=p.device,
+        rows=int(p.shape[0]),
+        depth_tensor=depth_tensor,
+    )                                                           # [L, 1]
+    com, spread = _depth_moments(p, d)
+    return torch.cat([torch.stack([strength, com, spread]), p], dim=0)
+
+
+def token_readout_rows(
+    rows: torch.Tensor,
+    depths: "Sequence[float]",
+    token_ids: "Sequence[int]",
+    *,
+    from_logits: bool,
+    token_ids_tensor: torch.Tensor | None = None,
+    depth_tensor: torch.Tensor | None = None,
+) -> torch.Tensor:
+    """:func:`token_readout_stats` (``from_logits``) or
+    :func:`token_readout_stats_from_probabilities` before the host transfer:
+    the device ``[3 + L, K]`` rows (strength, depth center, spread, then
+    ``p_l``), so a caller can fold them into its one transfer and unpack
+    the host copy with :func:`unpack_token_readout_rows`."""
+    _check_rows(rows, depths, "token readout stats")
+    if from_logits:
+        p = _token_probability_columns_from_logits(
+            rows, token_ids, token_ids_tensor=token_ids_tensor,
+        )
+    else:
+        p = rows.index_select(-1, _token_id_tensor(
+            token_ids, device=rows.device, token_ids_tensor=token_ids_tensor,
+        ))
+    return _token_rows_from_probability_columns(p, depths, depth_tensor=depth_tensor)
+
+
+def unpack_token_readout_rows(
+    host: torch.Tensor,
+) -> list[tuple[float, float, float, list[float]]]:
+    """``(strength, com, spread, per_layer)`` per column of a host copy of
+    :func:`token_readout_rows`."""
+    n_layers = int(host.shape[0]) - 3
+    out: list[tuple[float, float, float, list[float]]] = []
+    for j in range(int(host.shape[1])):
+        per_layer = [float(host[3 + l, j]) for l in range(n_layers)]
+        out.append(
+            (
+                float(host[0, j]), float(host[1, j]), float(host[2, j]),
+                per_layer,
+            )
+        )
+    return out
+
+
 def _token_readout_stats_from_probability_columns(
     p: torch.Tensor,
     depths: "Sequence[float]",
@@ -598,29 +766,11 @@ def _token_readout_stats_from_probability_columns(
     _check_rows(p, depths, "token readout stats")
     if p.shape[1] == 0:
         return []
-    strength = p.mean(dim=0)                                    # [K]
-    d = _depth_column(
-        depths,
-        device=p.device,
-        rows=int(p.shape[0]),
-        depth_tensor=depth_tensor,
-    )                                                           # [L, 1]
-    com, spread = _depth_moments(p, d)
     # one batched host transfer: 3 aggregate rows + the per-layer block
-    host = torch.cat(
-        [torch.stack([strength, com, spread]), p], dim=0,
+    host = _token_rows_from_probability_columns(
+        p, depths, depth_tensor=depth_tensor,
     ).cpu()                                                     # [3+L, K]
-    n_layers = int(p.shape[0])
-    out: list[tuple[float, float, float, list[float]]] = []
-    for j in range(int(p.shape[1])):
-        per_layer = [float(host[3 + l, j]) for l in range(n_layers)]
-        out.append(
-            (
-                float(host[0, j]), float(host[1, j]), float(host[2, j]),
-                per_layer,
-            )
-        )
-    return out
+    return unpack_token_readout_rows(host)
 
 
 def token_readout_stats(

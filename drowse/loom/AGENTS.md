@@ -15,10 +15,11 @@ recipes; the verbs, `restore_tree`, the joint-logprob cache),
 
 | Module | Owns |
 |---|---|
-| `tree.py` | `LoomNode`, `LoomTree` (mutators, reservation, cast roster, persistence), `TokenRow`, `TREE_FORMAT_VERSION`, `TOKEN_SIDECAR_FORMAT_VERSION` |
+| `tree.py` | `LoomNode`, `LoomTree` (mutators, reservation, cast roster, persistence), `TokenRow`, `PromptCapture`/`prompt_digest`, `TREE_FORMAT_VERSION`, `TOKEN_SIDECAR_FORMAT_VERSION` |
 | `recipe.py` | `Recipe`, `CastMember`, `compose_call`, `CALL_ONLY_SAMPLING_FIELDS`, regen modifiers, `derive_seed_schedule` |
-| `ops.py` | `append_turn`, seating/thinking checks, `resolve_token_anchor`, `plan_fork`/`plan_prefill` (→ `ForcedTurn`), `begin_generation_turn` |
-| `replay.py` | `TokenReplayer` (implements `readout/replay.py::TokenReplay`) |
+| `ops.py` | `append_turn`, seating/thinking checks, `resolve_token_anchor`/`resolve_prompt_anchor`, `plan_fork`/`plan_prefill` (→ `ForcedTurn`), `begin_generation_turn` |
+| `replay.py` | `TokenReplayer` (implements `readout/replay.py::TokenReplay`; `forward` hands the producing ids to a caller's own forward; `segments`), `ReplayForward`, `replay_segments`/`ReplaySegment`, `drive_segments`, `capture_pooled` |
+| `node_replay.py` | `NodeReplayer` (`session.token_anatomy`, `session.unit_activity`), `tap_token`/`TokenTaps`, the contribution math, the anatomy record builders, `UnitActivityJSON`, the population encoding |
 | `diff.py` | `text_diff`, `readings_diff`, `per_token_diff`, `node_diff`, `steering_delta` |
 | `filter.py` | `parse_filter`, `filter_tree`, `node_token_series`, `FilterParseError` |
 | `transcript.py` | `Transcript`, `Turn`, `ProbeRef`, replay results, `Transcript*Error` |
@@ -44,8 +45,8 @@ duck-typed `session`: it uses `tree`, `model_id`, `config.system_prompt`,
 - **Provenance is recipe presence.** A node with a `Recipe` is generated in
   either seat, since the model can generate into the user seat.
   `recipe is None` is authored. `rewind`, `anchor_recipe`,
-  `set_authored_token_scores`, transcript import and joint logprobs key on
-  this. Never infer provenance from `role`.
+  `set_authored_capture`, token replay, transcript import and joint logprobs
+  key on this. Never infer provenance from `role`.
 - **`role_label`** is the cast label the turn was sent under (`None` = family
   default). It is stamped at creation and immutable, and is unrelated to the
   transient `SteeringComposer.active_role`.
@@ -57,12 +58,30 @@ duck-typed `session`: it uses `tree`, `model_id`, `config.system_prompt`,
   stable snapshot. `raw_token_ids` is the exact decode sequence, delimiters
   and unmerged partial UTF-8 included: the forceable prefix for forks and
   replays, joined to rows by `raw_index`. Authored and imported turns have
-  `tokens=None` until authored capture adds rows (which have no `raw_index`).
+  `tokens=None` until authored capture adds rows.
+- **Prompt capture.** An authored turn's rows come once, with their replay
+  anchor `prompt_capture` (`PromptCapture`): the capturing call's steering,
+  the render's resolved system prompt, thinking flag and flat mode, each
+  channel's first render position (`start`, `thinking_start`, `None` for a
+  channel the capture did not find) and `digest`, the `prompt_digest` (SHA-256
+  of the comma-joined decimal ids) of the render before the later channel. The
+  rows carry no `raw_index`: a token's address is its place among the node's
+  captured rows, thinking rows first. `set_authored_capture` sets both
+  channels and the anchor in one mutation and refuses a node already captured,
+  so the address never shifts; `append_authored` clears all three.
 - **Readings.** `aggregate_readings` holds axis-0 finalize aggregates from all
-  three read families; `mean_logprob`/`mean_surprise` cover the response span.
+  four read families; `aggregate_measurements` the same aggregate envelope as
+  a node keeps it (`readout/measurements.py::aggregate_measurements`: each
+  reading's summary, no traces, no `scores`), which the rack and the probe
+  inspector draw after a reload, `None` for an authored or imported turn and
+  a reply that measured nothing; `mean_logprob`/`mean_surprise` cover the
+  response span.
 - **Edits.** `edit` rewrites `text` only. The recipe, rows and
   `raw_token_ids` keep the original decode, so forks, replay and joint
   logprobs read the original; `edit_count`/`edited_at` are the only signal.
+  An authored node's prompt replay takes its own tokens from its rows, so an
+  edit of its text reads the original too; an earlier turn edited since the
+  capture fails the anchor's digest and the replay refuses (400).
   `append_authored` instead clears the receipt, making the node authored.
 
 ## Mutation rules
@@ -99,11 +118,46 @@ its session lock).
 
 ## Persistence
 
-`tree_format` 2 and `token_sidecar_format` 2 are required exactly. Readers are
+`tree_format` 2 and `token_sidecar_format` 3 are required exactly. Readers are
 strict (`errors.require_fields`: every written field required, unknown keys
 rejected) and never migrate. `from_dict` also checks structure (`children_of`
 matches node ids, one agreeing parent, all reachable from a parentless
-`system` root, no cycles, all three token fields or none).
+`system` root, no cycles, all four token fields (`tokens`,
+`thinking_tokens`, `raw_token_ids`, `prompt_capture`) or none) and refuses a token
+row whose `measurements` envelope is not `MEASUREMENTS_VERSION` (2): rows
+arrive through the sidecar and inline through `PUT /tree` (the dashboard's
+restore), and a 5.x row's lens binding has another shape. It also refuses a
+row whose lens readout entry (aggregate or per-layer) lacks its vocabulary
+`id`: version 2 was never released without one, readers key the readout by
+id, and an unreleased pre-6.0 row or an outdated producer would collide.
+A row's keys are exactly `token_id`, `text`, `logprob`, `sampler_entropy`
+(the browser runtime's), `perplexity`, `raw_index`, `top_alts` and
+`measurements` (each optional). A generated row's envelope is
+`readout/measurements.py::token_row_measurements` of the token's envelope:
+`scores` and each geometry reading's `fraction` and `coords`, no other
+channel (the token view replays the rest); an authored (prompt) row is the
+same projection. A row kept whole (a call that set
+`persist_per_layer_scores`, generated or authored) is
+`summary_measurements(per_layer=True)`: each geometry reading carries its
+summary and all three traces. An authored node has rows exactly where its
+`prompt_capture` places a channel (an empty list is no rows), each with its
+`token_id` and no `raw_index`, thinking before visible; a generated node has
+no capture. So authored rows saved before the anchor (kept whole, with none)
+are refused; `tests/fixtures/token_rows.json`'s `authored` cases pin the rule
+for both readers. The reader refuses the earlier unreleased
+sidecar-3 shapes by what they carry: a row-level `probes` or
+`per_layer_scores` copy, an envelope `per_layer_scores` map, a geometry
+reading with `subspace_coords_per_layer` or with its summary but not all of
+its traces, and a row mixing generated readings with whole ones. A node's
+`aggregate_measurements` is null or an `aggregate`-scope envelope of this
+version, without `scores`, whose geometry readings carry exactly their
+summary.
+
+A node's `finish_reason` is `null` (authored, imported without one, or still
+streaming) or one of `generation.results.FINISH_REASONS`; the reader refuses
+any other string. `"cancelled"` is a reply a client Stop or a disconnect cut
+short: the engine reports it and `finalize_assistant` records it, and the
+dashboard marks the reply.
 
 `to_dict()` omits token payloads; `GET /tree` sends `include_tokens=True` and
 `PUT /tree` reads it back. `save` writes the JSON atomically after a gzip
@@ -132,11 +186,17 @@ and the browser seam. An absent `system_prompt` means inherit at use; `None`
 and `""` are captured values.
 
 `compose_call` is the single composition rule (the browser edition mirrors
-it). Tiers, weakest first: `cast`, the call's kwargs, `anchor`, `modifier`. A
-stronger tier sets `steering`/`thinking` when not `None` (`""` is explicit
-unsteered and blocks weaker tiers) and `system_prompt` when not inherited, and
-merges `sampling` field-wise via `SamplingConfig.merged_with` (a default field
-is unset, so no tier can reset a field to its default). Two exceptions:
+it; golden `tests/fixtures/browser/recipe-compose-v1.json`). Tiers, weakest
+first: `cast`, the call's kwargs, `anchor`, `modifier`. A stronger tier sets
+`steering`/`thinking` when not `None` (`""` is explicit unsteered and blocks
+weaker tiers) and `system_prompt` when not inherited, and merges `sampling`
+field-wise via `SamplingConfig.merged_with` (a default field is unset, so no
+tier can reset a field to its default). Sampling ranks the call above the
+anchor (cast < anchor < call < modifier): a field the call sets wins over the
+turn it anchors on, so a regenerate that sends no sampling reproduces the
+anchor exactly and a variation runs at the call's `max_tokens`; the
+dashboard's comparisons send no generation sampling for that reason. Two
+exceptions:
 `CALL_ONLY_SAMPLING_FIELDS` (`logprobs`, `return_hidden`, `return_top_k`, both
 `persist_*` flags, `return_probe_readings`) always come from the call, so a
 recipe never decides what a consumer captures; and the seed resolves in the
@@ -223,15 +283,122 @@ sibling.
 `TokenReplayer` backs every family's `token_readout`. It resolves the anchor,
 rebuilds the node's continue-mode render to its parent (stamped labels, recipe
 thinking and system prompt, node seat), appends `raw_ids[:raw_index]`, runs
-one capture forward, and hands `{layer: (hidden,) fp32}` pooled at the
-producing position to the family's `read`. The steering scope opens
+the capture forward (`capture_pooled` through `drive_segments`, segmented as
+below), and hands `{layer: (hidden,) fp32}` pooled at the producing position
+to the family's `read`. The steering scope opens
 **outside** the exclusive-GPU section (`base/exclusive.py::ExclusiveGuard`):
 composer push/pop take the generation lock blocking, so nesting would
 deadlock. The render (which uploads the ids to the device), `layers` and
-`read` all run inside it. `apply_steering=False` reads
-the unsteered counterfactual. Always-active affine terms reproduce exactly;
-phase/gated terms fire as the trigger context's rest state decides.
+`read` all run inside it: a device upload outside the section once raced a
+lock-free device read for MPS's one command buffer and aborted the server. `apply_steering=False` reads
+the unsteered counterfactual.
+
+An authored node routes through `resolve_prompt_anchor` instead (`raw_index`
+indexes its captured rows, thinking first): the render of the path to the
+node with the capture's system prompt, thinking flag and flat mode and no
+generation prompt, cut at the token's channel and checked against the
+anchor's digest (a mismatch refuses, 400), then the channel's tokens before
+it from the rows, as one prefill under the capture's steering. A prefill
+fires a term iff it has a prompt slot and no probe gate (`Trigger.active`),
+so the whole expression replays the capture's prompt-phase steering and
+`replay_segments` refuses no gate or phase window when there is no decode
+position. `raw` does not apply (the anchor records the render). The node replay's
+unit activity reads an authored turn's every row in one prefill: it anchors
+the row latest in the render, and `ReplayForward.spans()` places each
+channel's rows at their producing positions (a gap between the thinking and
+visible channels included). A raw first turn's row 0 sits at render
+position 0, which no position produces: it reads 0 like the sink's rows,
+and only a population asked there refuses (400). The forward fires the open terms as generation
+fired them (`TokenReplayer.segments`, the **Triggers** rule below, shared with
+the node replay), so a family's token readout, the token anatomy and the unit
+activity read one number for one token; a probe-gated term replays one decode
+position at a time, and a thinking-phase window on a family that thinks
+refuses (422) in every steered replay.
 `raw=True` picks the flat render, which the node does not record.
+
+`TokenReplayer.forward(node_id, raw_index, run=…)` is the same rebuild
+without the capture: `run` receives a `ReplayForward` (`ids`, `prompt_length`,
+the node's `raw_ids`, the anchored `raw_index`; raw token `i` is produced at
+`prompt_length + i − 1`) inside the exclusive section under the scope, and
+owns its forward. `__call__` is its capture use. An authored token's
+`ReplayForward` is all prompt (`prompt_length == len(ids)`), with the node's
+captured ids as `raw_ids`; the token anatomy reads it unchanged.
+
+## Node replay (`node_replay.py`)
+
+`NodeReplayer` (session-wired over the token replayer, the model, the lens
+instrument, the units runtime, the tokenizer, the tree getter, the chat
+traits, the steering manager's `TriggerContext` and the open stack's
+triggers) runs one forward over a node's tokens with taps where the model's
+parts meet the residual, stopping after the last block (no vocabulary head
+over every position): each block's input, its `mid` (the MLP input norm's
+input), its output before the steering hooks (a `prepend` hook) and after
+them, the down projection's input and output, and the output projection's
+input and output. Every tap is a forward hook, so it sees what the module
+used (after a unit ablation's pre-hook). Eager attention (the attention
+config's `_attn_implementation`, restored after) runs only when a pattern can
+be returned: `patterns > 0` and the R lens holds a `mid` layer to rank heads by.
+
+**Triggers.** Generation prefills the prompt in one forward and decodes one
+token per forward, and a trigger decides per forward. `replay_segments` (in
+`replay.py`, through `TokenReplayer.segments`, so the token replay splits the
+same way) splits the replay the same way: one cacheless forward when every open term is
+`Trigger.BOTH` (exact, the common case); otherwise the prefill, then the
+decode positions in runs where every trigger fires alike (`@first:N`,
+`@after:N` boundaries, judged by `Trigger.active` itself), run on one KV cache
+with `is_prefill`, `gen_step` and `sink_column` set as the decode loop sets
+them and the rest state restored after. A probe gate fires on live probe
+scores the node does not record: when the node's own steering has one,
+`TokenReplayer.forward` binds a gate-only capture (`gate_reads`, the session's
+`ReadPlane.gate_run`, the same binding joint logprobs uses) and
+`replay_segments(gate=...)` steps every decode position as its own forward,
+`drive_segments` setting `ctx.probe_scores` from the scores after the one
+before, as the decode loop does. On a family that thinks, a thinking-phase
+window (`@after`, `@thinking`) follows the decode loop's delimiter machine,
+which the node does not record, so a steered replay under one raises
+`SteeringCompositionError` (422), as does a gate in an ambient scope that is
+not the node's; `apply_steering=False` replays without the node's own terms.
+Pinned against the live unit readings of `@prompt`, `@response`, `@first:2`,
+`@after:2` and `@when:` generations.
+
+- **Token anatomy** (`token_anatomy(node_id, raw_index, k=8, units=8,
+  patterns=4)`): per layer the residual at `out` read as a residual
+  (`reads_as`, S centred), the attention write `mid − input` read at `mid`, the
+  MLP write `out_pre − mid` and the steering injection `out − out_pre` read at
+  `out` as directions (`input + attention + mlp + steering == out`, pinned),
+  `steering` `None` where nothing was injected; the top `units` neurons and
+  heads by direct contribution to the token's logit through the selected R
+  lens: `u = r·γ ⊙ W_U[v]` (the final norm linearized at the final residual,
+  its scale held; the softcap's slope folded in), `g_L = J_Lᵀ u`, neuron `act_n
+  · (s · γ_out ⊙ W_down[:, n] · r_mlp) · g_out`, head `Σ_i (γ_attn ⊙ g_mid ·
+  W_O)[h·hd+i] z_i · r_attn` (`r` a sandwich norm's per-position scale, held;
+  1 without one), `g` at `out` for neurons (the identity at the last layer,
+  the R target) and `mid` for heads, pinned against an autograd Jacobian;
+  across layers the top `units`; and the attention rows of the top `patterns`
+  heads from the token's producing position. Each layer's unit row carries its
+  raw activation and `activation_over_scale` (over the unit's reading scale,
+  the bound catalog's `act_top` or the neutral statistics', soft-floored:
+  `units/stats.py::UnitScales`; `units_scale` names which), so a unit shows the
+  number its probe, unit activity and the unit view show. No R lens:
+  `units_absent`.
+  It returns the `scope="replay"` envelope's `anatomy`, beside a lens channel
+  with the attached `jlens/`/`slens/` probes' readings of the same residual
+  (a loom row keeps only their values).
+- **Unit activity** (`unit_activity(node_id, top=32, units=(), raw_index=None,
+  layers=None)`): anchored at the node's last token, so one forward covers
+  every token's producing position; per-layer hooks reduce on the device
+  (`drowse/units/AGENTS.md`). Each peak's `label` is `None` here; the session
+  fills it from a bound catalog (the label of the pole that peaked, a head's
+  label), so the Units room can list and filter labelled units.
+
+Everything a result carries is packed into one fp32 vector and moved to the
+host once (`_Pack`); the lens reads ride the same transfer through
+`LensInstrument.plan_reads`, and so do an anatomy's context ids (exact in fp32
+below 2²⁴). Unit activity derives its sink row on the host from
+`prompt_length`. Only decoded tokens (a turn's raw record) are
+addressable, as with `token_readout`; prompt render positions appear only as
+pattern context. On SmolLM2 (MPS, warm) an anatomy takes about 0.3 s, a
+24-token activity about 0.15 s.
 
 ## Diff (`diff.py`)
 
@@ -256,7 +423,7 @@ probe  := [ns "/"] NAME ["." NAME] | "sae/" INT
 Deliberately separate from `@when:`, which gates live per-step readings; this
 filters what the loom persisted. `agg:` reads `aggregate_readings`. `any:`
 (max for `>`/`>=`, min for `<`/`<=`) and `last:` read the node's own rows,
-thinking first, from `measurements.scores` (never the flat `probes` map),
+thinking first, from `measurements.scores` (at the row's 6 significant digits),
 skipping rows without the probe. A missing probe makes the clause false. No
 OR, negation or grouping; compose with `LoomTree.filter(pred)`. Keys go
 through `readout/types.py::parse_gate_ref`: `name[0]` normalizes to `name`,
@@ -267,11 +434,13 @@ name can't be filtered. The browser ports this grammar; change both together.
 
 ## Transcripts (`transcript.py`)
 
-YAML, `drowse_transcript: 2` exactly. Header: `model_id`, `system_prompt`
+YAML, `drowse_transcript: 3` exactly. Header: `model_id`, `system_prompt`
 (the session default; per-turn prompts ride the recipes), optional `cast`,
 `probes` (`name` + `sha256`). Turns: `role` (seat), `text`, optional
-`speaker` (`role_label`), `thinking`, `recipe`, `readings`. The reader is
-strict (`TranscriptFormatError`).
+`speaker` (`role_label`), `thinking`, `recipe`, `readings`, `finish_reason`
+(generated turns only; one of `FINISH_REASONS`, so `cancelled` marks a reply
+a Stop or disconnect cut short). The reader is strict
+(`TranscriptFormatError`).
 
 `import_into` is one `graft`, so everything lands or nothing does. Turns with
 a recipe re-attach as generated nodes in their seat; system turns are
@@ -311,8 +480,8 @@ both chosen-token logprobs, `lp_a_in_b`/`lp_b_in_a`, `rank_changed` and
 - Position-independent steering (`all_fast_path()` or `static_steerable()`)
   with no penalties replays teacher-forced in `_REPLAY_CHUNK = 128` chunks;
   otherwise one forced token per forward drives the trigger context, with a
-  gate-only read-plane binding when probe gates need it (runs close in a
-  `finally`).
+  gate-only read-plane binding (`ReadPlane.gate_run`) when probe gates need it
+  (runs close in a `finally`).
 - Alignment is `shared_prefix_len` then `per_token_diff`; indices are relative
   to the divergence point and cross values exist only on aligned rows.
   `approx_kl` is KL(P_A‖P_B) over the union of each side's top
@@ -331,10 +500,11 @@ The browser edition (`stdlogits/drowse.ai`) ports the tree ops,
 `compose_call`, the filter grammar, diff and transcripts.
 `tests/fixtures/browser/loom-operation-transcript-v1.json` (checked by
 `tests/browser/test_browser_parity.py`) pins a shared script's events (`op`,
-`rev`, ids, `active_node_id`) and final tree; token rows carry the envelope
-pinned by `measurement-envelope-v1.json`. Changing an event, the recipe, node
-or tree JSON, the composition rule or the filter grammar is an interface
-change there.
+`rev`, ids, `active_node_id`) and final tree; token rows carry the generated
+row's projection and nodes their `aggregate_measurements`, both pinned by
+`measurement-envelope-v2.json` (`expectedRow`, `expectedNodeAggregate`).
+Changing an event, the recipe, node or tree JSON, the composition rule or the
+filter grammar is an interface change there.
 
 ## Testing
 

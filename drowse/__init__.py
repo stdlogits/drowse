@@ -5,7 +5,7 @@ from __future__ import annotations
 from importlib import import_module
 from typing import TYPE_CHECKING, Any
 
-__version__ = "5.4.1"
+__version__ = "6.0.0"
 
 _EXPORTS: dict[str, tuple[str, str]] = {
     "DrowseSession": ("drowse.session.session", "DrowseSession"),
@@ -70,6 +70,10 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "ManifoldTerm": ("drowse.steering.grammar", "ManifoldTerm"),
     "ProjectedTerm": ("drowse.steering.grammar", "ProjectedTerm"),
     "AblationTerm": ("drowse.steering.grammar", "AblationTerm"),
+    "UnitAblationTerm": ("drowse.steering.grammar", "UnitAblationTerm"),
+    "NeuronRef": ("drowse.naming", "NeuronRef"),
+    "HeadRef": ("drowse.naming", "HeadRef"),
+    "UnsupportedBlockError": ("drowse.errors", "UnsupportedBlockError"),
     "SelectorError": ("drowse.store.selectors", "SelectorError"),
     "AmbiguousSelectorError": ("drowse.store.selectors", "AmbiguousSelectorError"),
     "ManifoldNotRegisteredError": ("drowse.errors", "ManifoldNotRegisteredError"),
@@ -95,7 +99,6 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "LensNotFittedError": ("drowse.lens.jlens", "LensNotFittedError"),
     "MultiTokenWordError": ("drowse.lens.jlens", "MultiTokenWordError"),
     "InvalidTokenIdError": ("drowse.lens.jlens", "InvalidTokenIdError"),
-    "RelpUnsupportedError": ("drowse.errors", "RelpUnsupportedError"),
 }
 
 __all__ = [
@@ -161,6 +164,10 @@ __all__ = [
     "ManifoldTerm",
     "ProjectedTerm",
     "AblationTerm",
+    "UnitAblationTerm",
+    "NeuronRef",
+    "HeadRef",
+    "UnsupportedBlockError",
     "SelectorError",
     "AmbiguousSelectorError",
     "ManifoldNotRegisteredError",
@@ -185,7 +192,6 @@ __all__ = [
     "LensNotFittedError",
     "MultiTokenWordError",
     "InvalidTokenIdError",
-    "RelpUnsupportedError",
 ]
 
 
@@ -205,7 +211,6 @@ def __dir__() -> list[str]:
 
 if TYPE_CHECKING:
     from drowse.errors import (
-        RelpUnsupportedError as RelpUnsupportedError,
         DrowseError as DrowseError,
     )
     from drowse.events import (
@@ -278,9 +283,12 @@ if TYPE_CHECKING:
         AblationTerm as AblationTerm,
         ManifoldTerm as ManifoldTerm,
         ProjectedTerm as ProjectedTerm,
+        UnitAblationTerm as UnitAblationTerm,
         format_expr as format_expr,
         parse_expr as parse_expr,
     )
+    from drowse.naming import HeadRef as HeadRef, NeuronRef as NeuronRef
+    from drowse.errors import UnsupportedBlockError as UnsupportedBlockError
     from drowse.store.selectors import (
         AmbiguousSelectorError as AmbiguousSelectorError,
         SelectorError as SelectorError,

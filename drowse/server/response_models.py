@@ -36,6 +36,9 @@ from typing import Any, Literal
 from pydantic import ConfigDict
 from typing_extensions import NotRequired, TypedDict
 
+from drowse.generation.results import FinishReason
+from drowse.readout.measurements import Measurements
+
 #: Response-model config for shapes whose payload is produced outside this
 #: module.  Extra keys are preserved rather than silently dropped by the
 #: response validator; the generator turns it into a TS index signature.
@@ -108,8 +111,24 @@ class InstrumentFamilyBlock(TypedDict):
     capabilities: InstrumentCapabilities
 
 
+class ModelArchitectureJSON(TypedDict):
+    """The loaded model's shape, for the Model room: its decoder layers, residual
+    width, neurons and attention heads per layer (``None`` when the config does
+    not name them; the widest when it varies by layer) and parameter count."""
+
+    model_type: str
+    layers: int
+    hidden_size: int
+    neurons_per_layer: int | None
+    heads_per_layer: int | None
+    parameters: int
+
+
 class SessionInfo(TypedDict):
-    """``session_info()`` — the single session's full descriptor."""
+    """``session_info()`` — the single session's full descriptor.
+
+    ``architecture`` is optional on the wire: a runtime that does not describe
+    its model (the browser runtime, until it does) leaves it out."""
 
     id: str
     model_id: str
@@ -133,18 +152,94 @@ class SessionInfo(TypedDict):
     scene_mode: bool
     thinking_input_supported: bool
     strips_history_thinking: bool
+    architecture: NotRequired[ModelArchitectureJSON]
 
 
 class SessionListResponse(TypedDict):
     sessions: list[SessionInfo]
 
 
+class SteeringTermLayersJSON(TypedDict):
+    """Where one validated term acts (``SteeringComposer.term_layers``).
+
+    ``fitted`` are the layers the term can act on, ``share`` its weight at
+    each (aligned with ``fitted``, mean 1 over them), ``layers`` the ones its
+    ``{…}`` clause selects (``fitted`` without one).  ``key`` is the term's
+    canonical key, clause included.
+    """
+
+    key: str
+    fitted: list[int]
+    share: list[float]
+    layers: list[int]
+
+
+class SteeringPartJSON(TypedDict):
+    """One term of a validated expression, in order (``grammar.TermPart``).
+
+    ``text`` is the term alone as ``format_expr`` writes it (``expression``
+    is these joined); ``op`` is ``push``, ``ablate``, ``project`` or
+    ``position``; ``target`` the selector without coefficient, clause or
+    trigger (a projection's ``a~b``, a position's manifold); ``coeff`` the
+    coefficient (a position's along) and ``onto`` a position's collapse (0
+    otherwise); ``position`` a position's node label or coordinates;
+    ``layers`` the ``{…}`` clause (``null`` for none); ``trigger`` the ``@``
+    clause without the ``@`` (``null`` for both phases), and the same trigger
+    in fields: ``phase`` its window's preset name (``null`` for a counted
+    window), ``first_n`` / ``after_n`` the counted windows (``@first:N`` /
+    ``@after:N``), ``gate`` its probe gate (a bare ``@when:`` is phase
+    ``response`` with a gate); ``projection`` a projection's base, operator
+    and second concept (``null`` otherwise).
+    """
+
+    text: str
+    op: Literal["push", "ablate", "project", "position"]
+    target: str
+    coeff: float
+    onto: float
+    position: str | list[float] | None
+    layers: Literal["workspace"] | list[int] | None
+    trigger: str | None
+    phase: Literal["both", "before", "response", "after", "thinking"] | None
+    first_n: int | None
+    after_n: int | None
+    gate: SteeringGateJSON | None
+    projection: SteeringProjectionJSON | None
+
+
+class SteeringGateJSON(TypedDict):
+    """A term's probe gate (``@when:<probe><op><threshold>``): ``probe`` the
+    scalar key verbatim, the comparison and its threshold."""
+
+    probe: str
+    op: Literal[">", ">=", "<", "<="]
+    threshold: float
+
+
+class SteeringProjectionJSON(TypedDict):
+    """A projection term's parts: ``base~onto`` keeps the part of ``base``
+    along ``onto``, ``base|onto`` removes it."""
+
+    base: str
+    operator: Literal["~", "|"]
+    onto: str
+
+
 class SteeringValidationResponse(TypedDict):
-    """``POST .../steering/validate`` — a form result, not a failed request."""
+    """``POST .../steering/validate`` — a form result, not a failed request.
+
+    A valid, non-empty expression also carries the model's depth, where each
+    of its terms acts (the term editor's depth strip) and each term in order
+    with its fields (``parts``: the recipe row shows a recipe from elsewhere
+    as chips from them).
+    """
 
     valid: bool
     expression: str
     error: str | None
+    n_layers: NotRequired[int]
+    terms: NotRequired[list[SteeringTermLayersJSON]]
+    parts: NotRequired[list[SteeringPartJSON]]
 
 
 # -------------------------------------------------------------------- loom --
@@ -199,6 +294,21 @@ class CastMemberJSON(TypedDict):
     origin: NotRequired[str]
 
 
+class PromptCaptureJSON(TypedDict):
+    """``PromptCapture.to_dict()``: an authored node's prompt rows' replay
+    anchor (the capturing call's steering, the render's system prompt,
+    thinking flag and flat mode, where each channel starts, and the digest
+    of the render before the later channel)."""
+
+    steering: str | None
+    system_prompt: str | None
+    thinking: bool
+    raw: bool
+    start: int | None
+    thinking_start: int | None
+    digest: str
+
+
 class LoomNodeJSON(TypedDict):
     """``LoomNode.to_dict(include_tokens=True)``.
 
@@ -217,8 +327,9 @@ class LoomNodeJSON(TypedDict):
     role_label: str | None
     thinking_text: str | None
     aggregate_readings: dict[str, float]
+    aggregate_measurements: Measurements | None
     applied_steering: str | None
-    finish_reason: str | None
+    finish_reason: FinishReason | None
     starred: bool
     notes: str
     created_at: float
@@ -230,6 +341,7 @@ class LoomNodeJSON(TypedDict):
     tokens: list[dict[str, Any]] | None
     thinking_tokens: list[dict[str, Any]] | None
     raw_token_ids: list[int] | None
+    prompt_capture: PromptCaptureJSON | None
 
 
 class LoomNodeDetailJSON(LoomNodeJSON):
@@ -407,9 +519,12 @@ class GeometryProbeInfo(TypedDict):
 
 
 class LensProbeInfo(TypedDict):
-    """One pinned J-lens token probe (the readout channel)."""
+    """One pinned lens token probe (the readout channel). ``namespace`` says
+    which: ``jlens`` (toward saying the word; it reads the mean fitted-layer
+    probability) or ``slens`` (toward having read it; the mean footprint z)."""
 
     family: Literal["lens"]
+    namespace: Literal["jlens", "slens"]
     name: str
     layers: list[int]
     intrinsic_dim: int
@@ -431,7 +546,24 @@ class SaeProbeInfo(TypedDict):
     max_act: float | None
 
 
-ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo
+class UnitsProbeInfo(TypedDict):
+    """One attached unit probe: an MLP neuron or attention head, read at its
+    own layer in units of its reading scale (the bound catalog's ``act_top``,
+    else the neutral statistics', blended with a floor:
+    ``units.stats.UnitScales``; each reading's ``meta.scale`` names which)."""
+
+    family: Literal["units"]
+    name: str
+    unit: str
+    kind: Literal["neuron", "head"]
+    layer: int
+    index: int
+    layers: list[int]
+    intrinsic_dim: int
+    feature_space: str
+
+
+ProbeInfo = GeometryProbeInfo | LensProbeInfo | SaeProbeInfo | UnitsProbeInfo
 
 
 class ProbeListResponse(TypedDict):
@@ -696,7 +828,17 @@ class SaeDescriptionSourceJSON(TypedDict):
 
 
 class InstrumentSourceJSON(TypedDict):
-    """One usable artifact source (lens binding / SAE source row)."""
+    """One usable artifact source (lens binding / SAE source row).
+
+    A lens row names its kind (``lens``: J/R/K/S), the family slot it
+    selects into (``family``: ``R`` or ``S``), the sites it carries, each
+    site's layers (``layers``), its documents (``n_prompts``), each site's
+    recorded split-half difference by layer where the fit kept one
+    (``split_half``, ``{site: {layer: difference}}``; imports lack it),
+    on a family's active row whether it matches the loaded weights
+    (``compatible``) and, for a provider binding, the repository file bound
+    per site (``checkpoints``).
+    """
 
     __pydantic_config__ = _Open  # type: ignore[misc]
 
@@ -704,10 +846,17 @@ class InstrumentSourceJSON(TypedDict):
     kind: NotRequired[str]
     name: NotRequired[str]
     active: NotRequired[bool]
+    lens: NotRequired[Literal["J", "R", "K", "S"]]
+    family: NotRequired[Literal["R", "S"]]
+    sites: NotRequired[list[Literal["out", "mid"]]]
+    layers: NotRequired[dict[str, list[int]]]
+    n_prompts: NotRequired[int]
+    split_half: NotRequired[dict[str, dict[str, float]]]
+    compatible: NotRequired[bool]
     provider: NotRequired[str]
     repo_id: NotRequired[str]
     repo_revision: NotRequired[str]
-    checkpoint: NotRequired[str]
+    checkpoints: NotRequired[dict[str, str]]
     layer: NotRequired[int]
     features: NotRequired[int]
     description_source: NotRequired[SaeDescriptionSourceJSON | None]
@@ -729,9 +878,49 @@ class SaeReleaseJSON(TypedDict):
     source: Literal["local", "saelens"]
 
 
+class LensBandJSON(TypedDict):
+    """The session's S→R crossover band (``lens/depth.py``): its ends as
+    fractions of depth and ``[w_S, w_R]`` at every layer of the model."""
+
+    lo: float
+    hi: float
+    weights: list[list[float]]
+
+
+class LensProviderJSON(TypedDict):
+    """One fetchable lens provider source, prepared or not."""
+
+    source: str
+    lens: Literal["J", "R", "K", "S"]
+    family: Literal["R", "S"]
+    sites: list[Literal["out", "mid"]]
+    repo_id: str
+
+
+class TokenMaskJSON(TypedDict):
+    """Where the S read's token mask comes from: a bound neuron-lens catalog's
+    token counts (``"catalog"``), the model's corpus counts (``"corpus"``,
+    ``drowse lens counts``) or the tokenizer's rules alone (``"tokenizer"``,
+    whose ``detail`` says what to run); ``kept`` is the built mask's size,
+    ``None`` before the first S read."""
+
+    source: Literal["catalog", "corpus", "tokenizer"]
+    detail: str
+    kept: int | None
+
+
 class SourcesResponse(TypedDict):
+    """Prepared sources.  The SAE adds its provider ``releases``; the lens
+    adds its fetchable ``providers``, the crossover ``band``, the documents a
+    local fit averages over by default (``fit_documents``) and the S read's
+    ``token_mask``."""
+
     sources: list[InstrumentSourceJSON]
     releases: NotRequired[list[SaeReleaseJSON]]
+    providers: NotRequired[list[LensProviderJSON]]
+    band: NotRequired[LensBandJSON]
+    fit_documents: NotRequired[int]
+    token_mask: NotRequired[TokenMaskJSON]
 
 
 class SourceSwitchResponse(TypedDict):
@@ -761,7 +950,13 @@ class SaeRuntimeInfo(TypedDict):
 
 
 class PreparationStatusJSON(TypedDict):
-    """One shape over lens ``fetch``/``fit`` and sae ``fetch``/``train``."""
+    """One shape over lens ``fetch``/``fit``, sae ``fetch``/``train`` and the
+    units ``fetch`` (the neuron-lens catalog; ``slug`` names it).
+
+    A lens fit's ``replaceable`` is true only when it failed because it
+    would replace the artifact at its name; the same request with ``force``
+    replaces it.
+    """
 
     state: str
     operation: str | None
@@ -773,8 +968,10 @@ class PreparationStatusJSON(TypedDict):
     cancellable: bool
     live_layers: NotRequired[list[int] | None]
     source: NotRequired[str | None]
+    replaceable: NotRequired[bool | None]
     release: NotRequired[str | None]
     name: NotRequired[str | None]
+    slug: NotRequired[str | None]
     info: NotRequired[SaeRuntimeInfo | None]
 
 
@@ -802,3 +999,263 @@ class SaeFeatureMetaResponse(TypedDict):
     """``POST .../instruments/sae/features/metadata`` — the discovery backfill."""
 
     features: dict[str, SaeFeatureMetaEntry]
+
+
+# ------------------------------------------------------------------- units --
+
+class UnitTokenJSON(TypedDict):
+    """One ranked token of a unit read, in its half's ``unit``."""
+
+    token_id: int
+    token: str
+    value: float
+
+
+class UnitHalfJSON(TypedDict):
+    """One lens family's read of a unit vector at its place: the depth rule's
+    ``weight`` for the family there, the lens read through (``R:out``,
+    ``S:mid``, ``logit``, ``embedding``), and the tokens or why absent."""
+
+    family: Literal["R", "S"]
+    weight: float
+    unit: Literal["probability", "footprint_z", "layer_z", "own_token_z", "energy_z"]
+    lens: str | None
+    tokens: list[UnitTokenJSON]
+    absent: str | None
+
+
+class UnitPlaceJSON(TypedDict):
+    """A unit vector read at ``(layer, site)``: S and R halves; ``hubs`` is
+    ``hidden`` when the halves rank by the layer-contrastive z."""
+
+    layer: int
+    site: Literal["out", "mid"]
+    depth: float
+    hubs: Literal["shown", "hidden"]
+    s: UnitHalfJSON
+    r: UnitHalfJSON
+
+
+class UnitScaleJSON(TypedDict):
+    """What a unit's readings divide by: ``source`` ``"catalog"`` (the bound
+    neuron-lens catalog's ``act_top``) or ``"neutral"`` (drowse's, over the
+    neutral statements: a reading is relative to the neutral text), ``detail``
+    (which catalog, or how many statements), ``top`` the pole's (head's)
+    ``act_top`` there and ``value`` the soft scale over it."""
+
+    source: Literal["catalog", "neutral"]
+    detail: str
+    top: float
+    value: float
+
+
+class UnitFiringJSON(TypedDict):
+    """How a unit fires: ``rate`` (share of tokens past ``act_top / 4``, from
+    the catalog) or why absent; ``scale``, what its readings divide by
+    (``None`` without unit statistics); drowse's neutral statistics
+    (``act_top`` or a head's ``write_top``, the mean, the documents); the
+    catalog's activation row."""
+
+    rate: float | None
+    rate_absent: str | None
+    scale: UnitScaleJSON | None
+    neutral: dict[str, float] | None
+    neutral_absent: str | None
+    catalog: dict[str, Any] | None
+    catalog_absent: str | None
+
+
+class UnitLabelJSON(TypedDict):
+    """A catalog label (neuron-lens, by Claude Haiku 5.5): what the unit fires
+    on, attends to (heads) and writes, with confidences; its legibility
+    tests; the credit and the unit's neuron-lens.com page."""
+
+    __pydantic_config__ = _Open  # type: ignore[misc]
+
+    fires: NotRequired[str | None]
+    fires_conf: NotRequired[float | None]
+    attends: NotRequired[str | None]
+    attends_conf: NotRequired[float | None]
+    writes: NotRequired[str | None]
+    writes_conf: NotRequired[float | None]
+    note: NotRequired[str | None]
+    legible: NotRequired[dict[str, Any] | None]
+    credit: str
+    url: str
+
+
+class UnitCatalogBlockJSON(TypedDict):
+    """The catalog binding as a unit view shows it."""
+
+    bound: bool
+    slug: str | None
+    url: str | None
+    credit: str | None
+    reason: str | None
+
+
+class UnitScalarsJSON(TypedDict):
+    w_norm: float
+    cos_ab: float
+    null_share: float
+    mean_act: float | None
+
+
+class NeuronPoleJSON(TypedDict):
+    """One pole: its write read at ``out`` (writes) and its read direction at
+    ``mid`` (fires on), its logit-lens shape, firing and label."""
+
+    pole: Literal["+", "-"]
+    writes: UnitPlaceJSON
+    fires_on: UnitPlaceJSON
+    vocab_skew: float
+    vocab_kurt: float
+    firing: UnitFiringJSON
+    label: UnitLabelJSON | None
+
+
+class NeuronReadJSON(TypedDict):
+    unit: str
+    kind: Literal["neuron"]
+    layer: int
+    index: int
+    depth: float
+    scalars: UnitScalarsJSON
+    poles: list[NeuronPoleJSON]
+    catalog: UnitCatalogBlockJSON
+
+
+class HeadInputsJSON(TypedDict):
+    """What the head's projections pick up at ``L − 1``'s output."""
+
+    query: UnitPlaceJSON
+    key: UnitPlaceJSON
+    value: UnitPlaceJSON
+
+
+class HeadReadJSON(TypedDict):
+    unit: str
+    kind: Literal["head"]
+    layer: int
+    index: int
+    kv_head: int
+    depth: float
+    copies: UnitPlaceJSON
+    suppresses: UnitPlaceJSON
+    inputs: HeadInputsJSON
+    copy_score: dict[str, float | None]
+    firing: UnitFiringJSON
+    label: UnitLabelJSON | None
+    catalog: UnitCatalogBlockJSON
+
+
+class UnitTopHalfJSON(TypedDict):
+    """One family's score of a pole for the token: the layer-contrastive
+    ``z``, the raw read (R ``probability``, S ``footprint_z``), the weight."""
+
+    z: float | None
+    weight: float
+    lens: str | None
+    probability: NotRequired[float | None]
+    footprint_z: NotRequired[float | None]
+
+
+class UnitTopHitJSON(TypedDict):
+    unit: str
+    layer: int
+    index: int
+    pole: Literal["+", "-"]
+    score: float
+    r: UnitTopHalfJSON
+    s: UnitTopHalfJSON
+    label: UnitLabelJSON | None
+
+
+class UnitTopLayerJSON(TypedDict):
+    weights: dict[str, float]
+    lens: dict[str, str | None]
+    absent: dict[str, str | None]
+
+
+class UnitTopJSON(TypedDict):
+    """``GET .../instruments/units/top`` — the neuron poles that write or fire
+    on a token most specifically."""
+
+    token_id: int
+    token: str
+    by: Literal["writes", "fires"]
+    hits: list[UnitTopHitJSON]
+    layers: dict[str, UnitTopLayerJSON]
+
+
+class UnitFindNeuronJSON(TypedDict):
+    unit: str
+    index: int
+    pole: Literal["+", "-"]
+    coeff: float
+    label: UnitLabelJSON | None
+
+
+class UnitFindLayerJSON(TypedDict):
+    share: float
+    neurons: list[UnitFindNeuronJSON]
+
+
+class UnitFindJSON(TypedDict):
+    """``POST .../instruments/units/find`` — a direction split over each
+    layer's neuron writes (Mahalanobis; the sign is the pole)."""
+
+    target: str
+    k: int
+    mean_share: float
+    layers: dict[str, UnitFindLayerJSON]
+    catalog: dict[str, Any]
+
+
+class UnitCatalogSummaryJSON(TypedDict):
+    """The catalog binding without a unit: bound, or why not."""
+
+    bound: bool
+    slug: str | None
+    credit: str | None
+    reason: str | None
+
+
+class UnitLabelRowJSON(TypedDict):
+    """One catalog label: a neuron pole's (``pole`` ``+``/``-``) or a head's
+    (``pole`` ``None``); ``label`` is ``None`` where the catalog has no row."""
+
+    unit: str
+    pole: Literal["+", "-"] | None
+    label: UnitLabelJSON | None
+
+
+class UnitLabelsJSON(TypedDict):
+    """``GET .../instruments/units/labels`` — the catalog's labels for some
+    units (disk only): every pole of each neuron, each head once.  Unbound:
+    no rows, and ``catalog.reason`` says why."""
+
+    catalog: UnitCatalogSummaryJSON
+    labels: list[UnitLabelRowJSON]
+
+
+class UnitCatalogBindingJSON(TypedDict):
+    revision: str | None
+    fetched_at: str | None
+    files: int
+
+
+class UnitCatalogJSON(TypedDict):
+    """``GET .../instruments/units/catalog`` — the model's neuron-lens catalog:
+    ``available`` (catalogued), ``bound`` (fetched at the pinned commit) or
+    why not."""
+
+    model_id: str
+    available: bool
+    bound: bool
+    slug: str | None
+    repo: str
+    revision: str
+    credit: str | None
+    reason: str | None
+    binding: UnitCatalogBindingJSON | None

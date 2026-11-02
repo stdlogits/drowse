@@ -15,7 +15,7 @@
 
 <div class="grid2">
   <label class="field">
-    <span class="label">max dim</span>
+    <span class="label">Dimensions at most</span>
     <NumberInput
       value={tuning.maxDim}
       min={1}
@@ -26,14 +26,12 @@
       }}
     />
     {#if maxDimLimit !== null}
-      <span class="dim-note">
-        hosted browser limit · <strong>{maxDimLimit}</strong> dimensions
-      </span>
+      <span class="dim-note">at most <strong>{maxDimLimit}</strong> in the browser</span>
     {/if}
   </label>
   {#if tuning.fitMode === "pca" || tuning.fitMode === "auto"}
     <label class="field">
-      <span class="label">variance</span>
+      <span class="label">Variance kept</span>
       <NumberInput
         value={tuning.varThreshold}
         min={0}
@@ -46,7 +44,7 @@
     </label>
   {:else}
     <label class="field">
-      <span class="label">k-NN</span>
+      <span class="label">Neighbours (k-NN)</span>
       <NumberInput
         value={tuning.kNN}
         min={1}
@@ -60,7 +58,7 @@
 </div>
 {#if tuning.fitMode === "spectral"}
   <label class="field">
-    <span class="label">bandwidth σ</span>
+    <span class="label">Bandwidth σ</span>
     <NumberInput
       value={tuning.bandwidth}
       min={0}

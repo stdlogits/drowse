@@ -188,8 +188,12 @@ try {
     if (originalTimeZone === undefined) delete process.env.TZ;
     else process.env.TZ = originalTimeZone;
   }
-  assert.equal(displayModelName("Qwen/Qwen3-1.7B"), "Qwen3 1.7B");
-  assert.equal(displayModelName("google/gemma-3-4b-it"), "Gemma 3 4B it");
+  // Wave 3 finding 26: Saved chats wrote "SmolLM2 360M Instruct" where the header and every other
+  // view write the repository's name as it is.
+  assert.equal(displayModelName("Qwen/Qwen3-1.7B"), "Qwen3-1.7B");
+  assert.equal(displayModelName("google/gemma-3-4b-it"), "gemma-3-4b-it");
+  assert.equal(displayModelName("HuggingFaceTB/SmolLM2-360M-Instruct"), "SmolLM2-360M-Instruct");
+  assert.equal(displayModelName("local-model"), "local-model");
 
   let nextAutoId = 0;
   let autoTime = Date.parse("2026-09-07T07:05:00Z");
@@ -254,7 +258,7 @@ try {
   originalSnapshot.tree.nodes.push({
     id: "answer-1", parent_id: "user-1", role: "assistant", text: "One path.",
     recipe: { steering: "0.2 jlens/bright", seed: 12 },
-    tokens: [{ text: "One", id: 17, logprob: -0.2, raw_index: 0 }],
+    tokens: [{ text: "One", token_id: 17, logprob: -0.2, raw_index: 0 }],
     raw_token_ids: [17], starred: true, notes: "Keep this path",
   }, {
     id: "answer-2", parent_id: "user-1", role: "assistant", text: "Another path.", recipe: null,
@@ -303,6 +307,17 @@ try {
   assert.deepEqual([...copyStore.rows], beforeFailure, "failed copies never alter stored chats");
   await assert.rejects(copies.duplicate("missing-chat"), /no longer exists/);
 
+  // Regression: the per-conversation autosave limit read as a full disk ("not enough free space …
+  // choose a smaller model"), and a refused steering term read as a generic stopped reply.
+  const { userFacingError } = await server.ssrLoadModule("/src/lib/runtime/userFacingError.ts");
+  const limit = userFacingError(new ConversationLibraryError("STORAGE_LIMIT", "This conversation is larger than the 64 MiB save limit"));
+  assert.match(limit, /64 MiB autosave limit/);
+  assert.doesNotMatch(limit, /free space|smaller model/);
+  assert.match(userFacingError({ code: "QUOTA_EXCEEDED" }), /not enough free space/, "a full disk still says so");
+  const refused = { type: "error", code: "SteeringExprError", status: 400, message: "a head has no single write direction; silence it with !head/L20h3" };
+  assert.equal(userFacingError(refused, "Generation stopped."), refused.message, "a request error reads as the server wrote it");
+  assert.equal(userFacingError({ code: "InternalError", status: 500, message: "boom" }, "Generation stopped."), "Generation stopped.");
+
   process.stdout.write("conversation library tests passed\n");
 } finally {
   await server.close();
@@ -310,7 +325,7 @@ try {
 
 function snapshot(modelId, prompt, rev = 1) {
   return {
-    version: 7,
+    version: 8,
     savedAt: "2026-09-03T12:00:00.000Z",
     model_id: modelId,
     session_id: "default",
@@ -332,7 +347,7 @@ function snapshot(modelId, prompt, rev = 1) {
     },
     steerRack: [],
     subspaceAlong: 0.5,
-    customSteeringExpression: null,
+    readOnlyRecipe: null,
     probeRack: { sortMode: "name", active: [], entries: [] },
     highlightState: {
       target: null,

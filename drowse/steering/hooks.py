@@ -2,17 +2,22 @@
 
 A :class:`SteeringPlan` is the composed, device-agnostic steering state for one
 steering-stack head: one merged affine subspace per trigger group
-(:class:`AffineTerm`) plus each curved ``%`` manifold (:class:`CurvedTerm`).
-:meth:`SteeringPlan.lower` turns it into per-layer injection groups for one
-device/dtype, and :meth:`SteeringManager.install` is the only way steering
-reaches the model: it either writes the persistent compiled offset buffers
-(static pure-push plans) or attaches one transient :class:`SteeringHook` per
-steered layer.  :meth:`SteeringManager.clear_all` is its inverse, so the
-installed state is always a function of the plan.
+(:class:`AffineTerm`), each curved ``%`` manifold (:class:`CurvedTerm`), and
+each unit mean-ablation (:class:`UnitTerm`).  :meth:`SteeringPlan.lower` turns
+the residual terms into per-layer injection groups for one device/dtype and
+:meth:`SteeringPlan.lower_units` the unit terms into per-module
+:class:`UnitOp` groups; :meth:`SteeringManager.install` is the only way
+steering reaches the model: it either writes the persistent compiled offset
+buffers (static pure-push plans) or attaches one transient
+:class:`SteeringHook` per steered layer and one :class:`UnitHook` (a forward
+pre-hook on a down or output projection) per module carrying unit ablations.
+:meth:`SteeringManager.clear_all` is its inverse, so the installed state is
+always a function of the plan.
 
 Every affine injection — transient single-group, multi-group, or the compiled
 offsets — runs through one :class:`AffineOp`; curved terms run the curved
-branch of :func:`~drowse.geometry.inject.subspace_inject`.
+branch of :func:`~drowse.geometry.inject.subspace_inject`; unit ablations
+rewrite a projection's input, never the residual.
 """
 
 from __future__ import annotations
@@ -122,11 +127,15 @@ def _normalize_shares_mean1(raw: dict[int, float]) -> dict[int, float]:
     return {L: s / total * n_layers for L, s in raw.items()}
 
 
-def _manifold_layer_shares(manifold: Manifold) -> dict[int, float]:
+def _manifold_layer_shares(
+    manifold: Manifold, layers: "tuple[int, ...] | None" = None,
+) -> dict[int, float]:
     """A curved manifold's mean-1 per-layer share from its baked Mahalanobis share.
 
-    Full layer coverage is required: the share is cross-layer normalized, so
-    a partial map would compare incommensurable layers.
+    Full layer coverage of the bake is required: the share is cross-layer
+    normalized, so a partial map would compare incommensurable layers.  The
+    mean-1 normalization runs over ``layers`` (a layer-scoped term) or every
+    fitted layer.
     """
     baked = manifold.mahalanobis_share
     missing = set(manifold.layers) - set(baked)
@@ -136,8 +145,9 @@ def _manifold_layer_shares(manifold: Manifold) -> dict[int, float]:
             f"manifold {manifold.name!r} has non-canonical Mahalanobis shares "
             f"(missing={sorted(missing)}, extra={sorted(extra)})"
         )
+    selected = manifold.layers if layers is None else layers
     return _normalize_shares_mean1(
-        {layer_idx: float(baked[layer_idx]) for layer_idx in manifold.layers}
+        {layer_idx: float(baked[layer_idx]) for layer_idx in selected}
     )
 
 
@@ -367,7 +377,8 @@ class CurvedTerm:
     """One curved ``%`` manifold term, as registered on a plan.
 
     ``position`` is the resolved authoring coordinate tuple (labels resolved
-    at registration); ``shares`` the manifold's mean-1 per-layer share.
+    at registration); ``shares`` the manifold's mean-1 per-layer share over
+    the layers the term acts on, which are its keys.
     """
 
     name: str
@@ -403,29 +414,235 @@ class CurvedGroup:
 Group = AffineGroup | CurvedGroup
 
 
+# --- unit ablation -----------------------------------------------------------
+
+@dataclass(frozen=True, eq=False)
+class UnitTerm:
+    """One unit mean-ablation: coordinates ``[start, stop)`` of ``module``'s
+    input (``width`` wide) become ``(1 − coeff)·x + coeff·mean``.
+
+    A neuron is one coordinate of a down projection's input, a head its
+    ``head_dim`` slice of an output projection's input; ``coeff`` 1 is exact
+    mean-ablation, any other value blends (``> 1`` overshoots past the mean,
+    ``< 0`` amplifies the deviation from it).
+    """
+
+    name: str
+    module: torch.nn.Module
+    start: int
+    stop: int
+    width: int
+    mean: torch.Tensor
+    coeff: float
+    trigger: Trigger
+
+
+class UnitOp:
+    """``x ← x ⊙ keep + bias`` over a module input's last dimension, in place.
+
+    ``keep`` is 1 and ``bias`` 0 off the ablated coordinates; on them ``keep =
+    1 − c`` and ``bias = c·mean``.  Two elementwise ops on the input the
+    projection was about to read: no gather, no allocation, no host sync.
+    Constants are built in fp32 and cast once to the activation's
+    dtype/device (re-cast once if the activation arrives otherwise).
+    """
+
+    def __init__(
+        self, keep: torch.Tensor, bias: torch.Tensor, *,
+        device: torch.device, dtype: torch.dtype,
+    ) -> None:
+        self._keep32 = keep.to(torch.float32)
+        self._bias32 = bias.to(torch.float32)
+        self.keep = self._keep32.to(device=device, dtype=dtype)
+        self.bias = self._bias32.to(device=device, dtype=dtype)
+
+    def _recast(self, x: torch.Tensor) -> None:
+        self.keep = self._keep32.to(device=x.device, dtype=x.dtype)
+        self.bias = self._bias32.to(device=x.device, dtype=x.dtype)
+
+    def apply(self, x: torch.Tensor) -> None:
+        if x.dtype != self.keep.dtype or x.device != self.keep.device:
+            self._recast(x)
+        x.mul_(self.keep).add_(self.bias)
+
+
+@dataclass(frozen=True)
+class UnitGroup:
+    """One module's unit ablations under one trigger, as one :class:`UnitOp`."""
+
+    trigger: Trigger
+    op: UnitOp
+
+
+class UnitHook:
+    """One module carrying unit ablations: a forward pre-hook running its groups.
+
+    One always-active group makes the hook static (a single
+    :meth:`UnitOp.apply`, no trigger evaluation); otherwise the groups run in
+    order, skipping inactive triggers.  The input is rewritten in place
+    before the projection reads it, so every position the forward carries
+    (the whole prompt in a prefill) is ablated, except the attention sink:
+    the unit means count positions from 1, so the column
+    :attr:`TriggerContext.sink_column` names keeps its own activation (held
+    aside and written back; only a forward that carries position 0 pays the
+    one-column copy).
+    """
+
+    def __init__(self, module: torch.nn.Module) -> None:
+        self.module = module
+        self.groups: tuple[UnitGroup, ...] = ()
+        self._static: UnitOp | None = None
+        self._ctx: TriggerContext | None = None
+        self._handle: Any = None
+
+    @property
+    def is_static(self) -> bool:
+        return self._static is not None
+
+    def recompose(self, groups: "tuple[UnitGroup, ...]", ctx: TriggerContext) -> None:
+        self.groups = tuple(groups)
+        self._ctx = ctx
+        only = self.groups[0] if len(self.groups) == 1 else None
+        self._static = (
+            only.op if only is not None and only.trigger is Trigger.BOTH else None
+        )
+
+    def hook_fn(self, module: Any, args: Any) -> None:
+        x = args[0]
+        ctx = self._ctx
+        if ctx is None:
+            return None
+        sink = ctx.sink_column
+        held = (
+            x.narrow(-2, sink, 1).clone()
+            if sink is not None and x.shape[-2] > sink else None
+        )
+        static = self._static
+        if static is not None:
+            static.apply(x)
+        else:
+            for group in self.groups:
+                if _trigger_active(group.trigger, ctx):
+                    group.op.apply(x)
+        if held is not None:
+            x.narrow(-2, sink, 1).copy_(held)
+        return None
+
+    def attach(self) -> None:
+        self._handle = self.module.register_forward_pre_hook(self.hook_fn)
+
+    def detach(self) -> None:
+        if self._handle is not None:
+            self._handle.remove()
+            self._handle = None
+
+
+def _lower_unit_terms(
+    terms: "list[UnitTerm]", *, device: torch.device, dtype: torch.dtype,
+) -> "dict[int, tuple[torch.nn.Module, tuple[UnitGroup, ...]]]":
+    """Group unit terms by module and trigger into one :class:`UnitOp` each.
+
+    Keyed by ``id(module)``.  Terms of one group compose in registration
+    order on their spans (``keep ← keep·(1−c)``, ``bias ← bias·(1−c) + c·mean``),
+    which is the sequential application of each term.
+    """
+    by_module: dict[int, tuple[torch.nn.Module, dict[Trigger, list[UnitTerm]]]] = {}
+    for term in terms:
+        _module, by_trigger = by_module.setdefault(id(term.module), (term.module, {}))
+        by_trigger.setdefault(term.trigger, []).append(term)
+    out: dict[int, tuple[torch.nn.Module, tuple[UnitGroup, ...]]] = {}
+    for key, (module, by_trigger) in by_module.items():
+        groups: list[UnitGroup] = []
+        for trigger, members in by_trigger.items():
+            width = members[0].width
+            keep = torch.ones(width, dtype=torch.float32)
+            bias = torch.zeros(width, dtype=torch.float32)
+            for term in members:
+                if term.width != width:
+                    raise ValueError("unit terms on one module disagree on its width")
+                c = float(term.coeff)
+                span = slice(term.start, term.stop)
+                mean = term.mean.to(torch.float32).reshape(-1)
+                keep[span] = keep[span] * (1.0 - c)
+                bias[span] = bias[span] * (1.0 - c) + c * mean
+            groups.append(UnitGroup(
+                trigger=trigger,
+                op=UnitOp(keep, bias, device=device, dtype=dtype),
+            ))
+        out[key] = (module, tuple(groups))
+    return out
+
+
 class SteeringPlan:
     """Composed steering terms for one stack head, lowered on demand.
 
-    Built by the composer (or directly in tests) through :meth:`add_subspace`
-    and :meth:`add_manifold`, which validate as they register; lowering
-    (:meth:`lower`) and the compiled offsets (:meth:`static_offsets`) are
-    memoized, so a cached plan re-installs without recomposing.
+    Built by the composer (or directly in tests) through :meth:`add_subspace`,
+    :meth:`add_manifold` and :meth:`add_unit_ablation`, which validate as they
+    register; lowering (:meth:`lower`, :meth:`lower_units`) and the compiled
+    offsets (:meth:`static_offsets`) are memoized, so a cached plan
+    re-installs without recomposing.
     """
 
     def __init__(self) -> None:
         self.affine: list[AffineTerm] = []
         self.curved: list[CurvedTerm] = []
+        self.units: list[UnitTerm] = []
         self._lowered: dict[
             tuple[torch.device, torch.dtype], dict[int, tuple[Group, ...]]
+        ] = {}
+        self._lowered_units: dict[
+            tuple[torch.device, torch.dtype],
+            dict[int, tuple[torch.nn.Module, tuple[UnitGroup, ...]]],
         ] = {}
         self._offsets: "dict[int, torch.Tensor] | None | bool" = False
 
     def __bool__(self) -> bool:
-        return bool(self.affine or self.curved)
+        return bool(self.affine or self.curved or self.units)
 
     def _invalidate(self) -> None:
         self._lowered = {}
+        self._lowered_units = {}
         self._offsets = False
+
+    def add_unit_ablation(
+        self,
+        name: str,
+        *,
+        module: torch.nn.Module,
+        start: int,
+        stop: int,
+        width: int,
+        mean: torch.Tensor,
+        coeff: float,
+        trigger: Trigger = Trigger.BOTH,
+    ) -> None:
+        """Register a unit mean-ablation (see :class:`UnitTerm`)."""
+        if not 0 <= start < stop <= width:
+            raise ValueError(f"unit span [{start}, {stop}) is outside width {width}")
+        if int(mean.numel()) != stop - start:
+            raise ValueError("unit mean does not cover its span")
+        if not math.isfinite(float(coeff)):
+            raise SteeringCompositionError(
+                f"unit ablation {name!r} needs a finite coefficient, got {coeff!r}"
+            )
+        self.units.append(UnitTerm(
+            name=name, module=module, start=int(start), stop=int(stop),
+            width=int(width), mean=mean.detach().to("cpu", torch.float32).reshape(-1),
+            coeff=float(coeff), trigger=_canonical_trigger(trigger),
+        ))
+        self._invalidate()
+
+    def lower_units(
+        self, device: torch.device, dtype: torch.dtype,
+    ) -> "dict[int, tuple[torch.nn.Module, tuple[UnitGroup, ...]]]":
+        """Per-module unit-ablation groups for ``device``/``dtype`` (memoized),
+        keyed by ``id(module)``."""
+        memo_key = (device, dtype)
+        memo = self._lowered_units.get(memo_key)
+        if memo is None:
+            memo = _lower_unit_terms(self.units, device=device, dtype=dtype)
+            self._lowered_units[memo_key] = memo
+        return memo
 
     def add_subspace(
         self,
@@ -446,6 +663,7 @@ class SteeringPlan:
         along: float,
         onto: float,
         trigger: Trigger = Trigger.BOTH,
+        layers: "tuple[int, ...] | None" = None,
     ) -> None:
         """Register a curved-manifold term.
 
@@ -457,7 +675,8 @@ class SteeringPlan:
         clamping to a no-op (the same expression on an affine fit would push
         away — ``fit_mode=auto`` can resolve either way per model).  The loom
         ``inverted`` regen negates ``along``, so inverting a curved term lands
-        here too: a curved position has no opposite.
+        here too: a curved position has no opposite.  ``layers`` restricts
+        the term to a nonempty subset of the fitted layers (``None``: all).
         """
         if along < 0.0 or onto < 0.0:
             raise SteeringCompositionError(
@@ -465,6 +684,13 @@ class SteeringPlan:
                 f"are fractions in [0, 1]; got along={along:g}, onto={onto:g}. "
                 f"A curved position has no opposite, so the term cannot be "
                 f"negated or inverted; steer toward a different position."
+            )
+        if layers is not None and (
+            not layers or not set(layers) <= set(manifold.layers)
+        ):
+            raise SteeringCompositionError(
+                f"manifold {name!r} cannot act on layers {sorted(layers)}; "
+                f"it is fitted at {sorted(manifold.layers)}"
             )
         manifold.validate_runtime_geometry()
         resolved = manifold.resolve_position(position)
@@ -482,7 +708,7 @@ class SteeringPlan:
             along=float(along),
             onto=float(onto),
             trigger=_canonical_trigger(trigger),
-            shares=_manifold_layer_shares(manifold),
+            shares=_manifold_layer_shares(manifold, layers),
         ))
         self._invalidate()
 
@@ -515,7 +741,8 @@ class SteeringPlan:
             target_coord = domain.clamp_position(
                 torch.tensor(term.position, dtype=torch.float32)
             ).to(device)
-            for layer_idx, sub in manifold.layers.items():
+            for layer_idx, share in term.shares.items():
+                sub = manifold.layers[layer_idx]
                 B_new = sub.basis.to(torch.float32)
                 prev = curved_basis_by_layer.get(layer_idx)
                 if prev is not None:
@@ -537,7 +764,6 @@ class SteeringPlan:
                         f"curved manifold {manifold.name!r} has no neutral "
                         f"origin for layer {layer_idx}"
                     )
-                share = term.shares[layer_idx]
                 eff_along = (
                     min(1.0, along * _MANIFOLD_ALONG_GAIN) if periodic
                     else along * share * _MANIFOLD_ALONG_GAIN
@@ -576,14 +802,15 @@ class SteeringPlan:
         ``{}`` for an empty plan; a ``{layer: (D,)}`` fp32 map when every term
         is an always-active pure push; ``None`` for anything that needs the
         per-token kernel (curved ``%``, a gate / phase trigger, an ``!``
-        ablation).  The offsets come from the same :class:`LoweredAffine` the
-        transient :class:`AffineOp` consumes, so compiled and eager pushes are
-        one computation.
+        ablation) or a unit hook (``!neuron/…`` / ``!head/…``: a module
+        pre-hook the compiled graph was not traced with).  The offsets come
+        from the same :class:`LoweredAffine` the transient :class:`AffineOp`
+        consumes, so compiled and eager pushes are one computation.
         """
         if self._offsets is not False:
             return self._offsets  # pyright: ignore[reportReturnType]  # memo sentinel is False only
         offsets: "dict[int, torch.Tensor] | None" = {}
-        if self.curved:
+        if self.curved or self.units:
             offsets = None
         else:
             for affine in self.affine:
@@ -713,6 +940,8 @@ class SteeringManager:
 
     def __init__(self) -> None:
         self.hooks: dict[int, SteeringHook] = {}
+        #: Unit-ablation pre-hooks, keyed by ``id`` of the module they sit on.
+        self.unit_hooks: dict[int, UnitHook] = {}
         self.plan: SteeringPlan | None = None
         self.ctx: TriggerContext = TriggerContext()
         # True iff the installed plan rides the persistent offset buffers
@@ -734,12 +963,14 @@ class SteeringManager:
         writes them in place (valid on both the compiled graph and the eager
         fallback, which carry the same persistent hooks) and attaches no
         transient hook.  Anything else zeroes the buffers and attaches one
-        transient :class:`SteeringHook` per steered layer.  Everything that
+        transient :class:`SteeringHook` per steered layer and one
+        :class:`UnitHook` per module carrying unit ablations.  Everything that
         can fail (lowering, overlap checks) runs before any state changes, so
         a raising install leaves the previous plan in place.
         """
         offsets = plan.static_offsets() if self._compiled_offsets else None
         lowered = plan.lower(device, dtype) if offsets is None else {}
+        lowered_units = plan.lower_units(device, dtype) if offsets is None else {}
         if offsets is not None:
             self._detach_hooks()
             self._write_offsets(offsets)
@@ -757,6 +988,16 @@ class SteeringManager:
                     hook.attach(model_layers[idx])
                     self.hooks[idx] = hook
                 hook.recompose(groups, self.ctx)
+            for key in list(self.unit_hooks):
+                if key not in lowered_units:
+                    self.unit_hooks.pop(key).detach()
+            for key, (module, unit_groups) in lowered_units.items():
+                unit_hook = self.unit_hooks.get(key)
+                if unit_hook is None:
+                    unit_hook = UnitHook(module)
+                    unit_hook.attach()
+                    self.unit_hooks[key] = unit_hook
+                unit_hook.recompose(unit_groups, self.ctx)
         self.plan = plan
 
     def clear_all(self) -> None:
@@ -771,18 +1012,23 @@ class SteeringManager:
 
         Holds both unsteered and when the plan rides the compiled offsets, so
         it answers "is graph capture eligible", not "is this unsteered" (read
-        :attr:`uses_compiled_offsets` alongside it for that).
+        :attr:`uses_compiled_offsets` alongside it for that).  A unit hook is
+        transient: the compiled graph was traced without it.
         """
-        return not self.hooks
+        return not self.hooks and not self.unit_hooks
 
     def static_steerable(self) -> bool:
-        """True iff steering is attached and every hook is a static affine op.
+        """True iff steering is attached and every hook is static (one
+        always-active affine op per layer, one always-active unit op per
+        module).
 
-        Each steered layer then runs one fixed tensor-op sequence with no
-        trigger read or foot state, so StaticCache / graph capture stay valid.
-        False when unsteered (:meth:`all_fast_path`'s case).
+        Each hook then runs one fixed tensor-op sequence with no trigger read
+        or foot state, so StaticCache stays valid.  False when unsteered
+        (:meth:`all_fast_path`'s case).
         """
-        return bool(self.hooks) and all(h.is_static for h in self.hooks.values())
+        return bool(self.hooks or self.unit_hooks) and all(
+            h.is_static for h in self.hooks.values()
+        ) and all(h.is_static for h in self.unit_hooks.values())
 
     def reset_manifold_feet(self) -> None:
         """Cold-start every hook's per-token foot (called at generation start)."""
@@ -793,6 +1039,9 @@ class SteeringManager:
         for hook in self.hooks.values():
             hook.detach()
         self.hooks.clear()
+        for unit_hook in self.unit_hooks.values():
+            unit_hook.detach()
+        self.unit_hooks.clear()
 
     # -- persistent compile-clean offset buffers -------------------------------
 

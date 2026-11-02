@@ -5,13 +5,11 @@
   // through ``onclosed``; while a dialog is open the rest of the workspace
   // is inert.
   import { tick } from "svelte";
-  import { fade, fly } from "svelte/transition";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { IconButton, MorphText } from "@stdlogits/ledger";
   import NumberInput from "../../lib/NumberInput.svelte";
   import Select from "../../lib/Select.svelte";
   import { containTab } from "../../lib/focusTrap";
-  import { modalIn, modalOut, scrimIn, scrimOut } from "../../lib/motion";
+  import { fadeIn, fadeOut, rise } from "@stdlogits/ledger";
   import { apiTree } from "../../lib/runtime/services";
   import { userFacingError } from "../../lib/runtime/userFacingError";
   import { flushConversationAutosave, savedConversationState } from "../../lib/stores/savedConversations.svelte";
@@ -34,7 +32,9 @@
     pushToast,
     refreshLoomTree,
   } from "../../lib/stores.svelte";
-  import { parseStrengthList, resolveNodeIdPrefix } from "./loomCommands";
+  import { fanoutConcepts as flatConcepts, fanoutRecipe, parseStrengthList, resolveNodeIdPrefix } from "./loomCommands";
+  import { steerRack } from "../../lib/stores/steering.svelte";
+  import { goto } from "../../lib/stores/rooms.svelte";
 
   let {
     background = null,
@@ -67,8 +67,10 @@
     nodeId: string | null;
     text: string;
     n: number;
-    /** Steering selector for the fan-out modal. */
-    vector?: string;
+    /** The fan-out's concept (a fitted flat fit, ``ns/name``) and the node it steers toward: picked,
+     *  never typed (people write recipes with the chips, not as text). */
+    concept?: string;
+    toward?: string;
     /** Mode for the regen-with-modifier modal. */
     mode?: string;
     /** Inline validation error.  Non-empty means commit failed; the
@@ -80,10 +82,32 @@
     nodeId: null,
     text: "",
     n: 1,
-    vector: "",
+    concept: "",
+    toward: "",
     mode: "unsteered",
     error: "",
   });
+
+  /** The concepts a fan-out sweeps (loomCommands.ts::fanoutConcepts). */
+  const fanoutConcepts = $derived(flatConcepts(steerRack.catalog));
+
+  function fanoutNodes(concept: string): string[] {
+    return fanoutConcepts.find((row) => `${row.namespace}/${row.name}` === concept)?.node_labels ?? [];
+  }
+
+  /** The fan-out's opening pick: the rack's first flat concept chip (toward its node), else the
+   *  first fitted concept toward its first node. */
+  function fanoutDefault(): { concept: string; toward: string } {
+    const names = new Set(fanoutConcepts.map((row) => `${row.namespace}/${row.name}`));
+    for (const [name, entry] of steerRack.entries) {
+      if (entry.mode === "subspace" && !entry.ablate && names.has(name)) {
+        const nodes = fanoutNodes(name);
+        return { concept: name, toward: entry.label !== null && nodes.includes(entry.label) ? entry.label : nodes[0] ?? "" };
+      }
+    }
+    const first = fanoutConcepts[0];
+    return first ? { concept: `${first.namespace}/${first.name}`, toward: first.node_labels[0] ?? "" } : { concept: "", toward: "" };
+  }
   /** Focusable ref shared by every modal input variant — the regenerate
    *  / regen_mode number-of-siblings field swaps in a themed
    *  ``NumberInput`` which exposes a structurally-matching
@@ -159,7 +183,7 @@
       nodeId,
       text: initialText,
       n: initialN,
-      vector: "",
+      ...(kind === "fanout" ? fanoutDefault() : { concept: "", toward: "" }),
       mode: "unsteered",
       error: "",
     };
@@ -180,7 +204,8 @@
       nodeId: null,
       text: "",
       n: 1,
-      vector: "",
+      concept: "",
+      toward: "",
       mode: "unsteered",
       error: "",
     };
@@ -291,15 +316,12 @@
         return;
       }
       case "fanout": {
-        // Fan-out: anchor on the user node, send one regen per alpha as a
-        // sibling.  We use a sequential dispatch
-        // rather than the engine's ``generate_sweep`` because the
-        // active rack already carries the rest of the steering
-        // context — we only need to overlay the swept vector's α
-        // per call.
-        const vector = (m.vector ?? "").trim();
-        if (!vector) {
-          setModalError("vector name required");
+        // Fan-out: anchor on the user node, send one regen per strength as a sibling, each steered
+        // by the picked concept alone at that strength (a partial recipe's ``steering`` replaces
+        // the steering), written as the chips write it.
+        const info = fanoutConcepts.find((row) => `${row.namespace}/${row.name}` === m.concept);
+        if (!info || fanoutRecipe(info, m.toward ?? "", 0) === null) {
+          setModalError("Pick a concept and the node to steer toward.");
           return;
         }
         const alphas = parseStrengthList(m.text);
@@ -312,12 +334,9 @@
         }
         const userId = m.nodeId;
         for (const alpha of alphas) {
-          // Recipe override carries the per-row alpha for the swept
-          // vector.  The engine's modifier resolver accepts a partial
-          // recipe expression on the ``steering`` axis.
           await loomContinueFromCommitted(userId, {
             n: 1,
-            recipe_override: `steering=${alpha} ${vector}`,
+            recipe_override: fanoutRecipe(info, m.toward ?? "", alpha),
           });
         }
         break;
@@ -375,8 +394,8 @@
     class="loom-modal-backdrop"
     aria-hidden="true"
     onclick={closeModal}
-    in:fade={scrimIn()}
-    out:fade={scrimOut()}
+    in:fadeIn
+    out:fadeOut
   ></div>
   <div
     class="loom-modal"
@@ -386,8 +405,8 @@
     tabindex="-1"
     bind:this={modalEl}
     onkeydown={onModalKey}
-    in:fly={modalIn(8)}
-    out:fly={modalOut(4)}
+    in:rise
+    out:fadeOut
   >
     <header class="modal-header">
       <h2 id="loom-modal-title">
@@ -403,12 +422,12 @@
         {:else if modal.kind === "regen_mode"}Generate several replies
         {/if}
       </h2>
-      <button type="button" class="icon-btn" onclick={closeModal} aria-label="Close"><FluentIcon name="dismiss" /></button>
+      <IconButton icon="close" label="Close" onclick={closeModal} />
     </header>
     <div class="modal-body">
       {#if modal.kind === "regenerate"}
         <label>
-          <span>Number of replies</span>
+          <span class="meta">Replies</span>
           <NumberInput
             bind:this={modalInput}
             value={modal.n}
@@ -419,14 +438,11 @@
             onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
           />
         </label>
-        <p class="hint">Uses the current model settings.</p>
       {:else if modal.kind === "delete"}
-        <p>Remove this turn and every continuation below it?</p>
         <blockquote>{loomTree.nodes.get(modal.nodeId ?? "")?.text.slice(0, 240) || "Empty turn"}</blockquote>
-        <p class="hint danger">Earlier turns and sibling branches stay. This also updates the saved chat and cannot be undone. Download a copy first if you want a backup.</p>
+        <p>This turn and everything after it go, here and in the saved chat. Earlier turns and sibling branches stay. It cannot be undone.</p>
       {:else if modal.kind === "clear"}
-        <p>Save this conversation and start with an empty loom?</p>
-        <p class="hint">The full conversation, including all branches, stays in Saved chats. Model files and response settings are kept.</p>
+        <p>The whole conversation, every branch with it, stays in Saved chats; the loom starts empty.</p>
       {:else if modal.kind === "navpicker" || modal.kind === "search"}
         <input
           bind:this={modalInput as HTMLInputElement}
@@ -437,29 +453,42 @@
           onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
         />
       {:else if modal.kind === "fanout"}
+        {#if fanoutConcepts.length === 0}
+          <p class="meta">No concept for this model</p>
+          <div class="dw-row"><button type="button" class="dw-quiet" onclick={() => { closeModal(); goto("artifacts", "build"); }}>Build a probe</button></div>
+        {:else}
+          <label>
+            <span class="meta">Concept</span>
+            <Select
+              value={modal.concept ?? ""}
+              options={fanoutConcepts.map((row) => ({ value: `${row.namespace}/${row.name}`, label: `${row.namespace}/${row.name}` }))}
+              ariaLabel="The concept each variation steers with"
+              onchange={(value) => { modal.concept = value; modal.toward = fanoutNodes(value)[0] ?? ""; }}
+            />
+          </label>
+          <label>
+            <span class="meta">Toward</span>
+            <Select
+              value={modal.toward ?? ""}
+              options={fanoutNodes(modal.concept ?? "").map((node) => ({ value: node, label: node }))}
+              ariaLabel="The node each variation steers toward"
+              onchange={(value) => { modal.toward = value; }}
+            />
+          </label>
+        {/if}
         <label>
-          <span>Steering direction</span>
+          <span class="meta">Strengths</span>
           <input
             bind:this={modalInput as HTMLInputElement}
-            bind:value={modal.vector}
-            type="text"
-            placeholder="e.g. honest, calm, deer.wolf"
-            onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
-          />
-        </label>
-        <label>
-          <span>Strengths</span>
-          <input
             bind:value={modal.text}
             type="text"
             placeholder="0.0, 0.3, 0.6 · linspace(-1, 1, 5) · 0:1:0.25"
             onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
           />
         </label>
-        <p class="hint">Enter a comma-separated list, linspace(), or start:stop:step.</p>
       {:else if modal.kind === "regen_mode"}
         <label>
-          <span>Variation style</span>
+          <span class="meta">Variation</span>
           <Select
             value={modal.mode ?? "unsteered"}
             options={[
@@ -474,7 +503,7 @@
           />
         </label>
         <label>
-          <span>Number of replies</span>
+          <span class="meta">Replies</span>
           <NumberInput
             bind:this={modalInput}
             value={modal.n}
@@ -485,7 +514,6 @@
             onkeydown={(ev) => { if (ev.key === "Enter") { ev.preventDefault(); void commitModal(); } }}
           />
         </label>
-        <p class="hint">Keeps this branch's settings and applies the selected variation.</p>
       {:else}
         <textarea
           bind:this={modalInput as HTMLTextAreaElement}
@@ -505,7 +533,7 @@
             }
           }}
         ></textarea>
-        <p class="hint">⌃⏎ / ⌘⏎</p>
+        <p class="meta">⌘⏎</p>
       {/if}
       {#if modal.error}
         <p class="modal-error" role="alert">{modal.error}</p>
@@ -514,13 +542,13 @@
     <footer class="modal-footer">
       <button
         type="button"
-        class="cancel"
+        class="dw-text"
         bind:this={modalCancelButton}
         onclick={closeModal}
-      >cancel</button>
+      >Cancel</button>
       <button
         type="button"
-        class={modal.kind === "delete" || modal.kind === "clear" ? "danger" : "primary"}
+        class="dw-button"
         onclick={() => void commitModal()}
         disabled={modalBusy || (modal.kind === "clear" && genStatus.active) || (modal.kind === "delete" && modal.nodeId !== null &&
           loomNodeIntersectsGeneration(modal.nodeId))}
@@ -542,146 +570,43 @@
 {/if}
 
 <style>
-  .loom-modal-backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--scrim-strong);
-    z-index: var(--z-modal);
-    border: 0;
-    cursor: pointer;
-  }
+  /* A small dialog: paper over a wash2 scrim, as the shell's dialogs are. */
+  .loom-modal-backdrop { position: fixed; inset: 0; z-index: 100; background: color-mix(in oklab, var(--wash2) 88%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); cursor: pointer; }
   .loom-modal {
     position: fixed;
     top: 50%;
     left: 50%;
+    z-index: 101;
+    display: flex;
+    flex-direction: column;
+    gap: var(--s4);
+    width: min(560px, calc(100vw - var(--s4) * 2));
+    max-height: calc(100dvh - var(--s6));
+    min-width: 0;
+    padding: var(--s5) var(--s6) var(--s6);
+    border-radius: var(--r-row);
+    background: var(--paper);
+    color: var(--ink2);
+    font: var(--type-small);
     transform: translate(-50%, -50%);
-    z-index: calc(var(--z-modal) + 1);
-    background: var(--surface-sheen), var(--popup-bg);
-    border: 1px solid var(--popup-border);
-    border-radius: var(--popup-radius);
-    box-shadow: var(--popup-shadow);
-    width: min(640px, calc(100vw - 2rem));
-    min-width: 0;
-    max-height: calc(100dvh - 2rem);
-    display: flex;
-    flex-direction: column;
-    font-family: var(--font-reading);
-    font-size: var(--text);
-    color: var(--fg);
   }
-  .modal-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    color: var(--accent);
-    text-transform: lowercase;
-    letter-spacing: 0;
-  }
-  .modal-header h2 {
-    margin: 0;
-    font: inherit;
-    font-weight: var(--weight-medium);
-  }
-  .modal-body {
-    padding: var(--panel-padding) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-width: 0;
-    overflow-y: auto;
-  }
-  .modal-body label {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .modal-body input,
-  .modal-body textarea {
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-    font: inherit;
-    font-family: var(--font-reading);
-    resize: vertical;
-    min-width: 0;
-    max-width: 100%;
-    box-sizing: border-box;
-  }
-  .modal-body input:focus,
-  .modal-body textarea:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .modal-body blockquote {
-    margin: 0;
-    overflow-wrap: anywhere;
-    color: var(--accent-yellow);
-    background: var(--surface-sheen), var(--bg-elev);
-    padding: var(--surface-padding);
-    border-radius: var(--radius);
-  }
-  .modal-body .danger {
-    color: var(--accent-red);
-  }
-  .modal-footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-3);
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .modal-footer button {
-    background: var(--glass);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    color: var(--fg-strong);
-    padding: var(--space-3) var(--space-5);
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-mono);
-  }
-  .modal-footer .primary {
-    background: var(--accent);
-    color: var(--text-on-accent);
-  }
-  .modal-footer .primary:hover {
-    background: var(--accent-light);
-  }
-  .modal-footer .danger {
-    background: var(--danger-bg);
-    color: var(--accent-red);
-  }
-  .modal-footer .danger:hover {
-    background: var(--danger-hover);
-  }
-  .modal-footer .cancel:hover {
-    background: var(--glass-strong);
-  }
-  .modal-error {
-    font-size: var(--text-sm);
-    margin-top: var(--space-3);
-    color: var(--error-text);
-    background: var(--surface-sheen), var(--popup-bg);
-    border-radius: var(--radius-sm);
-    padding: var(--surface-padding);
-    font-family: var(--font-mono);
-  }
-  @media (prefers-contrast: more) {
-    .modal-error { background: var(--bg); }
+  .loom-modal:focus { outline: none; }
+  .modal-header { display: flex; align-items: center; justify-content: space-between; gap: var(--s4); }
+  .modal-header h2 { margin: 0; color: var(--ink); font: var(--type-lead); }
+  /* Inset by the focus ring's reach, so a focused field's ring is not clipped by the scroll box. */
+  .modal-body { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; margin: -4px; padding: 4px; overflow-y: auto; }
+  .modal-body label { display: grid; gap: var(--s1); }
+  .modal-body input, .modal-body textarea { width: 100%; min-width: 0; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-col); background: var(--wash); color: var(--ink); font: var(--type-body); resize: vertical; }
+  .modal-body input { height: 40px; }
+  .modal-body blockquote { margin: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); overflow-wrap: anywhere; }
+  .modal-footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--s4); }
+  .modal-error { padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); overflow-wrap: anywhere; }
+  @media (max-width: 720px) {
+    .loom-modal { padding: var(--s4) var(--s4) var(--s5); }
+    .modal-body input, .modal-body textarea { font-size: 16px; }
   }
   @media (forced-colors: active) {
     .modal-error { background: Canvas; color: CanvasText; }
   }
-  @media (max-width: 760px), (max-height: 600px) {
-    .modal-body input,
-    .modal-body textarea {
-      font-size: var(--text-input-touch);
-    }
-  }
-  .hint {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
+  @media (pointer: coarse) { .dw-text, .modal-body input { min-height: 44px; } }
 </style>

@@ -53,6 +53,19 @@ try {
   client.events.close();
   currentSocket.finishClose();
   assert.deepEqual(states.at(-1), { state: "closed", expected: true, reason: null });
+  // A server connection that drops (not one this page closed) names itself, so the page says the
+  // connection dropped and reads the tree again, rather than "the local model is not ready".
+  {
+    const reopened = client.events.open();
+    const dropped = sockets.at(-1);
+    dropped.connect();
+    await reopened;
+    dropped.finishClose();
+    const last = states.at(-1);
+    assert.equal(last.expected, false);
+    assert.equal(last.code, "RUNTIME_CONNECTION_LOST");
+    assert.match(last.reason, /connection to the drowse server closed/);
+  }
   // Every SSE operation goes through one POST/stream/done helper.
   const { apiManifoldFitStream, apiExtractStream } = await server.ssrLoadModule("/src/lib/api.ts");
   const previousFetch = globalThis.fetch;
@@ -77,6 +90,37 @@ try {
       "an incomplete done payload is not a result");
     globalThis.fetch = async () => sse(['event: error\ndata: {"message":"not poised","code":"PoisednessError","status":422}\n\n']);
     await assert.rejects(apiManifoldFitStream("local", "m", {}, () => {}), error => error.status === 422 && /not poised/.test(error.message));
+    // Token-readout replays: geometry takes no top_k (the server refuses one); lens and SAE send theirs.
+    const { apiInstruments } = await server.ssrLoadModule("/src/lib/api.ts");
+    const asked = [];
+    globalThis.fetch = async path => { asked.push(new URL(path, "http://x").searchParams); return Response.json({ measurements: {} }); };
+    await apiInstruments.tokenReadout("geometry", "n", 3, { steered: false });
+    await apiInstruments.tokenReadout("lens", "n", 3, { topK: 5, layers: "all" });
+    assert.equal(asked[0].has("top_k"), false, "a geometry replay carries no top_k");
+    assert.equal(asked[0].get("steered"), "false");
+    assert.equal(asked[1].get("top_k"), "5");
+    // Regression: two checks of one quick term edit raced each other into the route's 409 (it
+    // refuses rather than wait for the session lock). The page sends one at a time.
+    const { apiSessions } = await server.ssrLoadModule("/src/lib/api.ts");
+    let inFlight = 0;
+    let most = 0;
+    const releases = [];
+    globalThis.fetch = async (_path, init) => {
+      inFlight += 1;
+      most = Math.max(most, inFlight);
+      await new Promise((resolve) => releases.push(resolve));
+      inFlight -= 1;
+      return init.body.includes("bad") ? Response.json({ message: "busy" }, { status: 409 }) : Response.json({ valid: true, expression: JSON.parse(init.body).expression });
+    };
+    const checks = [apiSessions.validateSteering("0.3 a"), apiSessions.validateSteering("0.3 bad"), apiSessions.validateSteering("0.3 b")];
+    for (let i = 0; i < 3; i += 1) {
+      while (releases.length === 0) await new Promise((resolve) => setImmediate(resolve));
+      releases.shift()();
+    }
+    const settled = await Promise.allSettled(checks);
+    assert.equal(most, 1, "one validation in flight at a time");
+    assert.deepEqual(settled.map((s) => s.status), ["fulfilled", "rejected", "fulfilled"], "a refused check does not stall the next");
+    assert.equal(settled[2].value.expression, "0.3 b");
   } finally { globalThis.fetch = previousFetch; }
   console.log("HTTP runtime lifecycle: closed and replaced socket events are ignored; active messages and expected shutdown are preserved; SSE operations stream, resolve, and fail through one path");
 } finally {

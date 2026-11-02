@@ -4,6 +4,8 @@ from __future__ import annotations
 from types import SimpleNamespace
 from typing import Any, cast
 
+from dataclasses import replace
+
 import pytest
 import torch
 
@@ -236,13 +238,54 @@ def test_override_keeps_anchor_sampling_and_caller_fields(mode: str):
     """Regression: an override used to replace the caller's whole sampling."""
     out = _override(mode)
     assert out.sampling is not None
-    # The anchor's knobs survive a modifier that doesn't touch them …
+    # The anchor's knobs the call leaves unset survive a modifier that
+    # doesn't touch them …
     assert out.sampling.top_p == 0.5
     assert out.sampling.stop == ("\n",)
-    assert out.sampling.max_tokens == 64
-    # … and the caller's per-call fields survive the anchor.
+    # … and the caller's own fields win over the anchor's.
+    assert out.sampling.max_tokens == 200
     assert out.sampling.return_top_k == 5
     assert out.sampling.assistant_role == "pirate"
+
+
+@pytest.mark.parametrize("mode", ["reseed", "unsteered", "inverted"])
+def test_regenerate_as_it_was_reproduces_the_anchor(mode: str):
+    """A regen that sends no sampling of its own reproduces the anchor's whole
+    sampling block; only what the modifier changes differs."""
+    out = _override(mode, sampling=None)
+    assert out.sampling is not None
+    expected = _ANCHOR.sampling
+    assert expected is not None
+    if mode == "reseed":
+        assert out.sampling.seed != expected.seed
+        assert out.sampling == replace(expected, seed=out.sampling.seed)
+    else:
+        assert out.sampling == expected
+    assert out.thinking is False and out.steering is not None
+
+
+def test_variation_runs_at_the_calls_max_tokens():
+    """Regression (decision 6): a variation on a committed turn anchors on an
+    earlier reply, whose ``max_tokens`` used to beat the composer's."""
+    ancestor = Recipe(
+        steering="0.2 calm", sampling=SamplingConfig(temperature=0.7, max_tokens=40, top_p=0.9, seed=5),
+    )
+    composer = SamplingConfig(temperature=0.7, top_p=0.9, top_k=40, max_tokens=24)
+    out = compose_call(
+        steering="", sampling=composer, thinking=False, anchor=ancestor,
+        modifier=ancestor.compose_modifier("steering=0.6 warm"),
+    )
+    assert out.sampling == SamplingConfig(temperature=0.7, top_p=0.9, top_k=40, max_tokens=24, seed=5)
+    assert out.steering == "0.6 warm"
+
+
+def test_regen_modifier_with_explicit_temperature():
+    """The modifier outranks the call, and the call outranks the anchor."""
+    call = SamplingConfig(temperature=0.9, max_tokens=200)
+    assert _sampling("temperature=1.5", sampling=call).temperature == pytest.approx(1.5)
+    assert _sampling("cool", sampling=call).temperature == pytest.approx(0.3)
+    assert _sampling("reseed", sampling=call).temperature == pytest.approx(0.9)
+    assert _sampling("reseed", sampling=SamplingConfig(max_tokens=200)).temperature == pytest.approx(0.7)
 
 
 def test_override_modifier_fields_win():
@@ -346,6 +389,30 @@ def test_resolve_override_from_a_user_anchor_walks_to_the_generated_ancestor():
     assert _resolve(tree, "unsteered", parent_node_id=uid).sampling is None
 
 
+def test_resolve_variation_on_a_committed_turn_keeps_the_calls_sampling():
+    """The engine's anchor for a committed turn is an earlier reply; the
+    call's own sampling outranks it, the fields it leaves unset do not."""
+    tree = LoomTree()
+    uid = tree.add_user_turn("hi")
+    aid = tree.begin_assistant(uid, recipe=Recipe(
+        steering="0.3 honest",
+        sampling=SamplingConfig(temperature=0.7, max_tokens=40, stop=("END",), seed=42),
+    ))
+    tree.finalize_assistant(aid, text="hello")
+    child = tree.add_user_turn("again", parent_id=aid)
+    out = _resolve(
+        tree, "reseed", parent_node_id=child,
+        sampling=SamplingConfig(temperature=0.7, max_tokens=24),
+    )
+    assert out.sampling is not None
+    assert out.sampling.max_tokens == 24
+    assert out.sampling.stop == ("END",)
+    assert out.sampling.seed not in (None, 42)
+    assert out.steering == "0.3 honest"
+    plain = _resolve(tree, "unsteered", parent_node_id=child)
+    assert plain.sampling == SamplingConfig(temperature=0.7, max_tokens=40, stop=("END",), seed=42)
+
+
 def test_resolve_override_passthrough_when_none():
     tree, _uid, _aid = _anchored_tree()
     out = _resolve(tree, None, parent_node_id=None, steering="0.5 warm")
@@ -438,6 +505,16 @@ def test_invert_manifold_term():
     assert isinstance(term, ManifoldTerm)
     assert term.along == pytest.approx(-0.6)
     assert term.onto == pytest.approx(0.3)
+
+
+def test_invert_manifold_term_with_zero_along_keeps_onto():
+    # Regression: negating a zero ``along`` gave -0.0, rendered ``-0``, and
+    # the re-parse applied that sign to ``onto`` (0.5 became -0.5).
+    inv = Recipe(steering="0,0.5 m%x").invert_steering()
+    assert inv.steering == "0,0.5 m%x"
+    (term,) = parse_expr(inv.steering).alphas.values()
+    assert isinstance(term, ManifoldTerm)
+    assert term.onto == 0.5
 
 
 def test_inverted_regen_of_a_curved_term_is_refused_at_composition():
@@ -612,3 +689,9 @@ def test_recipe_from_dict_rejects_a_non_string_system_prompt() -> None:
     data["system_prompt"] = 5
     with pytest.raises(LoomTreeError, match="system_prompt must be a string or null"):
         Recipe.from_dict(data)
+
+
+def test_invert_unit_ablation_term():
+    """``!neuron/…`` is a UnitAblationTerm; inverting flips its coefficient."""
+    inv = Recipe(steering="!neuron/L1n2 + 0.5 !head/L0h3@response").invert_steering()
+    assert inv.steering == "-!neuron/L1n2 - 0.5 !head/L0h3@response"

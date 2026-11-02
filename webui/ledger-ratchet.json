@@ -1,0 +1,30 @@
+{
+  "about": "Ledger ratchet: per-file counts that may only go down (scripts/check-ledger.mjs). The 6.0 cut needs every count at zero.",
+  "categories": {
+    "border": "borders other than 0 or none",
+    "outline": "outlines other than a focus ring (outside :focus and :focus-visible rules)",
+    "shadow": "shadows other than a marked token's 2px same-colour spread (the tip's --float is Ledger's own)",
+    "mono": "monospace",
+    "uppercase": "text-transform: uppercase or small capitals",
+    "tracking": "letter-spaced text (positive letter-spacing)",
+    "easing": "easing other than Ledger's one curve",
+    "loop": "animations that loop (infinite)",
+    "colour": "colours written outside the tokens",
+    "mix": "colour mixes outside oklch and oklab (the accent mixes in oklch; a grey mixes in oklab, since Chrome gives a near-grey's powerless oklch hue a red cast)",
+    "tintText": "text coloured by the depth accent (--tint, --deep or --late)"
+  },
+  "totals": {
+    "border": 0,
+    "outline": 0,
+    "shadow": 0,
+    "mono": 0,
+    "uppercase": 0,
+    "tracking": 0,
+    "easing": 0,
+    "loop": 0,
+    "colour": 0,
+    "mix": 0,
+    "tintText": 0
+  },
+  "files": {}
+}

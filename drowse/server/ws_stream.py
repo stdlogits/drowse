@@ -1,9 +1,13 @@
 """Native WebSocket token+probe co-stream (``WS /drowse/v1/sessions/{id}/stream``).
 
 Bidirectional token + per-token probe co-stream — the killer feature of
-the native tree API.  The connection runs a single perpetual reader, a
-loom-mutation forwarder, and a per-generate-turn worker; see the
-``_ws_handle_generate`` docstring for the concurrency design.
+the native tree API.  The connection runs a single perpetual reader, one
+sender over an ordered outbound buffer (:class:`_OutboundQueue`), and a
+per-generate-turn worker; see :func:`_ws_stream_generation` for the
+concurrency design.  A client that reads slower than the model decodes
+never slows or cancels generation: past the buffer's bound its token and
+tree frames are dropped, and once it drains it receives one ``resync`` frame
+and rebuilds the rest from ``GET /tree``.
 """
 
 # pyright: reportUnusedFunction=false
@@ -18,7 +22,7 @@ import uuid
 from collections import deque
 from contextlib import AsyncExitStack, suppress
 from dataclasses import dataclass
-from typing import Any, Awaitable, Callable, Generic, Literal, TypeVar, cast
+from typing import Any, Awaitable, Callable, Literal, cast
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from pydantic import ValidationError
@@ -57,8 +61,19 @@ _logger = logging.getLogger(__name__)
 MAX_WS_MESSAGE_BYTES = 1024 * 1024
 MAX_WS_PENDING_MESSAGES = 16
 MAX_WS_PENDING_BYTES = 4 * MAX_WS_MESSAGE_BYTES
+#: Droppable frames (``token``, ``tree_mutated``) one connection may hold
+#: queued or pending; past it the connection lags and later gets a ``resync``.
 MAX_WS_OUTBOUND_EVENTS = 256
 WS_SEND_TIMEOUT_SECONDS = 30
+#: The server's WebSocket keepalive (``uvicorn.run(ws_ping_interval=...,
+#: ws_ping_timeout=...)``).  Pings still go out (they keep idle connections
+#: open through proxies, and a peer that is gone fails the TCP write), but a
+#: late pong never closes the socket: a reader slower than generation answers
+#: the ping only after the token backlog queued in front of it, which would
+#: close a live page about 40 s into a long reply and record the reply
+#: ``cancelled``.  ``WS_SEND_TIMEOUT_SECONDS`` is the one dead-peer rule.
+WS_PING_INTERVAL_SECONDS = 20.0
+WS_PING_TIMEOUT_SECONDS: float | None = None
 
 JSONValue = None | bool | int | float | str | list["JSONValue"] | dict[str, "JSONValue"]
 JSONObject = dict[str, JSONValue]
@@ -136,48 +151,91 @@ class _InboundBuffer:
             await self.changed.wait()
 
 
-_T = TypeVar("_T")
+class _OutboundQueue:
+    """The connection's one ordered outbound buffer; a slow reader never blocks a producer.
 
+    Every frame the connection sends goes through it and one sender task, so
+    wire order is put order: ``started`` precedes the tree delta that opens
+    its node, a reply's tree finalization precedes its ``done``, and
+    ``request_complete`` comes last.  ``put`` is safe from any thread (the
+    generation worker and EventBus callbacks call it) and never waits.
 
-class _OutboundQueue(Generic[_T]):
-    """Bound both queued events and callbacks awaiting the event loop."""
+    Droppable frames (``token`` and ``tree_mutated``) count against
+    :data:`MAX_WS_OUTBOUND_EVENTS`, including frames still pending as loop
+    callbacks.  Past the bound the queue *lags*: it drops every droppable frame
+    until the sender has taken all it had queued, then :meth:`get` returns one
+    ``{type: "resync", dropped}`` frame and live frames follow.  Generation
+    goes on into the tree meanwhile; the client rebuilds what it missed from
+    ``GET /tree``.  Control frames (``started``, ``done``, ``error``,
+    ``request_complete``) are never dropped: a turn adds a few, and the turn
+    loop waits for :meth:`flushed` before it takes the next message, so the
+    buffer stays bounded.
+    """
 
-    def __init__(self, overflow: Callable[[], None]) -> None:
+    def __init__(self) -> None:
         self._loop = asyncio.get_running_loop()
-        self._queue: asyncio.Queue[_T] = asyncio.Queue()
-        self._slots = threading.BoundedSemaphore(MAX_WS_OUTBOUND_EVENTS)
-        self._overflow = overflow
-        self._closed = threading.Event()
+        self._queue: asyncio.Queue[tuple[JSONObject, bool]] = asyncio.Queue()
+        self._lock = threading.Lock()
+        self._droppable = 0
+        self._unsent = 0
+        self._dropped = 0
+        self._lagging = False
+        self._closed = False
+        self._idle = asyncio.Event()
+        self._idle.set()
 
-    def put(self, item: _T) -> None:
-        if self._closed.is_set():
-            return
-        if not self._slots.acquire(blocking=False):
-            self._closed.set()
-            self._loop.call_soon_threadsafe(self._overflow)
-            return
-        self._loop.call_soon_threadsafe(self._queue.put_nowait, item)
+    def put(self, frame: JSONObject, *, droppable: bool = False) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            if droppable:
+                if self._lagging or self._droppable >= MAX_WS_OUTBOUND_EVENTS:
+                    self._lagging = True
+                    self._dropped += 1
+                    return
+                self._droppable += 1
+            self._unsent += 1
+        with suppress(RuntimeError):  # the loop closed under a late producer
+            self._loop.call_soon_threadsafe(self._enqueue, frame, droppable)
 
-    async def get(self) -> _T:
-        item = await self._queue.get()
-        self._slots.release()
-        return item
+    def _enqueue(self, frame: JSONObject, droppable: bool) -> None:
+        self._idle.clear()
+        self._queue.put_nowait((frame, droppable))
+
+    async def get(self) -> JSONObject:
+        """The next frame to send: a ``resync`` once a lag has drained."""
+        with self._lock:
+            if self._lagging and self._droppable == 0:
+                self._lagging = False
+                dropped, self._dropped = self._dropped, 0
+                self._unsent += 1
+                return {"type": "resync", "dropped": dropped}
+        frame, droppable = await self._queue.get()
+        if droppable:
+            with self._lock:
+                self._droppable -= 1
+        return frame
+
+    def sent(self) -> None:
+        """Mark the frame the sender last took as written to the socket."""
+        with self._lock:
+            self._unsent -= 1
+            idle = self._unsent == 0
+        if idle:
+            self._idle.set()
+
+    async def flushed(self) -> None:
+        """Wait until every frame put so far has been written."""
+        while True:
+            with self._lock:
+                if self._unsent == 0:
+                    return
+            self._idle.clear()
+            await self._idle.wait()
 
     def close(self) -> None:
-        self._closed.set()
-
-
-@dataclass(frozen=True)
-class _TokenFrame:
-    payload: JSONObject
-
-
-@dataclass(frozen=True)
-class _TokenDone:
-    pass
-
-
-_TokenQueueItem = _TokenFrame | _TokenDone
+        with self._lock:
+            self._closed = True
 
 
 def _error_frame(
@@ -321,28 +379,19 @@ def register_ws_stream(app: FastAPI) -> None:
 
         reader_task = asyncio.create_task(_reader())
 
-        # Loom: subscribe to ``LoomMutated`` for the connection's
-        # lifetime and forward exact ``tree_mutated`` frames. Held
-        # in a queue + forwarder task so the EventBus callback (which
-        # runs on the gen thread) never touches the WS directly.
-        tree_event_queue = _OutboundQueue[JSONObject](
-            lambda: incoming.close(1013, "client is not consuming events"),
-        )
-        # ``websocket.send_json`` is not safe for concurrent callers —
-        # starlette serializes per-call but two tasks can interleave
-        # bytes on the wire and corrupt the frame sequence.  This lock
-        # is the single send-side serializer the connection uses; both
-        # the generate-handler and the tree-forwarder acquire it before
-        # every send.
+        # Every frame this connection sends (token frames from the worker
+        # thread, tree deltas from EventBus callbacks on any thread, the
+        # turn's control frames) goes through one ordered outbound buffer
+        # and one sender task, so no producer ever waits on this client.
+        outbound = _OutboundQueue()
+        # ``websocket.send_json`` is not safe for concurrent callers; the
+        # sender and the terminal error path below share this lock.
         ws_send_lock = asyncio.Lock()
 
         async def _send_json(payload: JSONObject) -> None:
             async with asyncio.timeout(WS_SEND_TIMEOUT_SECONDS):
                 async with ws_send_lock:
                     await websocket.send_json(payload)
-
-        def _queue_tree_event(payload: JSONObject) -> None:
-            tree_event_queue.put(payload)
 
         def _on_loom_event(event: object) -> None:
             if not isinstance(event, LoomMutated):
@@ -366,72 +415,57 @@ def register_ws_stream(app: FastAPI) -> None:
             # roster on every mutation so adds, deletes, and restores reconcile
             # identity without a refetch or provenance inference client-side.
             mutated_payload["cast"] = cast(JSONValue, cast_json(session))
-            _queue_tree_event(mutated_payload)
+            outbound.put(mutated_payload, droppable=True)
         loom_unsub = session.events.subscribe(_on_loom_event)
 
-        async def _tree_forwarder():
-            """Forward tree-mutated events as WS frames.
+        async def _sender() -> None:
+            """Write the outbound buffer to the socket for the connection's lifetime.
 
-            Runs as a dedicated task for the connection's lifetime so
-            tree mutations from any source (this WS, a REST route on a
-            different connection, the gen loop) reach the client without
-            interleaving with the per-turn token loop.
+            A send the client accepts nothing of for ``WS_SEND_TIMEOUT_SECONDS``
+            means the peer is gone: the connection closes, which cancels a turn
+            still generating like any disconnect.
             """
             try:
                 while True:
-                    payload = await tree_event_queue.get()
+                    payload = await outbound.get()
                     try:
                         await _send_json(payload)
                     except Exception:
                         incoming.close(1013, "client is not consuming events")
                         return
-                    if payload.get("op") == "finalize_assistant":
-                        updated = payload.get("updated")
-                        if isinstance(updated, list):
-                            for node in updated:
-                                if not isinstance(node, dict):
-                                    continue
-                                node_id = node.get("id")
-                                if isinstance(node_id, str):
-                                    tree_forwarded_finalized.append(node_id)
-                    tree_forwarded_event.set()
+                    outbound.sent()
             except asyncio.CancelledError:
                 return
 
-        tree_forwarded_finalized: deque[str] = deque(maxlen=MAX_WS_PENDING_MESSAGES)
-        tree_forwarded_event = asyncio.Event()
-        forwarder_task = asyncio.create_task(_tree_forwarder())
+        sender_task = asyncio.create_task(_sender())
 
-        async def _wait_for_tree_finalization(node_id: str) -> None:
-            """Do not let ``done`` overtake its authoritative tree delta.
+        async def _send(payload: JSONObject) -> None:
+            outbound.put(payload)
 
-            The mutation forwarder and generation dispatcher are separate
-            tasks sharing a send lock.  Serialization alone does not impose
-            ordering: the dispatcher could acquire the lock first even though
-            the worker had already queued its ``finalize`` event, briefly
-            leaving clients with a completed but empty assistant node.
+        def _send_token(payload: JSONObject) -> None:
+            outbound.put(payload, droppable=True)
+
+        async def _turn(msg: _Inbound) -> None:
+            """Handle one inbound message, then wait until its frames are written.
+
+            Waiting here keeps the buffer bounded: a client that stops reading
+            holds at most one turn's control frames, never a growing backlog.
+            Generation never waits on it: the session lock is released when
+            the last sibling's worker ends.
             """
-            while node_id not in tree_forwarded_finalized:
-                tree_forwarded_event.clear()
-                if node_id in tree_forwarded_finalized:
-                    return
-                event_wait = asyncio.create_task(tree_forwarded_event.wait())
-                finished, pending = await asyncio.wait(
-                    {event_wait, forwarder_task},
-                    return_when=asyncio.FIRST_COMPLETED,
-                )
-                for task in pending:
-                    if task is not forwarder_task:
-                        task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await task
-                if (
-                    forwarder_task in finished
-                    and node_id not in tree_forwarded_finalized
-                ):
-                    raise RuntimeError(
-                        "tree mutation stream ended before generation finalization"
-                    )
+            if isinstance(msg, (WSGenerateMessage, WSSubmitMessage)):
+                await _ws_handle_generate(app, msg, incoming, _send, _send_token)
+            elif isinstance(msg, _InvalidInbound):
+                frame = _error_frame(msg.message, code="ValidationError", status=400)
+                if msg.request_id is not None:
+                    frame["request_id"] = msg.request_id
+                outbound.put(frame)
+                if msg.request_id is not None:
+                    outbound.put({
+                        "type": "request_complete", "request_id": msg.request_id,
+                        "state": "failed", "completed_siblings": 0,
+                    })
+            await outbound.flushed()
 
         closed_task = asyncio.create_task(incoming.closed.wait())
         request_task: asyncio.Task[None] | None = None
@@ -442,34 +476,19 @@ def register_ws_stream(app: FastAPI) -> None:
                     with suppress(Exception):
                         await websocket.close(code=msg.code, reason=msg.reason)
                     return
-                if isinstance(msg, (WSGenerateMessage, WSSubmitMessage)):
-                    request_task = asyncio.create_task(_ws_handle_generate(
-                        app, msg, incoming, _send_json, _wait_for_tree_finalization,
-                    ))
-                    finished, _ = await asyncio.wait(
-                        {request_task, closed_task}, return_when=asyncio.FIRST_COMPLETED,
-                    )
-                    if closed_task in finished:
-                        request_task.cancel()
-                        with suppress(asyncio.CancelledError):
-                            await finish_worker(request_task)
-                    else:
-                        await request_task
-                    request_task = None
-                elif isinstance(msg, _Stop):
+                if isinstance(msg, _Stop):
                     continue
+                request_task = asyncio.create_task(_turn(msg))
+                finished, _ = await asyncio.wait(
+                    {request_task, closed_task}, return_when=asyncio.FIRST_COMPLETED,
+                )
+                if closed_task in finished:
+                    request_task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await finish_worker(request_task)
                 else:
-                    frame = _error_frame(
-                        msg.message, code="ValidationError", status=400,
-                    )
-                    if msg.request_id is not None:
-                        frame["request_id"] = msg.request_id
-                    await _send_json(frame)
-                    if msg.request_id is not None:
-                        await _send_json({
-                            "type": "request_complete", "request_id": msg.request_id,
-                            "state": "failed", "completed_siblings": 0,
-                        })
+                    await request_task
+                request_task = None
         except WebSocketDisconnect:
             return
         except Exception as e:
@@ -481,15 +500,15 @@ def register_ws_stream(app: FastAPI) -> None:
                     await websocket.close(code=1011)
         finally:
             loom_unsub()
-            tree_event_queue.close()
+            outbound.close()
             with CancelScope(shield=True):
                 if request_task is not None:
                     request_task.cancel()
                     with suppress(asyncio.CancelledError, Exception):
                         await finish_worker(request_task)
-                for task in (forwarder_task, reader_task, closed_task):
+                for task in (sender_task, reader_task, closed_task):
                     task.cancel()
-                await asyncio.gather(forwarder_task, reader_task, closed_task, return_exceptions=True)
+                await asyncio.gather(sender_task, reader_task, closed_task, return_exceptions=True)
 
 
 def _normalize_submit(
@@ -632,7 +651,7 @@ async def _ws_handle_generate(
     msg: WSGenerateMessage | WSSubmitMessage,
     incoming: _InboundBuffer,
     send_json: Callable[[JSONObject], Awaitable[None]],
-    wait_for_tree_finalization: Callable[[str], Awaitable[None]],
+    send_token: Callable[[JSONObject], None],
 ) -> None:
     """Run one inbound turn; with a ``request_id``, keep its receipt in the ledger.
 
@@ -643,7 +662,7 @@ async def _ws_handle_generate(
     ends with one ``request_complete`` frame.
     """
     if msg.request_id is None:
-        await _ws_dispatch_generate(app, msg, incoming, send_json, wait_for_tree_finalization)
+        await _ws_dispatch_generate(app, msg, incoming, send_json, send_token)
         return
     request_id = msg.request_id
     ledger: OperationLedger = app.state.operations
@@ -687,13 +706,20 @@ async def _ws_handle_generate(
             ledger.observe(request_id, correlated)
         await send_json(correlated)
 
+    def correlated_token(frame: JSONObject) -> None:
+        send_token({**frame, "request_id": request_id})
+
     def record_only(frame: JSONObject) -> None:
         ledger.observe(request_id, {**frame, "request_id": request_id})
 
     try:
-        await _ws_dispatch_generate(
-            app, msg, incoming, correlated_send, wait_for_tree_finalization, record_only,
+        stopped = await _ws_dispatch_generate(
+            app, msg, incoming, correlated_send, correlated_token, record_only,
         )
+        # A stop that raced a reply's natural end leaves that reply's reason,
+        # but the request it cut short is still cancelled.
+        if stopped and state == "completed":
+            state = "cancelled"
     except (WebSocketDisconnect, asyncio.CancelledError):
         ledger.settle_disconnected(request_id, msg.n)
         raise
@@ -717,9 +743,9 @@ async def _ws_dispatch_generate(
     msg: WSGenerateMessage | WSSubmitMessage,
     incoming: _InboundBuffer,
     send_json: Callable[[JSONObject], Awaitable[None]],
-    wait_for_tree_finalization: Callable[[str], Awaitable[None]],
+    send_token: Callable[[JSONObject], None],
     record_event: Callable[[JSONObject], None] | None = None,
-) -> None:
+) -> bool:
     """Validate one inbound turn and dispatch it to its mode handler.
 
     ``generate``'s own field-consistency rules already ran in the schema
@@ -731,7 +757,7 @@ async def _ws_dispatch_generate(
     :func:`_ws_handle_commit` (no decode) or :func:`_ws_stream_generation`
     (the token fan-out).  Every rejection here is an error frame on a
     connection that stays open — a 400-grade user mistake must not close the
-    socket.
+    socket.  Returns whether a client stop ended the run.
     """
     authored: _AuthoredTurn | None = None
     commit_only = False
@@ -740,12 +766,12 @@ async def _ws_dispatch_generate(
             msg, authored, commit_only = _normalize_submit(msg)
         except _WSRequestError as e:
             await send_json(e.frame)
-            return
+            return False
 
     if commit_only:
         assert authored is not None  # set together by ``_normalize_submit``
         await _ws_handle_commit(app, msg, authored, send_json)
-        return
+        return False
 
     # FastAPI's exception handlers do not apply to WebSocket routes: a
     # malformed or unresolvable expression is an error frame on a connection
@@ -758,12 +784,11 @@ async def _ws_dispatch_generate(
     except Exception as e:  # noqa: BLE001 - reported as an error frame
         info = describe_error(e, failure="Steering failed")
         await send_json(_error_frame(info.message, code=info.code, status=info.status))
-        return
+        return False
 
-    await _ws_stream_generation(
+    return await _ws_stream_generation(
         app, msg, steering, sampling, authored,
-        incoming, send_json, wait_for_tree_finalization,
-        record_event,
+        incoming, send_json, send_token, record_event,
     )
 
 
@@ -775,40 +800,31 @@ async def _ws_stream_generation(
     authored: _AuthoredTurn | None,
     incoming: _InboundBuffer,
     send_json: Callable[[JSONObject], Awaitable[None]],
-    wait_for_tree_finalization: Callable[[str], Awaitable[None]],
+    send_token: Callable[[JSONObject], None],
     record_event: Callable[[JSONObject], None] | None = None,
-) -> None:
-    """Run one generate turn and stream token/done/error events.
+) -> bool:
+    """Run one generate turn and stream its started/token/done/error frames.
 
-    Concurrency design: synchronous generation runs in a worker thread
-    via ``asyncio.to_thread`` under its own cancellation scope. Its
-    ``on_token`` callback bridges into asyncio through a bounded queue.
-    The main
-    coroutine races two tasks: one pulls ``TokenEvent``s from a local
-    queue and forwards them as ``{type: "token", ...}`` frames; the
-    other pulls controls from the shared ``incoming`` buffer
-    (populated by the connection's single reader task) so an in-flight
-    ``{type: "stop"}`` can signal this worker without blocking on
-    the token loop.
+    Concurrency design: synchronous generation runs in a worker thread under
+    its own cancellation scope.  Its ``on_token`` callback hands each token
+    frame to ``send_token``, the connection's ordered outbound buffer, which
+    never blocks it (past its bound a slow reader's frames are dropped and it
+    is told to resync; see :class:`_OutboundQueue`).  This coroutine waits on
+    the worker and, beside it, on controls from the shared ``incoming``
+    buffer (populated by the connection's single reader task), so an
+    in-flight ``{type: "stop"}`` reaches the worker however far behind the
+    client's reading is.  The session lock is released once the last
+    sibling's worker ends, not once its frames are written.
 
-    ``asyncio.wait(..., FIRST_COMPLETED)`` is used in a loop: whenever
-    the incoming task returns a stop frame we signal the session and
-    keep draining tokens until the worker joins; whenever the queue
-    delivers a sentinel we finish.  The WS stays open across generate
-    turns — a client can submit ``{type: "generate", ...}`` again after
-    ``done``, and the perpetual reader keeps feeding the shared queue
-    between turns so we never have two ``receive_json()`` calls in
-    flight.
-
-    **Loom**: ``parent_node_id`` attaches the assistant node
-    under a specific tree node; ``n>1`` fans out N siblings serially.
-    Each sibling produces its own ``started`` / token-stream / ``done``
-    triplet, all tagged with the assistant node id.  ``tree_mutated``
-    events ride the connection-level subscription
-    in ``session_stream``; this handler only emits the per-sibling
-    ``started`` / ``token`` / ``done`` frames.  ``authored`` (from a
-    ``submit`` that also generates) is committed once inside the worker,
-    under the same session lock as the whole fan.
+    **Loom**: ``parent_node_id`` attaches the assistant node under a specific
+    tree node; ``n>1`` fans out N siblings serially.  Each sibling produces
+    its own ``started`` / token-stream / ``done`` triplet, all tagged with
+    the assistant node id.  ``tree_mutated`` frames ride the
+    connection-level subscription through the same buffer, so a reply's
+    finalization precedes its ``done``.  ``authored`` (from a ``submit``
+    that also generates) is committed once inside the worker, under the
+    same session lock as the whole fan.  Returns whether a client stop ended
+    the run.
     """
     session: DrowseSession = app.state.session
     n = msg.n
@@ -830,10 +846,9 @@ async def _ws_stream_generation(
         except SessionLockTimeout as e:
             info = describe_error(e)
             await send_json(_error_frame(info.message, code=info.code, status=info.status))
-            return
+            return False
         for sibling_idx, seed_i in enumerate(seeds):
             generation_id = uuid.uuid4().hex[:12]
-            tree_rev_before_generation = int(session.tree.rev)
 
             # Per-sibling sampling override carrying the derived seed.
             if n == 1 and seed_i is None:
@@ -843,9 +858,6 @@ async def _ws_stream_generation(
                 base_sc = sampling if sampling is not None else SamplingConfig()
                 per_sibling_sampling = _dc_replace(base_sc, seed=seed_i)
 
-            token_queue = _OutboundQueue[_TokenQueueItem](
-                lambda: incoming.close(1013, "client is not consuming events"),
-            )
             cancelled = threading.Event()
             # The tree assigns the assistant node id at ``begin_assistant``
             # time inside the generation; we don't know it before the
@@ -853,19 +865,22 @@ async def _ws_stream_generation(
             # node off the tree (which is set to the streaming assistant
             # node for the lifetime of the gen).
             current_node_holder: list[str | None] = [None]
+            # Set once this sibling's worker has ended: a callback that
+            # outlives it (a consumer held past its generation) emits nothing.
+            sealed = threading.Event()
 
             def _on_event(
                 event: TokenEvent,
                 _node_holder: list[str | None] = current_node_holder,
-                _token_queue: _OutboundQueue[_TokenQueueItem] = token_queue,
+                _sealed: threading.Event = sealed,
             ) -> None:
-                frame = build_token_event(session, _node_holder, event)
-                _token_queue.put(_TokenFrame(cast(JSONObject, frame)))
+                if _sealed.is_set():
+                    return
+                send_token(cast(JSONObject, build_token_event(session, _node_holder, event)))
             consumer = TokenConsumer(
                 _on_event,
                 TokenConsumerOptions(
                     live_scores=True,
-                    per_layer_scores=True,
                     lens_readout=True,
                     sae_readout=True,
                     perplexity=True,
@@ -888,7 +903,6 @@ async def _ws_stream_generation(
                 _on_token: TokenConsumer = consumer,
                 _result_holder: list[GenerationResult] = result_holder,
                 _error_holder: list[BaseException] = error_holder,
-                _token_queue: _OutboundQueue[_TokenQueueItem] = token_queue,
                 _recipe_override: str | None = recipe_override,
             ) -> None:
                 try:
@@ -936,8 +950,6 @@ async def _ws_stream_generation(
                         _result_holder.append(result)
                 except BaseException as e:
                     _error_holder.append(e)
-                finally:
-                    _token_queue.put(_TokenDone())
 
             await send_json({
                 "type": "started",
@@ -953,20 +965,16 @@ async def _ws_stream_generation(
 
             worker_task = asyncio.create_task(asyncio.to_thread(_worker))
 
-            # Race two queue reads — token frames from the worker and
-            # client frames from the connection's perpetual reader.
-            # Neither side ever calls ``websocket.receive_json()``
-            # directly, so the underlying ``recv_in_progress`` flag is
-            # owned by the reader task alone for the connection's
-            # lifetime.
-            done = False
+            # Race the worker against client controls from the connection's
+            # perpetual reader.  Nothing here waits on the socket, so a stop
+            # lands however far behind the client's reading is.
             stop_signaled = False
-            token_get = asyncio.create_task(token_queue.get())
+            joined = False
             client_get = asyncio.create_task(incoming.get(control_only=True))
             try:
-                while not done:
+                while not worker_task.done():
                     finished, _pending = await asyncio.wait(
-                        {token_get, client_get}, return_when=asyncio.FIRST_COMPLETED,
+                        {worker_task, client_get}, return_when=asyncio.FIRST_COMPLETED,
                     )
                     if client_get in finished:
                         incoming_msg = client_get.result()
@@ -978,19 +986,11 @@ async def _ws_stream_generation(
                             cancelled.set()
                             stop_signaled = True
                         client_get = asyncio.create_task(incoming.get(control_only=True))
-                    if token_get in finished:
-                        item = token_get.result()
-                        if isinstance(item, _TokenDone):
-                            done = True
-                        else:
-                            await send_json(item.payload)
-                            token_get = asyncio.create_task(token_queue.get())
+                joined = True
             finally:
-                worker_was_complete = worker_task.done()
                 cancelled.set()
-                token_queue.close()
                 with CancelScope(shield=True):
-                    # A stop racing the final token must still abort the fan.
+                    # A stop racing the reply's end must still abort the fan.
                     if client_get.done() and not client_get.cancelled():
                         pending_control = client_get.result()
                         if isinstance(pending_control, _Stop) and (
@@ -998,17 +998,14 @@ async def _ws_stream_generation(
                         ):
                             stop_signaled = True
                     client_get.cancel()
-                    token_get.cancel()
                     try:
-                        await asyncio.gather(client_get, token_get, return_exceptions=True)
+                        await asyncio.gather(client_get, return_exceptions=True)
                     finally:
                         await finish_worker(worker_task)
-                        if not done and record_event is not None:
+                        sealed.set()
+                        if not joined and record_event is not None:
                             if result_holder:
-                                recovered = result_to_json(result_holder[0])
-                                if not worker_was_complete and recovered.get("finish_reason") == "stop":
-                                    recovered["finish_reason"] = "cancelled"
-                                record_event({"type": "done", "result": recovered,
+                                record_event({"type": "done", "result": result_to_json(result_holder[0]),
                                               "node_id": current_node_holder[0], "sibling_index": sibling_idx,
                                               "sibling_count": n})
                             elif error_holder:
@@ -1025,18 +1022,15 @@ async def _ws_stream_generation(
                     sibling_index=sibling_idx,
                 ))
                 # An error inside one sibling aborts the rest of the fan.
-                return
+                return False
 
             if not result_holder:
                 raise RuntimeError("generation completed without a result")
             result = result_holder[0]
+            # The engine reports ``cancelled`` when the stop cut the reply, and
+            # the loom node records the same reason; a stop that raced the
+            # reply's own end leaves its natural reason.
             result_json = result_to_json(result)
-            # The engine reports ``stop`` for EOS, stop sequences, and an
-            # external stop alike; this socket knows a client stop happened, so
-            # the wire (only) says ``cancelled``.  The loom recipe keeps the
-            # engine's canonical reason.
-            if stop_signaled and result_json.get("finish_reason") == "stop":
-                result_json["finish_reason"] = "cancelled"
             # The aggregate-scope measurements envelope the engine built at
             # finalize, per sibling.
             if result.measurements:
@@ -1058,14 +1052,12 @@ async def _ws_stream_generation(
             }
             if record_event is not None:
                 record_event(receipt)
-            if (
-                finalized_node_id is not None
-                and int(session.tree.rev) > tree_rev_before_generation
-            ):
-                await wait_for_tree_finalization(finalized_node_id)
+            # The finalize tree delta was put on the worker thread before the
+            # worker ended, so this ``done`` follows it on the wire.
             await send_json(receipt)
 
             # Mid-batch stop honors the batch plan: cancel the currently
             # streaming sibling and skip every remaining queued sibling.
             if stop_signaled:
-                break
+                return True
+    return False

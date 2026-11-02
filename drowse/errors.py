@@ -112,6 +112,21 @@ class WhitenerError(ValueError, DrowseError):
         return (400, str(self) or self.__class__.__name__)
 
 
+class NeutralMeansError(RuntimeError, DrowseError):
+    """Raised when a residual read has no neutral mean to centre on.
+
+    S-family reads of a residual are centred on the neutral layer mean at
+    the read's site (``out``: the whitener's centring mean; ``mid``: the
+    neutral cache's mid means).  A model whose cache carries no mid means
+    (its blocks are outside the block description) or a neutral baseline
+    that cannot be built refuses the read rather than reading it
+    uncentred.  422.
+    """
+
+    def user_message(self) -> tuple[int, str]:
+        return (422, str(self) or self.__class__.__name__)
+
+
 class ProfileError(ValueError, DrowseError):
     """Raised on invalid Profile operations (missing layer, empty, etc.).
 
@@ -176,16 +191,30 @@ class SaeFeatureError(RequestError):
     """Raised when an SAE feature id is malformed or outside the resident width."""
 
 
-class RelpUnsupportedError(RuntimeError, DrowseError):
-    """Raised when a model's decoder layers do not fit the dense RelP rule
-    shape (one standard gated MLP plus residual RMSNorms per layer) — MoE
-    experts and fused gate-up projections need per-arch rule arms that are
-    not implemented, and a silently partial RelP fit would be a wrong
-    artifact rather than a degraded one.
+class UnsupportedBlockError(RuntimeError, DrowseError):
+    """Raised when a decoder block is outside what a
+    :class:`~drowse.model.blocks.BlockSpec` can describe: a mixture-of-experts
+    MLP, a fused gate-up or qkv projection, a linear-attention (hybrid) layer,
+    a norm that is not an RMSNorm, or any submodule the description has no
+    place for.  ``layer`` names the block (``None`` for the model-level
+    part) and ``reason`` says what was found.  Transport fits and unit reads
+    need every block described exactly, so a partial description is refused
+    rather than read approximately.
     """
+
+    def __init__(self, reason: str, *, layer: int | None = None) -> None:
+        self.layer = layer
+        self.reason = reason
+        super().__init__(reason if layer is None else f"layer {layer}: {reason}")
 
     def user_message(self) -> tuple[int, str]:
         return (422, str(self) or self.__class__.__name__)
+
+
+class UnitRefError(RequestError):
+    """Raised when a ``neuron/`` or ``head/`` unit name is malformed (the
+    form is ``L<layer>n<index>`` / ``L<layer>h<index>``).  Whether the layer
+    and index exist is checked later, against the loaded model."""
 
 
 class UnsupportedProbeChannelError(RequestError):

@@ -57,8 +57,9 @@ export function omittedAnalyticsProbes(
 
 function analyticsOmissionReason(info: ProbeInfo | undefined): string {
   if (!info) return "not exposed as a direction by this runtime";
-  if (info.family === "lens") return "J-lens readout, not a residual direction";
+  if (info.family === "lens") return `${info.namespace === "slens" ? "S" : "J"}-lens readout, not a residual direction`;
   if (info.family === "sae") return "SAE readout, not a residual direction";
+  if (info.family === "units") return "a neuron or head, not a residual direction";
   if (!info.is_affine) return "curved manifold, not one direction";
   if (info.intrinsic_dim !== 1) return "multidimensional subspace, not one direction";
   return "not exposed as a direction by this runtime";

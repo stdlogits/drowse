@@ -1,6 +1,6 @@
 <script lang="ts">
   import Slider from "../Slider.svelte";
-  import MorphText from "../ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Render a discover-mode manifold's PCA variance bars or spectral
   // eigenvalue spectrum, with the picked-k cut highlighted.  Used by
   // ManifoldDrawer's per-row inspector; safe to drop into any other
@@ -38,7 +38,7 @@
 {#if quotientDescription(manifold.domain)}
   <div class="diag">
     <p class="summary">{quotientDescription(manifold.domain)}</p>
-    <p class="muted">Authored geometry · not an automatic topology detection</p>
+    <p class="muted">Authored geometry, not a detected topology</p>
   </div>
 {/if}
 {#if diag !== null}
@@ -69,93 +69,26 @@
     {#if fit && fit.hyperparams}
       <p class="hyperparams">
         {#each Object.entries(fit.hyperparams) as [k, v] (k)}
-          <code>{k}={typeof v === "number" ? v.toString() : v}</code>
+          <span>{k} <b>{typeof v === "number" ? v.toString() : v}</b></span>
         {/each}
       </p>
     {/if}
   </div>
 {:else if isDiscoverFit(manifold)}
-  <p class="muted">
-    fit for diagnostics
-  </p>
+  <p class="muted">Run a fit for diagnostics</p>
 {/if}
 
 <style>
-  .diag {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--surface-padding);
-    background: var(--surface-sheen), var(--bg-deep);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius);
-  }
-  .summary {
-    margin: 0;
-    color: var(--fg-strong);
-    font-size: var(--text-xs);
-    font-family: var(--font-mono);
-  }
-  .bars {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    align-items: flex-end;
-    gap: var(--data-mark-gap);
-    height: 72px;
-    margin-bottom: var(--space-5);
-    border-bottom: 1px solid var(--glass-line);
-  }
-  .bar {
-    flex: 1 1 0;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: flex-end;
-    height: 100%;
-    position: relative;
-    min-width: 6px;
-  }
-  .bar-fill {
-    width: 100%;
-    background: var(--fg-muted);
-    border-radius: var(--data-mark-radius) var(--data-mark-radius) 0 0;
-    transition: background var(--dur) var(--ease-out);
-  }
-  .bar.picked .bar-fill {
-    background: var(--accent);
-  }
-  .bar-label {
-    position: absolute;
-    bottom: -1.2em;
-    color: var(--fg-muted);
-    font-size: var(--text-2xs);
-    font-family: var(--font-mono);
-  }
-  .hyperparams {
-    margin: var(--space-2) 0 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-  }
-  .hyperparams code {
-    background: var(--bg-elev);
-    padding: 0 var(--space-2);
-    border-radius: var(--radius);
-    color: var(--fg);
-  }
-  .warn {
-    margin: 0;
-    color: var(--accent-yellow);
-    font-size: var(--text-xs);
-  }
-  .muted {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-style: italic;
-  }
+  /* A fit's components as bars on a wash: the kept ones in the depth tint, the rest in faint ink. */
+  .diag { display: grid; gap: var(--s2); min-width: 0; padding: var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .summary { margin: 0; color: var(--ink); font: var(--type-small); font-variant-numeric: tabular-nums; }
+  .bars { display: flex; align-items: stretch; gap: 2px; height: 80px; margin: 0; padding: 0; list-style: none; }
+  .bar { position: relative; display: grid; grid-template-rows: minmax(0, 1fr) 16px; flex: 1 1 0; min-width: 6px; }
+  .bar-fill { align-self: end; width: 100%; min-height: 2px; border-radius: 2px; background: var(--ink3); opacity: 0.45; transition: background-color var(--fast) var(--ease), opacity var(--fast) var(--ease); }
+  .bar.picked .bar-fill { background: var(--tint); opacity: 1; }
+  .bar-label { justify-self: center; color: var(--ink3); font: var(--type-meta); }
+  .hyperparams { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); margin: 0; color: var(--ink3); font: var(--type-meta); }
+  .hyperparams b { color: var(--ink); font-weight: 500; }
+  .warn { margin: 0; color: var(--ink); font: var(--type-meta); }
+  .muted { margin: 0; color: var(--ink3); font: var(--type-meta); }
 </style>

@@ -283,6 +283,24 @@ def test_manifold_coeffs_sum_on_merge():
     assert term.onto == pytest.approx(0.5)
 
 
+@pytest.mark.parametrize("expr", [
+    "0.5 m%0.1234567 + 0.25 m%0.1234568",
+    "0.5 m%1000001 + 0.25 m%1000004",
+])
+def test_positions_sharing_a_key_refuse_to_merge(expr: str) -> None:
+    # Regression: the key renders coordinates with %g, so these two distinct
+    # points shared one key and merged silently (along summed, last
+    # position kept).
+    with pytest.raises(SteeringExprError, match="six significant digits"):
+        parse_expr(expr)
+
+
+def test_equal_positions_written_differently_still_merge() -> None:
+    term = _only_term("0.5 m%0.25 + 0.25 m%0.250")
+    assert isinstance(term, ManifoldTerm)
+    assert term.along == pytest.approx(0.75)
+
+
 def test_rejects_three_coeffs():
     with pytest.raises(SteeringExprError):
         parse_expr("0.6,0.3,0.2 circumplex%happy")
@@ -305,6 +323,20 @@ def test_mixed_sign_manifold_term_round_trips():
     assert isinstance(reparsed, ManifoldTerm)
     assert reparsed.along == pytest.approx(-0.6)
     assert reparsed.onto == pytest.approx(0.3)
+
+
+@pytest.mark.parametrize("expr", ["-0,0.3 m%a", "0,0.3 m%a", "-0,-0.3 m%a"])
+def test_zero_along_keeps_onto_through_a_round_trip(expr: str) -> None:
+    # ``%g`` renders a negative zero ``along`` as ``-0``, and the parser
+    # applies that leading sign to ``onto`` as well, so the formatter reads
+    # the sign bit, not ``along < 0``.
+    import math
+
+    before = _only_term(expr)
+    after = _only_term(format_expr(parse_expr(expr)))
+    assert isinstance(before, ManifoldTerm) and isinstance(after, ManifoldTerm)
+    assert after.onto == before.onto
+    assert math.copysign(1.0, after.along) == math.copysign(1.0, before.along)
 
 
 @pytest.mark.parametrize("expr", [

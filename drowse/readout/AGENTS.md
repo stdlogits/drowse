@@ -1,7 +1,7 @@
 # drowse/readout — AGENTS.md
 
 The read side's lower half: the shared read vocabulary, the instrument
-contract all three read families implement, the geometry family (the whitened
+contract all four read families implement, the geometry family (the whitened
 `Monitor` and its `GeometryInstrument` adapter), the hidden-state capture
 buffers, the pure capture planner, the probe roster, the versioned measurement
 envelope, and Mahalanobis cosine analytics. The narrative of how reads fit a
@@ -11,7 +11,8 @@ contract an editor needs.
 Lives elsewhere: `generation/read_plane.py::ReadPlane` applies capture plans,
 arms the step sinks, builds the gate callback and runs the finalize reads;
 `loom/replay.py::TokenReplayer` implements the `TokenReplay` protocol;
-`lens/instrument.py` and `sae/instrument.py` are the other two families;
+`lens/instrument.py`, `sae/instrument.py` and `units/instrument.py` are the
+other three families (`drowse/units/AGENTS.md`);
 `geometry/whitener.py` is the metric; `session/session.py` wires it all.
 
 ## Module map
@@ -24,18 +25,19 @@ arms the step sinks, builds the gate callback and runs the finalize reads;
 | `planner.py` | `GateDemand`, `ReadDemand`, `resolve_read_demand`, `CapturePlan`, `plan_capture`, `CaptureMode`, `CaptureState` — pure, no side effects |
 | `capture_buffer.py` | `HiddenCapture`, `install_persistent_capture_hooks` |
 | `monitor.py` | `Monitor`: every geometry read and gate scalar |
-| `monitor_attach.py` | attach-time algebra: `AttachedManifoldProbe`, `_LayerWhiten`, `_FactorStack`, bandwidths, `NEUTRAL_LABEL`; plus the per-token `_layer_geometry` |
+| `monitor_attach.py` | attach-time algebra: `AttachedManifoldProbe`, `_LayerWhiten`, `_FactorStack`, `_CurvedStack`, bandwidths, `NEUTRAL_LABEL`; plus the per-token `_curved_geometry` |
 | `monitor_flat.py` | `_FlatEngine`: the batched read over every flat probe |
 | `geometry.py` | `GeometryInstrument`, `GeometryRun` |
 | `roster.py` | `ProbeRoster` and its `GeometryFamily`/`ReadoutFamily` protocols |
-| `measurements.py` | `build_measurements`, `live_sources`, the envelope TypedDicts |
+| `measurements.py` | `build_measurements`, the persisted projections at `types.READING_DIGITS` (`token_row_measurements`, `summary_measurements`, `aggregate_measurements`), `envelope_sources`, `LENS_FAMILY_BY_UNIT`, the envelope TypedDicts |
 | `analytics.py` | `cross_layer_cosine`, `cosine_matrix` (whitened; used by `server/profile_routes.py`) |
 
 ## Layering
 
-`readout` sits above `steering.{grammar,terms,triggers}` and below `lens`/`sae`
-(`tests/invariants/test_layering.py`; `TYPE_CHECKING` imports count). It must
-not import `lens`, `sae`, `steering.composer`/`hooks`, `generation` or
+`readout` sits above `steering.{grammar,terms,triggers}` and below
+`lens`/`sae`/`units` (`tests/invariants/test_layering.py`; `TYPE_CHECKING`
+imports count). It must not import `lens`, `sae`, `units`,
+`steering.composer`/`hooks`, `generation` or
 anything above; collaborators from those layers are typed against the
 Protocols here (`LatestSlices`, `TokenReplay`, `GeometryFamily`,
 `ReadoutFamily`). `monitor_attach.py` must never import `monitor.py`.
@@ -69,7 +71,14 @@ bind` per family (`ReadPlane.bind_runs`) and reaches `close_runs` in a
 out-of-generation reads. There is no per-run reading memo: within one forward
 the decode loop passes the same `step_id` (`len(generated_ids)` before the
 forward) to the capture sink, the gate callback and the token tap, and reuse
-is the sink's row (geometry) or the lens/SAE step-keyed stash.
+is the sink's row (geometry) or the lens/SAE/units step-keyed stash.
+
+The units family reads no residual capture: its bound run owns a tap of its
+own (`units/capture.py::UnitTap`, forward hooks on the down and output
+projections, present only while a probe or gate reads them), so its plan
+declares no layers and `plan_capture` never sees it. Its finalize read takes
+the aggregate's forward index (`UnitsInstrument.score_aggregate`), not the
+pooled residual slice.
 
 **Locks.** Each family's `state_lock` is a reentrant leaf: roster mutation and
 the coherent read surfaces (`names`, `specs`, `plan`/`bind` roster reads, idle
@@ -84,10 +93,13 @@ generation fails fast with `ConcurrentExtractionError` (409, "retry shortly").
 a family cannot honor raises `RequestError` (400), never silently ignored:
 geometry rejects `top_k` and `layers`, SAE rejects `layers`.
 
-**`validate_gate`** guards channels a family can never produce. Lens and SAE
-accept only the strength axis (`validate_gate_channels`); geometry accepts
-everything. It runs at generation preflight in `ReadPlane.resolve_gates`, for
-gates naming an attached lens/SAE probe.
+**`validate_gate`** guards channels a family can never produce. Lens, SAE and
+units accept only the strength axis (`validate_gate_channels`); geometry
+accepts everything. It runs at generation preflight in
+`ReadPlane.resolve_gates`, for gates naming an attached lens/SAE/units probe,
+and for every gate naming a unit: a unit gate needs no attached probe
+(`UnitsInstrument.gate_unit` checks the unit against the model, a 400 for an
+unknown one, and the tap reads it for the gate alone).
 
 `session.instruments` is the family enumeration. `generation/token_payloads.py::_FAMILY_SLOTS`
 and `server/instrument_routes.py::CAPABILITIES` are pinned to it by test, so a
@@ -113,10 +125,19 @@ and labels, and `:` splits only on the two exact channel words. The runtime
 gate lookup stays a plain `dict.get` on the verbatim string; `GateRef` is for
 preflight and planning.
 
-Readings: geometry produces `ProbeReading`; lens and SAE produce `ScalarReading`
-(`value` + explicit `unit` — `mean_token_probability`, `activation_over_max`,
-`raw_activation` — + `per_layer` + `DepthSummary`). `DepthSummary.basis` travels
-with the numbers because the three families weight depth by unrelated masses;
+Readings: geometry produces `ProbeReading`; lens, SAE and units produce
+`ScalarReading` (`value` + explicit `unit` — `mean_token_probability`,
+`mean_footprint_z` (`slens/` probes), `activation_over_max`,
+`raw_activation`, `activation_over_scale` — + `per_layer` + `DepthSummary` +
+optional `meta`). A unit reading is a neuron's activation over its pole's
+reading scale (signed) or a head's write norm over its own, at one layer
+(basis `single_layer`), with the raw firing in `meta` and the scale's source
+in `meta.scale` (`"catalog"`: the bound neuron-lens catalog's `act_top`;
+`"neutral"`: the neutral statistics', relative to the neutral text), soft-
+floored (`units/stats.py::UnitScales`, `drowse/units/AGENTS.md`). The token
+anatomy names its unit rows' source as `anatomy.units_scale`.
+`DepthSummary.basis` travels with the numbers because the families weight
+depth by unrelated masses;
 never compare centers across bases. `as_probe_reading` /
 `ScalarReading.to_probe_reading` is a compatibility projection used only for
 `TokenEvent.probe_readings` and the OpenAI/Ollama `x-drowse-probe-readings`
@@ -136,6 +157,8 @@ trailing special tokens to the last content token.
 (the engine masks every per-token geometry consumer when the geometry live
 toggle is off):
 
+- `units_gating_probe_keys` (from `GateDemand.units_keys`) = gates naming an
+  attached unit probe or any unit; the units tap reads them, nothing here.
 - `per_token_full_consumer` = (live scores on and loom attached) or live token
   scores or persisted per-layer scores or persisted probe row or persisted
   inspector coords.
@@ -145,7 +168,8 @@ toggle is off):
   per-token consumer.
 - `lean_per_token` = per-token need, no `return_hidden`, no geometry gate,
   geometry probes attached, and no full-reading consumer (live token scores,
-  per-layer heatmap, inspector coords): every per-token consumer reads axis 0.
+  persisted per-layer traces, inspector coords): every per-token consumer
+  reads axis 0.
 
 `plan_capture` layers: `return_hidden` (`widen`) captures every model layer;
 otherwise the union of geometry `latest_layers` and lens/SAE `latest_layers |
@@ -232,7 +256,11 @@ fit's `mahalanobis_share`, normalized):
 - `depth_com`/`depth_spread` need `n_layers` at construction; mass is
   `share_L · |coord_L[axis]|` at depth `L/(n_layers−1)`.
 - `subspace_coords_per_layer` (inspector trail) is emitted only while
-  `set_subspace_coords(True)`; the engine sets it per generation.
+  `set_subspace_coords(True)`; the engine sets it per generation. It rides the
+  live token frame only: a loom row never keeps it. The geometry token replay
+  scores inside `subspace_coords_emitted()`, so a replayed reading always
+  carries it (the dashboard's Probes room places the token in a manifold's
+  plot with it) and the live flag is restored after.
 
 **Execution.** `_FactorStack` is the single device copy of the whitener's
 Woodbury factors per device, grown rather than duplicated (detach keeps it),
@@ -241,11 +269,25 @@ attaches on the host too and uploads packed (`geometry/packing.py`), so the
 roster stays a few device buffers instead of thousands of small tensors. A
 read is one stacked `Σ⁻¹h` apply over every layer; the flat roster is then one
 `_FlatEngine` pass (segments bucketed by rank, dim and candidate count; rank-1
-is elementwise) and one host transfer; each curved probe adds its foot solve
-and one transfer. Curved feet warm-start per `(probe, layer)` only while
-`enable_curved_warm(True)` (sequential per-token scoring). Aggregates, replays
-and `FULL` stacks read cold so one-shot reads stay reproducible. Curved
-probes are the expensive reads: a foot solve per layer per token.
+is elementwise) and one host transfer; each curved probe adds one stacked
+read and one transfer. A curved probe's per-layer factors and surfaces are
+stacked at attach (`monitor_attach.py::_CurvedStack`, `StackedRbf`, packed
+with the probe), and a read runs every layer at once: elementwise work over the
+stack, the reductions (the basis projections, the norms) on each layer's own
+rows at its own rank, one batched foot solve (`invert_stacked`) per rank
+(one for a rank-uniform fit), and the share-weighted means as a left fold in
+layer order. Every kernel computes a layer as the per-layer read did, so a
+reading does not depend on how many layers ran together: bit-identical to the
+per-layer read on MPS (`tests/gpu/test_curved_stack_gpu.py`; on CPU
+`tests/readout/test_monitor_curved_stack.py` pins it to tolerance). A
+reduction batched across layers moves values by an ulp, and an off-surface
+state's foot to another basin, so keep reductions per layer. A read that saw only some of
+a probe's layers uses a cached `_CurvedStack.subset`. Curved feet warm-start
+per `(probe, layers)` only while `enable_curved_warm(True)` (sequential
+per-token scoring). Aggregates, replays and `FULL` stacks read cold so one-shot
+reads stay reproducible. Curved probes are still the expensive reads: a
+SmolLM2 `months` probe costs about 6 ms a token (the per-layer reductions are
+a few hundred small kernels), where the layer-by-layer read cost about 49.
 
 **Gates.** `plan_gate_scalars` parses keys once per generation;
 `score_planned_gate_scalars` computes only the requested channels (curved
@@ -276,21 +318,23 @@ gates are the sole consumer and final readings are off. The binding freezes
 names only. `is_live` (default on) is the all-or-nothing per-token switch;
 `set_live` rejects extras with `TypeError`. `probe_hash` is sha256 over
 fp32 bytes: the folded direction for a foldable fit, else per-layer
-mean/basis/node coords (`monitor_attach.py::probe_digest`). Attach takes it,
-the listing's node coords and the inspector's geometry payload
-(`probe_geometry_payload`, served by `Monitor.probe_geometry`) from the host
-copy before the upload (`AttachedManifoldProbe.digest`, `.node_coords_host`,
-`.geometry`), because transcript exports, the probe listing and the inspector
-run without the GPU lock and a copy off a resident MPS tensor beside another
-thread's model op aborts the process.
+mean/basis/node coords, recorded when the probe is attached or swapped (inside
+the exclusive section), so the lock-free transcript export only looks it up.
+Attach likewise takes the listing's node coords and the inspector's geometry
+payload (`monitor_attach.py::probe_geometry_payload`, served by
+`Monitor.probe_geometry`) from the host copy before the upload
+(`AttachedManifoldProbe.node_coords_host`, `.geometry`): the probe listing and
+the inspector run without the GPU lock, and a copy off a resident MPS tensor
+beside another thread's model op aborts the process.
 `token_readout` captures the roster's layer union
 (resolved inside the exclusive section) and scores with a cold foot.
 
 ## ProbeRoster
 
-`jlens/…` routes to the lens, `sae/…` to the SAE, anything else to geometry.
-`detach` asks lens, then SAE, then geometry, and an unknown name is a no-op (the
-server 404s first). Digests are cached per family until `forget`; `changed`
+`jlens/…` and `slens/…` route to the lens, `sae/…` to the SAE, `neuron/…` and
+`head/…` to the units, anything else to geometry. `detach` asks lens, then SAE,
+then units, then geometry, and an unknown name is a no-op (the server 404s
+first). Digests are cached per family until `forget`; `changed`
 drops them and runs `on_change` (the session invalidates analytics; the prefix
 cache survives). Names are not checked for uniqueness across families; a
 collision shadows (hash and detach consult lens first; the flat `scores` join
@@ -300,22 +344,88 @@ keeps the last family written).
 
 The one wire record for token frames (`scope="token"`), final aggregates
 (`"aggregate"`) and replays (`"replay"`, `provenance="replayed"`);
-`MEASUREMENTS_VERSION = 1`. Build rules: `None` when nothing was measured; a
+`MEASUREMENTS_VERSION = 2` (v2: the lens binding's per-family `sources` and
+the `units` channel; the loom refuses persisted rows of another version).
+Build rules: `None` when nothing was measured; a
 family channel exists only when it has readings or a readout; lens/SAE channels
-always carry `binding` (`source`, `steering`, SAE `layer`), geometry only when
-the caller passes one (replay); `readings` are each family's native
+always carry `binding`, geometry only when the caller passes one (replay). The
+SAE binding is `{source, steering, layer}`; the lens channel carries two lens
+families, so its binding is `{sources: {R?, S?}, steering}` (`LensBinding`)
+naming the source of each family that produced its data: `R` for `jlens/`
+readings or the readout, `S` for `slens/` readings, told apart by the
+reading's unit (`LENS_FAMILY_BY_UNIT`; any other unit is a broken invariant).
+`units` `units` (`UnitsChannel`) is exactly `{binding:
+{source: null, steering}, readings}`, present only with readings; `readings` are each family's native
 `to_dict()`; `readout` is the native discovery surface; `scores` is the axis-0
-join rounded to 6 places. The lens readout holds `p_l`, and this is the one
-place it becomes the wire's `logprob` (floored at `1e-45` so JSON stays
-finite). `ProbeReadingDict`'s last five keys are `NotRequired` because
-persisted loom rows may lack them. `live_sources` is the one builder of
-`lens_source`/`sae_source`/`sae_layer`; an aggregate binds a family's source
+join at 6 significant digits; there is no layer-major `per_layer_scores` copy (a
+reading's trace lives in the reading). The lens readout holds `p_l`, and this
+is the one place it becomes the wire's `logprob` (floored at `1e-45` so JSON
+stays finite).
+
+Three projections persist an envelope, every float rounded to
+`READING_DIGITS` (6) significant digits (`types.round_reading`: `%g`'s
+correctly rounded form, `FLT_DIG`, what an fp32 reading reliably carries; the
+envelope's scalar readings and `scores` use the same rule, so nothing is
+rounded twice). Significant digits, not decimal places: a `jlens/` probability
+is often below 1e-4 and is read on a log scale, so fixed places would zero it.
+
+- `token_row_measurements(envelope)` is a generated loom token row's
+  (`TokenRowMeasurements`, the engine's `TokenTap`): what the transcript's
+  tint, the reply trace and the tree filter read per token without a model,
+  the flat `scores` (every family's axis 0) and each geometry reading's
+  `fraction` and `coords` (`ROW_GEOMETRY_KEYS`: a curved probe's trace reads
+  its share, a multi-axis probe's tint its other coordinates), and no other
+  channel. Everything else is the token view's and the hover's, which replay
+  the token: the geometry `token_readout`, the lens and SAE `token_readout`s
+  (each also returns the attached probes' readings from the same capture) and
+  the token anatomy (its lens channel carries the lens probes' readings).
+  About 1.6 kB a SmolLM2 token with the 17 default probes (geometry about
+  1.1 kB, `scores` 0.5 kB), where the whole envelope is about 118 kB.
+- `summary_measurements(envelope, per_layer=)` is every reading whole but its
+  traces: each geometry reading's summary (`GEOMETRY_SUMMARY_KEYS`: fraction,
+  nearest, coords, residual, assignment, membership, depth_com,
+  depth_spread), each scalar reading whole (its `per_layer` is a lens probe's
+  band or one unit or SAE layer), the lens readout's `aggregate`, the SAE
+  features, the bindings and `scores`; `per_layer=True` adds
+  `GEOMETRY_TRACE_KEYS` and the readout's `layers`. A row of a call that set
+  `persist_per_layer_scores` (generated, or an authored prompt row that call
+  captured) keeps it with `per_layer=True`; every other row, an authored one
+  included, keeps `token_row_measurements` and replays the rest (an authored
+  row through its node's `prompt_capture`). `subspace_coords_per_layer` (the
+  inspector's live trail) is never kept.
+- `aggregate_measurements(envelope)` is what a loom node keeps of its reply's
+  aggregate envelope (`LoomNode.aggregate_measurements`, stamped at
+  finalize): the summary without traces and without `scores` (the node's
+  `aggregate_readings` is its flat view). The rack and the probe inspector
+  draw the reply's settled reading from it after a reload.
+
+The loom reader refuses rows and node aggregates of any other shape
+(`loom/tree.py`). That is why the geometry per-layer keys and
+`LensReadout.layers` are `NotRequired` in the TypedDicts. `envelope_sources` is the one builder of
+`lens_sources`/`sae_source`/`sae_layer`, from the lens instrument's
+`measurement_sources()` (the source labels its run pinned, stamped on each
+`LensRuntime` when its lens became resident, so no disk read per
+generation) and the SAE live config; an aggregate binds a family's source
 only when it carries that family's readings.
 
+A `replay` envelope may also carry `anatomy` (`TokenAnatomy`, built by
+`loom/node_replay.py` and passed to `build_measurements(anatomy=…)`; any other
+scope refuses it): one token's per-layer lens reads (`reads_as`, the residual
+with its S half centred; `attention`, `mlp`, `steering`, write deltas read as
+directions; each a `LensReadDict` with its `of` and per-half `centred`), the
+units that pushed the token (`AnatomyUnit`: its contribution, its raw
+`activation` (a head's write norm) and `activation_over_scale`, the units
+family's number for the same unit, over its soft neutral scale, `None` without
+unit statistics and in the cross-layer list), the top heads' attention rows
+(`AnatomyPattern`), the decoded `context` and a lens `binding`. An anatomy
+envelope's `instruments` hold only the attached lens probes' readings of the
+same residual (a lens channel, empty without lens probes); the anatomy sits
+beside them because it records the replay forward, not a probe.
+
 Wire drift is a test failure: `tests/readout/test_measurements_envelope.py`
-pins key sets for every scope; `tests/browser/test_browser_parity.py` compares
+pins key sets for every scope (the anatomy record's included); `tests/browser/test_browser_parity.py` compares
 against the hand-maintained golden
-`tests/fixtures/browser/measurement-envelope-v1.json`, which the drowse.ai
+`tests/fixtures/browser/measurement-envelope-v2.json`, which the drowse.ai
 runtime replays (change both together); the TypedDicts feed
 `scripts/generate_webui_types.py`, gated by
 `tests/invariants/test_webui_types_parity.py`.

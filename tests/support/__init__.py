@@ -28,6 +28,7 @@ test modules; a helper two modules share lives here.
   ``StubSession``.
 - :mod:`~tests.support.whitener` — synthetic covering whiteners and means.
 - :mod:`~tests.support.jlens_toys` — the frozen toy model behind lens tests.
+- :mod:`~tests.support.lens_oracle` — the autograd lens oracle the transport is tested against.
 - :mod:`~tests.support.cli` — the fake session the CLI runner tests install.
 - :mod:`~tests.support.streams` — ``FakeGenerationStream``.
 - :mod:`~tests.support.gpu` — the GPU test model id and its skip helper.

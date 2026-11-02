@@ -1,4 +1,4 @@
-import type { RuntimeProgressEvent } from "./contracts";
+import type { RuntimeProgressEvent, TokenAnatomyOptions } from "./contracts";
 import { apiInstruments } from "./services";
 import type { InstrumentFamily, MeasurementsEnvelopeJSON } from "../types";
 
@@ -14,6 +14,7 @@ type TokenReadoutPriority = "interactive" | "background";
 
 interface CacheEntry {
   key: string;
+  /** The family whose epoch invalidates the entry (the anatomy reads through the lens). */
   family: InstrumentFamily;
   nodeId: string;
   rawIndex: number;
@@ -26,6 +27,8 @@ interface CacheEntry {
   listeners: Set<(event: RuntimeProgressEvent) => void>;
   state: "queued" | "active" | "settled";
   invalidated: boolean;
+  /** The runtime call, with the check its answer must pass. */
+  call: (entry: CacheEntry) => Promise<TokenReadoutResponse>;
 }
 
 const MAX_TOKEN_READOUTS = 96;
@@ -36,6 +39,7 @@ const epochs: Record<InstrumentFamily, number> = {
   geometry: 0,
   lens: 0,
   sae: 0,
+  units: 0,
 };
 let active: CacheEntry | null = null;
 
@@ -48,6 +52,50 @@ export function cachedTokenReadout(
   priority: TokenReadoutPriority = "interactive",
 ): Promise<TokenReadoutResponse> {
   const key = tokenReadoutKey(family, nodeId, rawIndex, options);
+  return queued(key, family, nodeId, rawIndex, { ...options }, readoutCall, onProgress, priority);
+}
+
+/** One token's anatomy (the node replay), through the same one-at-a-time queue as the readouts:
+ *  both run model work, which the server refuses to overlap. Invalidated with the lens. */
+export function cachedTokenAnatomy(
+  nodeId: string,
+  rawIndex: number,
+  options: TokenAnatomyOptions,
+  onProgress?: (event: RuntimeProgressEvent) => void,
+  priority: TokenReadoutPriority = "interactive",
+): Promise<TokenReadoutResponse> {
+  const fixed = { ...options };
+  const key = JSON.stringify([
+    "anatomy",
+    epochs.lens,
+    nodeId,
+    rawIndex,
+    fixed.k ?? null,
+    fixed.units ?? null,
+    fixed.patterns ?? null,
+    fixed.steered ?? true,
+    fixed.raw ?? false,
+  ]);
+  const call = async (entry: CacheEntry): Promise<TokenReadoutResponse> => {
+    const read = apiInstruments.tokenAnatomy;
+    if (!read) throw new Error("This runtime has no token anatomy.");
+    const value = await read.call(apiInstruments, entry.nodeId, entry.rawIndex, fixed);
+    if (!value.measurements.anatomy) throw new Error("No anatomy came back for this token. Select it again to retry.");
+    return value;
+  };
+  return queued(key, "lens", nodeId, rawIndex, {}, call, onProgress, priority);
+}
+
+function queued(
+  key: string,
+  family: InstrumentFamily,
+  nodeId: string,
+  rawIndex: number,
+  options: TokenReadoutOptions,
+  call: CacheEntry["call"],
+  onProgress: ((event: RuntimeProgressEvent) => void) | undefined,
+  priority: TokenReadoutPriority,
+): Promise<TokenReadoutResponse> {
   let entry = cache.get(key);
   if (!entry) {
     if (pending.length >= MAX_PENDING_TOKEN_READOUTS) {
@@ -64,7 +112,7 @@ export function cachedTokenReadout(
       family,
       nodeId,
       rawIndex,
-      options: { ...options },
+      options,
       priority,
       promise,
       resolve,
@@ -73,6 +121,7 @@ export function cachedTokenReadout(
       listeners: new Set(),
       state: "queued",
       invalidated: false,
+      call,
     };
     cache.set(key, entry);
     enqueue(entry);
@@ -91,6 +140,24 @@ export function cachedTokenReadout(
   if (!onProgress) return entry.promise;
   const selected = entry;
   return entry.promise.finally(() => selected.listeners.delete(onProgress));
+}
+
+async function readoutCall(entry: CacheEntry): Promise<TokenReadoutResponse> {
+  const value = await apiInstruments.tokenReadout(
+    entry.family,
+    entry.nodeId,
+    entry.rawIndex,
+    entry.options,
+    undefined,
+    (event) => notify(entry, event),
+  );
+  const block = value.measurements.instruments[entry.family];
+  // Geometry and units answer readings only; the lens and SAE answer a ranked readout too.
+  const readingsOnly = entry.family === "geometry" || entry.family === "units";
+  if (!block || (!readingsOnly && (!("readout" in block) || !block.readout))) {
+    throw new Error("No reading was returned for this token. Check the active reading source and try again.");
+  }
+  return value;
 }
 
 export function tokenReadoutCacheEpoch(family: InstrumentFamily): number {
@@ -140,19 +207,8 @@ function pump(): void {
 
 async function run(entry: CacheEntry): Promise<void> {
   try {
-    const value = await apiInstruments.tokenReadout(
-      entry.family,
-      entry.nodeId,
-      entry.rawIndex,
-      entry.options,
-      undefined,
-      (event) => notify(entry, event),
-    );
+    const value = await entry.call(entry);
     if (entry.invalidated) return;
-    const block = value.measurements.instruments[entry.family];
-    if (!block || (entry.family !== "geometry" && (!("readout" in block) || !block.readout))) {
-      throw new Error("No reading was returned for this token. Check the active reading source and try again.");
-    }
     entry.state = "settled";
     if (cache.get(entry.key) === entry) touch(entry.key, entry);
     entry.resolve(value);

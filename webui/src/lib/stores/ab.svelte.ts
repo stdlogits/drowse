@@ -13,7 +13,7 @@
 
 import type { WSClientMessage } from "../types";
 import { chatLog, genStatus } from "./chat.svelte";
-import { buildSamplingPayload, samplingState } from "./sampling.svelte";
+import { buildObservationSampling, samplingState } from "./sampling.svelte";
 import { userFacingError } from "../runtime/userFacingError";
 import { ensureRuntimeChannel } from "./ws.svelte";
 
@@ -106,11 +106,11 @@ export async function sendShadowGenerate(
   genStatus.active = true;
   try {
     const channel = await ensureRuntimeChannel();
-    // Shadow path mirrors ``sendGenerate``'s sampling-payload build so the
-    // ``return_top_k`` opt-in rides shadow / auto-regen runs too (matches
-    // the steered turn's wire-shape, keeps logit captures comparable across
-    // siblings).
-    const sampling = buildSamplingPayload() ?? {};
+    // The comparison is the compared turn as it was, with one modifier: it
+    // sends the composer's observation knobs (``return_top_k`` keeps logit
+    // captures comparable) and none of its generation sampling, which would
+    // outrank the turn's own (``compose_call``).
+    const sampling = buildObservationSampling();
     if (target.roleLabel) {
       if (target.role === "user") sampling.user_role = target.roleLabel;
       else sampling.assistant_role = target.roleLabel;
@@ -253,7 +253,16 @@ export function currentRecipeOverride(): string | null {
   if (!autoRegenState.enabled) return null;
   if (autoRegenState.mode === "custom") {
     const v = autoRegenState.custom.trim();
-    return v || null;
+    return v && customComparisonProblem(v) === null ? v : null;
   }
   return autoRegenState.mode;
+}
+
+/** Why a custom comparison recipe is refused, or null. It changes sampling only (``seed=42,
+ *  temperature=1.5``): the dashboard takes no steering typed as text, since the chips build it, so
+ *  a comparison's steering comes from the rack or the Original / Opposite modes. */
+export function customComparisonProblem(text: string): string | null {
+  return /(?:^|,)\s*steering\s*=/u.test(text)
+    ? "A custom comparison changes sampling only, such as seed=42, temperature=1.5. Its steering comes from the steer rack."
+    : null;
 }

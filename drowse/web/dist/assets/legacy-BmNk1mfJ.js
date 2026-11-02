@@ -1,0 +1,1 @@
+import{vt as e}from"./index-client-B2jUARBN.js";e();

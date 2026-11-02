@@ -257,7 +257,9 @@ placeholder channels.
   rows.
 - **Replay.** `token_readout(node_id, raw_index, top_k=None → 8, layers=None,
   …)` rebuilds the producing forward through `TokenReplay` and returns the
-  `scope="replay"` envelope. `top_k` must lie in `[1, min(width, 256)]`, and a
+  `scope="replay"` envelope, with the attached `sae/<id>` probes' readings
+  from the same encode (`score_probes_from_activations`; a loom row keeps only
+  their values). `top_k` must lie in `[1, min(width, 256)]`, and a
   `layers` argument raises `RequestError` rather than being ignored.
 - **Steering atoms.** The grammar reads `sae/<int>` as a feature id (`#` ids
   and variants are rejected). The registry's `sae` atom resolver calls

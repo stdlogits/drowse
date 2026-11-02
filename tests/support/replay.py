@@ -95,10 +95,14 @@ class ReplayRig:
         seat: str = "assistant",
         role_label: str | None = None,
     ) -> str:
-        """A finished generated turn under a fresh user turn; returns its id."""
+        """A finished generated turn under a fresh user turn; returns its id.
+        Generated is recipe presence: ``recipe=None`` stamps a default one."""
+        from drowse.loom.recipe import Recipe
+
         user_id = self.tree.add_user_turn("a user turn")
         node_id = self.tree.begin_assistant(
-            user_id, recipe=recipe, seat=seat, role_label=role_label,
+            user_id, recipe=Recipe() if recipe is None else recipe, seat=seat,
+            role_label=role_label,
         )
         self.tree.finalize_assistant(
             node_id, text="a generated turn", finish_reason="stop",
@@ -119,6 +123,7 @@ class ReplayRig:
         assistant_role: str | None = None,
         to_device: bool = True,
         gen_seat: str = "assistant",
+        add_generation_prompt: bool = True,
         system_prompt: Any = None,
     ) -> torch.Tensor:
         del stateless, to_device
@@ -127,7 +132,7 @@ class ReplayRig:
             "input": input, "raw": raw, "thinking": thinking,
             "system_prompt": system_prompt, "parent_node_id": parent_node_id,
             "user_role": user_role, "assistant_role": assistant_role,
-            "gen_seat": gen_seat,
+            "gen_seat": gen_seat, "add_generation_prompt": add_generation_prompt,
         })
         return torch.tensor([self.tokenizer.encode(PROMPT_RENDER)], dtype=torch.long)
 
@@ -148,7 +153,7 @@ class ReplayRig:
         self.events.append("exclusive-exit")
 
     def _capture(self, ids: torch.Tensor, **kwargs: Any) -> dict[int, torch.Tensor]:
-        from drowse.fit.capture import _capture_all_hidden_states
+        from drowse.loom.replay import capture_pooled
 
         pool = kwargs.get("pool_index")
         self.events.append("capture")
@@ -157,4 +162,4 @@ class ReplayRig:
             int(pool) if pool is not None else None,
             tuple(kwargs.get("layer_indices") or ()),
         ))
-        return _capture_all_hidden_states(self.model, self.layers, ids, **kwargs)
+        return capture_pooled(self.model, self.layers, ids, **kwargs)

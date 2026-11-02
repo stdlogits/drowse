@@ -9,11 +9,11 @@ injected, where, when, and how strongly.
 
 | Module | Owns |
 |---|---|
-| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr`, `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `ManifoldTerm`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
+| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr` (the joined `term_parts` texts; `TermPart` is one term with its fields, for `POST .../steering/validate`: its trigger both as the clause text and as `phase`, `first_n`, `after_n` and `gate`, a projection's `(base, operator, onto)`, so a client shows it as a chip without a parser), `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
 | `terms.py` | `Steering` (frozen IR), `AlphaEntry`, `SteeringStackEntry`, `term_entry` / `entry_trigger` / `entry_coeff` |
 | `triggers.py` | `Trigger` + presets, `ProbeGate`, `TriggerContext` |
-| `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries), `SteeringScope`, `resolve_scope_role`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
-| `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
+| `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries, `term_layers`), `SteeringScope`, `TermLayers`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
+| `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `UnitTerm` / `UnitOp` / `UnitHook` (unit ablation), `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
 
 Layering (`tests/invariants/test_layering.py`): `grammar`/`terms`/`triggers`
 sit above `store` (parsing resolves bare atoms against installed manifolds via
@@ -32,18 +32,20 @@ on `SteeringHook`s, or the compiled offset buffers.
 Every live surface (Python, YAML `vectors:`, HTTP, CLI, loom recipes) parses
 through `parse_expr`. `fit/bake.py::_parse_merge_expr` walks the private AST
 (`_lex`, `_Parser`, `_Term`/`_Selector`/`_Atom`) to accept only
-namespace-qualified additive scalar terms; keep those fields stable or update
-it.
+namespace-qualified additive scalar terms, refusing any `_Term.layers`; keep
+those fields stable or update it.
 
 ```text
 expr       := [sign] term (sign term)*
 sign       := "+" | "-"
-term       := [coeffs ["*"]] ["!"] selector ["@" trigger]
+term       := [coeffs ["*"]] ["!"] selector ["{" layers "}"] ["@" trigger]
 coeffs     := NUM ["," signed_num]           # 2 values only on a % term: along,onto
+layers     := <model/layers.py selector>     # entries INT | INT "-" INT, comma-joined; "all" | "workspace"
 selector   := atom [("~" | "|") atom | "%" position]
 position   := signed_num ("," signed_num)* | IDENT     # coord list | node label
 atom       := ("jlens" | "slens") "/" "#" INT          # exact vocab id
             | "sae" "/" INT                            # SAE feature
+            | ("neuron" | "head") "/" UNIT             # L8n344 / L20h17
             | [IDENT "/"] IDENT ["." IDENT] [":" IDENT]  # ns / name . name : variant
 trigger    := phase ["&" gate] | gate
 phase      := preset | ("first" | "after") ":" INT
@@ -52,12 +54,15 @@ gate       := "when" ":" probe op signed_num
 probe      := [IDENT "/"] pname ( ":" ("fraction" | "membership")
                                 | ("@" | "~") IDENT
                                 | ["." IDENT] ["[" INT "]"] )
-pname      := IDENT | "#" INT (jlens/slens) | INT (sae)
+pname      := IDENT | "#" INT (jlens/slens) | INT (sae) | UNIT (neuron/head)
 op         := ">" | ">=" | "<" | "<="
 signed_num := ["+" | "-"] NUM
+UNIT       := "L" INT ("n" | "h") INT                  # any letter case; n under neuron/, h under head/
 ```
 
-Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`); a term's sign
+Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`), and every digit,
+in `NUM`, `INT` and a layer clause, is ASCII `0-9` (an Arabic-Indic or
+fullwidth digit is an unexpected character); a term's sign
 comes from the leading/separating `+`/`-` and applies to every value of a
 comma run (`-0.6,0.3 m%x` is `along=-0.6, onto=-0.3`). `IDENT` is
 `[A-Za-z][A-Za-z0-9_]*`, and a `-` between two identifier characters joins
@@ -65,12 +70,45 @@ segments, so `a-b` is one name (slugged to `a_b`) and `0.5 a-0.3 b` is a parse
 error; write `a - b`. Multi-word names use `_`; quotes, `==`, and `a.b.c` are
 errors. `SteeringExprError` (400) carries the failing `col`.
 
+The lexer takes a `{…}` clause whole and hands its body to
+`model/layers.py::parse_layer_selector(body, allow_sample=False)`, the one
+layer-selector parser (whitespace inside is free). The clause follows the
+whole selector (after `%pos`, `~b`, `|b`) and precedes `@`. Parse errors,
+each with a `col` (a `LayerSelectorError`'s offset maps into the expression):
+an empty clause, `sample`, an empty entry, a negative index, a reversed range
+(`8-4`), a layer named twice (`4-8,6`), an unterminated `{`, a second clause,
+a `~`/`|`/`%` after the clause, a clause after `@` (gate probes take none),
+and a clause on a selector with a `neuron/` or `head/` atom (unit atoms carry
+their own layer).
+
+**Unit atoms.** `neuron/L8n344` and `head/L20h17` name one MLP neuron or one
+attention head. The name lexes as one `IDENT` and goes through
+`naming.parse_unit_ref` (any letter case, leading zeros dropped), so the key,
+`format_expr` and `referenced_selectors` carry the canonical `L8n344`; the
+letter must match the namespace. Parse errors, each with a `col`: a malformed
+unit (`neuron/L8h344`, `neuron/8`), a `.` after a unit, a `:variant`, a unit
+as an operand of `~`, `|` or `%` (either side), a layer clause, and a head
+without `!` (`a head has no single write direction; silence it with
+!head/…`). Gate probes take units too (`@when:neuron/L8n344 > 2`), stored
+canonical; a unit probe is one scalar, so a channel suffix after it
+(`:fraction`, `@label`, `~label`, `[i]`) is a parse error rather than a gate
+that never fires.
+
 | Form | IR value (`Steering.alphas` key) | Lowered as |
 |---|---|---|
 | `α x` | `ManifoldTerm` via the bare-atom ladder, else `α` / `(α, Trigger)` under `x` | push |
 | `α a~b` / `α a\|b` | `ProjectedTerm` under `a~b` / `a\|b` | Mahalanobis LEACE `project_profile`: keep / remove the component of `a` along `b`, then push |
 | `α !x` | `AblationTerm` under `!x` | `h' = h − α(h·d̂ − μ·d̂)d̂`; bare `!x` is α = 1 |
+| `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's `+`-pole write at its layer (a one-layer profile, folded and pushed like any vector); a negative α pushes along the `−` pole's |
+| `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | a `UnitOp` pre-hook on the down / output projection: the unit's activation (a neuron's `act`, a head's `z_h`) becomes `(1 − α)·x + α·mean`, its neutral mean; never a residual direction ablation |
 | `along[,onto] m%pos` | `ManifoldTerm` under `m%pos` | affine fit: push fragment; curved fit: own term |
+| any of these but a unit atom `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`deceptive{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
+
+`LayerScope` is `None` (every fitted layer), `"workspace"`, or a sorted index
+tuple; `{all}` is `None`. The clause is part of the term's identity: the same
+selector under two clauses is two keys, and equal clauses merge as below
+(written order is irrelevant: `a{5,4}` is `a{4-5}`). `split_layer_clause(key)`
+reads a key back into `(bare key, LayerScope)`.
 
 Omitted coefficient: 0.5 (`DEFAULT_COEFF`), or 1.0 after `!`. Parse-time
 rejections: `!` with `~`/`|`/`%`; `%` with `~`/`|` or a second `%`; chained
@@ -78,9 +116,15 @@ projections; a two-value comma run on anything that does not resolve to a `%`
 term (a bare node label does: `0.6,0.3 pirate` is legal); more than two
 values; more than one `@` clause or gate per term. Repeated keys merge: equal
 triggers sum coefficients (`along` and `onto` separately), differing triggers
-raise, and one key used both as a plain term and as a projection raises.
+raise, and one key used both as a plain term and as a projection raises. A
+coordinate `%` key renders its position with `%g`, so two positions that agree
+to six significant digits (`m%0.1234567` and `m%0.1234568`) share a key: they
+raise rather than merge, since summing would move one term onto the other's
+point.
 Projection, ablation and `%` terms default to `Trigger.BOTH`; a plain term
-without `@` stores a bare float that inherits `Steering.trigger`.
+without `@`, or with `@both`, stores a bare float that inherits
+`Steering.trigger` (`Trigger.BOTH` for every parsed value), so `x@both` and
+`x` are one IR and merge.
 
 ### Triggers
 
@@ -109,7 +153,7 @@ as `default/emotions` is gated as `default/emotions@happy`).
 
 | Shape | Channel (`readout.types`) | Produced by |
 |---|---|---|
-| `p`, `a.b`, `p[i]` | `Axis(i)`; bare = axis 0 | geometry (one key per coord axis, domain-frame); `jlens/<w>` / `jlens/#id` (mean fitted-layer probability); `sae/<id>` (normalized strength). Lens and SAE emit axis 0 only; a higher index validates but never fires. |
+| `p`, `a.b`, `p[i]` | `Axis(i)`; bare = axis 0 | geometry (one key per coord axis, domain-frame); `jlens/<w>` / `jlens/#id` (mean fitted-layer probability); `sae/<id>` (normalized strength); `neuron/L8n344` (activation over its pole's neutral `act_top`, signed), `head/L20h17` (write norm over its `act_top`). Lens and SAE emit axis 0 only; a higher index validates but never fires. A unit gate needs no attached probe. |
 | `p:fraction` | `Fraction` | geometry: share of the centered activation in the subspace, [0, 1] |
 | `p:membership` | `Membership` | geometry: tube-fit density, [0, 1] |
 | `p@label` | `Distance` | geometry: negated distance in typical label spacings (larger = closer); only for nodes in the reading's `nearest` list; `neutral` names the frame anchor |
@@ -124,30 +168,47 @@ first decode step). Validation happens at generation preflight in
 `ReadPlane.resolve_gates` (`generation/read_plane.py`): a gate naming a probe
 attached to the lens or SAE family on a channel that family cannot produce
 raises `UnsupportedProbeChannelError` (400); geometry accepts every channel;
-a gate naming no attached probe is silently inactive.
+a gate on a unit reads it whether or not a unit probe is attached, and a unit
+outside the model is a `UnitIndexError` (400) there; any other gate naming no
+attached probe is silently inactive.
 
 ### Round trip
 
 `format_expr` renders the canonical form: resolved registry keys (`0.5 pirate`
-→ `0.5 default/personas%pirate`), `%g` numbers (six significant digits, so
-lossy beyond that), no tag for `Trigger.BOTH`, canonical preset spellings
-(`before`, `response`), `!x` / `-!x` for ±1 ablations, and a `%` term's
+→ `0.5 default/personas%pirate`), `%g` numbers (C's `%g`: six significant
+digits, so lossy beyond that; trailing zeros and a bare point dropped;
+exponent form when the decimal exponent is below −4 or at least 6, written
+`e`, a sign and at least two digits: `1e-05`, `1e+06`, `-1.23457e+06`; the
+same rendering spells a coordinate `%` position in its key), no tag for `Trigger.BOTH`, canonical preset spellings
+(`before`, `response`), `!x` / `-!x` for ±1 ablations, a `%` term's
 `onto` rendered relative to `along`'s sign so mixed-sign terms (the loom
-`inverted` regen negates only `along`) re-parse exactly.
+`inverted` regen negates only `along`) re-parse exactly, and the canonical
+layer clause (`format_layer_clause`): indices sorted, each maximal run of
+consecutive layers as `a-b` (`{4,5}` → `{4-5}`) and a lone layer as `a`, joined
+by `,` with no spaces (`model/layers.py::format_layer_indices`); `workspace`
+lower-case; `{all}` and no clause render nothing.
 `parse_expr(format_expr(s)) == s` holds for every IR the parser produces and
 every trigger built from the presets, `first`/`after`/`when`, or
 `replace(preset, gate=…)`. Any other hand-built `Trigger` has no grammar form
 and `format_expr` raises `SteeringExprError`; because results stamp
 `applied_steering = str(steering)` (as do loom recipes and scoring), such a
 trigger fails there. `referenced_selectors` returns the pre-resolution concept
-atoms `(namespace, concept, variant)`, skipping `%` terms (pack-install checks
-in `cli/config_file.py`).
+atoms `(namespace, concept, variant)`, skipping `%` terms and never carrying a
+layer clause (pack-install checks in `cli/config_file.py`).
 
 The browser edition reimplements this grammar.
 `tests/fixtures/browser_steering_expression.json` (accepted expressions with
 their `referenced_selectors`, plus rejected ones) is pinned by
 `tests/browser/test_browser_parity.py`; a grammar change updates the fixture
-and is an interface change for drowse.ai.
+and is an interface change for drowse.ai. The parsed form is pinned
+separately by `tests/fixtures/steering_ir.json`
+(`tests/steering/test_steering_ir.py`): every accepted expression's ordered
+terms (key, kind, coefficient or along/onto, operands, position, layer scope,
+trigger) and canonical string against a small fixture registry, and every
+rejected expression's error class. It is Python-only today and is the target
+drowse.ai's parser will match; a change to any parsed value regenerates it
+(`PYTHONPATH=. python -m tests.steering.test_steering_ir`) and is the same
+interface change.
 
 ## Names, atoms and resolution
 
@@ -160,10 +221,13 @@ and is an interface change for drowse.ai.
   bare labels stay unambiguous; `@` is forbidden (HF revision separator).
 - **Reserved namespaces** (`RESERVED_NAMESPACES`: `jlens`, `slens`, `sae`,
   `neuron`, `head`) name instrument units: the name is kept verbatim and
-  case-preserving (`jlens/Paris` ≠ `jlens/paris`), takes no `:variant` (not
-  even `:raw`), and skips every manifold tier. The session wires resolvers for
-  `jlens` and `sae` (`ArtifactRegistry.set_atom_resolver`); `slens`, `neuron`
-  and `head` parse but raise `ProfileNotRegisteredError` when steered.
+  case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are the
+  exception, canonicalized as above), takes no `:variant` (not even `:raw`),
+  and skips every manifold tier. The session wires resolvers for `jlens`,
+  `slens` (the token's S-lens footprint direction, `register_input_direction`),
+  `sae` and `neuron` (`ArtifactRegistry.set_atom_resolver`; `neuron` is
+  `units.instrument.UnitsInstrument.register_direction`, which checks the unit
+  against the model: a 400 at `open_scope`).
 - **Variants**: `raw` (default), `sae` / `sae-<release>`, `role` /
   `role-<id>` (role-augmented fit; its role becomes the scope's assistant
   label), `from` / `from-<src>` (cross-model transfer). There is no `pca`
@@ -199,9 +263,10 @@ Keys carry `<ns>/` only when typed and `:<variant>` only when not `raw`.
 ## Composition (`composer.py`)
 
 `SteeringComposer` reaches the session only through its constructor
-arguments: the `ArtifactSource` and `NeutralSource` protocols (the session's
-`ArtifactRegistry` and `NeutralBaseline`), the manager, the exclusive
-generation lock, the event bus, and two callbacks.
+arguments: the `ArtifactSource`, `NeutralSource` and `UnitSource` protocols
+(the session's `ArtifactRegistry`, `NeutralBaseline` and
+`units.runtime.UnitsRuntime`), the manager, the exclusive generation lock, the
+event bus, and two callbacks.
 
 **Resolution.** `open_scope(value)` parses (with `profile_names`), then
 `resolve()` concretizes and loads every artifact: `concretize_key` pins a bare
@@ -238,15 +303,46 @@ layer (`WhitenerError` otherwise; there is no Euclidean path).
 | Entry | Lowering |
 |---|---|
 | `(α, trigger)` vector | profile → `fold_directions_to_subspace` (neutral-anchored rank-1 ray, + pole at `‖d_L‖`) → `affine_manifold_push(folded, "+")`, coefficient α |
-| `ProjectedTerm` | `project_profile(base, onto, op, whitener=…)`, memoized on the identities of base, onto and whitener and never registered → folded and pushed like a vector |
+| `ProjectedTerm` | `project_profile(base, onto, op, whitener=…)`, memoized on the identities of base, onto and whitener under the clause-free key (one projection serves every clause) and never registered → folded and pushed like a vector |
 | `AblationTerm` | target profile's per-layer direction(s) → ablate fragment with its coefficient |
+| `UnitAblationTerm` | `resolve` checks the unit against the model (`UnitIndexError` 400 before the scope); `compose` takes its `UnitSite` (module, coordinate span, neutral mean) from `UnitSource.site` and registers `SteeringPlan.add_unit_ablation(…, coeff, trigger)`; it joins no affine group. The plan cache records the neutral unit statistics it read. Without unit statistics: `UnitsUnavailableError` (422); on a model `BlockSpec` refuses: `UnsupportedBlockError` (422) |
 | affine `ManifoldTerm` | `affine_manifold_push(manifold, position)`, coefficient `along` (`onto` is vacuous and dropped) |
-| curved `ManifoldTerm` | `SteeringPlan.add_manifold` (its own term) |
+| curved `ManifoldTerm` | `SteeringPlan.add_manifold(…, layers=…)` (its own term) |
+
+**Layer scoping.** Before grouping, `select_term_layers(key, fitted, scope,
+n_layers=len(layers))` turns each term's `LayerScope` into its layers: a
+vector's or ablation target's profile layers, a projection's projected layers,
+or a manifold's fitted layers are `fitted`. An index scope must lie inside
+`fitted`; `workspace` resolves against the model depth
+(`resolve_layer_selector("workspace", range(n_layers), …)`) and intersects
+`fitted`. A selected layer outside the fit, or an empty intersection, raises
+`SteeringCompositionError` (422) naming the term and its fitted layers. The
+term's per-layer directions or push fragments are restricted to the selection
+(a curved term passes `layers` to `add_manifold`, which restricts its shares
+and lowered layers), so synthesis, the mean-1 share normalization and the
+compiled offsets see only selected layers. A plain vector's scope is read from
+its key (`split_layer_clause`); the other kinds carry `layers`. Ablation
+coefficients stay exact under any selection (`eff_along · κ` is still the
+user's coefficient).
+
+`SteeringComposer.term_layers(entries)` (and `SteeringScope.term_layers()`)
+reports where each resolved term acts, for the dashboard's term editor (`POST
+.../steering/validate`): a `TermLayers` of its fitted layers, its share at each
+(mean 1 over the fitted layers) and the layers its clause selects
+(`select_term_layers`, so a clause composition refuses raises here too). Each
+term is weighed alone and unscoped, as composition weighs it: a push (vector,
+pole, projection, affine `%`) by its whitened displacement `‖Δ_L‖_M`, a curved
+`%` by its baked Mahalanobis share, an ablation evenly (its coefficient is exact
+at every layer), a unit at its own layer. It takes the exclusive lock and
+changes nothing installed.
 
 Push and ablate fragments group by trigger equality; each group becomes one
 `synthesize_subspace` call (one merged affine subspace per layer, push wins a
 direction shared with an ablation) registered as `__affine__<i>`. Distinct
-triggers produce distinct groups, each with its own share normalization.
+triggers produce distinct groups, each with its own share normalization over
+the union of its terms' layers, so a scoped term sharing a trigger with an
+unscoped one is normalized over the union; a scoped term alone in its group
+is normalized over its selection.
 `affine_manifold_push` with a label uses that node's per-layer `node_coords`;
 with coordinates it blends the per-layer coords by cardinal RBF weights over
 the shared layout (exact at nodes). Coordinate arity raises
@@ -254,7 +350,8 @@ the shared layout (exact at nodes). Coordinate arity raises
 the label form.
 
 **Plan cache.** `plan_for` keys on `tuple(entries.items())` (entries are
-frozen) in an LRU of `_PLAN_CACHE_SIZE = 16`, enough for the push/pop pair of
+frozen, and every key carries its canonical layer clause, so two clauses are
+two plans) in an LRU of `_PLAN_CACHE_SIZE = 16`, enough for the push/pop pair of
 each `generate(steering=…)`. A hit is reused only while every registry object
 composition read is still the identical object (`_CachedPlan.deps`;
 registries replace values, so a re-extract, eviction, whitener rebuild or
@@ -275,9 +372,11 @@ checks for an installed plan itself).
 
 ## Lowering and hooks (`hooks.py`)
 
-`SteeringPlan.lower(device, dtype)` places curved groups first at each layer.
-Two curved spans sharing a layer with max |cosine| above
-`_CURVED_ORTHO_TOL = 1e-3` raise `OverlappingManifoldError` (422). Each affine
+`SteeringPlan.lower(device, dtype)` places curved groups first at each layer
+(a curved term lowers only at the layers of its `shares`). Two curved spans
+sharing a layer with max |cosine| above `_CURVED_ORTHO_TOL = 1e-3` raise
+`OverlappingManifoldError` (422); disjoint layer clauses let one curved
+manifold appear twice (`m%a{0-3} + m%b{4-7}`). Each affine
 term then goes through `_lower_affine_subspaces`, the single affine lowering:
 mean-1 share normalization, `_orthogonalize_affine_against` the curved span at
 that layer (the curved term owns shared directions; κ is carried through the
@@ -291,10 +390,13 @@ their parity.
 ### Gains
 
 `_normalize_shares_mean1` makes `Σ_L share_L = n_layers`, so a 1-layer or
-30-layer fit, 4-dim or 16-dim, lands in the same α band. The raw share is
+30-layer fit, 4-dim or 16-dim, lands in the same α band; `n_layers` counts the
+layers a group or curved term acts on, so a layer clause selecting one layer
+lands there too. The raw share is
 `SynthesizedSubspace.share` (the whitened push displacement `‖Δ_L‖_M`; a
 positive proxy on pure-ablation layers) or a curved fit's baked
-`mahalanobis_share`, which must cover exactly its fitted layers.
+`mahalanobis_share`, which must cover exactly its fitted layers and is then
+normalized over the term's selected layers.
 `synthesize_subspace` makes each push target whitened-unit, so every target
 gets the same whitened budget (`Σ_L eff_along_L = gain · n_layers`; rationale
 in `ARCHITECTURE.md` §6.4). There is no lever or N correction and no clamp or
@@ -338,21 +440,48 @@ seeds at the origin with `_MANIFOLD_COLD_GN_STEPS = 4`. The last position's
 foot carries from prefill into decode; `reset_manifold_feet()` cold-starts
 every generation.
 
+**Unit ablation.** `SteeringPlan.add_unit_ablation` records a `UnitTerm`
+(module, coordinate span `[start, stop)` of its input, width, neutral mean,
+coefficient, trigger); `lower_units(device, dtype)` (memoized) groups terms by
+module and trigger into one `UnitOp` each: full-width fp32 constants `keep`
+(1, and `1 − α` on the units' coordinates) and `bias` (0, and `α·mean`),
+composed in registration order when two terms share a span, cast once to the
+activation dtype. `UnitOp.apply` is `x.mul_(keep).add_(bias)` on the
+projection's input: two elementwise ops, no gather, no allocation, no host
+sync, every position the forward carries (the whole prompt in a prefill)
+except the attention sink. The unit means count positions from 1, so position
+0 keeps its own activation: `TriggerContext.sink_column` names the column
+holding absolute position 0 (rest state 0, for replays, captures and scores
+over a sequence from the start; the decode loop sets 0 on a prefill from
+position 0 or a cacheless re-feed and `None` on incremental steps, as the
+joint-logprob replay does, and both restore 0 after), and the `UnitHook`
+holds that one column aside and writes it back after its ops (one
+`[B, 1, F]` copy, only in a forward that carries position 0). A left-padded
+batch has a per-row sink column, so `session/batch.py` sends a batch with a
+unit ablation to the serial loop. A `UnitHook` is a forward pre-hook on the
+down or output projection; one always-active group makes it static (no
+trigger evaluation), otherwise it walks its groups like a `SteeringHook`. Unit terms make `static_offsets()`
+`None`: the compiled graph was not traced with a module pre-hook.
+
 `SteeringManager.install(plan, …)`: when the session adopted compiled offset
 buffers (`install_persistent_offset_hooks` runs before `torch.compile` on
 CUDA/MPS; `adopt_compiled_offsets`) and `plan.static_offsets()` returns a map
-(no curved term, every group `Trigger.BOTH`, every layer a pure push), it
-writes the buffers in place (`copy_`; reassigning would change identity and
-force a retrace; untouched layers are zeroed), attaches no transient hook and
-sets `uses_compiled_offsets`. Otherwise it zeroes the buffers and attaches or
-re-arms one transient `SteeringHook` per steered layer. Lowering and
-validation run before any state changes, so a raising install keeps the
-previous plan; `clear_all()` is the inverse, and an empty stack always
-clears. Routing predicates for `session/engine.py`: `all_fast_path()` (no
-transient hook: unsteered or on offsets, so the compiled graph is valid) and
-`static_steerable()` (hooks attached, every one static, so StaticCache stays
-eligible). On a compiled session any transient hook routes to the eager
-original module.
+(no curved term, no unit term, every group `Trigger.BOTH`, every layer a pure
+push), it writes the buffers in place (`copy_`; reassigning would change
+identity and force a retrace; untouched layers are zeroed), attaches no
+transient hook and sets `uses_compiled_offsets`. Otherwise it zeroes the
+buffers and attaches or re-arms one transient `SteeringHook` per steered layer
+and one `UnitHook` per module carrying unit ablations (`unit_hooks`, keyed by
+module id). Lowering and validation run before any state changes, so a
+raising install keeps the previous plan; `clear_all()` is the inverse, and an
+empty stack always clears. Routing predicates for `session/engine.py`:
+`all_fast_path()` (no transient hook, unit hooks included: unsteered or on
+offsets, so the compiled graph is valid) and `static_steerable()` (hooks
+attached, every layer hook and unit hook static, so StaticCache stays
+eligible). On a compiled session any transient hook, a unit hook or the units
+read tap included, routes to the eager original module: a unit ablation never
+rides the compiled graph (`tests/units/test_unit_steering.py` pins the
+predicates).
 
 `TriggerContext` is `SteeringManager.ctx`. `generation/decode.py::generate_steered`
 sets `is_prefill`, `thinking` and `gen_step` before each forward and replaces
@@ -367,11 +496,16 @@ belong in compose or lower.
 ## Tests
 
 All CPU, in `tests/steering/`: grammar and round trips
-(`test_steering_expr.py`, `test_manifold_grammar.py`), triggers
+(`test_steering_expr.py`, `test_manifold_grammar.py`, unit atoms in
+`test_unit_grammar.py`, the parsed-IR golden in `test_steering_ir.py`), triggers
 (`test_triggers.py`), scopes on a real session and on
 `tests/support/composer.py::SteeringRig` (`test_steering_context.py`,
 `test_steering_context_ablation.py`), installed state and offset buffers
 (`test_steering_install.py`), affine lowering, gain, κ compensation and
 compiled/eager parity (`test_subspace_steering.py`), `AffineOp` against
 `subspace_inject` (`test_hooks_triggers.py`), curved lowering and foot state
-(`test_manifold_steering.py`). Kernel math lives in `tests/geometry/`.
+(`test_manifold_steering.py`), layer clauses through composition: coverage,
+ablation exactness, shares over the selection, 422s, curved restriction,
+compiled/eager parity and plan-cache keying (`test_layer_scoped_steering.py`).
+Unit ablation and neuron pushes against hand-patched forwards:
+`tests/units/test_unit_steering.py`. Kernel math lives in `tests/geometry/`.

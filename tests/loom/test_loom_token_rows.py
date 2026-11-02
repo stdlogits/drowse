@@ -39,7 +39,9 @@ def test_token_rows_carry_raw_index_when_created() -> None:
     node_id = tree.begin_assistant(user, recipe=Recipe())
     session = SimpleNamespace(
         tree=tree,
-        lens=SimpleNamespace(live=None, last_step_readings=None),
+        lens=SimpleNamespace(
+            live=None, last_step_readings=None, measurement_sources=lambda: {},
+        ),
         sae=SimpleNamespace(live=None, last_step_readings=None),
     )
     state = GenerationState()

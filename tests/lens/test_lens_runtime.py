@@ -139,9 +139,9 @@ def test_jlens_device_stacks_use_a_bounded_lru_cache() -> None:
 
     assert len(session.lens.runtime._stacks) == DEVICE_STACK_CACHE_MAX
     keys = list(session.lens.runtime._stacks)
-    assert (id(lens), str(device), (0,)) in keys
-    assert (id(lens), str(device), (0, 1)) in keys
-    assert (id(lens), str(device), (1,)) not in keys
+    assert (id(lens), "out", str(device), (0,)) in keys
+    assert (id(lens), "out", str(device), (0, 1)) in keys
+    assert (id(lens), "out", str(device), (1,)) not in keys
 
 
 def test_jlens_token_decode_cache_is_bounded() -> None:
@@ -188,8 +188,11 @@ def test_jlens_property_refreshes_and_evicts_after_external_lifecycle() -> None:
     }
     disk_b = LensHarness().lens.fit(corpus_b, force=True)
 
+    # The compatibility check is metadata only: it never reloads the
+    # resident lens (that is device work, and the check runs lock-free).
     assert session_a.lens.has_compatible()
-    refreshed = session_a.lens.resident_lens
+    assert session_a.lens.resident_lens is resident_a
+    refreshed = session_a.lens.resident()
 
     assert refreshed is not None
     assert any(
@@ -262,7 +265,7 @@ def test_external_lens_replacement_plans_and_freezes_refreshed_layers(
     frozen binding are taken — pairing the new lens with stale layers
     KeyErrors in the transport stack."""
     session_a = make_tiny_session(warm=False)
-    session_a.lens.fit(_TINY_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_TINY_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
@@ -272,7 +275,7 @@ def test_external_lens_replacement_plans_and_freezes_refreshed_layers(
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
     disk_b = make_tiny_session(warm=False).lens.fit(
-        corpus_b, source_layers=[1], force=True,
+        corpus_b, layers=[1], force=True,
     )
     assert list(disk_b.source_layers) == [1]
 
@@ -316,7 +319,7 @@ def test_prepare_is_the_refresh_site_and_supplies_the_pin() -> None:
     from drowse.readout.types import LensPrep, ReadRequest
 
     session_a = LensHarness()
-    session_a.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
@@ -325,7 +328,7 @@ def test_prepare_is_the_refresh_site_and_supplies_the_pin() -> None:
     corpus_b = [
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
-    LensHarness().lens.fit(corpus_b, source_layers=[1], force=True)
+    LensHarness().lens.fit(corpus_b, layers=[1], force=True)
 
     inst = session_a.lens
     prep = inst.prepare(ReadRequest(final_aggregate=True))
@@ -343,9 +346,8 @@ def test_prepare_is_the_refresh_site_and_supplies_the_pin() -> None:
 
 
 def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
-    """sol's round-3 P1: prepare pins lens A; before plan/bind, the
-    un-locked ``has_compatible`` (the session-info route runs it
-    without the generation lock) observes a replacement lens B and adopts
+    """sol's round-3 P1: prepare pins lens A; before plan/bind, a
+    reconciling ``resident()`` observes a replacement lens B and adopts
     it, rewriting the live probe layer lists.  Because plan and bind
     consume the prep's snapshot — never the live registry — the run still
     measures A's layers with A pinned; the old registry reread paired A
@@ -353,7 +355,7 @@ def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
     from drowse.readout.types import ReadRequest
 
     session_a = LensHarness()
-    session_a.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
@@ -366,8 +368,10 @@ def test_interleaved_adoption_cannot_desync_plan_from_pin() -> None:
     corpus_b = [
         f"replacement disjoint prompt {i} with enough content" for i in range(4)
     ]
-    LensHarness().lens.fit(corpus_b, source_layers=[1], force=True)
-    assert session_a.lens.has_compatible() is True  # adopts B
+    LensHarness().lens.fit(corpus_b, layers=[1], force=True)
+    assert session_a.lens.has_compatible() is True  # a metadata check
+    assert session_a.lens.probes["jlens/example"]["layers"] == [0]
+    assert session_a.lens.resident() is not None  # adopts B
     assert session_a.lens.probes["jlens/example"]["layers"] == [1]
 
     plan = inst.plan(prep)
@@ -484,14 +488,14 @@ def test_idle_measurement_state_is_coherent() -> None:
     from drowse.readout.types import ReadRequest
 
     session_a = LensHarness()
-    session_a.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    session_a.lens.fit(_PROMPTS, layers=[0], force=True)
     session_a.lens.probes["jlens/example"] = {
         "word": "example", "token_id": 1, "layers": [0],
     }
     corpus_b = [
         f"replacement idle prompt {i} with enough content" for i in range(4)
     ]
-    LensHarness().lens.fit(corpus_b, source_layers=[1], force=True)
+    LensHarness().lens.fit(corpus_b, layers=[1], force=True)
 
     inst = session_a.lens
     lens, specs = inst._measurement_state()
@@ -683,20 +687,27 @@ def test_bind_rejects_same_family_plan_prep_crossing(tiny_session: Any) -> None:
         session.lens.bind(plan_other, prep_local)
 
 
-def test_prepare_rejects_a_layerless_pin_demanded_lens(
+def test_prepare_pins_a_mid_only_lens_with_no_probe_layers(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A pin-demanded lens without ``source_layers`` is structurally
-    broken (layers align captures, specs, and Jacobians) — it fails at
-    the prepare boundary, not as a mid-generation KeyError."""
+    """Regression: a pin-demanded R lens holding only ``mid`` pins with its
+    ``jlens/`` probes layerless (they read ``out``), as its adoption left
+    them; prepare used to probe ``source_layers``, which raises
+    ``LensNotFittedError`` for such a lens, and failed every generation."""
+    from drowse.lens.jlens import JacobianLens
+    from drowse.lens.key import LensKey
     from drowse.readout.types import ReadRequest
 
     session = LensHarness()
     inst = session.lens
-    monkeypatch.setattr(inst, "resident", lambda: object())  # no source_layers
-    inst.live = {"layers": [0]}
-    with pytest.raises(RuntimeError, match="source_layers"):
-        inst.prepare(ReadRequest(final_aggregate=False, live=True))
+    mid_only = JacobianLens(
+        None, mid={0: torch.eye(4)}, n_prompts=1, d_model=4, key=LensKey("R"),
+    )
+    monkeypatch.setattr(inst, "resident", lambda: mid_only)
+    inst.probes["jlens/a"] = {"word": "a", "token_id": 1, "layers": [], "family": "R"}
+    prep = inst.prepare(ReadRequest(final_aggregate=True, live=False))
+    assert prep.pinned and prep.lens is mid_only
+    assert prep.specs["jlens/a"]["layers"] == []
 
 
 def test_generation_lens_snapshot_avoids_per_token_disk_validation(
@@ -747,7 +758,7 @@ def test_jlens_property_rejects_changed_loaded_weights() -> None:
     changed = LensHarness()
     changed_model: Any = changed.model
     with torch.no_grad():
-        changed_model.model.layers[0].w1.data.reshape(-1)[1] += 0.125
+        changed_model.model.layers[0].mlp.up_proj.weight.data.reshape(-1)[1] += 0.125
     assert changed.lens.resident() is None
 
 
@@ -764,15 +775,18 @@ def test_jlens_property_rechecks_loaded_pointer_fingerprint(
         "n_prompts": 1,
     }
     replaced = {**compatible, "model_fingerprint": "different-weights"}
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model: compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model: (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _family="R": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _family="R": (lens, replaced))
 
     assert session.lens.resident() is None
 
 
-def test_has_compatible_jlens_rechecks_loaded_pointer_fingerprint(
+def test_resident_rechecks_loaded_pointer_fingerprint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The sidecar matches but the payload loaded under it does not: the
+    compatibility check trusts the sidecar (metadata only), and the
+    reconciling load refuses the payload and evicts."""
     import drowse.lens.store as lens_io
 
     session = LensHarness()
@@ -785,10 +799,13 @@ def test_has_compatible_jlens_rechecks_loaded_pointer_fingerprint(
     replaced = {**compatible, "model_fingerprint": "different-weights"}
     session.lens.runtime.lens = lens
     session.lens.runtime.identity = cast(Any, ("old",))
-    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model: compatible)
-    monkeypatch.setattr(lens_io, "load_lens", lambda _model: (lens, replaced))
+    monkeypatch.setattr(lens_io, "load_lens_sidecar", lambda _model, _family="R": compatible)
+    monkeypatch.setattr(lens_io, "load_lens", lambda _model, _family="R": (lens, replaced))
 
-    assert not session.lens.has_compatible()
+    assert session.lens.has_compatible()
+    assert session.lens.runtime.lens is lens
+    assert session.lens.resident() is None
+    assert session.lens.runtime.lens is None
 
 
 def test_jlens_readout_shape_and_default_position() -> None:
@@ -834,15 +851,15 @@ def test_jlens_readout_aggregate_rides_same_logits() -> None:
     assert len(rows) == 3
     strengths = [r[1] for r in rows]
     assert strengths == sorted(strengths, reverse=True)
-    for tok, strength, com, spread in rows:
-        assert isinstance(tok, str)
+    for tok, strength, com, spread, token_id in rows:
+        assert isinstance(tok, str) and isinstance(token_id, int)
         assert 0.0 <= strength <= 1.0
         assert 0.0 <= com <= 1.0
         assert spread >= 0.0
     # Both fitted source layers contribute. Softmax assigns positive mass to
     # every vocabulary item at each layer, so every aggregate row has a
     # non-degenerate depth distribution over L0 and L1.
-    for _, _, com, spread in rows:
+    for _, _, com, spread, _ in rows:
         assert 0.0 < com < 1 / (3 - 1)
         assert spread > 0.0
 
@@ -991,13 +1008,13 @@ def test_live_lens_readout_step_reads_latest_slices() -> None:
     assert scores == sorted(scores, reverse=True)
     assert all(0.0 <= sc <= 1.0 for sc in scores)
     # the aggregate chip list rides the same step: top_k rows of
-    # (token, strength, com, spread) with strength descending in [0, 1]
-    # and com/spread valid normalized depths
+    # (token, strength, com, spread, token_id) with strength descending in
+    # [0, 1] and com/spread valid normalized depths
     assert len(agg) == 3
     strengths = [srow[1] for srow in agg]
     assert strengths == sorted(strengths, reverse=True)
-    for tok, strength, com, spread in agg:
-        assert isinstance(tok, str)
+    for tok, strength, com, spread, token_id in agg:
+        assert isinstance(tok, str) and isinstance(token_id, int)
         assert 0.0 <= strength <= 1.0
         assert 0.0 <= com <= 1.0
         assert spread >= 0.0
@@ -1065,7 +1082,7 @@ def test_live_lens_step_normalizes_once_across_all_consumers(
     calls = 0
     stat_calls = 0
     original = jlens_module.readout_probabilities
-    original_stats = jlens_module.token_readout_stats_from_probabilities
+    original_stats = jlens_module.token_readout_rows
 
     def counting_probabilities(logits: torch.Tensor) -> torch.Tensor:
         nonlocal calls
@@ -1082,7 +1099,7 @@ def test_live_lens_step_normalizes_once_across_all_consumers(
     )
     monkeypatch.setattr(
         jlens_module,
-        "token_readout_stats_from_probabilities",
+        "token_readout_rows",
         counting_stats,
     )
 
@@ -1279,7 +1296,7 @@ def test_lens_token_readout_reads_every_fitted_layer() -> None:
 
     # One capture forward at the producing position over the fitted layers.
     assert rig.captures == [(rig.prompt_len + 3, rig.prompt_len + 2, (0, 1))]
-    assert block["binding"] == {"source": s.lens.active_source, "steering": None}
+    assert block["binding"] == {"sources": {"R": s.lens.active_source}, "steering": None}
     layers = block["readout"]["layers"]
     assert [row["layer"] for row in layers] == [0, 1]  # fitted sources of the toy
     for row in layers:

@@ -4,7 +4,8 @@ A frozen ``alphas: {key: entry}`` mapping plus an optional ``thinking``
 override and a default ``trigger`` for bare-float entries.  Callers hand
 :meth:`Steering.from_value` an expression string (parsed by
 :mod:`drowse.steering.grammar`) or a pre-built :class:`Steering`; dicts are
-not accepted.  Keys are registry keys — the grammar's canonical form — and
+not accepted.  Keys are registry keys — the grammar's canonical form, ending
+in the term's canonical ``{…}`` layer clause when it has one — and
 resolution to loaded artifacts happens once, in
 :meth:`~drowse.steering.composer.SteeringComposer.resolve`.
 """
@@ -21,18 +22,21 @@ if TYPE_CHECKING:
         AblationTerm,
         ManifoldTerm,
         ProjectedTerm,
+        UnitAblationTerm,
     )
 
 #: Accepted shapes for a single entry in ``Steering.alphas`` — a bare
 #: alpha (inherits ``Steering.trigger``), a ``(alpha, Trigger)`` tuple, a
 #: :class:`~drowse.steering.grammar.ProjectedTerm` (``~``/``|`` projection),
-#: an :class:`~drowse.steering.grammar.AblationTerm` (``!``), or a
-#: :class:`~drowse.steering.grammar.ManifoldTerm` (``%``).
+#: an :class:`~drowse.steering.grammar.AblationTerm` (``!``), a
+#: :class:`~drowse.steering.grammar.UnitAblationTerm` (``!neuron/…``,
+#: ``!head/…``), or a :class:`~drowse.steering.grammar.ManifoldTerm` (``%``).
 AlphaEntry = Union[
     float,
     "tuple[float, Trigger]",
     "ProjectedTerm",
     "AblationTerm",
+    "UnitAblationTerm",
     "ManifoldTerm",
 ]
 
@@ -44,6 +48,7 @@ SteeringStackEntry = Union[
     "tuple[float, Trigger]",
     "ProjectedTerm",
     "AblationTerm",
+    "UnitAblationTerm",
     "ManifoldTerm",
 ]
 

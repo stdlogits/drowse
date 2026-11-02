@@ -2,7 +2,7 @@
 //
 // A steering vector is the K=2 flat case of a manifold, so every term is a
 // position on a fitted geometry — one ``entries`` map of tagged
-// ``SteerEntry`` (``mode: "subspace" | "manifold" | "jlens" | "sae"``), one
+// ``SteerEntry`` (``mode: "subspace" | "manifold" | "jlens" | "slens" | "sae" | "unit"``), one
 // card, and one serializer.  Subspace (flat) terms share the rack-level
 // ``subspaceAlong`` master (the merged affine subspace slides once);
 // manifold (curved) terms keep their per-card along/onto; the two
@@ -13,18 +13,28 @@
 // surface).
 
 import { SvelteMap } from "svelte/reactivity";
-import { apiManifolds, apiProfiles } from "../runtime/services";
+import { apiManifolds, apiProfiles, apiSessions } from "../runtime/services";
 import { userFacingError } from "../runtime/userFacingError";
 import type { CorrelationData, ManifoldInfo, VectorInfo } from "../types";
 import type {
   AtomMode,
   AtomSteerEntry,
+  LayerScope,
   ManifoldSteerEntry,
+  ProjectionSteerEntry,
   SteerEntry,
+  SteerTiming,
+  SteeringPartJSON,
   SubspaceSteerEntry,
+  UnitSteerEntry,
   Variant,
 } from "../types";
+import { formatLayerIndices } from "../steering/layers";
+import { recipeAsChips } from "../steering/recipe";
+import { forgetTermLayers } from "../steering/termLayers.svelte";
 import { serializeExpression } from "../expression";
+import { parseUnit } from "../units";
+import { unitTermProblem } from "../unitTerms";
 import { enqueueOrApply } from "./pending.svelte";
 
 /** Default shared subspace-along master — the ~0.5 coherent sweet spot
@@ -33,14 +43,19 @@ import { enqueueOrApply } from "./pending.svelte";
 const DEFAULT_SUBSPACE_ALONG = 0.5;
 
 export interface SteerRack {
-  /** Rack key = atom display form (``honest``, ``ns/foo``, ``happy.sad``,
+  /** Rack key = atom display form (``deceptive``, ``ns/foo``, ``happy.sad``,
    *  ``personas``).  One entry per name; ``mode`` discriminates subspace
    *  (flat) vs manifold (curved).  Variant lives on the entry, not the key —
    *  matching the drowse parser's Steering.alphas semantics. */
   entries: Map<string, SteerEntry>;
-  /** Advanced full-grammar expression. ``null`` means serialize the visual
-   * rack; a string (including empty = explicitly unsteered) is authoritative. */
-  customExpression: string | null;
+  /** A recipe from elsewhere (an agent's expression, a saved conversation's, the command line's
+   *  default) that the chips cannot hold: shown as one read-only chip and sent as written. ``null``
+   *  when the chips are the recipe. People never type one; the chips are how they write recipes
+   *  (``applyRecipe`` turns a recipe into chips whenever every term fits one). */
+  readOnlyRecipe: string | null;
+  /** Why ``readOnlyRecipe`` is not chips (``null`` while that is being checked), and whether
+   *  checking again could change it (the check could not run). */
+  recipeNote: { text: string; retry: boolean } | null;
   /** Shared "subspace along" master — the single slide magnitude every
    *  subspace (flat) term serializes with (the merged affine subspace has one
    *  slide).  Unclamped (a high-share layer is meant to overshoot; the engine
@@ -69,7 +84,8 @@ export interface SteerRack {
 // callers that mutate an entry must reassign via .set(name, {...e, …}).
 export const steerRack: SteerRack = $state({
   entries: new SvelteMap(),
-  customExpression: null,
+  readOnlyRecipe: null,
+  recipeNote: null,
   subspaceAlong: DEFAULT_SUBSPACE_ALONG,
   profiles: new SvelteMap(),
   correlation: null,
@@ -160,15 +176,19 @@ function defaultSubspaceEntry(
 // rack edit reassigns its entry with a fresh spread through ``patchSteerEntry``.
 
 type EntryOf<M extends SteerEntry["mode"]> = Extract<SteerEntry, { mode: M }>;
-type SteerPatch = { [K in keyof SteerEntry]?: SteerEntry[K] }
-  & Partial<Pick<SubspaceSteerEntry, "ablate" | "coords" | "label">>
+type SteerPatch = { [K in Exclude<keyof SteerEntry, keyof SteerTiming>]?: SteerEntry[K] }
+  & Partial<Pick<SubspaceSteerEntry, "ablate" | "coords" | "label" | "layers">>
   & Partial<Pick<ManifoldSteerEntry, "blend" | "onto">>
-  & Partial<Pick<AtomSteerEntry, "alpha">>;
+  & Partial<Pick<AtomSteerEntry | UnitSteerEntry | ProjectionSteerEntry, "alpha">>;
 
 /** Describe a rack edit for the pending-queue bubble. */
 function describePatch(name: string, patch: SteerPatch): string {
   if (patch.enabled !== undefined) return `${patch.enabled ? "enable" : "disable"} ${name}`;
   if (patch.ablate !== undefined) return `${patch.ablate ? "ablate" : "push"} ${name}`;
+  if (patch.layers !== undefined) {
+    const where = patch.layers === null ? "every layer" : patch.layers === "workspace" ? "the workspace" : `layers ${formatLayerIndices(patch.layers) || "none"}`;
+    return `${name} at ${where}`;
+  }
   const [field, value] = Object.entries(patch)[0] ?? ["edit", ""];
   return `${field} ${name}${typeof value === "number" ? ` ${value.toFixed(3)}` : typeof value === "string" ? ` ${value}` : ""}`;
 }
@@ -178,13 +198,107 @@ function describePatch(name: string, patch: SteerPatch): string {
  *  of another mode is left alone. */
 export function patchSteerEntry<M extends SteerEntry["mode"]>(
   name: string,
-  patch: Partial<EntryOf<M>> & SteerPatch,
+  patch: Omit<Partial<EntryOf<M>>, keyof SteerTiming> & SteerPatch,
   modes?: readonly M[],
 ): void {
   enqueueOrApply(describePatch(name, patch), () => {
     const entry = steerRack.entries.get(name);
     if (!entry || (modes && !modes.includes(entry.mode as M))) return;
-    steerRack.entries.set(name, { ...entry, ...patch } as SteerEntry);
+    const next = { ...entry, ...patch } as SteerEntry;
+    // A unit's edit keeps to the one rule (a head is not pushed, an ablation not negative).
+    if (next.mode === "unit" && unitTermProblem(name, next) !== null) return;
+    steerRack.entries.set(name, next);
+  });
+}
+
+/** A term's timing alone (its window, its count and its gate), each key only when it is set. */
+export function timingOf(entry: SteerTiming): SteerTiming {
+  const counted = entry.trigger === "FIRST_N" || entry.trigger === "AFTER_N";
+  return {
+    trigger: entry.trigger,
+    ...(counted ? { tokens: entry.tokens ?? 0 } : {}),
+    ...(entry.gate ? { gate: { ...entry.gate } } : {}),
+  };
+}
+
+/** Set when a term acts: its window (a preset, or a counted one with its count) and its probe
+ *  gate, replacing the ones it had (queued behind a running generation like every rack edit). */
+export function setSteerTiming(name: string, timing: SteerTiming): void {
+  const next = timingOf(timing);
+  enqueueOrApply(`when ${name}`, () => {
+    const entry = steerRack.entries.get(name);
+    if (!entry) return;
+    const { tokens: _tokens, gate: _gate, ...rest } = entry;
+    steerRack.entries.set(name, { ...rest, ...next } as SteerEntry);
+  });
+}
+
+/** The side of a flat concept's axis a position sits on: ``+1`` toward its first pole, ``-1``
+ *  toward its second, ``0`` at neutral. A projection's positive strength pushes toward the first
+ *  pole (the fit orients every layer's axis so node 0 projects non-negative), whatever sign the
+ *  catalog's display layout gives it: that layout is neutral-centred but its sign is the layout's
+ *  own (SmolLM2 draws ``formal`` at −4.1 and ``casual`` at +21.6). So a label takes its pole's
+ *  side, and a free position its coordinate's side measured against the first pole's. */
+function flatPositionSign(info: ManifoldInfo | null, label: string | null, coords: readonly number[]): number {
+  if (label !== null) return info?.node_labels.indexOf(label) === 1 ? -1 : 1;
+  const coord = coords[0];
+  if (coord === undefined) return 1;
+  const first = info?.node_coords[0]?.[0];
+  return Math.sign(coord) * (first !== undefined && first !== 0 ? Math.sign(first) : 1);
+}
+
+/** The pole of a flat concept on the ``sign`` side of its axis: the first for ``+1`` (and ``0``),
+ *  the second for ``-1``, by pole order, as a projection's strength reads it. */
+function flatPoleOnSide(info: ManifoldInfo | null, sign: number): number {
+  const count = info?.node_labels.length ?? 0;
+  return count >= 2 && sign < 0 ? 1 : 0;
+}
+
+/** A flat concept's relation to a second one: push only the part of it along ``onto``
+ *  (``operator`` ``~``), or all but that part (``|``); ``null`` pushes all of it again. The term's
+ *  key is its selector, so a relation re-keys it (``base~onto``): ``onselect`` gets the new key
+ *  once the change has applied (queued behind a running generation like every rack edit). A
+ *  projection keeps its own signed strength toward the first pole: the shared flat strength times
+ *  the side its position sat on (a pole's, or a free coordinate's). All of it again rejoins the
+ *  shared strength at the pole on the side that strength over the shared one's sign points to, so
+ *  the round trip keeps its direction at either sign of the shared strength. Nothing changes when
+ *  the new key is already a chip. */
+export function relateSteerEntry(
+  name: string,
+  relation: { operator: "~" | "|"; onto: string } | null,
+  onselect?: (key: string) => void,
+): void {
+  enqueueOrApply(relation === null ? `all of ${name}` : `${name} ${relation.operator === "~" ? "along" : "not along"} ${relation.onto}`, () => {
+    const entry = steerRack.entries.get(name);
+    if (!entry || (entry.mode !== "subspace" && entry.mode !== "projection")) return;
+    const layers = entry.layers === undefined ? {} : { layers: entry.layers };
+    const common = { ...timingOf(entry), ...layers, enabled: entry.enabled };
+    let key: string;
+    let next: SteerEntry;
+    if (relation === null) {
+      if (entry.mode !== "projection") return;
+      const info = manifoldByName(entry.base);
+      const along = Math.sign(steerRack.subspaceAlong) || 1;
+      const pole = flatPoleOnSide(info, Math.sign(entry.alpha) * along);
+      const label = info?.node_labels[pole] ?? null;
+      const coords = info?.node_coords[pole] ? [...info.node_coords[pole]] : [];
+      // The rack keys a concept by its catalog name (an agent may have written it bare).
+      key = info ? `${info.namespace}/${info.name}` : entry.base;
+      next = { mode: "subspace", ablate: false, coords, label, variant: "raw", ...common };
+    } else {
+      const base = entry.mode === "projection" ? entry.base : name;
+      let alpha: number;
+      if (entry.mode === "projection") alpha = entry.alpha;
+      else {
+        alpha = flatPositionSign(manifoldByName(name), entry.label, entry.coords) * steerRack.subspaceAlong;
+      }
+      key = `${base}${relation.operator}${relation.onto}`;
+      next = { mode: "projection", base, operator: relation.operator, onto: relation.onto, alpha: alpha || 0, ...common };
+    }
+    if (key !== name && steerRack.entries.has(key)) return;
+    steerRack.entries.delete(name);
+    steerRack.entries.set(key, next);
+    onselect?.(key);
   });
 }
 
@@ -215,17 +329,17 @@ export function setSubspaceAlong(along: number): void {
   });
 }
 
-/** Add a flat (subspace) term.  A 2-node concept defaults to its positive
- *  pole (label form); a higher-rank flat (personas) to the domain centroid;
+/** Add a flat (subspace) term.  A 1- or 2-node concept defaults to its first
+ *  node, the positive pole (label form); a higher-rank flat (personas) to the domain centroid;
  *  an uncatalogued typed name to its positive pole label.  Magnitude is the
  *  shared ``subspaceAlong`` master, not per-card. */
 export function addSubspaceToRack(name: string, variant: Variant = "raw"): void {
   if (steerRack.entries.has(name)) return;
-  steerRack.customExpression = null;
+  dropRecipe();
   const info = manifoldByName(name);
   let coords: number[] = [];
   let label: string | null = null;
-  if (info && info.node_count === 2 && info.node_labels.length > 0) {
+  if (info && (info.node_count === 1 || info.node_count === 2) && info.node_labels.length > 0) {
     label = info.node_labels[0];
     coords = info.node_coords?.[0] ? [...info.node_coords[0]] : [];
   } else if (info) {
@@ -237,6 +351,14 @@ export function addSubspaceToRack(name: string, variant: Variant = "raw"): void 
   steerRack.entries.set(name, defaultSubspaceEntry(coords, label, variant));
 }
 
+/** Scope a term to layers (its ``{…}`` clause): ``null`` for every fitted layer, ``"workspace"``,
+ *  or exact indices (the empty list leaves the term out until it has a layer again).  Units carry
+ *  their own layer and take no clause. */
+export function setSteerLayers(name: string, layers: LayerScope): void {
+  const scope = Array.isArray(layers) ? [...layers] : layers;
+  patchSteerEntry(name, { layers: scope }, ["subspace", "manifold", "projection", "jlens", "slens", "sae"]);
+}
+
 /** Take any term off the rack.  Never deletes the server-side artifact. */
 export function removeSteerEntry(name: string): void {
   steerRack.entries.delete(name);
@@ -246,18 +368,87 @@ export function removeSteerEntry(name: string): void {
  * Recomputed on demand; cheap.  Subspace terms first (at the shared
  * ``subspaceAlong`` master), then manifold (curved) terms. */
 export function currentSteeringExpression(): string {
-  return steerRack.customExpression
+  return steerRack.readOnlyRecipe
     ?? serializeExpression(steerRack.entries, steerRack.subspaceAlong);
 }
 
-/** Make a validated full-grammar expression authoritative.  The visual rack
- * cannot faithfully represent every binary projection/gate form, so mixing
- * the two would lie about what generation uses; switching modes clears it. */
-export function applyCustomSteeringExpression(expression: string): void {
-  enqueueOrApply("apply custom steering expression", () => {
+// ------------------------------------------------ recipes from elsewhere --
+//
+// An agent's expression (WebMCP ``drowse_set_steering``), a saved conversation's read-only recipe
+// and the command line's default (``drowse serve -S``) arrive as text. Each becomes chips when the
+// server's validation describes every term and every term fits a chip exactly
+// (lib/steering/recipe.ts); otherwise it stays one read-only chip that can be cleared. Mixing a
+// read-only recipe with chips would misstate what generation uses, so a chip added afterwards
+// replaces it.
+
+/** Bumped by every change of the recipe, so a check that answers late never overwrites a newer
+ *  rack. */
+let recipeTicket = 0;
+
+/** Make ``expression`` the recipe the next reply uses (queued behind a running generation like
+ *  every rack edit): as chips when they can hold it, else read-only. ``parts`` is the caller's
+ *  validation of it when it has one; otherwise the server is asked. Empty means unsteered. */
+export function applyRecipe(expression: string, parts?: readonly SteeringPartJSON[]): void {
+  enqueueOrApply("use a recipe", () => {
     steerRack.entries.clear();
-    steerRack.customExpression = expression;
+    holdRecipe(expression, parts);
   });
+}
+
+/** Restore a saved rack: its chips, its shared flat strength and the read-only recipe it held,
+ *  checked again (the chips may hold it now). */
+export function restoreRack(entries: Iterable<[string, SteerEntry]>, subspaceAlong: number, readOnlyRecipe: string | null): void {
+  steerRack.entries.clear();
+  for (const [name, entry] of entries) steerRack.entries.set(name, entry);
+  steerRack.subspaceAlong = subspaceAlong;
+  holdRecipe(readOnlyRecipe ?? "");
+}
+
+/** Check a read-only recipe again (its check could not run before). */
+export function retryRecipe(): void {
+  if (steerRack.readOnlyRecipe !== null) holdRecipe(steerRack.readOnlyRecipe);
+}
+
+function holdRecipe(expression: string, parts?: readonly SteeringPartJSON[]): void {
+  const text = expression.trim();
+  const ticket = ++recipeTicket;
+  steerRack.readOnlyRecipe = text || null;
+  steerRack.recipeNote = null;
+  if (!text) return;
+  if (parts) settleRecipe(text, parts, ticket);
+  else void checkRecipe(text, ticket);
+}
+
+async function checkRecipe(text: string, ticket: number): Promise<void> {
+  try {
+    const result = await apiSessions.validateSteering(text);
+    if (ticket !== recipeTicket) return;
+    if (!result.valid) steerRack.recipeNote = { text: result.error ?? "It does not resolve on this model.", retry: false };
+    else if (!result.parts) steerRack.recipeNote = { text: "This runtime does not describe its terms.", retry: false };
+    else settleRecipe(text, result.parts, ticket);
+  } catch (error) {
+    if (ticket === recipeTicket) steerRack.recipeNote = { text: userFacingError(error, "It could not be checked now."), retry: true };
+  }
+}
+
+function settleRecipe(text: string, parts: readonly SteeringPartJSON[], ticket: number): void {
+  if (ticket !== recipeTicket || steerRack.readOnlyRecipe !== text) return;
+  const made = recipeAsChips(parts, steerRack.catalog, steerRack.subspaceAlong);
+  if ("problem" in made) {
+    steerRack.recipeNote = { text: `Chips cannot hold it, so only an agent can write it: ${made.problem}.`, retry: false };
+    return;
+  }
+  steerRack.entries.clear();
+  for (const [name, entry] of made.chips.entries) steerRack.entries.set(name, entry);
+  steerRack.subspaceAlong = made.chips.subspaceAlong;
+  steerRack.readOnlyRecipe = null;
+}
+
+/** A chip added while a read-only recipe stands replaces it (and any check still running). */
+function dropRecipe(): void {
+  recipeTicket += 1;
+  steerRack.readOnlyRecipe = null;
+  steerRack.recipeNote = null;
 }
 
 // ------------------------------------------------ manifold catalog --
@@ -268,6 +459,8 @@ export async function refreshManifoldList(): Promise<void> {
   try {
     const r = await apiManifolds.list();
     steerRack.catalog = r.manifolds;
+    // A fit, an install or a deletion can move where a term acts.
+    forgetTermLayers();
     steerRack.error = null;
   } catch (e) {
     steerRack.catalog = [];
@@ -303,15 +496,18 @@ export function manifoldCentroid(m: ManifoldInfo): number[] {
 /** Add a curved manifold to the rack at its domain centroid, along 0.5. */
 export function addManifoldToRack(name: string, variant: Variant = "raw"): void {
   if (steerRack.entries.has(name)) return;
-  steerRack.customExpression = null;
+  dropRecipe();
+  // A curved term starts at its first node (titled by it, as the canvas titles one), else at
+  // the middle of its nodes when the catalog names none.
   const info = manifoldByName(name);
-  const coords = info ? manifoldCentroid(info) : [];
+  const label = info?.node_labels[0] ?? null;
+  const coords = info && label !== null && info.node_coords[0] ? [...info.node_coords[0]] : info ? manifoldCentroid(info) : [];
   steerRack.entries.set(name, {
     mode: "manifold",
     blend: 0.5,
     onto: 0,
     coords,
-    label: null,
+    label,
     variant,
     trigger: "BOTH",
     enabled: true,
@@ -334,13 +530,14 @@ export const ATOM_DEFAULT_ALPHA = 0.3;
  *  steering grammar. */
 export const ATOM_PREFIX: Record<AtomMode, string> = {
   jlens: "jlens/",
+  slens: "slens/",
   sae: "sae/",
 };
 
 function addAtomToRack(mode: AtomMode, id: string): void {
   const name = `${ATOM_PREFIX[mode]}${id}`;
   if (steerRack.entries.has(name)) return;
-  steerRack.customExpression = null;
+  dropRecipe();
   steerRack.entries.set(name, {
     mode,
     ablate: false,
@@ -349,6 +546,11 @@ function addAtomToRack(mode: AtomMode, id: string): void {
     enabled: true,
   } as AtomSteerEntry);
 }
+
+/** A lens atom named by vocabulary id (``jlens/#282``, from the token view's Steer toward it) reads
+ *  on its chip as the token's text: the decoded token each id was added for, this page's memory
+ *  only (a chip from elsewhere, or after a reload, shows its id). */
+export const lensTokenText = new SvelteMap<number, string>();
 
 /** Add a J-lens token steering chip (``α jlens/<word>``).  Accepts a bare
  *  word or a full ``jlens/…`` atom; the rack key is the full atom.
@@ -361,7 +563,66 @@ export function addJLensToRack(word: string): void {
   addAtomToRack("jlens", bare);
 }
 
+/** Add an S-lens token steering chip (``α slens/<word>``): toward having read the word, where
+ *  ``jlens/`` pushes toward saying it.  Accepts a bare word or a full ``slens/…`` atom. */
+export function addSLensToRack(word: string): void {
+  const bare = word.trim().replace(/^slens\//, "");
+  if (!bare) return;
+  addAtomToRack("slens", bare);
+}
+
 /** Add a resident-SAE decoder-row steering chip (``α sae/<id>``). */
 export function addSaeToRack(featureId: number): void {
   addAtomToRack("sae", String(featureId));
+}
+
+// ------------------------------------------------------ unit terms
+
+/** A unit's term as the rack holds it: a push (signed ``alpha``) or an ablation. */
+export type UnitTermValue = { ablate: boolean; alpha: number };
+
+/** Put a unit's one term into the recipe, or take it out (``null``). ``id`` names the unit in any
+ *  form ``parseUnit`` reads (``neuron/L31n4410``, ``L28 h12``); the rack key is the engine's
+ *  reference. A push runs along the neuron's write (``alpha`` signed, the − pole's below zero), an
+ *  ablation blends the unit toward its neutral mean (``alpha`` 1 is exact mean-ablation). A unit
+ *  holds one term at a time, so a push replaces an ablation and back, keeping its trigger. The one
+ *  rule (lib/unitTerms.ts) refuses a head push and a negative ablation: nothing changes and the
+ *  answer is null. Otherwise the answer is the rack key; the edit queues behind a running
+ *  generation like every rack edit. ``term`` may be a function of the unit's term when the edit
+ *  applies (null: none), so a queued edit decides against the rack as the queue left it, not as it
+ *  was when clicked; a term the unit already holds changes nothing. */
+export function setUnitTerm(
+  id: string,
+  term: UnitTermValue | null | ((held: UnitTermValue | null) => UnitTermValue),
+): string | null {
+  const name = parseUnit(id)?.id ?? null;
+  if (name === null) return null;
+  const heldOf = (): UnitTermValue | null => {
+    const prev = steerRack.entries.get(name);
+    return prev?.mode === "unit" ? { ablate: prev.ablate, alpha: prev.alpha } : null;
+  };
+  const resolve = (): UnitTermValue | null => (typeof term === "function" ? term(heldOf()) : term);
+  const preview = resolve();
+  if (preview !== null && unitTermProblem(name, preview) !== null) return null;
+  const what = preview === null ? `remove ${name}` : preview.ablate ? `ablate ${name}` : `push ${name} ${preview.alpha}`;
+  enqueueOrApply(what, () => {
+    const next = resolve();
+    if (next === null) {
+      steerRack.entries.delete(name);
+      return;
+    }
+    if (unitTermProblem(name, next) !== null) return;
+    const held = heldOf();
+    if (held !== null && held.ablate === next.ablate && held.alpha === next.alpha && steerRack.readOnlyRecipe === null) return;
+    const prev = steerRack.entries.get(name);
+    dropRecipe();
+    steerRack.entries.set(name, {
+      mode: "unit",
+      ablate: next.ablate,
+      alpha: next.alpha,
+      ...(prev?.mode === "unit" ? timingOf(prev) : { trigger: "BOTH" as const }),
+      enabled: prev?.mode === "unit" ? prev.enabled : true,
+    });
+  });
+  return name;
 }

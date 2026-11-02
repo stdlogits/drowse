@@ -55,10 +55,12 @@ def fake_readout_family(
     gate_scalars: Callable[..., dict[str, float]] | None = None,
 ) -> Any:
     """A J-lens / SAE instrument fake: names, live state, the finalize
-    aggregate, the bound run's gate scalars and an accept-all gate check."""
+    aggregate, the bound run's gate scalars, an accept-all gate check and
+    (the lens's) per-family measurement sources."""
     return SimpleNamespace(
         names=list(names),
         live=live,
+        measurement_sources=lambda: {"R": None, "S": None},
         score_aggregate=score_aggregate or (lambda _ids, _pooled: {}),
         current_run=SimpleNamespace(
             gate_scalars=gate_scalars or (lambda _step, _hidden, _keys: {}),
@@ -103,8 +105,9 @@ class ReadRig:
 
     - ``capture``: the :class:`CaptureSlot` every reader shares.
     - ``monitor``: the geometry engine (default: an empty ``Monitor``).
-    - ``geometry`` / ``lens`` / ``sae``: the instruments (real by default;
-      pass a fake to replace one).
+    - ``geometry`` / ``lens`` / ``sae`` / ``units``: the instruments (real by
+      default — the units instrument over a model-less runtime; pass a fake
+      to replace one).
     - ``roster``: the probe roster; ``roster_changes`` counts its change hook.
     - ``plane``: the :class:`ReadPlane` under test.
     - ``lock``: the generation lock the geometry exclusive section takes.
@@ -118,6 +121,7 @@ class ReadRig:
         geometry: Any = None,
         lens: Any = None,
         sae: Any = None,
+        units: Any = None,
         layers: Any = (),
         tokenizer: Any = None,
         gate_refs: Callable[[], list[Any]] = lambda: [],
@@ -128,6 +132,7 @@ class ReadRig:
         from drowse.generation.read_plane import ReadPlane
         from tests.support.lens import lens_instrument
         from tests.support.sae import sae_instrument
+        from tests.support.units import inert_units_instrument
 
         self.capture = CaptureSlot(capture)
         self.lock = threading.RLock()
@@ -147,10 +152,13 @@ class ReadRig:
                 capture=self.capture, replay=replay,
             )
         )
+        self.units = (
+            units if units is not None else inert_units_instrument(replay=replay)
+        )
         self.roster_changes = 0
         self.roster = ProbeRoster(
             geometry=self.geometry, lens=self.lens, sae=self.sae,
-            on_change=self._roster_changed,
+            units=self.units, on_change=self._roster_changed,
         )
         self.plane = ReadPlane(
             capture=cast(Any, self.capture),
@@ -158,6 +166,7 @@ class ReadRig:
             geometry=self.geometry,
             lens=self.lens,
             sae=self.sae,
+            units=self.units,
             layers=layers,
             tokenizer=tokenizer,
             gate_refs=gate_refs,

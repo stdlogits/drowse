@@ -101,8 +101,8 @@ def _parse_merge_expr(expression: str) -> "list[_MergeTerm]":
     """Parse an additive merge expression into qualified scalar terms.
 
     Raises :class:`MergeError` on any parser-level issue or when a term
-    uses a feature merge doesn't support (triggers, bare poles without
-    namespaces).
+    uses a feature merge doesn't support (triggers, layer clauses, bare
+    poles without namespaces).
     """
     from drowse.steering.grammar import (
         SteeringExprError, _Parser, _lex,
@@ -131,6 +131,11 @@ def _parse_merge_expr(expression: str) -> "list[_MergeTerm]":
             raise MergeError(
                 "merge expressions do not accept triggers "
                 f"(got @{term.trigger})"
+            )
+        if term.layers is not None:
+            raise MergeError(
+                "merge expressions are layer-agnostic and take no layer "
+                "clause ('{…}'); scope the baked manifold when steering it"
             )
         sel = term.selector
         if sel.manifold_position is not None:

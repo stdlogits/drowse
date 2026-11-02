@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING
 import pytest
 import torch
 from drowse.geometry.profile import Profile
+from drowse.generation.finalize import MIN_ELAPSED_FOR_RATE
 from drowse.generation.results import GenerationResult, RunSet, TokenEvent
 from tests.support.gpu import gpu_model_id, load_or_skip_inaccessible
 
@@ -126,16 +127,17 @@ class TestMixedSteering:
         from drowse.store.bundled import materialize_bundled_artifacts
 
         materialize_bundled_artifacts()
-        for name in ("months", "honest.deceptive", "formal.casual"):
+        for name in ("months", "deceptive", "formal.casual"):
             session.fit(manifold_dir("default", name))
 
     @pytest.mark.parametrize(
         "affine",
         [
-            "0.5 default/honest.deceptive",
-            "0.5 !default/honest.deceptive",
-            "0.5 default/honest.deceptive%honest",
-            "0.5 default/honest.deceptive~default/formal.casual",
+            "0.5 default/deceptive",
+            "0.5 !default/deceptive",
+            "0.5 default/deceptive%deceptive",
+            "0.5 default/formal.casual%casual",
+            "0.5 default/deceptive~default/formal.casual",
         ],
     )
     def test_affine_beside_a_curved_term(self, session: DrowseSession, affine: str) -> None:
@@ -178,8 +180,13 @@ class TestGeneration:
         single = result.first
         assert len(single.text) > 0
         assert single.token_count > 0
-        assert single.tok_per_sec > 0
         assert single.elapsed > 0
+        # A one-word reply can finish inside the rate's resolution floor,
+        # which reports 0 rather than a timer-dominated rate.
+        if single.elapsed >= MIN_ELAPSED_FOR_RATE:
+            assert single.tok_per_sec > 0
+        else:
+            assert single.tok_per_sec == 0
         assert single.steering_alphas == {}
 
     def test_generate_blocking_messages(self, session: DrowseSession) -> None:
@@ -286,7 +293,8 @@ class TestStreamingGeneration:
         # A character spanning several tokens (an emoji, say) streams as one
         # merged event, so events can be fewer than tokens; the text matches.
         assert len(tokens) <= result.token_count
-        assert "".join(t.text for t in tokens) == result.text
+        # A thinking model streams its thinking too; ``text`` is the response.
+        assert "".join(t.text for t in tokens if not t.thinking) == result.text
 
     def test_stream_with_alphas(self, session: DrowseSession) -> None:
         name, profile = session.extract_from_corpora(

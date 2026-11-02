@@ -25,6 +25,7 @@ from drowse.generation.sampling import InheritSystemPrompt, SamplingConfig
 from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
 from drowse.generation.types import GenState
 from drowse.readout.types import ScalarReading
+from drowse.readout.measurements import MEASUREMENTS_VERSION, token_row_measurements
 from drowse.session.engine import (
     ConsumerPlan,
     GenerationEngine,
@@ -132,6 +133,36 @@ def test_transaction_teardown_frees_the_loom_reservation(tiny_session: Any) -> N
     assert tiny_session._engine.phase is GenState.IDLE
     assert tiny_session._gen_lock.acquire(blocking=False)
     tiny_session._gen_lock.release()
+
+
+@pytest.mark.parametrize("partial", [False, True])
+def test_a_failed_reply_leaves_no_empty_node(
+    tiny_session: Any, monkeypatch: pytest.MonkeyPatch, partial: bool,
+) -> None:
+    """Regression: a reply the engine failed before any token (a steering
+    install error on MPS, say) left an empty assistant node with no finish
+    reason, which reloaded as a blank turn the next message threaded under.
+    A reply cut after some tokens keeps them."""
+    sess = tiny_session
+    engine = sess._engine
+
+    def failing(spec: Any, input_ids: Any, **kwargs: Any) -> Any:
+        if partial:
+            # A reply whose node already holds a token (as a streamed row).
+            sess.tree.append_token(sess.tree.active_node_id, {"id": 5, "text": "hi"})
+        raise RuntimeError("the install failed")
+
+    monkeypatch.setattr(engine, "decode", failing)
+    with pytest.raises(RuntimeError, match="install failed"):
+        sess.generate("Say hello.", sampling=SamplingConfig(max_tokens=3, seed=0))
+    user = [n for n in sess.tree.nodes.values() if n.role == "user"]
+    assistants = [n for n in sess.tree.nodes.values() if n.role == "assistant"]
+    assert len(user) == 1 and user[0].text == "Say hello."
+    assert sess.tree.reservation is None
+    if partial:
+        assert len(assistants) == 1 and assistants[0].tokens
+    else:
+        assert assistants == [] and sess.tree.active_node_id == user[0].id
 
 
 def test_transaction_release_failure_still_frees_phase_and_lock() -> None:
@@ -261,10 +292,12 @@ def _forbid(name: str) -> Any:
 
 
 def _tap_session(*, lens_live: Any = None, sae_live: Any = None,
-                 lens_step: Any = None, rows: list[Any] | None = None) -> Any:
+                 lens_step: Any = None, rows: list[Any] | None = None,
+                 lens_sources: Any = None) -> Any:
     return SimpleNamespace(
         lens=SimpleNamespace(
             live=lens_live, last_step_readings=None,
+            measurement_sources=lambda: dict(lens_sources or {}),
             live_readout_step=lens_step or _forbid("lens readout"),
         ),
         sae=SimpleNamespace(
@@ -319,14 +352,14 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
 
     def _lens_step(*, top_k: int, step_id: int) -> Any:
         assert (top_k, step_id) == (8, 4)
-        return lens_rows, [(" a", 0.4, 0.5, 0.1)], {3: [7]}
+        return lens_rows, [(" a", 0.4, 0.5, 0.1, 7)], {3: [7]}
 
     session = _tap_session(
-        lens_live={"layers": [3], "source": "local:default"},
+        lens_live={"layers": [3]}, lens_sources={"R": "local:default"},
         lens_step=_lens_step, rows=rows,
     )
     session.lens.last_step_readings = {
-        "jlens/a": ScalarReading(value=0.25, unit="probability"),
+        "jlens/a": ScalarReading(value=0.25, unit="mean_token_probability"),
     }
     state = GenerationState()
     state.emit_map = [(4, False)]
@@ -352,25 +385,31 @@ def test_tap_hands_a_consumer_one_event_matching_the_loom_row() -> None:
     assert event.top_alts == alts and event.perplexity == 1.5
     assert event.measurements is not None and event.probe_readings is not None
     lens = event.measurements["instruments"]["lens"]
-    assert lens["binding"] == {"source": "local:default", "steering": "0.3 calm"}
+    assert lens["binding"] == {"sources": {"R": "local:default"}, "steering": "0.3 calm"}
     assert lens["readings"]["jlens/a"]["value"] == 0.25
     assert set(event.probe_readings) == {"jlens/a"}
 
     ((node_id, row, thinking),) = rows
     assert (node_id, thinking) == ("node-1", False)
-    assert row["measurements"] is event.measurements
+    # The row keeps the generated row's projection (the lens probe's value
+    # as its score, nothing of the lens channel); the event carries it whole.
+    assert row["measurements"] == token_row_measurements(cast(Any, event.measurements))
+    assert row["measurements"]["instruments"] == {}
     assert row["raw_index"] == 4
     assert row["top_alts"] == [{"id": 7, "text": " a", "logprob": -0.1}]
-    assert row["probes"] == {"jlens/a": 0.25}
+    assert set(row) == {
+        "token_id", "text", "logprob", "perplexity", "raw_index", "top_alts", "measurements",
+    }
+    assert row["measurements"].get("scores") == {"jlens/a": 0.25}
 
 
 def test_tap_skips_the_compat_projection_unless_the_consumer_asks() -> None:
     session = _tap_session(
-        lens_live={"layers": [3], "source": "local:default"},
+        lens_live={"layers": [3]}, lens_sources={"R": "local:default"},
         lens_step=lambda **_kw: ({3: [(" a", 0.5)]}, [], {3: [7]}),
     )
     session.lens.last_step_readings = {
-        "jlens/a": ScalarReading(value=0.25, unit="probability"),
+        "jlens/a": ScalarReading(value=0.25, unit="mean_token_probability"),
     }
     events: list[TokenEvent] = []
     tap = TokenTap(
@@ -476,7 +515,7 @@ def test_stream_options_follow_live_scores_and_live_readouts(
     tiny_session: Any, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     result = GenerationResult(text="ok", tokens=[7], token_count=1, tok_per_sec=1.0, elapsed=1.0)
-    envelope = {"version": 1, "scope": "token", "instruments": {}}
+    envelope = {"version": MEASUREMENTS_VERSION, "scope": "token", "instruments": {}}
     seen: list[TokenConsumerOptions] = []
 
     def _fake_generate_one(_input: Any, *, on_token: Any, **_kw: Any) -> GenerationResult:
@@ -968,10 +1007,11 @@ def test_decode_keeps_the_static_cache_on_a_static_prefix_hit(
         runtime=CompiledRuntime(static_cache_active=True),
         steering=cast(Any, SimpleNamespace(
             all_fast_path=lambda: True, static_steerable=lambda: False,
-            uses_compiled_offsets=False, ctx=None, hooks={},
+            uses_compiled_offsets=False, ctx=None, hooks={}, unit_hooks={},
         )),
         reads=cast(Any, SimpleNamespace(
             capture=SimpleNamespace(is_transient=lambda: False),
+            transient_hooks=False,
             step_callback=lambda: (lambda _step: None),
         )),
         release=lambda: None,

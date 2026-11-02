@@ -336,12 +336,13 @@ class TestNeutralBaselineLazy:
 
         from drowse.session.neutral import NeutralBaseline
         from drowse.fit import neutral as neutral_store
+        from drowse.store.neutral import NeutralCache, NeutralMid, NeutralUnits
 
-        def _load(*args: Any, **kwargs: Any) -> dict[int, torch.Tensor]:
+        def _load(*args: Any, **kwargs: Any) -> NeutralCache:
             calls.append(kwargs["model_id"])
-            return acts
+            return NeutralCache(acts, NeutralUnits(None, 0, "test"), NeutralMid(None, "test"), {})
 
-        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_activations", _load)
+        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_cache", _load)
         return NeutralBaseline(
             model=object(), tokenizer=object(), layers=[], model_id="test/model",
             exclusive=lambda *_a, **_kw: nullcontext(), steered=lambda: False,
@@ -389,7 +390,7 @@ class TestNeutralBaselineLazy:
         def _boom(*_args: Any, **_kwargs: Any) -> Any:
             raise OSError("neutral cache unreadable")
 
-        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_activations", _boom)
+        monkeypatch.setattr(neutral_store, "load_or_compute_neutral_cache", _boom)
         assert baseline.whitener() is None
         with pytest.raises(DrowseError, match="neutral layer means") as info:
             baseline.layer_means()
@@ -479,8 +480,8 @@ class TestComputeDlsAxesBipolarGuard:
         # Layer 2 is checkable but failed; fallback returns just it.
         # Layers 0+1 stay dropped despite the fallback.
         assert out == {2}
-        msgs = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
-        assert any("DLS" in m for m in msgs)
+        # The fit's DLS line reports the fallback; this function is silent.
+        assert not [w for w in caught if "DLS" in str(w.message)]
 
     def test_partial_layer_means_runs_check(self):
         """Layers with a baseline get checked; layers without fall through
@@ -558,8 +559,7 @@ class TestComputeDlsAxes:
             _warnings.simplefilter("always")
             out = compute_dls_axes(node_centroids, bases, layer_means)
         assert out == {0: {0, 1}}
-        msgs = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
-        assert any("DLS" in m for m in msgs)
+        assert not [w for w in caught if "DLS" in str(w.message)]
 
 # ------------------------------- v2.1 nested projection scope restore ---
 

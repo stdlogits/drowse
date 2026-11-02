@@ -1,4 +1,4 @@
-// Python-dashboard-only SAE training and J-lens fitting jobs. The hosted
+// Python-dashboard-only SAE training and lens fitting jobs. The hosted
 // build aliases its source panels to pack-only components and never imports
 // this module.
 
@@ -19,9 +19,9 @@ export const saeTrain = createPreparationSlice("sae", "train", {
 });
 
 export const lensFit = createPreparationSlice("lens", "fit", {
-  label: "J-lens fit",
+  label: "Lens fit",
   intervalMs: 3000,
-  successMessage: "J-lens fitted · live",
+  successMessage: "Lens fitted",
   onSettled: async () => {
     await refreshSession();
     await refreshLensSources();

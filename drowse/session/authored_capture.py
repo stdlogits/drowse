@@ -4,18 +4,27 @@ Authored loom turns (typed, committed or edited text: ``recipe is None``) have
 no per-token measurement rows of their own.  When a later generation's prompt
 renders them, the prefill forward already computes their hidden states, so the
 engine scores those positions once and attaches the rows to the authored node
-(``LoomTree.set_authored_token_scores``).  This module owns that work:
+(``LoomTree.set_authored_capture``), with the
+:class:`~drowse.loom.tree.PromptCapture` that replays them.  This module owns
+that work:
 
 - :func:`plan_authored_capture` decides, before the prefill, whether anything
   will measure the rows (the geometry monitor, a live J-lens or SAE consumer)
-  and only then tokenizes the uncaptured authored channels on the path;
+  and only then tokenizes the authored nodes on the path no generation has
+  captured yet (both channels: a node is captured once, as a whole);
 - :meth:`AuthoredPromptCapture.match` locates them in the rendered prompt and
   maps each token to the capture row that produced it;
 - :meth:`AuthoredPromptCapture.persist` scores those rows through the monitor
-  and the lens/SAE instruments and writes the token rows to the tree.
+  and the lens/SAE instruments and writes each node's rows to the tree with
+  its anchor: the render's parameters, the call's steering, where each
+  channel starts and the digest of the render before it.
 
-Row and measurement-envelope shapes are the loom token-row contract the
-browser runtime replays; they must not change.
+A row keeps what a generated row keeps
+(:func:`~drowse.readout.measurements.token_row_measurements`), or every
+reading whole when the call set ``persist_per_layer_scores``; the token view
+replays the rest through the anchor (:mod:`drowse.loom.replay`).  Row and
+measurement-envelope shapes are the loom token-row contract the browser
+runtime replays.
 """
 
 from __future__ import annotations
@@ -27,7 +36,13 @@ from typing import TYPE_CHECKING, Any, Callable
 import torch
 
 from drowse.generation.token_payloads import TokenProbePayload
-from drowse.readout.measurements import live_sources
+from drowse.loom.tree import PromptCapture, prompt_digest
+from drowse.readout.measurements import (
+    EnvelopeSources,
+    envelope_sources,
+    summary_measurements,
+    token_row_measurements,
+)
 
 if TYPE_CHECKING:
     from drowse.lens.instrument import LensInstrument
@@ -148,7 +163,9 @@ def pending_targets(
     *,
     raw: bool,
 ) -> list[AuthoredPromptTarget]:
-    """Uncaptured authored channels on the prompt path, in render order."""
+    """The channels of the uncaptured authored nodes on the prompt path, in
+    render order.  A node is captured once, both channels from one render:
+    the index its rows define (thinking, then visible) never shifts."""
     if assistant_node_id is None:
         return []
     generated = tree.nodes.get(assistant_node_id)
@@ -158,15 +175,17 @@ def pending_targets(
     for node in tree.path_to(generated.parent_id):
         if node.id == tree.root_id or node.recipe is not None:
             continue
+        if node.prompt_capture is not None:
+            continue
         # Raw/flat rendering ignores thinking_text; chat rendering places
         # authored thinking before the visible response content.
-        if not raw and node.thinking_text and node.thinking_tokens is None:
+        if not raw and node.thinking_text:
             target = tokenize_authored_text(
                 tokenizer, node.id, node.thinking_text, thinking=True,
             )
             if target is not None:
                 targets.append(target)
-        if node.text and node.tokens is None:
+        if node.text:
             target = tokenize_authored_text(
                 tokenizer, node.id, node.text, thinking=False,
             )
@@ -291,13 +310,21 @@ class AuthoredPromptCapture:
     lens_active: bool
     sae_active: bool
     readout_top_k: int
-    persist_per_layer_scores: bool
     steering: str | None
+    #: The render this capture reads (the anchor records it): the resolved
+    #: system prompt, the thinking flag and flat mode.
+    system_prompt: str | None = None
+    thinking: bool = False
+    raw: bool = False
+    #: The call's ``persist_per_layer_scores``: rows keep every reading whole.
+    per_layer: bool = False
     search_end: int | None = None
     matches: list[AuthoredPromptMatch] = field(default_factory=list)
+    prompt_ids: tuple[int, ...] = ()
 
     def match(self, input_ids: torch.Tensor, *, cache_position_offset: int) -> list[int]:
         """Locate the targets in ``input_ids``; return the producer rows to keep."""
+        self.prompt_ids = tuple(int(t) for t in input_ids[0].detach().to("cpu").tolist())
         self.matches, producers = match_targets(
             self.tokenizer,
             self.targets,
@@ -307,12 +334,29 @@ class AuthoredPromptCapture:
         )
         return producers
 
+    def _anchor(self, by_channel: dict[bool, AuthoredPromptMatch]) -> PromptCapture:
+        """The replay anchor of one node's matched channels."""
+        visible = by_channel.get(False)
+        thinking = by_channel.get(True)
+        start = visible.token_positions[0] if visible is not None else None
+        thinking_start = thinking.token_positions[0] if thinking is not None else None
+        head = max(p for p in (start, thinking_start) if p is not None)
+        return PromptCapture(
+            steering=self.steering,
+            system_prompt=self.system_prompt,
+            thinking=self.thinking,
+            raw=self.raw,
+            start=start,
+            thinking_start=thinking_start,
+            digest=prompt_digest(self.prompt_ids[:head]),
+        )
+
     def persist(self, prompt_rows: dict[int, torch.Tensor]) -> None:
         """Score the retained prefill rows and attach them to authored nodes."""
         matches = self.matches
         if not matches or not prompt_rows:
             return
-        sources = live_sources(self.lens.live, self.sae.live)
+        sources = envelope_sources(self.lens.measurement_sources(), self.sae.live)
 
         output_rows: list[list[dict[str, Any]]] = [
             [
@@ -337,6 +381,23 @@ class AuthoredPromptCapture:
                     ordered.append((token_position, match_index, token_index, column))
 
         populated_matches: set[int] = set()
+        # Each prompt token is a one-off read: a curved probe's foot solves
+        # cold, as the token's replay solves it, rather than from the token
+        # before (the decode loop's warm start), and the decode's own feet
+        # stay as they were.
+        with self.monitor.cold_reads():
+            self._score(prompt_rows, ordered, output_rows, populated_matches, sources)
+        self._attach(output_rows, populated_matches)
+
+    def _score(
+        self,
+        prompt_rows: dict[int, torch.Tensor],
+        ordered: list[tuple[int, int, int, int]],
+        output_rows: list[list[dict[str, Any]]],
+        populated_matches: set[int],
+        sources: EnvelopeSources,
+    ) -> None:
+        """Score the retained rows in prompt order into ``output_rows``."""
         for _position, match_index, token_index, column in sorted(ordered):
             hidden = {
                 layer: rows[column]
@@ -348,9 +409,7 @@ class AuthoredPromptCapture:
             payload = TokenProbePayload()
             if self.monitor_active:
                 payload.merge_readings(
-                    self.monitor.score_single_token(hidden),
-                    family="geometry",
-                    per_layer=self.persist_per_layer_scores,
+                    self.monitor.score_single_token(hidden), family="geometry",
                 )
 
             lens_payload = lens_aggregate = lens_token_ids = None
@@ -365,11 +424,7 @@ class AuthoredPromptCapture:
                         lens_token_ids,
                         lens_readings,
                     ) = lens_capture
-                    payload.merge_readings(
-                        lens_readings,
-                        family="lens",
-                        per_layer=self.persist_per_layer_scores,
-                    )
+                    payload.merge_readings(lens_readings, family="lens")
 
             sae_payload = None
             if self.sae_active:
@@ -378,11 +433,7 @@ class AuthoredPromptCapture:
                 )
                 if sae_capture is not None:
                     sae_payload, sae_readings = sae_capture
-                    payload.merge_readings(
-                        sae_readings,
-                        family="sae",
-                        per_layer=self.persist_per_layer_scores,
-                    )
+                    payload.merge_readings(sae_readings, family="sae")
 
             shaped = payload.to_token_payload(
                 lens=lens_payload,
@@ -396,22 +447,33 @@ class AuthoredPromptCapture:
             if not measurements:
                 continue
             row = output_rows[match_index][token_index]
-            if payload.scores:
-                row["probes"] = {
-                    name: round(float(value), 6)
-                    for name, value in payload.scores.items()
-                }
-            if payload.per_layer_scores:
-                row["per_layer_scores"] = payload.per_layer_scores
-            row["measurements"] = measurements
+            # As a generated row: the token view replays the rest through the
+            # node's anchor.  A call persisting per-layer scores keeps it whole.
+            row["measurements"] = (
+                summary_measurements(measurements, per_layer=True)
+                if self.per_layer else token_row_measurements(measurements)
+            )
             populated_matches.add(match_index)
 
-        for match_index in sorted(populated_matches):
-            match = matches[match_index]
-            self.tree.set_authored_token_scores(
-                match.target.node_id,
-                output_rows[match_index],
-                thinking=match.target.thinking,
+    def _attach(
+        self, output_rows: list[list[dict[str, Any]]], populated_matches: set[int],
+    ) -> None:
+        """Write each measured node's rows and anchor to the tree."""
+        matches = self.matches
+        # One capture per node, both channels at once (a matched channel
+        # whose rows the prefix cache left unscored still gets its rows: the
+        # anchor replays them).
+        by_node: dict[str, dict[bool, int]] = {}
+        for match_index, match in enumerate(matches):
+            by_node.setdefault(match.target.node_id, {})[match.target.thinking] = match_index
+        for node_id, channels in by_node.items():
+            if not populated_matches & set(channels.values()):
+                continue
+            self.tree.set_authored_capture(
+                node_id,
+                self._anchor({thinking: matches[i] for thinking, i in channels.items()}),
+                tokens=output_rows[channels[False]] if False in channels else None,
+                thinking_tokens=output_rows[channels[True]] if True in channels else None,
             )
 
 
@@ -428,8 +490,10 @@ def plan_authored_capture(
     lens_active: bool,
     sae_active: bool,
     readout_top_k: int,
-    persist_per_layer_scores: bool,
     content_end: Callable[[], int],
+    system_prompt: str | None = None,
+    thinking: bool = False,
+    per_layer: bool = False,
 ) -> AuthoredPromptCapture | None:
     """The authored-prompt capture this generation needs, or None.
 
@@ -438,7 +502,9 @@ def plan_authored_capture(
     the path is walked.  ``content_end`` renders the prompt without its
     generation header and returns its length (the search bound that keeps
     the header out of the match); it runs only when there are chat-rendered
-    targets to find.
+    targets to find.  ``system_prompt`` is the render's resolved system
+    prompt, ``thinking`` its thinking flag and ``per_layer`` the call's
+    ``persist_per_layer_scores``.
     """
     if not (monitor_active or lens_active or sae_active):
         return None
@@ -458,8 +524,11 @@ def plan_authored_capture(
         lens_active=lens_active,
         sae_active=sae_active,
         readout_top_k=readout_top_k,
-        persist_per_layer_scores=persist_per_layer_scores,
         steering=recipe.steering if recipe is not None else None,
+        system_prompt=None if raw else system_prompt,
+        thinking=bool(thinking) and not raw,
+        raw=raw,
+        per_layer=per_layer,
         search_end=None if raw else int(content_end()),
     )
 

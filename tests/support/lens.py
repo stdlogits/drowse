@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import sys
 import types
-from collections.abc import Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping
 from contextlib import contextmanager
 from typing import Any
 
@@ -93,8 +93,15 @@ def lens_kwargs(
     capture: Any = None,
     registry: Any = None,
     replay: Any = None,
+    whitener: Any = None,
+    neutral_means: "Mapping[str, Mapping[int, torch.Tensor]] | None" = None,
 ) -> dict[str, Any]:
     """The :class:`LensInstrument` constructor arguments, with inert defaults.
+
+    ``whitener`` is what the instrument's whitener getter returns (default
+    ``None``: a decomposition raises ``WhitenerError``).  ``neutral_means``
+    is ``{site: {layer: mean}}`` (default none: a residual S read raises
+    ``NeutralMeansError``).
 
     ``capture`` defaults to an empty :class:`FakeCapture`, ``registry`` to a
     fresh artifact registry (profiles resolve from it), ``replay`` to
@@ -125,7 +132,24 @@ def lens_kwargs(
         resolve_profile=lambda selector: registry.profiles[selector],
         assert_unsteered=lambda: None,
         replay=unwired_replay if replay is None else replay,
+        whitener=lambda: whitener,
+        neutral_means=site_means(neutral_means),
     )
+
+
+def site_means(
+    means: "Mapping[str, Mapping[int, torch.Tensor]] | None",
+) -> Callable[[str], Mapping[int, torch.Tensor]]:
+    """A ``neutral_means`` getter over ``{site: {layer: mean}}`` that raises
+    ``NeutralMeansError`` for a site it lacks, as the session's does."""
+    from drowse.errors import NeutralMeansError
+
+    def get(site: str) -> Mapping[int, torch.Tensor]:
+        if means is None or site not in means:
+            raise NeutralMeansError(f"the test harness has no neutral {site} means")
+        return means[site]
+
+    return get
 
 
 def lens_instrument(**kwargs: Any) -> Any:
@@ -158,6 +182,8 @@ class LensHarness:
         tokenizer: Any = None,
         model_id: str = TOY_MODEL_ID,
         replay: Any = None,
+        whitener: Any = None,
+        neutral_means: "Mapping[str, Mapping[int, torch.Tensor]] | None" = None,
     ) -> None:
         from drowse.lens.instrument import LensInstrument
         from tests.support.replay import unwired_replay
@@ -173,6 +199,8 @@ class LensHarness:
         self.changes: list[list[str]] = []
         self.capture: Any = FakeCapture({})
         self.exclusive_messages: list[str] = []
+        #: What the instrument's whitener getter returns (decompositions).
+        self.whitener = whitener
         self.lens = LensInstrument(
             model=self.model,
             tokenizer=self.tokenizer,
@@ -187,6 +215,8 @@ class LensHarness:
             resolve_profile=lambda selector: self.registry.profiles[selector],
             assert_unsteered=lambda: None,
             replay=unwired_replay if replay is None else replay,
+            whitener=lambda: self.whitener,
+            neutral_means=site_means(neutral_means),
         )
 
     @property

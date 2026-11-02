@@ -43,10 +43,10 @@ from typing import Any, ClassVar, Literal, Mapping, Union
 from drowse.errors import UnsupportedProbeChannelError
 
 
-#: The three read families.  THE enumeration — ``session.instruments`` is
+#: The four read families.  THE enumeration — ``session.instruments`` is
 #: keyed by it, the server validates ``{family}`` against that registry, and
 #: the payload layer's per-family slots are pinned to it by test.
-InstrumentFamily = Literal["geometry", "lens", "sae"]
+InstrumentFamily = Literal["geometry", "lens", "sae", "units"]
 
 
 #: Depth of the bounded capture tail ring finalize aggregates pool from —
@@ -72,6 +72,9 @@ DepthBasis = Literal[
     "share_weighted_coord_mass",
     # lens: mass = the token's per-layer readout probability p_l
     "readout_probability_mass",
+    # lens (slens/ probes): mass = w_S(l) * max(z_l, 0), the token's per-layer
+    # footprint z under the depth rule's S weight
+    "footprint_z",
     # sae: the resident hook layer's normalized depth, a constant
     "single_layer",
 ]
@@ -225,10 +228,31 @@ class DepthSummary:
 
 #: The lens strength unit — ``mean_l p_l(v)`` over the fitted layers.
 UNIT_MEAN_TOKEN_PROBABILITY = "mean_token_probability"
+#: The ``slens/`` probe unit — ``Σ_l w_S(l) z_l(v) / Σ_l w_S(l)``, the
+#: token's footprint z (a vocabulary z-score) averaged over the S lens's
+#: ``out`` layers under the depth rule's S weight (``lens/depth.py``).
+UNIT_MEAN_FOOTPRINT_Z = "mean_footprint_z"
 #: The SAE strength unit when Neuronpedia ``maxActApprox`` is cached.
 UNIT_ACTIVATION_OVER_MAX = "activation_over_max"
 #: The SAE strength unit with no metadata (offline / unlisted feature).
 UNIT_RAW_ACTIVATION = "raw_activation"
+#: The units family's strength unit: a neuron's activation over its pole's
+#: neutral ``act_top`` (signed), a head's write norm over its ``act_top``.
+UNIT_ACTIVATION_OVER_SCALE = "activation_over_scale"
+
+#: Significant digits a measured float keeps on the wire and in a loom token
+#: row: ``FLT_DIG``, every digit an fp32 reading reliably carries.
+#: Significant digits, not decimal places: a ``jlens/`` probability is often
+#: far below 1e-4 and is read on a log scale (the token view's ``formatP``,
+#: the tree filter's thresholds), so fixed places would zero it.
+READING_DIGITS = 6
+
+
+def round_reading(value: float) -> float:
+    """``value`` at :data:`READING_DIGITS` significant digits: ``%g``, the
+    exact binary value rounded to the nearest decimal (an exact tie to even,
+    as ``round`` does)."""
+    return float(f"{float(value):.{READING_DIGITS}g}")
 
 
 @dataclass
@@ -355,11 +379,18 @@ class ScalarReading:
 
     * ``"mean_token_probability"`` — lens strength, ``mean_l p_l(v)`` in
       ``[0, 1]``;
+    * ``"mean_footprint_z"`` — an ``slens/`` probe, the ``w_S``-weighted mean
+      ``Σ_l w_S(l) z_l(v) / Σ_l w_S(l)`` of the token's footprint z (a
+      vocabulary z-score, unbounded) where S is the faithful lens;
     * ``"activation_over_max"`` — SAE activation normalized by the
       Neuronpedia ``maxActApprox`` corpus max, ~``[0, 1]``;
     * ``"raw_activation"`` — SAE activation with no metadata available
       (offline / unlisted feature), comparable across tokens for one
-      feature only.
+      feature only;
+    * ``"activation_over_scale"`` — a unit probe: a neuron's activation over
+      its pole's neutral typical high (signed; ``meta.activation`` is the
+      raw value), a head's write norm over its neutral typical high
+      (``meta.write_norm``).
     """
 
     value: float
@@ -378,17 +409,17 @@ class ScalarReading:
         measurements" pattern the 5.x break removed from the gate path.
         """
         out: dict[str, Any] = {
-            "value": round(float(self.value), 6),
+            "value": round_reading(self.value),
             "unit": str(self.unit),
             "per_layer": {
-                str(layer): round(float(v), 6)
+                str(layer): round_reading(v)
                 for layer, v in self.per_layer.items()
             },
         }
         if self.depth is not None:
             out["depth"] = {
-                "center": [round(float(c), 6) for c in self.depth.center],
-                "spread": [round(float(s), 6) for s in self.depth.spread],
+                "center": [round_reading(c) for c in self.depth.center],
+                "spread": [round_reading(s) for s in self.depth.spread],
                 "basis": str(self.depth.basis),
             }
         else:
@@ -421,7 +452,7 @@ class ScalarReading:
 
 #: What a family's ``score_probes`` returns: the geometry family's full
 #: whitened :class:`ProbeReading`, or the single-axis
-#: families' :class:`ScalarReading`.  The three helpers below are the only
+#: families' :class:`ScalarReading`.  The two helpers below are the only
 #: places a consumer needs to care which.
 Reading = Union[ProbeReading, ScalarReading]
 
@@ -434,19 +465,6 @@ def reading_axis0(reading: "Reading") -> float:
         return float(reading.value)
     coords = reading.coords
     return float(coords[0]) if coords else 0.0
-
-
-def reading_per_layer_axis0(reading: "Reading") -> dict[int, float]:
-    """The per-layer trace of :func:`reading_axis0`."""
-    if isinstance(reading, ScalarReading):
-        return {
-            int(layer): float(value)
-            for layer, value in reading.per_layer.items()
-        }
-    return {
-        int(layer): float(coord[0] if coord else 0.0)
-        for layer, coord in reading.coords_per_layer.items()
-    }
 
 
 def as_probe_reading(reading: "Reading") -> "ProbeReading":
@@ -525,6 +543,13 @@ class LensLiveState(LiveState):
             "enabled": bool(self.enabled),
             "layers": list(self.layers) if self.layers is not None else None,
         }
+
+
+@dataclass(frozen=True)
+class UnitsLiveState(LiveState):
+    """The units family's per-token readings switch — all-or-nothing."""
+
+    family: ClassVar[InstrumentFamily] = "units"
 
 
 @dataclass(frozen=True)
@@ -620,6 +645,12 @@ class LensPrep(InstrumentPrep):
       stamp a concurrently adopted replacement's identity onto a run
       pinned to the older lens.
 
+    * ``input_lens`` / ``input_pinned`` — the same pin for the S-family
+      lens that ``slens/`` probes read (``lens`` is the R family's).
+    * ``sources`` — ``{"R": label, "S": label}``, the public source label
+      each family's resident was selected as, from the same snapshot: the
+      measurement envelope's lens binding (``binding.sources``).
+
     The whole snapshot is taken under the instrument's ``state_lock``
     — the one lens-state boundary that also serializes the getter's
     refresh/adoption/eviction and the registry/live mutations — so it
@@ -631,6 +662,9 @@ class LensPrep(InstrumentPrep):
     specs: Mapping[str, Mapping[str, Any]] = field(default_factory=dict)
     live_state: Mapping[str, Any] | None = None
     fingerprint: str | None = None
+    input_lens: Any = None
+    input_pinned: bool = False
+    sources: Mapping[str, str | None] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -675,6 +709,8 @@ class InstrumentBinding:
 
 
 __all__ = [
+    "READING_DIGITS",
+    "round_reading",
     "AGG_TAIL_DEPTH",
     "Assignment",
     "Axis",
@@ -696,12 +732,14 @@ __all__ = [
     "SaeLiveState",
     "ScalarReading",
     "UNIT_ACTIVATION_OVER_MAX",
+    "UNIT_ACTIVATION_OVER_SCALE",
+    "UNIT_MEAN_FOOTPRINT_Z",
     "UNIT_MEAN_TOKEN_PROBABILITY",
     "UNIT_RAW_ACTIVATION",
+    "UnitsLiveState",
     "as_probe_reading",
     "parse_gate_ref",
     "reading_axis0",
-    "reading_per_layer_axis0",
     "scalar_gate_keys",
     "validate_gate_channels",
 ]

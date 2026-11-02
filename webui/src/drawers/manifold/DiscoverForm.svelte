@@ -1,10 +1,11 @@
 <script lang="ts">
+  import { Segmented, Switch } from "@stdlogits/ledger";
   import { onMount as onInterfaceMount } from "svelte";
   import { registerInterfaceController } from "../../lib/workspaceController";
   import { discoverDraftSchema } from "../../lib/interfaceSchemas";
   import { ToolError } from "../../lib/webmcp/types";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
   // Auto-generated authoring: hand the model a flat concept list, the
   // K-tuple generator produces per-concept corpora against the shared
   // baseline prompts, then the fitter derives coords per-model via PCA or
@@ -27,10 +28,7 @@
   import { EXAMPLES_PER_ROUND, EXAMPLE_BUDGETS } from "../../lib/exampleBudget";
   import { isFittingCancellation } from "../../lib/runtime/fittingCancellation";
   import type { FitManifoldRequest, GenerateManifoldRequest } from "../../lib/types";
-  import Button from "../../lib/ui/Button.svelte";
-  import Checkbox from "../../lib/Checkbox.svelte";
   import NumberInput from "../../lib/NumberInput.svelte";
-  import Radio from "../../lib/Radio.svelte";
   import Select from "../../lib/Select.svelte";
   import AdvancedSection from "../../lib/builder/AdvancedSection.svelte";
   import ValidationBlock from "../../lib/builder/ValidationBlock.svelte";
@@ -182,9 +180,7 @@
 
   function sharedNameInput(): HTMLInputElement | null {
     const body = formRegion?.closest(".mb-form");
-    return body?.querySelector<HTMLInputElement>(
-      ":scope > .grid2 > .field:nth-child(2) input",
-    ) ?? null;
+    return body?.querySelector<HTMLInputElement>('input[data-identity="name"]') ?? null;
   }
 
   function tuningInput(label: string): HTMLInputElement | null {
@@ -219,8 +215,8 @@
     advancedOpen = true;
     await tick();
     const label = tuning.maxDim < 1 || maxDimLimit !== null && tuning.maxDim > maxDimLimit
-      ? "max dim"
-      : "variance";
+      ? "Dimensions at most"
+      : "Variance kept";
     tuningInput(label)?.focus();
   }
 
@@ -322,10 +318,10 @@
   aria-busy={submitting}
 >
   <fieldset class="creation-fields" disabled={submitting || anotherJob}>
-  <section class="step">
-    <h2 class="step-title">Concepts to compare</h2>
+  <section class="step" aria-labelledby="discover-concepts-title">
+    <h3 id="discover-concepts-title" class="step-title"><span class="n">2</span>Concepts</h3>
     <label class="field">
-      <span class="label">Concepts (at least 2)</span>
+      <span class="sr-only">Concepts (at least 2)</span>
       <textarea
         bind:this={conceptsInput}
         class="input"
@@ -339,23 +335,25 @@
       {#if conceptsError}
         <span id="discover-concepts-error" class="field-error">{conceptsError}</span>
       {/if}
-      <span class="dim-note">
-        <strong><MorphText text={concepts.length} /></strong> concepts · separate with commas or new lines; join words with underscores
+      <span class="dim-note" data-tip="Separate with commas or new lines; join words with underscores">
+        <strong><MorphText text={concepts.length} /></strong> concepts
       </span>
     </label>
-    <div>
-      <div class="field">
-        <span class="label">What do the concepts describe?</span>
-        <div class="radio-row" role="radiogroup" aria-label="Concept kind">
-          <Radio bind:group={kind} value="concrete" label="Roles or characters" />
-          <Radio bind:group={kind} value="abstract" label="Traits or feelings" />
-          <Radio bind:group={kind} value="custom" label="Custom instructions" />
-        </div>
-      </div>
+    <div class="kind">
+      <Segmented
+        label="Concept kind"
+        value={kind}
+        onchange={(next) => (kind = next)}
+        options={[
+          { value: "concrete", label: "Roles", hint: "Roles or characters: “a pirate”" },
+          { value: "abstract", label: "Traits", hint: "Traits or feelings: “someone patient”" },
+          { value: "custom", label: "Custom", hint: "Your own system template, with {c} for the concept" },
+        ]}
+      />
     </div>
     {#if kind === "custom"}
       <label class="field">
-        <span class="label">system template</span>
+        <span class="label">System template</span>
         <textarea
           bind:this={customSystemInput}
           class="input"
@@ -377,35 +375,34 @@
   </section>
 
   <section class="step" aria-labelledby="example-budget-title">
-    <h2 id="example-budget-title" class="step-title">Example budget</h2>
-    <div class="budget-options" role="radiogroup" aria-label="Example budget">
+    <h3 id="example-budget-title" class="step-title"><span class="n">3</span>Examples</h3>
+    <div class="choice-rows" role="radiogroup" aria-label="Example budget">
       {#each EXAMPLE_BUDGETS as option}
-        <label class="budget-option" class:selected={budget === String(option.rounds)}>
-          <input type="radio" name="example-budget" value={String(option.rounds)} bind:group={budget} onchange={() => (samplesPerPrompt = option.rounds)} />
-          <span><strong>{option.label}</strong><span>{option.rounds * EXAMPLES_PER_ROUND} examples per concept</span><small>{option.description}</small></span>
+        <label class="choice" data-tip={option.description}>
+          <input class="sr-only" type="radio" name="example-budget" value={String(option.rounds)} bind:group={budget} onchange={() => (samplesPerPrompt = option.rounds)} />
+          <b>{option.label}</b><span class="meta">{option.rounds * EXAMPLES_PER_ROUND} per concept</span>
         </label>
       {/each}
-      <label class="budget-option" class:selected={budget === "custom"}>
-        <input type="radio" name="example-budget" value="custom" bind:group={budget} />
-        <span><strong>Custom</strong><span>Choose the number of responses per prompt.</span></span>
+      <label class="choice">
+        <input class="sr-only" type="radio" name="example-budget" value="custom" bind:group={budget} />
+        <b>Custom</b><span class="meta">responses per prompt</span>
       </label>
     </div>
     {#if budget === "custom"}
-      <label bind:this={samplesField} class="field">
+      <label bind:this={samplesField} class="field samples">
         <span class="label">Responses per prompt</span>
         <NumberInput value={samplesPerPrompt} min={1} step={1} oninput={(v) => { if (v !== null) samplesPerPrompt = v; }} />
         {#if samplesError}<span id="discover-samples-error" class="field-error">{samplesError}</span>{/if}
       </label>
     {/if}
-    <p class="budget-total"><strong>{Number.isSafeInteger(totalExamples) && totalExamples > 0 ? `${totalExamples.toLocaleString()} examples total` : "Choose concepts and an example budget"}</strong><span>{concepts.length} concepts × {examplesPerConcept} examples</span></p>
-    <p class="budget-help">Each round covers all {EXAMPLES_PER_ROUND} prompts. More examples can reduce sampling noise, but do not guarantee a better probe. Start with Standard, then inspect the result.</p>
+    <p class="dim-note" data-tip={`Each round covers all ${EXAMPLES_PER_ROUND} prompts. More examples can reduce sampling noise, but do not guarantee a better probe.`}>{#if Number.isSafeInteger(totalExamples) && totalExamples > 0}<strong>{`${totalExamples.toLocaleString()} examples total`}</strong> · {concepts.length} × {examplesPerConcept}{:else}Choose concepts and a budget{/if}</p>
   </section>
 
   <AdvancedSection bind:expanded={advancedOpen}>
     <FitMethodPicker {tuning} linearOnly={browserMode} spectralNote="curved · best with ≥50 nodes" onchange={(fitMode) => (tuning.fitMode = fitMode)} />
     {#if browserMode}
       <div class="field">
-        <span class="label">feature space for fit</span>
+        <span class="label">Feature space</span>
         <Select
           bind:value={saeRelease}
           options={browserSaeOptions}
@@ -415,7 +412,7 @@
         {#if saeSourceState.error}
           <span class="field-error">{saeSourceState.error}</span>
         {:else if !saeSourceState.loading && saeSourceState.sources.length === 0}
-          <span class="dim-note">No compatible learned-feature pack is installed.</span>
+          <span class="dim-note">No compatible feature pack installed</span>
         {/if}
       </div>
     {:else}
@@ -424,38 +421,33 @@
         <input
           class="input"
           bind:value={saeRelease}
-          placeholder="e.g. gemma-scope-2-4b-it-res"
+          placeholder="gemma-scope-2-4b-it-res"
           spellcheck="false"
         />
       </label>
     {/if}
     <DiscoverTuningFields {tuning} {maxDimLimit} />
     <div class="check-stack">
-      <Checkbox bind:checked={alsoFit} label="Fit after generating examples" />
-      <Checkbox
-        bind:checked={rolePerNode}
+      <Switch checked={alsoFit} onchange={(on) => (alsoFit = on)} label="Fit after generating examples" />
+      <Switch
+        checked={rolePerNode}
+        onchange={(on) => (rolePerNode = on)}
         label="Use a separate role for each concept"
-        title={PER_NODE_ROLE_HELP}
+        hint={`${PER_NODE_ROLE_HELP} A chat template without roles fails before fitting.`}
       />
-      {#if rolePerNode}
-        <p class="role-hint">
-          each concept becomes its assistant voice; unsupported chat templates fail before fitting
-        </p>
-      {/if}
-      <Checkbox bind:checked={force} label="Replace existing examples with this name" />
-      <p class="budget-help">Without replacement, existing concept groups are reused. To change their example budget, use a new name or enable replacement.</p>
+      <Switch checked={force} onchange={(on) => (force = on)} label="Replace existing examples with this name"
+        hint="Without replacement, existing concept groups are reused. To change their budget, use a new name or replace them." />
     </div>
   </AdvancedSection>
   </fieldset>
-  {#if error}<p class="creation-error" role="alert">{error}</p>{/if}
+  {#if error}<p class="mf-error" role="alert">{error}</p>{/if}
   {#if result && !submitting}
-    <section class="creation-result" aria-label="Creation result">
-      <strong>{result.fitted ? "Ready to use" : "Examples saved"}: {result.namespace}/{result.name}</strong>
-      <p>{result.fitted ? "Add a probe to measure the next reply, or open the library to steer with it." : "Fit these saved examples when you are ready. You do not need to generate them again."}</p>
-      <div class="result-actions">
-        {#if result.fitted}<Button variant="solid" disabled={attached || attaching} onclick={() => void addProbe()}>{attached ? "Probe added" : "Add probe"}</Button>
-        {:else}<Button variant="solid" disabled={anotherJob} onclick={() => void fitSaved()}>Fit saved examples</Button>{/if}
-        <Button onclick={() => oncomplete ? oncomplete(result!) : openDrawer("subspace")}>Open library</Button>
+    <section class="mf-wash" aria-label="Creation result">
+      <div class="mf-sec-head"><b class="result-name">{result.namespace}/{result.name}</b><span class="meta">{result.fitted ? "Ready to use" : "Examples saved"}</span></div>
+      <div class="mf-actions">
+        {#if result.fitted}<button type="button" class="dw-button" disabled={attached || attaching} onclick={() => void addProbe()}>{attached ? "Probe added" : "Add probe"}</button>
+        {:else}<button type="button" class="dw-button" disabled={anotherJob} onclick={() => void fitSaved()}>Fit saved examples</button>{/if}
+        <button type="button" class="dw-quiet" onclick={() => oncomplete ? oncomplete(result!) : openDrawer("subspace")}>Open library</button>
       </div>
     </section>
   {/if}
@@ -465,47 +457,21 @@
     messages={validationAttempted ? validation.messages : []}
   />
 
-  <button
-    type="button"
-    class="save-btn"
-    disabled={submitting || anotherJob}
-    onclick={save}
-  >
-    <MorphText text={alsoFit ? "Generate and fit" : "Generate examples"} />
-  </button>
+  <div class="submit">
+    <button
+      type="button"
+      class="dw-button"
+      disabled={submitting || anotherJob}
+      onclick={save}
+    >
+      <MorphText text={alsoFit ? "Generate and fit" : "Generate examples"} />
+    </button>
+  </div>
 </div>
 
 <style>
-  .field-error {
-    color: var(--accent-red);
-    font-size: var(--text-xs);
-    line-height: 1.4;
-  }
-
-  textarea[aria-invalid="true"] {
-    border-color: var(--accent-red);
-  }
-  .creation-fields { display: flex; flex-direction: column; gap: var(--space-lg); border: 0; padding: 0; margin: 0; min-width: 0; }
-  .budget-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-sm); }
-  .budget-option { display: flex; align-items: start; gap: var(--space-sm); min-height: var(--control-target); background: var(--workspace-field-bg); border: 1px solid transparent; border-radius: var(--radius-group); padding: var(--space-sm); cursor: pointer; transition: background-color var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out); }
-  .budget-option.selected { background: var(--workspace-neutral-bg); border-color: var(--fg-dim); }
-  .budget-option:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .creation-fields:disabled .budget-option { cursor: not-allowed; opacity: var(--disabled-opacity); }
-  .budget-option input { margin-block-start: var(--space-xs); accent-color: var(--accent); flex: none; }
-  .budget-option > span { display: grid; gap: var(--space-xs); min-width: 0; }
-  .budget-option span span, .budget-option small { font-size: var(--text-sm); color: var(--fg-dim); line-height: 1.5; font-variant-numeric: tabular-nums; text-wrap: pretty; }
-  .step-title, .budget-option strong { text-wrap: balance; }
-  .budget-total { display: flex; flex-wrap: wrap; gap: var(--space-sm); margin: var(--space-sm) 0 0; font-variant-numeric: tabular-nums; }
-  .budget-total span { color: var(--fg-dim); }
-  .budget-help { margin: 0; color: var(--fg-dim); font-size: var(--text-sm); line-height: 1.5; text-wrap: pretty; }
-  .creation-error { color: var(--accent-red); line-height: 1.5; overflow-wrap: anywhere; }
-  .creation-result { display: grid; gap: var(--space-sm); padding: var(--surface-padding); background: var(--workspace-field-bg); border-radius: var(--popup-radius); overflow-wrap: anywhere; }
-  .creation-result p { margin: 0; line-height: 1.5; color: var(--fg-dim); text-wrap: pretty; }
-  .result-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
-  .save-btn { transition: background-color var(--dur-fast) var(--ease-out), scale var(--dur-fast) var(--ease-out); }
-  .save-btn:active:not(:disabled) { scale: var(--press-scale); }
-  @media (hover: hover) { .creation-fields:not(:disabled) .budget-option:hover { background: var(--workspace-neutral-hover); } }
-  @media (forced-colors: active) { .budget-option { border-color: CanvasText; } .budget-option.selected { border-color: Highlight; outline: 1px solid Highlight; } }
-  @container (max-width: 360px) { .budget-options { grid-template-columns: 1fr; } }
-  @media (max-width: 380px) { .budget-options { grid-template-columns: 1fr; } }
+  .kind { min-width: 0; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+  .kind::-webkit-scrollbar { display: none; }
+  .samples { max-width: 200px; }
+  .result-name { min-width: 0; color: var(--ink); font: var(--type-control); overflow-wrap: anywhere; }
 </style>

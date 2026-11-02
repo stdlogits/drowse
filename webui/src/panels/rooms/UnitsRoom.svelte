@@ -1,0 +1,620 @@
+<script lang="ts">
+  // The Units room (the Units canvas): the model's neurons and heads on this conversation, read at
+  // the token cursor (TokenStrip: a token of any turn, prompt tokens included, or the whole reply).
+  // The atlas draws every layer as a column of its units (UnitAtlas): the strongest of each layer at
+  // the token (at their peak over the reply, whole), or every neuron of it at the token; the units
+  // most active there, the clearest writers of a word, or the units the catalog labels; a bar (All:
+  // a cell) chooses its unit. The search names a word (the units that write it) or a unit's ID.
+  // Below, the units as rows (ID, label, a meter, the value) and the chosen one in brief: its value
+  // here and its peak, its activation token by token (a bar moves the cursor there), what it writes,
+  // its Push and Silence (lib/steerActions.ts: the term lands in the recipe's strip, its chip opened
+  // for the strength), and the way to the workbench (which selects it) or to its Neuron Lens page.
+  // Without a bound catalog, one link leads to the Artifacts room's unit catalog.
+  import { tick, untrack } from "svelte";
+  import { MediaQuery } from "svelte/reactivity";
+  import { Icon, MorphText, Segmented, Swap, Token, formatValue, tokenParts } from "@stdlogits/ledger";
+  import UnitAtlas, { type AtlasField } from "./UnitAtlas.svelte";
+  import TokenStrip from "./TokenStrip.svelte";
+  import LensAbsent from "../inspector/LensAbsent.svelte";
+  import { depthTint } from "../../lib/charts/depth";
+  import { genStatus } from "../../lib/stores/chat.svelte";
+  import { goto } from "../../lib/stores/rooms.svelte";
+  import { select } from "../../lib/stores/selection.svelte";
+  import { cursorAtIndex, moveCursor, settled, tokenCursor } from "../../lib/stores/tokenCursor.svelte";
+  import {
+    loadCatalog,
+    nodeActivity,
+    requestNodeActivity,
+    requestUnitRead,
+    requestUnitsForWord,
+    retryUnits,
+    unitActivityAvailable,
+    unitLabelFor,
+    unitRead,
+    unitsAvailable,
+    unitsForWord,
+    unitsState,
+    unitTerm,
+  } from "../../lib/stores/units.svelte";
+  import { steerRack } from "../../lib/stores/steering.svelte";
+  import { pushUnit, silenceUnit } from "../../lib/steerActions";
+  import { formatUnitTerm } from "../../lib/expression";
+  import type { UnitTerm } from "../../lib/unitTerms";
+  import {
+    decileCuts,
+    decodeFloat16,
+    FIRES_AT,
+    labelText,
+    lensText,
+    orderedHalves,
+    parseQuery,
+    parseUnit,
+    peakIndex,
+    peakPole,
+    poleOf,
+    scaleText,
+    signedValue as signed,
+    strongestColumns,
+    unitTitle,
+    type AtlasBar,
+  } from "../../lib/units";
+  import type { ActivityPeak, UnitActivityJSON, UnitLabelJSON } from "../../lib/types";
+
+  type Kind = "neuron" | "head";
+  type Filter = "active" | "writes" | "labelled";
+
+  let kind = $state<Kind>("neuron");
+  let every = $state(false);
+  let filter = $state<Filter>("active");
+  let query = $state("");
+  let committed = $state("");
+  let sel = $state<string | null>(null);
+  let layer = $state<number | null>(null);
+  let shown = $state(8);
+  let picks = $state(0);
+  let search: HTMLInputElement | null = $state(null);
+  /** A narrow window takes the search's short placeholder. */
+  const narrow = new MediaQuery("max-width: 520px");
+
+  const available = $derived(unitsAvailable());
+  $effect(() => {
+    if (!unitsState.catalogRead) void loadCatalog();
+  });
+  const bound = $derived(unitsState.catalog?.bound === true);
+  const credit = $derived(bound ? unitsState.catalog?.credit ?? null : null);
+  /** The catalog this model has and has not bound: its labels are fetched in the Artifacts room. */
+  const catalogMissing = $derived(unitsState.catalog?.available === true && !bound);
+
+  // ---------- the token the room reads: the cursor's, or the whole reply
+  /** The cursor's token once it holds still (a held arrow key asks for no replay on the way). */
+  const here = settled(() => tokenCursor.token);
+  const cursorToken = $derived(here.current);
+  const whole = $derived(cursorToken === null);
+  /** The node and the token read: the cursor's token (where it replays), or, whole, the reply. */
+  const target = $derived.by((): { nodeId: string; rawIndex: number | null; turnIdx: number } | null => {
+    if (!unitActivityAvailable()) return null;
+    if (cursorToken) {
+      return cursorToken.nodeId !== null && cursorToken.index !== null
+        ? { nodeId: cursorToken.nodeId, rawIndex: cursorToken.index, turnIdx: cursorToken.at.turnIdx }
+        : null;
+    }
+    const reply = tokenCursor.reply;
+    return reply?.nodeId ? { nodeId: reply.nodeId, rawIndex: null, turnIdx: reply.turnIdx } : null;
+  });
+  /** The cursor is on a token no replay reaches (a prompt token no generation has measured). */
+  const unreachable = $derived(cursorToken !== null && target === null);
+  const focusRaw = $derived(target?.rawIndex ?? null);
+
+  const request = $derived(target ? (focusRaw !== null ? { top: 1024, rawIndex: focusRaw } : { top: 1024 }) : null);
+  $effect(() => {
+    if (target && request && !genStatus.active) requestNodeActivity(target.nodeId, request);
+  });
+  const loading = $derived(target && request ? nodeActivity(target.nodeId, request) : null);
+  /** The last activity that arrived, held while the next token's loads. */
+  let held = $state<UnitActivityJSON | null>(null);
+  $effect(() => {
+    const value = loading?.value;
+    if (value) held = value;
+    else if (!target) held = null;
+  });
+  const data = $derived.by(() => {
+    const value = loading?.value ?? held;
+    if (!value || !target || value.node_id !== target.nodeId) return null;
+    // Whole, a held token's population is not the reply's.
+    return whole && value.population ? (loading?.value ?? null) : value;
+  });
+  const focusToken = $derived(whole ? null : data?.tokens.find(t => t.raw_index === (data.population?.raw_index ?? focusRaw)) ?? null);
+
+  const pop = $derived.by(() => {
+    const p = data?.population;
+    if (!p) return null;
+    const sorted = [...p.layers].sort((a, b) => a.layer - b.layer);
+    const neurons = sorted.map(l => decodeFloat16(l.neurons));
+    const heads = sorted.map(l => decodeFloat16(l.heads));
+    const flat = new Float32Array(neurons.reduce((n, a) => n + a.length, 0));
+    let at = 0;
+    for (const a of neurons) { flat.set(a, at); at += a.length; }
+    return {
+      neurons, heads, layers: sorted.map(l => l.layer), cuts: decileCuts(flat),
+      nNeurons: sorted[0]?.n_neurons ?? 0, nHeads: sorted[0]?.n_heads ?? 0,
+    };
+  });
+  const nLayers = $derived(pop?.neurons.length ?? Math.max(0, ...(data?.top ?? []).map(t => t.layer + 1)));
+
+  /** The strongest ``perLayer`` units of each layer at the token, as peaks (each its value there). */
+  function strongestAt(values: Float32Array[], layers: number[], unitKind: Kind, perLayer: number): ActivityPeak[] {
+    const out: ActivityPeak[] = [];
+    values.forEach((row, i) => {
+      const L = layers[i];
+      const order = Array.from(row.keys()).sort((a, b) => Math.abs(row[b]) - Math.abs(row[a])).slice(0, perLayer);
+      for (const index of order) {
+        if (row[index] === 0) continue;
+        out.push({ unit: unitKind === "neuron" ? `neuron/L${L}n${index}` : `head/L${L}h${index}`, kind: unitKind, layer: L, index, peak: row[index], raw_index: focusRaw ?? 0, label: null });
+      }
+    });
+    return out;
+  }
+  /** The units read: whole, each unit's peak over the reply; at a token, the strongest there. */
+  const peaks = $derived.by((): ActivityPeak[] => {
+    if (whole || !pop) return data?.top ?? [];
+    return [...strongestAt(pop.neurons, pop.layers, "neuron", 40), ...strongestAt(pop.heads, pop.layers, "head", pop.nHeads)];
+  });
+  const topLabels = $derived(new Map((data?.top ?? []).map(t => [t.unit, t])));
+
+  // ---------- what the search names, and the word the writers write
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  function typed(value: string): void {
+    query = value;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { committed = query; }, 500);
+  }
+  function commit(): void {
+    if (timer) clearTimeout(timer);
+    committed = query;
+  }
+  function clear(): void {
+    query = "";
+    commit();
+    search?.focus();
+  }
+  const q = $derived(parseQuery(committed));
+  /** The word whose writers show: the searched word, else (Writes a word) the token the atlas reads. */
+  const word = $derived.by((): { ask: string; shown: string } | null => {
+    if (q.mode === "word") return { ask: q.word, shown: q.word };
+    if (q.mode === "active" && filter === "writes" && focusToken) return { ask: `#${focusToken.token_id}`, shown: focusToken.token };
+    return null;
+  });
+  $effect(() => {
+    if (word && available && !genStatus.active) requestUnitsForWord(word.ask, "writes", 48);
+  });
+  const writers = $derived(word ? unitsForWord(word.ask, "writes", 48) : null);
+
+  // ---------- the rows
+  /** A unit as a row; ``pole`` is the side the row is about (a peak's sign, a writer's pole). */
+  interface Row { id: string; layer: number; kind: Kind; value: number | null; label: string | null; pole: "+" | "-" }
+  const labelOf = (id: string, pole: "+" | "-", label?: UnitLabelJSON | null) => labelText(label) ?? unitLabelFor(id, pole);
+  const activeRows = $derived<Row[]>([...peaks].sort((a, b) => Math.abs(b.peak) - Math.abs(a.peak)).map(t => {
+    const pole = t.kind === "neuron" && t.peak < 0 ? "-" : "+";
+    // A peak's catalog label is its peak pole's: it names this row only on the same side.
+    const top = topLabels.get(t.unit);
+    const label = t.label ?? (top && (top.peak < 0) === (t.peak < 0) ? top.label : null);
+    return { id: t.unit, layer: t.layer, kind: t.kind, value: t.peak, label: labelOf(t.unit, pole, label), pole };
+  }));
+  const writerRows = $derived<Row[]>((writers?.value?.hits ?? []).map(h => {
+    const pole = h.pole === "-" ? "-" : "+";
+    return { id: h.unit, layer: h.layer, kind: "neuron", value: h.score, label: labelOf(h.unit, pole, h.label), pole };
+  }));
+  const rows = $derived.by((): Row[] => {
+    if (q.mode === "id") {
+      if (!q.ref) return [];
+      const id = q.ref.id;
+      const hit = activeRows.find(r => r.id === id);
+      return [hit ?? { id, layer: q.ref.layer, kind: q.ref.kind, value: null, label: unitLabelFor(id), pole: "+" }];
+    }
+    if (word) return kind === "neuron" ? writerRows : [];
+    const mine = activeRows.filter(r => r.kind === kind);
+    return filter === "labelled" ? mine.filter(r => r.label) : mine;
+  });
+  const rowsLoading = $derived(word ? writers?.status === "loading" || writers === null : (loading === null || loading.status === "loading") && !data);
+  const rowsError = $derived(word ? (writers?.status === "error" ? writers.error : null) : loading?.status === "error" ? loading.error : null);
+  const top = $derived(Math.max(1e-9, ...rows.map(r => Math.abs(r.value ?? 0))));
+  const visible = $derived(rows.slice(0, shown));
+  $effect(() => {
+    void committed; void filter;
+    untrack(() => { shown = 8; });
+  });
+
+  // The list's count is always its rows; the model's whole population at the token, and the scale
+  // the values are over, ride the tip.
+  const heading = $derived.by((): { pre: string; word: string | null; meta: string } => {
+    const units = (n: number) => `${n.toLocaleString()} ${n === 1 ? "unit" : "units"}`;
+    if (q.mode === "id") return { pre: "Matches", word: null, meta: units(rows.length) };
+    if (word) return { pre: "Writes ", word: word.shown, meta: writers?.value ? units(rows.length) : "" };
+    if (filter === "labelled") return { pre: whole ? "Labelled in this reply" : "Labelled here", word: null, meta: units(rows.length) };
+    return { pre: whole ? "Most active in this reply" : "Most active here", word: null, meta: units(rows.length) };
+  });
+  const headingTip = $derived([
+    !whole && pop && nLayers ? `of ${(nLayers * (kind === "neuron" ? pop.nNeurons : pop.nHeads)).toLocaleString()} ${kind === "neuron" ? "neurons" : "heads"}` : "",
+    data?.scale && scaleText(data.scale.source) ? `values over each unit's ${scaleText(data.scale.source)}` : "",
+    data?.scale?.detail ?? "",
+  ].filter(Boolean).join(" · "));
+
+  // The selected unit: the one chosen, else the first row; choosing a row picks its layer and kind.
+  const selected = $derived(sel ?? rows[0]?.id ?? null);
+  const selRef = $derived(selected ? parseUnit(selected) : null);
+  // On a phone the detail sits under the list: a chosen row brings it into view.
+  let detail: HTMLElement | null = $state(null);
+  const phone = new MediaQuery("max-width: 720px");
+  function pick(row: Row): void {
+    if (row.id !== selected) picks += 1;
+    sel = row.id;
+    layer = row.layer;
+    kind = row.kind;
+    if (phone.current) {
+      void tick().then(() => detail?.scrollIntoView({
+        block: "start",
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+      }));
+    }
+  }
+  /** A unit chosen in the atlas: it and its layer, the list and the summary left where they are. */
+  function pickInAtlas(id: string, L: number): void {
+    if (id !== selected) picks += 1;
+    sel = id;
+    layer = L;
+  }
+  const atLayer = $derived(layer ?? selRef?.layer ?? 0);
+
+  // ---------- the atlas
+  const columns = $derived.by((): AtlasBar[][] => {
+    if (!nLayers) return [];
+    if (kind === "head") {
+      return strongestColumns(peaks.filter(t => t.kind === "head"), nLayers, pop?.nHeads ?? Math.max(1, ...peaks.filter(t => t.kind === "head").map(t => t.index + 1)));
+    }
+    const source = word && q.mode !== "id"
+      ? writerRows.map(r => ({ unit: r.id, layer: r.layer, index: parseUnit(r.id)?.index ?? 0, peak: r.value ?? 0 }))
+      : peaks.filter(t => t.kind === "neuron" && (filter !== "labelled" || activeRows.some(r => r.id === t.unit && r.label)));
+    return strongestColumns(source, nLayers, 40);
+  });
+  const rowsPerColumn = $derived(kind === "head" ? Math.max(1, pop?.nHeads ?? Math.max(1, ...columns.map(col => col.length))) : every ? 40 : Math.max(8, ...columns.map(col => col.length)));
+  const lit = $derived.by((): Set<string> | null => {
+    if (q.mode === "id") return q.ref ? new Set([q.ref.id]) : new Set();
+    if (q.mode === "word" && kind === "head") return new Set();
+    return null;
+  });
+  const showAll = $derived(every && kind === "neuron" && pop !== null && !whole);
+  const field = $derived<AtlasField | null>(showAll && pop ? { layers: pop.neurons, cuts: pop.cuts } : null);
+  const hits = $derived(showAll
+    ? q.mode === "id" ? (q.ref?.kind === "neuron" ? [{ layer: q.ref.layer, index: q.ref.index }] : [])
+      : q.mode === "word" ? writerRows.map(r => ({ layer: r.layer, index: parseUnit(r.id)?.index ?? 0 })) : []
+    : []);
+  const pin = $derived(showAll && selRef?.kind === "neuron" ? { layer: selRef.layer, index: selRef.index } : null);
+
+  const subset = $derived.by(() => {
+    if (!pop) return "";
+    if (kind === "head") return `all ${pop.nHeads} heads a layer`;
+    const n = pop.nNeurons.toLocaleString();
+    if (showAll) return `all ${n} a layer, in neuron order`;
+    if (word && q.mode !== "id") return `the clearest writers of ${n} a layer`;
+    if (filter === "labelled") return `the labelled of ${n} a layer`;
+    return `the 40 most active of ${n} a layer`;
+  });
+  const layerFact = $derived.by(() => {
+    if (!pop) return "";
+    const values = kind === "head" ? pop.heads[atLayer] : pop.neurons[atLayer];
+    if (!values) return "";
+    if (word && kind === "neuron" && q.mode !== "id") {
+      // Until the search answers there is no count to state.
+      if (!writers?.value) return "";
+      const n = writerRows.filter(r => r.layer === atLayer).length;
+      return `L${atLayer} · ${n} write ${tokenParts(word.shown).lead ? "·" : ""}${tokenParts(word.shown).text}`;
+    }
+    let n = 0;
+    for (const v of values) if (Math.abs(v) >= FIRES_AT) n += 1;
+    return `L${atLayer} · ${n.toLocaleString()} of ${values.length.toLocaleString()} active here`;
+  });
+
+  // ---------- the selected unit, in brief
+  $effect(() => {
+    if (selected && available && !genStatus.active) requestUnitRead(selected, true);
+  });
+  $effect(() => {
+    if (selected && target && !genStatus.active) requestNodeActivity(target.nodeId, { units: [selected], top: 1 });
+  });
+  const selRead = $derived(selected ? (unitRead(selected, true)?.value ?? null) : null);
+  const selTrace = $derived(selected && target ? nodeActivity(target.nodeId, { units: [selected], top: 1 })?.value ?? null : null);
+  const trace = $derived(selected ? selTrace?.traces[selected] ?? null : null);
+  const tokens = $derived(selTrace?.tokens ?? []);
+  const peakAt = $derived(trace ? peakIndex(trace) : -1);
+  const peakMag = $derived(trace && peakAt >= 0 ? Math.abs(trace[peakAt] ?? 0) : 0);
+  /** The cursor's token in the trace. */
+  const hereAt = $derived(focusRaw === null ? -1 : tokens.findIndex(t => t.raw_index === focusRaw));
+  /** A bar of the trace moves the cursor to its token. */
+  function toToken(rawIndex: number | undefined): void {
+    if (rawIndex === undefined || !target) return;
+    moveCursor(cursorAtIndex(target.turnIdx, rawIndex));
+  }
+  /** The side of a neuron the summary reads, as the unit view opens it: the side that fired here
+   *  (its trace's peak; the row's sign while the trace loads), or, for a writer of the searched
+   *  word, the side that writes it. Its writes, label and link all come from that side. */
+  const selRow = $derived(selected ? rows.find(r => r.id === selected) ?? null : null);
+  const selPole = $derived.by((): "+" | "-" => {
+    if (selRef?.kind !== "neuron") return "+";
+    if (word && q.mode !== "id" && selRow) return selRow.pole;
+    if (trace && peakAt >= 0) return peakPole(trace);
+    return selRow?.pole ?? "+";
+  });
+  const selSide = $derived(selRead?.kind === "neuron" ? poleOf(selRead, selPole) : null);
+  const selLabel = $derived(selRead ? labelText(selRead.kind === "neuron" ? selSide?.label : selRead.label) : selected ? unitLabelFor(selected, selPole) : null);
+  const selLink = $derived(selRead ? (selRead.kind === "neuron" ? selSide?.label?.url ?? (selRead.catalog.bound ? selRead.catalog.url : null) : selRead.label?.url ?? null) : null);
+  const writes = $derived.by(() => {
+    if (!selRead) return null;
+    const place = selRead.kind === "neuron" ? selSide?.writes : selRead.copies;
+    if (!place) return null;
+    const { primary } = orderedHalves(place);
+    return { lens: lensText(primary), family: primary.family, absent: primary.absent, tokens: primary.tokens };
+  });
+  const isHit = (t: string) => word !== null && t.trim().toLowerCase() === word.shown.trim().toLowerCase();
+  const selFact = $derived.by((): { b: string; pre: string; post: string } | null => {
+    if (!selRead) return null;
+    if (selRead.kind === "head") {
+      const v = selRead.firing.scale?.top;
+      const post = selRead.firing.scale?.source === "neutral" ? " on the neutral text" : "";
+      return typeof v === "number" ? { pre: "typical write ", b: formatValue(v), post } : null;
+    }
+    const rate = selSide?.firing.rate;
+    if (typeof rate === "number") return { pre: "fires on ", b: `${(rate * 100).toFixed(rate >= 0.1 ? 0 : 1)}%`, post: " of tokens" };
+    return { pre: "write norm ", b: formatValue(selRead.scalars.w_norm), post: "" };
+  });
+  const tint = $derived(selRef && nLayers > 1 ? depthTint(selRef.layer / (nLayers - 1)) : null);
+
+  // ---------- the recipe: the chosen unit pushed (a neuron, either pole) or silenced, as the unit view
+  const selTerm = $derived(selected ? unitTerm(selected) : null);
+  const selEntry = $derived(selected ? steerRack.entries.get(selected) : undefined);
+  const selExpression = $derived(selected && selTerm && selEntry?.mode === "unit" ? formatUnitTerm(selected, selEntry) : null);
+  const selActions = $derived<{ term: UnitTerm; label: string }[]>(selRef?.kind === "head"
+    ? [{ term: "silence", label: "Silence" }]
+    : [{ term: "plus", label: "Push +" }, { term: "minus", label: "Push −" }, { term: "silence", label: "Silence" }]);
+  function act(term: UnitTerm): void {
+    if (!selected) return;
+    if (term === "silence") silenceUnit(selected);
+    else pushUnit(selected, term === "minus" ? "-" : "+");
+  }
+
+  function open(): void {
+    if (!selected) return;
+    select({ kind: "unit", id: selected });
+    goto("workbench");
+  }
+  function onKey(event: KeyboardEvent): void {
+    if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest("input, textarea, [contenteditable='true']")) return;
+    event.preventDefault();
+    search?.focus();
+  }
+</script>
+
+<svelte:window onkeydown={onKey} />
+
+<div class="dw-room units">
+  {#if !available}
+    <div class="dw-empty"><span class="head">Units</span><p>This runtime does not read neurons and heads.</p></div>
+  {:else}
+    <TokenStrip />
+    <div class="tools">
+      <Segmented label="Units" value={kind} onchange={(v) => { kind = v; if (v === "head" && filter === "writes") filter = "active"; }} options={[{ value: "neuron", label: "Neurons" }, { value: "head", label: "Heads" }]} />
+      <span class="seg-wrap" class:off={kind === "head" || whole} inert={kind === "head" || whole}>
+        <Segmented label="Which neurons" value={every ? "all" : "strongest"} onchange={(v) => (every = v === "all")}
+          options={[{ value: "strongest", label: "Strongest" }, { value: "all", label: "All" }]} />
+      </span>
+      <Segmented label="Units shown" value={filter} onchange={(v) => (filter = v)}
+        options={[{ value: "active", label: "Active here" }, ...(kind === "neuron" ? [{ value: "writes" as const, label: "Writes a word" }] : []), ...(bound ? [{ value: "labelled" as const, label: "Labelled" }] : [])]} />
+      <div class="search">
+        <Icon name="search" size={18} />
+        <label class="sr-only" for="unit-q">Search units</label>
+        <input id="unit-q" type="search" autocomplete="off" spellcheck="false" bind:this={search} value={query}
+          placeholder={narrow.current ? "A word, or an ID like L20 n344" : "Search a word, or an ID like L20 n344"}
+          oninput={(e) => typed((e.currentTarget as HTMLInputElement).value)}
+          onkeydown={(e) => { if (e.key === "Enter") commit(); if (e.key === "Escape" && query) { e.preventDefault(); clear(); } }} />
+        {#if query}
+          <button type="button" class="clear" aria-label="Clear the search" onclick={clear}><Icon name="close" /></button>
+        {:else}
+          <kbd aria-hidden="true">/</kbd>
+        {/if}
+      </div>
+    </div>
+
+    <section class="atlas-sec" aria-label="Atlas">
+      <div class="dw-sec-head">
+        <span class="ah">
+          {#if focusToken && (kind === "head" || every || !word)}<span class="head" data-tip={subset || undefined}>At <Token token={focusToken.token} /></span>{:else if word}<span class="head" data-tip={subset || undefined}>Writes <Token token={word.shown} /></span>{:else if whole && data}<span class="head" data-tip={subset || undefined}>This reply, at each unit's peak</span>{/if}
+        </span>
+        <span class="meta"><MorphText text={layerFact} /></span>
+      </div>
+      {#if columns.length > 0}
+        <UnitAtlas {columns} rows={rowsPerColumn} {lit} selected={selected} layer={atLayer} onlayer={(L) => (layer = L)} onunit={pickInAtlas}
+          {field} {hits} {pin} label="Layers" />
+      {:else if loading?.status === "error"}
+        <div class="dw-row"><span class="meta">{loading.error}</span><button type="button" class="dw-text" onclick={retryUnits}>Try again</button></div>
+      {:else if unreachable}
+        <div class="ghost-atlas none"><span class="meta">This token has no replay record.</span></div>
+      {:else if !target}
+        <div class="ghost-atlas none">
+          <span class="head">No reply yet</span>
+          <button type="button" class="dw-quiet" onclick={() => goto("workbench")}>Workbench<Icon name="right" /></button>
+        </div>
+      {:else}
+        <div class="ghost-atlas" aria-hidden="true"></div>
+      {/if}
+    </section>
+
+    <div class="below">
+      <section class="list" aria-label="Results">
+        <div class="dw-sec-head">
+          <span class="head">{heading.pre}{#if heading.word !== null}<Token token={heading.word} />{/if}</span>
+          <span class="meta" data-tip={headingTip || undefined}>{heading.meta}</span>
+        </div>
+        {#if visible.length > 0}
+          <div class="rows">
+            {#each visible as r (r.id)}
+              <button type="button" class="row" aria-pressed={r.id === selected}
+                style:--tint={depthTint(nLayers > 1 ? r.layer / (nLayers - 1) : null) ?? undefined} onclick={() => pick(r)}>
+                <span class="uid">{unitTitle(r.id)}</span>
+                <span class="ulabel">{r.label ?? ""}</span>
+                <span class="meter" class:neg={(r.value ?? 0) < 0}><i style:width="{Math.round((Math.abs(r.value ?? 0) / top) * 100)}%"></i></span>
+                <span class="uval">{r.value === null ? "–" : signed(r.value)}</span>
+              </button>
+            {/each}
+          </div>
+        {:else if rowsError}
+          <div class="dw-row"><span class="meta">{rowsError}</span><button type="button" class="dw-text" onclick={retryUnits}>Try again</button></div>
+        {:else if rowsLoading}
+          <div class="ghost-rows" aria-hidden="true">{#each [0, 1, 2, 3] as k (k)}<i></i>{/each}</div>
+        {:else if q.mode === "id"}
+          <p class="meta none">No unit {committed.trim()}</p>
+        {:else if word}
+          <p class="meta none">No unit writes <Token token={word.shown} /></p>
+        {:else if data}
+          <p class="meta none">{filter === "labelled" ? "No unit here has a label" : kind === "head" ? "No head wrote here" : "No neuron fired here"}</p>
+        {/if}
+        <div class="split">
+          {#if rows.length > shown}<button type="button" class="dw-text" onclick={() => (shown += 16)}>{rows.length - shown} more</button>{/if}
+          {#if credit}<span class="meta credit">{credit}</span>{:else if catalogMissing}
+            <button type="button" class="dw-text credit link" onclick={() => goto("artifacts", "units")}>Unit catalog<Icon name="right" /></button>
+          {/if}
+        </div>
+      </section>
+
+      {#if selected}
+        <Swap key={`${selected}:${picks}`}>
+          <section class="sum" aria-label="Selected unit" style:--tint={tint ?? undefined} bind:this={detail}>
+            <div class="name">
+              <h2 class="dw-title">{unitTitle(selected)}</h2>
+              {#if selLabel}<p class="label">{selLabel}</p>{/if}
+            </div>
+            <div class="acts">
+              <div class="dw-row">
+                {#each selActions as a (a.term)}
+                  <button type="button" class="dw-quiet act" aria-pressed={selTerm === a.term} onclick={() => act(a.term)}>
+                    {#if selTerm === a.term}<Icon name="check" />{/if}{a.label}
+                  </button>
+                {/each}
+              </div>
+              {#if selExpression}<span class="meta expr">{selExpression}</span>{/if}
+            </div>
+            <div class="dw-facts">
+              {#if trace && hereAt >= 0}<span>at <Token token={tokens[hereAt]?.token ?? ""} /> <b>{signed(trace[hereAt] ?? 0)}</b></span>{/if}
+              {#if trace && peakAt >= 0}<span>peak here <b>{signed(trace[peakAt] ?? 0)}</b> on <Token token={tokens[peakAt]?.token ?? ""} /></span>{/if}
+              {#if selFact}<span>{selFact.pre}<b>{selFact.b}</b>{selFact.post}</span>{/if}
+            </div>
+            {#if trace && trace.length > 0}
+              <div class="strip" style:--n={trace.length} role="group" aria-label={`${unitTitle(selected)} on each of the ${trace.length} tokens; choose one to read the atlas there`}>
+                {#each trace as v, i (i)}
+                  {@const a = Math.abs(v ?? 0)}
+                  <button type="button" class="s" class:on={i === hereAt} aria-label={`${tokens[i]?.token ?? ""} ${signed(v ?? 0)}`}
+                    onclick={() => toToken(tokens[i]?.raw_index)}>
+                    <i class:neg={(v ?? 0) < 0} class:lit={peakMag > 0 && a >= 0.4 * peakMag} style:height="{Math.max(2, peakMag > 0 ? (a / peakMag) * 32 : 2)}px"></i>
+                  </button>
+                {/each}
+              </div>
+            {/if}
+            {#if writes}
+              <div class="group">
+                <div class="dw-row"><h3 class="head">{selRef?.kind === "head" ? "Copies" : "Writes"}</h3><span class="meta">{writes.lens}</span></div>
+                {#if writes.absent}
+                  <LensAbsent family={writes.family} reason={writes.absent} />
+                {:else}
+                  <div class="toks">{#each writes.tokens.slice(0, 8) as t, i (`${i}:${t.token}`)}<Token token={t.token} flags={isHit(t.token) ? 1 : 0} {i} />{/each}</div>
+                {/if}
+              </div>
+            {:else}
+              <div class="ghost-toks" aria-hidden="true">{#each [56, 72, 48, 64, 80] as w, j (j)}<i style:width="{w}px"></i>{/each}</div>
+            {/if}
+            <div class="dw-row">
+              <button type="button" class="dw-quiet" onclick={open}>Open in workbench<Icon name="right" /></button>
+              {#if selLink}<a class="out" href={selLink} target="_blank" rel="noopener">Open in Neuron Lens<Icon name="external" /></a>{/if}
+            </div>
+          </section>
+        </Swap>
+      {/if}
+    </div>
+  {/if}
+</div>
+
+<style>
+  .units { gap: var(--s6); }
+  .tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s3); }
+  .seg-wrap { display: inline-flex; transition: opacity var(--fast) var(--ease); }
+  .seg-wrap.off { opacity: 0.4; }
+  .search { flex: 1 1 320px; display: flex; align-items: center; gap: var(--s2); min-width: 0; height: 44px; padding: 0 var(--s2) 0 var(--s4); border-radius: var(--r-pill); background: var(--wash); color: var(--ink3); transition: background-color var(--fast) var(--ease); }
+  .search:focus-within { background: var(--wash2); }
+  .search input { flex: 1 1 auto; min-width: 0; height: 100%; padding: 0; border: 0; outline: 0; background: transparent; color: var(--ink); font: var(--type-body); }
+  .search input::placeholder { color: var(--ink3); }
+  .search input::-webkit-search-cancel-button { display: none; }
+  .search kbd { display: grid; place-items: center; min-width: 24px; height: 24px; margin-right: var(--s2); border-radius: var(--r-chip); background: var(--paper); color: var(--ink3); font: var(--type-meta); }
+  .clear { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease); }
+  .clear:hover { color: var(--ink); background: var(--paper); }
+
+  .atlas-sec { display: grid; gap: var(--s3); min-width: 0; }
+  .ah { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); min-width: 0; }
+  .ghost-atlas { display: grid; place-items: center; height: 214px; border-radius: var(--r-box); background: var(--wash); }
+  .ghost-atlas.none { padding: var(--s4); }
+
+  .below { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s7); }
+  .list { flex: 999 1 520px; max-width: 760px; min-width: 0; display: grid; gap: var(--s3); }
+  .rows { display: grid; gap: 2px; }
+  .row { display: grid; grid-template-columns: 88px minmax(0, 1fr) 56px 44px; gap: var(--s3); align-items: center; height: 36px; padding: 0 var(--s3); border: 0; border-radius: var(--r-box); background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+  .row:hover { background: var(--wash); }
+  .row[aria-pressed="true"] { background: var(--wash2); }
+  .row:active { scale: 0.99; }
+  .uid { color: var(--ink); font: 600 14px/20px var(--display); letter-spacing: -0.01em; white-space: nowrap; }
+  .ulabel { overflow: hidden; color: var(--ink2); font: var(--type-small); white-space: nowrap; text-overflow: ellipsis; }
+  .row[aria-pressed="true"] .ulabel { color: var(--ink); }
+  .meter { position: relative; height: 4px; border-radius: 2px; background: var(--wash2); }
+  .row[aria-pressed="true"] .meter { background: var(--paper); }
+  .meter > i { position: absolute; top: 0; bottom: 0; left: 0; border-radius: 2px; background: var(--tint); transition: width var(--glide) var(--ease); }
+  .meter.neg > i { background: var(--ink3); opacity: 0.6; }
+  .uval { color: var(--ink2); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: right; }
+  .split { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+  .split .credit { margin-left: auto; }
+  .link { display: inline-flex; align-items: center; gap: var(--s1); min-height: 36px; }
+  .link:hover { color: var(--ink); }
+  .none { margin: 0; padding: var(--s2) var(--s3); }
+  .ghost-rows { display: grid; gap: 2px; }
+  .ghost-rows > i { display: block; height: 36px; border-radius: var(--r-box); background: var(--wash); }
+
+  .sum { flex: 1 1 360px; max-width: 520px; min-width: 0; display: grid; gap: var(--s4); align-content: start; }
+  .name { display: grid; gap: var(--s1); }
+  .acts { display: grid; gap: var(--s2); }
+  .act[aria-pressed="true"] { background: var(--wash2); }
+  .expr { overflow-wrap: anywhere; }
+  .label { margin: 0; color: var(--ink); font: var(--type-label); }
+  .strip { display: grid; grid-template-columns: repeat(var(--n), minmax(0, 1fr)); align-items: end; height: 40px; }
+  .s { display: flex; align-items: flex-end; justify-content: center; height: 100%; min-width: 0; padding: 0 0 4px; border: 0; border-radius: 4px; background: transparent; cursor: pointer; transition: background-color var(--fast) var(--ease); }
+  .s:hover, .s.on { background: var(--wash); }
+  .s > i { display: block; width: 62%; min-height: 2px; border-radius: 2px; background: var(--tint); opacity: 0.4; transition: height var(--glide) var(--ease), opacity var(--glide) var(--ease); }
+  .s > i.lit { opacity: 1; }
+  .s > i.neg { background: var(--ink3); opacity: 0.4; }
+  .group { display: grid; gap: var(--s2); min-width: 0; }
+  .group h3 { margin: 0; }
+  .ghost-toks { display: flex; flex-wrap: wrap; gap: var(--s1); }
+  .ghost-toks > i { display: block; height: 24px; border-radius: var(--r-chip); background: var(--wash); }
+  .out { display: inline-flex; align-items: center; gap: 6px; height: 36px; color: var(--ink2); font: var(--type-control); text-decoration: none; transition: color var(--fast) var(--ease); }
+  .out:hover { color: var(--ink); }
+
+  /* Phone sizes and touch: every target 44 px (a token's bar is a column of the strip, so the strip
+   * grows instead), and no key hint where there is no keyboard. */
+  @media (max-width: 720px), (pointer: coarse) {
+    .row { height: 44px; }
+    .clear { width: 44px; height: 44px; }
+    .strip { height: 48px; }
+    .split .dw-text { min-height: 44px; }
+  }
+  @media (pointer: coarse) {
+    .search kbd { display: none; }
+  }
+  @media (max-width: 520px) {
+    .row { grid-template-columns: 80px minmax(0, 1fr) 40px 40px; gap: var(--s2); }
+  }
+</style>

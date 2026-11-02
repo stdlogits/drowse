@@ -38,11 +38,11 @@ def build_token_event(
     if event.raw_index is not None:
         frame["raw_index"] = int(event.raw_index)
 
-    # The measurement envelope is the single read-side wire record: geometry /
-    # lens / SAE ``instruments`` plus the flat ``scores`` / ``per_layer_scores``
-    # views (:func:`drowse.readout.measurements.build_measurements`).  The token
-    # tap builds it once and stores the same envelope on the loom row, so live
-    # and rehydrated tokens share one authority.
+    # The measurement envelope is the single read-side wire record: the
+    # families' ``instruments`` plus the flat ``scores`` view
+    # (:func:`drowse.readout.measurements.build_measurements`).  The token tap
+    # builds it once; the frame carries it whole and the loom row keeps its
+    # projection (``token_row_measurements``: summaries, rounded).
     if event.measurements:
         frame["measurements"] = event.measurements
 

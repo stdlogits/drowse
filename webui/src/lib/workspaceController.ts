@@ -1,11 +1,14 @@
 import type { InputSchema } from "./webmcp/types";
 import type { ChatRole } from "./types";
+import type { Room } from "./stores/rooms.svelte";
+import type { WorkbenchPage } from "./stores/workbench.svelte";
 
+/** Where the dashboard is: a room (and its section), and on the workbench what the Page region
+ *  shows. */
 export interface WorkspaceNavigation {
-  view?: "conversation" | "branches" | "controls" | "tools";
-  section?: "response" | "model" | "chat";
-  leftSidebar?: boolean;
-  headersVisible?: boolean;
+  room?: Room;
+  section?: string | null;
+  page?: WorkbenchPage;
 }
 
 export interface ComposerDraft {

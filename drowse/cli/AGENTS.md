@@ -1,9 +1,9 @@
 # drowse/cli
 
 The `drowse` console script (`drowse.cli.main:main`; `python -m drowse` is the
-same entry point): eight verb groups — `serve`, `manifold`, `pack`, `config`,
-`experiment`, `template`, `lens`, `sae` — as thin frontends over `DrowseSession`
-and the `store`/`fit`/`lens`/`sae` packages. The CLI is in the top layer beside
+same entry point): nine verb groups — `serve`, `manifold`, `pack`, `config`,
+`experiment`, `template`, `lens`, `sae`, `unit` — as thin frontends over
+`DrowseSession` and the `store`/`fit`/`lens`/`sae`/`units` packages. The CLI is in the top layer beside
 `server`, `web` and `notebook` (`tests/invariants/test_layering.py`): it may
 import any lower layer and never reaches a session private (`session._x`).
 
@@ -105,7 +105,7 @@ not --no-dls`, `compile`, `cuda_graphs`, `return_top_k`, closed on exit.
   `probes=[]`, which also skips the construction-time neutral capture and fits.
 - `-d/-q` (`MODEL_LOAD`) exist exactly on the verbs that load weights: `serve`,
   `manifold extract|generate|fit`, `template score`, `lens fit|top|decompose`,
-  `sae train`, every `experiment` verb. `manifold transfer` has neither but loads
+  `sae train`, `unit read|top|find|stats`, every `experiment` verb. `manifold transfer` has neither but loads
   a model (default device) when it must capture a missing neutral cache.
 
 ## Fail before the load
@@ -160,20 +160,28 @@ checked against the sidecar, and only a 2-node affine fit folds.
 ## `serve` startup
 
 Bind check → `effective_config(yaml_vectors=True)` → model check → parse `-S` →
-`open_session(roster=True)` → `enable_live_lens` → `preflight_steering` →
+`open_session(roster=True)` → `enable_live_lens` → `select_s_lens` → `preflight_steering` →
 `create_app` → `warm_up` (`--compile` only) → `enable_live_sae` (not with
-`--no-web`) → `uvicorn.run`. Lens, SAE and warm-up failures are narrated and
-never block startup.
+`--no-web`) → `uvicorn.run` (with `server/ws_stream.py`'s `ws_max_size` and
+keepalive: pings every 20 s, no pong timeout). Lens, SAE and warm-up failures
+are narrated and never block startup.
 
-- The live lens precedes the preflight because `jlens/<word>` atoms resolve
-  against the selected lens source. `preflight_steering` enters and leaves
+- The lens sources precede the preflight because `jlens/<word>` and
+  `slens/<word>` atoms resolve against the selected sources. `preflight_steering` enters and leaves
   `session.steering(expr)` once — resolving and loading every atom as a request
   would, authoring nothing; a missing concept exits 1 with an `extract` hint.
-- Live lens: a selected output-side source (`lens use`) is never rewritten
+- Live lens: a selected R-family source (`lens use`) is never rewritten
   (incompatible → live off with a hint). With none selected, serve tries prepared
-  output-side sources in `lens.sources.lens_source_preference_key` order and the
+  R-family sources in `lens.sources.lens_source_preference_key` order and the
   first compatible one stays selected in `active.json` (the lens runtime has no
   in-memory selection); if none fits, the trial selection is cleared.
+- S lens (`select_s_lens`): the same policy for the S family, with
+  `session.lens.has_compatible_input()` (checks the weights, pages nothing in)
+  as the validation. A selected S-family source is never rewritten
+  (incompatible → a `lens use` hint); with none selected, serve tries prepared
+  S-family sources that hold `out` (`slens/` atoms and probes read it) in
+  preference order and keeps the first compatible one. There is no live S
+  readout to turn on.
 - Live SAE: the active source, then other prepared ones (local first), then
   `best_sae_release` (official `google/` repo, Neuronpedia-labelled, `canonical`,
   curated base over its `-all` sibling, name). `--no-web` skips this discovery
@@ -194,7 +202,7 @@ One letter, one long form, tree-wide (`test_short_flags_keep_one_meaning_tree_wi
 | `-P` | `--port` | `-C` | `--cors` | `-k` | below |
 
 - `-k` is the one double-booked letter: `--api-key` on `serve`, `--top-k` on
-  `lens top|decompose`; they never share a parser.
+  `lens top|decompose` and `unit read|top|find`; they never share a parser.
 - `-s` is always `--strict`, strict about something per verb: unresolvable
   steering references (config block), identical layer coverage (`manifold
   bake`), probe-roster drift (`transcript run`).
@@ -216,8 +224,8 @@ does not carry.
   makes each node's corpus reproducible from S and its node index;
   `--role-per-node` uses each slug as its node's role substitution. Fitting is a
   separate step so a flaky generation leaves inspectable corpora.
-- `fit TARGET`: `--layers` takes indices, `workspace` (the 40–90% depth band)
-  or `all`, never `sample`. Overrides apply only to discover folders (authored
+- `fit TARGET`: `--layers` takes indices and `a-b` ranges (`4-8,20`),
+  `workspace` (the 40–90% depth band) or `all`, never `sample`. Overrides apply only to discover folders (authored
   exits 2); only the supplied patch reaches `session.fit`, which merges it under
   the fit lock — the CLI never writes `manifold.json`. `-f` bypasses the tensor
   cache, needed because `fit` does not re-author corpora: an unchanged corpus
@@ -248,20 +256,74 @@ assistant}` or the single-turn `{user, assistant}` sugar (`_canonical_context`).
 `score` is the only template verb that loads a model, and has no `-c`.
 
 **lens** — corpus specs, sources and estimators are in `drowse/lens/AGENTS.md`.
-- `fit MODEL`: `--kind r` (default, RelP R-lens, `local:r`) or `--kind j`
-  (standard, `local:j`); `--corpus FILE` (one document per line, JSON lines
-  contribute `text`) or repeatable `--hf-corpus`, else FineWeb-Edu
-  `sample-10BT` (needs `drowse.ai[hf]`). A Hub corpus is pinned once and the
-  pinned spec serves both the no-op proof and the stream. Unset numeric flags take
-  the `lens.jlens` defaults. A fit never backprops below its shallowest source
-  layer, so a `--layers` band is the one wall-time lever; `sample` is rejected
-  because it includes layer 0 and saves nothing.
-  `-f` restarts from zero, otherwise a matching partial fit resumes.
+- `fit MODEL`: `--kind r` (default, RelP R-lens), `j` (standard J-lens), `s`
+  or `k` (the S family's S- and K-lenses), each at `local:<kind>`;
+  `--sites out,mid` (default both); `--corpus FILE` (one document per line,
+  JSON lines contribute `text`) or repeatable `--hf-corpus`, else FineWeb-Edu
+  `sample-10BT` (needs `drowse.ai[hf]`). `--prompts` defaults to 64 (`lens/key.py::DEFAULT_FIT_DOCUMENTS`). A Hub
+  corpus is pinned once and the pinned spec serves both the no-op proof and
+  the stream. Unset numeric flags take the `lens.jlens` defaults
+  (`--dim-batch` 256 seeds per transport pass). `--layers` resolves per site
+  (the out site of r/j stops below the last block; an explicit layer no
+  requested site holds exits 2); an output fit stops at its lowest layer, an
+  input fit at its highest, so a band trims work. `sample` is rejected.
+  `--no-split-half` saves the split-half accumulator; otherwise the result
+  prints min/median/max split-half per site.
+  `-f` restarts from zero, otherwise a matching partial fit resumes. Without
+  `-f`, a fit that would replace a local lens over more documents, or one
+  holding a site or layer the request omits, exits 2 (a 5.4 default fit
+  holds 100 documents; ask for `--prompts 100`).
+  Checkpoints land every `--checkpoint-every` documents (default 25) and at
+  the first document boundary ten minutes after the last one
+  (`lens.jlens.CHECKPOINT_SECONDS`, a fixed rule). The first SIGINT or
+  SIGTERM (`stop_on_signals`) finishes the document in flight, writes a
+  checkpoint and exits `128 + signal` with a note to rerun the same command;
+  a second stops at once, keeping the last checkpoint, and restores the
+  previous handlers.
 - `fetch` never loads the model: the payload stays in the Hugging Face cache and
-  Drowse writes, and activates, a commit-pinned binding. `show` / `rm` default to
-  the active output-side source; removing a binding never touches the cache.
+  Drowse writes, and activates in its family's slot, a commit-pinned binding
+  (`rs-r`/`rs-s` bind every site the repository holds). `show` / `rm` default
+  to the active R-family source, else the active S-family one; removing a
+  binding never touches the cache. `ls` prints each source's kind and sites,
+  `show` its layers per site (an S source also its token mask's source, `-j`
+  `token_mask`), `use` the family it selected.
+- `counts MODEL` never loads the model: it streams the S lens's recorded
+  corpus (else the default lens corpus; `--corpus FILE` or `--hf-corpus`
+  instead) through the tokenizer alone, `--documents` 32768 by default, and
+  writes the model's corpus counts (`lens/token_counts.py`; under 1M tokens
+  exits 2). A current count is kept without `-f`; `--remove` drops it. The
+  S mask uses it when no neuron-lens catalog is bound.
+- `top MODEL PROMPT [--site out|mid]` is `session.lens.read_prompt`: each
+  layer's residual read through both families (S footprint z, R readout
+  probability), S line first, each with its depth weight and lens label or
+  the reason it is absent, after one line naming the S token mask's source;
+  `-j` emits `LensRead.to_dict()` per position and `token_mask`.
+  `decompose --dictionary tokens-out|tokens-in|neurons` (default `tokens-out`;
+  `neurons` needs no lens, and `unit find` is it with poles and labels). A
+  neuron's coefficient is signed, the sign its pole: the text prints
+  `+neuron/L8n344 0.42`, and `-j` lists `neurons` (`unit`, `pole`, `coeff`)
+  where a token dictionary lists `tokens`.
 - `top` reads a raw prompt (no chat template); `decompose SELECTOR -m` takes the
   model as a flag, unlike the rest of the group.
+
+**unit** — `drowse/units/AGENTS.md` has the reads and the catalog.
+- `read UNIT -m` (`neuron/L8n344`, `head/L20h17`) prints a neuron per pole
+  (writes at `out`, fires on at `mid`, each an S line then an R line with its
+  depth weight and lens) with its scalars, firing and catalog label; a head's
+  copies, suppressions and query/key/value inputs (at `L − 1`) and copy
+  scores. `--hide-hubs` ranks by the layer-contrastive z (the first use of a
+  layer builds its statistics); `-j` emits `NeuronRead`/`HeadRead.to_dict()`.
+- `top TOKEN -m [--by writes|fires] [--layers L]` lists the poles that write
+  (or fire on) the token most specifically across the layers (default all;
+  `sample` exits 2); `find SELECTOR -m` is `lens decompose --dictionary
+  neurons` with poles and labels; `stats UNIT -m` the firing block alone.
+- `fetch MODEL [-f]`, `ls [MODEL]` and `rm MODEL -y` never load a model:
+  the catalog binding is the model's label source, fetched, listed and
+  removed as `lens` and `sae` sources are (`ls` without a model lists every
+  catalogued one). The catalog exists for `Qwen/Qwen3-8B` and
+  `google/gemma-4-12B` only, and any other model is a 404 (exit 1). `rm`
+  without `-y` exits 2, like every `rm`. Unit reads and the catalog need no
+  `-d/-q` beyond the read verbs.
 
 **sae** — `train`'s `--layer` defaults to the layer nearest 65% depth within the
 40–90% band (`sae.backend.select_runtime_layer`); `--width` overrides
@@ -293,8 +355,9 @@ Each belongs to a design the engine does not have; do not propose them.
 
 ## Testing
 
-`tests/cli/` is CPU-only and model-free. `test_cli_verbs.py` pins the parser:
-eight groups, `-h` on every parser, the short-flag table, bare groups exit 0,
+`tests/cli/` is CPU-only and model-free (`test_cli_unit.py` alone loads the
+tiny checkpoint on CPU). `test_cli_verbs.py` pins the parser:
+nine groups, `-h` on every parser, the short-flag table, bare groups exit 0,
 rejected argv for absent surfaces, parsed namespaces, torch-free help — a new
 verb or flag usually needs a case there. `test_cli_flags.py` covers runners over
 `tests.support.cli` (`FakeSession`, `install_fake_session`, `poison_session` to

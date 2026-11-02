@@ -297,6 +297,7 @@ def _serve_harness(
     monkeypatch.setattr(server, "create_app", lambda *_a, **kw: captured.update(app=kw) or "app")
     monkeypatch.setattr(uvicorn, "run", lambda *_a, **kw: captured.update(run=kw))
     monkeypatch.setattr(serve, "enable_live_lens", lambda _s: captured.update(lens=True))
+    monkeypatch.setattr(serve, "select_s_lens", lambda _s: captured.update(s_lens=True))
     monkeypatch.setattr(serve, "enable_live_sae", lambda _s: captured.update(sae=True))
     monkeypatch.setattr(serve, "warm_up", lambda _s: captured.update(warmed=True))
     return captured
@@ -319,6 +320,7 @@ def test_serve_startup_uses_cli_steer_over_yaml_and_warms_only_compiled(
     steering = captured["app"]["default_steering"]
     assert list(steering.alphas) == ["jlens/dog"] and session.entered == [steering]
     assert captured["warmed"] is bool(compile_flag)
+    assert captured["lens"] and captured["s_lens"]  # both lens families at startup
     assert "sae" not in captured  # --no-web: no implicit provider download
     assert session.closed
 
@@ -344,7 +346,13 @@ def _lens_session(compatible: set[str]) -> Any:
         def has_compatible(self) -> bool:
             from drowse.lens.sources import LENS_SOURCES
 
-            active = LENS_SOURCES.active("org/model", "output")
+            active = LENS_SOURCES.active("org/model", "R")
+            return active is not None and LENS_SOURCES.format(active) in compatible
+
+        def has_compatible_input(self) -> bool:
+            from drowse.lens.sources import LENS_SOURCES
+
+            active = LENS_SOURCES.active("org/model", "S")
             return active is not None and LENS_SOURCES.format(active) in compatible
 
         def select_source(self, source: str) -> None:
@@ -375,13 +383,14 @@ def _prepare_local_lenses(model_id: str, *names: str) -> None:
 def _active_lens(model_id: str) -> str | None:
     from drowse.lens.sources import LENS_SOURCES
 
-    ref = LENS_SOURCES.active(model_id, "output")
+    ref = LENS_SOURCES.active(model_id, "R")
     return None if ref is None else LENS_SOURCES.format(ref)
 
 
-def test_serve_keeps_a_compatible_active_lens_selection() -> None:
+def test_serve_keeps_a_compatible_active_lens_selection(capsys: pytest.CaptureFixture[str]) -> None:
     """Regression: serve re-pointed ``active.json`` to its preferred source,
-    overwriting the user's ``lens use`` choice."""
+    overwriting the user's ``lens use`` choice.  The banner names the lens by
+    its 6.0 family (it said "Live J-lens readout" for any output lens)."""
     from drowse.cli.verbs.serve import enable_live_lens
     from drowse.lens.sources import LENS_SOURCES, use_lens_source
 
@@ -390,6 +399,8 @@ def test_serve_keeps_a_compatible_active_lens_selection() -> None:
     before = LENS_SOURCES.active_path("org/model").read_bytes()
     session = _lens_session({"local:j", "local:r"})
     assert enable_live_lens(session)
+    err = capsys.readouterr().err
+    assert "R-family lens local:j: live readout on" in err and "J-lens readout" not in err
     assert session.selected == [] and session.lens.live
     assert LENS_SOURCES.active_path("org/model").read_bytes() == before
 
@@ -424,6 +435,78 @@ def test_serve_clears_its_trial_selection_when_no_lens_is_compatible() -> None:
     _prepare_local_lenses("org/model", "r")
     assert not enable_live_lens(_lens_session(set()))
     assert _active_lens("org/model") is None
+
+
+def _save_s_family(model_id: str, kind: str, sites: tuple[str, ...]) -> None:
+    """Publish a real local S-family lens, then clear the input selection."""
+    import torch
+
+    from drowse.lens.jlens import JacobianLens
+    from drowse.lens.key import LensKey
+    from drowse.lens.sources import LENS_SOURCES
+    from drowse.lens.store import LensProvenance, save_lens
+
+    mats = {0: torch.eye(3)}
+    save_lens(
+        JacobianLens(
+            mats if "out" in sites else None, mid=mats if "mid" in sites else None,
+            n_prompts=2, d_model=3, key=LensKey(kind),
+        ),
+        model_id,
+        LensProvenance(corpus_spec="t", corpus_sha256="a" * 64, seq_len=8, dim_batch=1),
+    )
+    active = LENS_SOURCES.active(model_id, "S")
+    if active is not None:
+        LENS_SOURCES.clear_if_active(model_id, active)
+
+
+def _active_s_lens(model_id: str) -> str | None:
+    from drowse.lens.sources import LENS_SOURCES
+
+    ref = LENS_SOURCES.active(model_id, "S")
+    return None if ref is None else LENS_SOURCES.format(ref)
+
+
+def test_serve_adopts_the_best_compatible_s_lens_holding_out(capsys: pytest.CaptureFixture[str]) -> None:
+    """Regression: serve auto-selected only the R family, so a prepared S lens
+    stayed unselected and ``slens/`` refused until a manual ``lens use``.  It
+    adopts the preferred compatible S-family source that holds ``out``."""
+    from drowse.cli.verbs.serve import select_s_lens
+
+    _save_s_family("org/model", "S", ("mid",))  # preferred, but no out
+    _save_s_family("org/model", "K", ("out",))
+    session = _lens_session({"local:s", "local:k"})
+    assert select_s_lens(session)
+    assert "S-family lens local:k" in capsys.readouterr().err
+    assert session.selected == ["local:k"]
+    assert _active_s_lens("org/model") == "local:k"
+    assert _active_lens("org/model") is None  # the R family untouched
+
+
+def test_serve_keeps_a_selected_s_lens_and_flags_an_incompatible_one(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from drowse.cli.verbs.serve import select_s_lens
+    from drowse.lens.sources import use_lens_source
+
+    _save_s_family("org/model", "S", ("out",))
+    _save_s_family("org/model", "K", ("out",))
+    use_lens_source("org/model", "local:k")
+    assert select_s_lens(_lens_session({"local:k"}))
+    assert _active_s_lens("org/model") == "local:k"
+    session = _lens_session({"local:s"})
+    assert not select_s_lens(session)
+    assert session.selected == [] and _active_s_lens("org/model") == "local:k"
+    assert "lens use org/model" in capsys.readouterr().err
+
+
+def test_serve_clears_its_s_trial_selection_when_none_is_compatible() -> None:
+    from drowse.cli.verbs.serve import select_s_lens
+
+    _save_s_family("org/model", "S", ("out",))
+    session = _lens_session(set())
+    assert not select_s_lens(session)
+    assert session.selected == ["local:s"] and _active_s_lens("org/model") is None
 
 
 def test_best_sae_release_prefers_official_canonical_provider() -> None:
@@ -485,16 +568,55 @@ def test_serve_live_sae_prefers_prepared_sources(
     assert session.sae.loaded == expected and session.sae.load_kwargs == load_kwargs
 
 
+def test_serve_live_sae_narrates_a_provider_load_before_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: serve downloaded a multi-GB provider SAE before binding
+    its port with nothing on the console, so it looked hung for minutes."""
+    from drowse.cli.verbs import serve
+
+    events: list[str] = []
+
+    class _Sae:
+        info = None
+
+        def set_live(self, enabled: bool, **_k: Any) -> SaeLiveState:
+            return SaeLiveState(enabled=enabled, layer=22)
+
+        def load(self, release: str, **_kwargs: Any) -> dict[str, Any]:
+            events.append(f"load {release}")
+            return {"release": release}
+
+    class _Session:
+        model_id = "google/gemma-3-4b-it"
+        sae = _Sae()
+
+    monkeypatch.setattr("drowse.sae.sources.list_sae_sources", lambda _m: [])
+    monkeypatch.setattr(
+        "drowse.sae.backend.list_sae_releases",
+        lambda _m: [{"release": "gemma-scope-2-4b-it-res", "source": "saelens",
+                     "repo_id": "google/gemma-scope-2-4b-it", "neuronpedia": True}],
+    )
+    monkeypatch.setattr(serve, "note", lambda text: events.append(f"note {text}"))
+    assert serve.enable_live_sae(_Session())
+    assert events[0].startswith("note Live SAE readout: loading gemma-scope-2-4b-it-res")
+    assert events[1] == "load gemma-scope-2-4b-it-res"
+
+
 # ---------------------------------------------------------------------------
 # -j purity: stdout is exactly one JSON document, narration goes to stderr
 # ---------------------------------------------------------------------------
 
 class _ReadoutLens:
-    def resident(self) -> Any:
-        return SimpleNamespace(source_layers=[3, 4])
+    def token_mask_info(self) -> dict[str, Any]:
+        return {"source": "tokenizer", "detail": "the tokenizer's rules only", "kept": None}
 
-    def readout(self, _prompt: str, **_kw: Any) -> Any:
-        return {3: [[("a", 0.5)]], 4: [[("b", 0.25)]]}, [[("a", 0.4, 3.0, 0.5)]]
+    def read_prompt(self, _prompt: str, **_kw: Any) -> Any:
+        from drowse.lens.read import FamilyRead, LensRead, TokenScore
+
+        r = FamilyRead("R", 0.75, "probability", lens="R:out", tokens=(TokenScore(1, "a", 0.5),))
+        s = FamilyRead("S", 0.25, "footprint_z", absent="no S-lens available")
+        return {7: [LensRead(3, "out", 0.5, r=r, s=s, of="residual")]}
 
     def decompose(self, _selector: str, **_kw: Any) -> Any:
         return {3: (0.1, [("a", 0.2)]), 4: (0.3, [("b", 0.4)])}
@@ -805,6 +927,8 @@ def test_extract_corrupt_tensor_is_not_a_cache_hit(
     ["manifold", "generate", "solo", "--concepts", "one", "-m", "m/x"],
     ["manifold", "fit", "anything", "-m", "m/x", "--layers", "sample"],
     ["manifold", "fit", "anything", "-m", "m/x", "--layers", "1,x"],
+    ["manifold", "fit", "anything", "-m", "m/x", "--layers", "8-4"],
+    ["manifold", "fit", "anything", "-m", "m/x", "--layers", "2-4,3"],
 ])
 def test_authoring_rejections_happen_before_the_model_loads(
     argv: list[str], monkeypatch: pytest.MonkeyPatch,
@@ -827,6 +951,8 @@ def test_fit_delegates_overrides_to_the_fit_transaction(monkeypatch: pytest.Monk
     main(["manifold", "fit", str(folder), "-m", "fake/model", "--smoothing", "0.25"])
     assert created[0].fit_kwargs["fit_mode"] is None
     assert created[0].fit_kwargs["hyperparams"] == {"smoothing": 0.25}
+    main(["manifold", "fit", str(folder), "-m", "fake/model", "--layers", "9, 2-4"])
+    assert created[1].fit_kwargs["layers"] == [9, 2, 3, 4]
 
 
 def test_a_folder_path_without_manifold_json_is_reported_as_such(

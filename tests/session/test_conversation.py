@@ -143,3 +143,34 @@ def test_authored_turns_gain_rows_only_when_a_channel_measures_them(
     assert rows, "the authored turn was not captured"
     assert "".join(row["text"] for row in rows) == "plain words"
     assert all("measurements" in row for row in rows)
+
+
+def test_authored_rows_are_slim_and_anchored_like_generated_rows(
+    make_tiny_session: TinySessionFactory,
+) -> None:
+    """With ``persist_per_layer_scores`` off (the dashboard's default) an
+    authored prompt row keeps what a generated row keeps (each geometry
+    share and coordinates, the scores); its node carries the replay anchor
+    that brings the rest back.  Before 6.0's anchor, authored rows were kept
+    whole (~45 kB a token) because no replay could reach them."""
+    from drowse.readout.measurements import ROW_GEOMETRY_KEYS
+    from tests.support.sessions import register_vectors
+
+    session, _script = make_tiny_session.scripted("ok")
+    register_vectors(session, "probe_axis")
+    session.add_probe("probe_axis")
+    user = session.append_turn(None, "plain words", role="user")
+    session.generate(None, on_token=lambda *_a, **_k: None, sampling=SamplingConfig(max_tokens=3))
+
+    node = session.tree.nodes[user]
+    assert node.tokens and node.prompt_capture is not None
+    for row in node.tokens:
+        assert "raw_index" not in row
+        if "measurements" not in row:
+            continue
+        reading = row["measurements"]["instruments"]["geometry"]["readings"]["probe_axis"]
+        assert tuple(reading) == ROW_GEOMETRY_KEYS
+    generated = session.tree.nodes[session.tree.active_node_id].tokens
+    assert generated
+    reading = generated[0]["measurements"]["instruments"]["geometry"]["readings"]["probe_axis"]
+    assert tuple(reading) == ROW_GEOMETRY_KEYS

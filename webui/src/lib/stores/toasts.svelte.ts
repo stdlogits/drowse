@@ -1,3 +1,5 @@
+import { hideTip } from "@stdlogits/ledger";
+
 export interface Toast {
   id: number;
   kind: "info" | "warning" | "error";
@@ -23,6 +25,8 @@ export function pushToast(
 ): number {
   const id = ++_toastSeq;
   const kind = opts.kind ?? "info";
+  // A toast answers what was just done; the tip that was showing for it would sit over the toast.
+  if (typeof document !== "undefined") hideTip();
   toasts.entries = [
     ...toasts.entries,
     {

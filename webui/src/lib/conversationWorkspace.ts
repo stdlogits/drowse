@@ -6,7 +6,7 @@ import {
   validateConversationSnapshot,
   type ConversationImportPlan,
   type ConversationProbeRow,
-  type ConversationSnapshotV7,
+  type ConversationSnapshotV8,
 } from "./conversationSnapshot";
 import { runtimeClient } from "./runtime/client";
 import { apiSessions, apiTree } from "./runtime/services";
@@ -17,6 +17,7 @@ import {
   highlightState,
   probeRack,
   refreshLoomTree,
+  restoreRack,
   samplingState,
   sessionState,
   steerRack,
@@ -28,7 +29,7 @@ interface WorkspaceRollback {
   tree: LoomTreeJSON;
   steerEntries: Array<[string, SteerEntry]>;
   subspaceAlong: number;
-  customSteeringExpression: string | null;
+  readOnlyRecipe: string | null;
   probeRequests: ProbeRequest[];
   probeEntries: Array<[string, ProbeRackEntry]>;
   probeSortMode: typeof probeRack.sortMode;
@@ -47,22 +48,36 @@ export interface ConversationRestoreSummary {
   probes: number;
 }
 
-export function captureConversationSnapshot(now = new Date()): ConversationSnapshotV7 {
+export function captureConversationSnapshot(now = new Date()): ConversationSnapshotV8 {
+  return snapshotWith((tree) => clone(tree), now);
+}
+
+/** The workspace alone (the tree reduced to its identity, no nodes): what the page keeps
+ *  synchronously as it hides (``workspaceDraft``), when a change has not reached autosave yet.
+ *  Cheap whatever the tree's size. */
+export function captureWorkspaceSnapshot(now = new Date()): ConversationSnapshotV8 {
+  return snapshotWith((tree) => ({ ...tree, nodes: [], children_of: {}, active_node_id: tree.root_id }), now);
+}
+
+function snapshotWith(
+  treeOf: (tree: NonNullable<ReturnType<typeof currentLoomTreeSnapshot>>) => ConversationSnapshotV8["tree"],
+  now: Date,
+): ConversationSnapshotV8 {
   const info = sessionState.info;
   const tree = currentLoomTreeSnapshot();
   if (!info || !tree) throw new Error("The conversation is still loading");
-  const snapshot: ConversationSnapshotV7 = {
+  const snapshot: ConversationSnapshotV8 = {
     version: CONVERSATION_SNAPSHOT_VERSION,
     savedAt: now.toISOString(),
     model_id: info.model_id,
     session_id: info.id,
-    tree: clone(tree),
+    tree: treeOf(tree),
     steerRack: [...steerRack.entries.entries()].map(([name, entry]) => ({
       name,
       ...clone(entry),
     })),
     subspaceAlong: steerRack.subspaceAlong,
-    customSteeringExpression: steerRack.customExpression,
+    readOnlyRecipe: steerRack.readOnlyRecipe,
     probeRack: {
       sortMode: probeRack.sortMode,
       active: [...probeRack.active],
@@ -82,7 +97,7 @@ export function captureConversationSnapshot(now = new Date()): ConversationSnaps
 }
 
 export async function restoreConversationSnapshot(
-  snapshot: ConversationSnapshotV7,
+  snapshot: ConversationSnapshotV8,
 ): Promise<ConversationRestoreSummary> {
   const portableSnapshot = clone(snapshot);
   validateConversationSnapshot(portableSnapshot, CONVERSATION_SAMPLING_KEYS);
@@ -118,6 +133,21 @@ export async function restoreConversationSnapshot(
   };
 }
 
+/** A reload in server mode: the server still holds the tree and the probe roster, but the
+ *  workspace the page kept (the steer rack, its read-only recipe, sampling, the highlight and the
+ *  probe sort) lived only in the page. Put it back from the autosave record of this tree, so the
+ *  autosave that follows never writes an empty rack over the saved one. The rack validates as it
+ *  restores (``restoreRack``): a recipe that no longer resolves stays read-only with its reason. */
+export function restoreWorkspaceSettings(snapshot: ConversationSnapshotV8): void {
+  const portableSnapshot = clone(snapshot);
+  validateConversationSnapshot(portableSnapshot, CONVERSATION_SAMPLING_KEYS);
+  const plan = buildConversationImportPlan(portableSnapshot);
+  restoreRack([...plan.steerEntries].map(([name, entry]) => [name, clone(entry)]), plan.snapshot.subspaceAlong, plan.snapshot.readOnlyRecipe);
+  Object.assign(samplingState, clone(plan.snapshot.samplingState));
+  Object.assign(highlightState, clone(plan.snapshot.highlightState));
+  probeRack.sortMode = plan.snapshot.probeRack.sortMode;
+}
+
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
@@ -133,7 +163,7 @@ async function captureWorkspace(): Promise<WorkspaceRollback> {
       [name, clone(entry)] as [string, SteerEntry]
     ),
     subspaceAlong: steerRack.subspaceAlong,
-    customSteeringExpression: steerRack.customExpression,
+    readOnlyRecipe: steerRack.readOnlyRecipe,
     probeRequests: probeRack.active.map((name) => clone(byName.get(name)!.request)),
     probeEntries,
     probeSortMode: probeRack.sortMode,
@@ -147,11 +177,6 @@ async function replaceProbeRoster(requests: readonly ProbeRequest[]): Promise<vo
   for (const request of requests) {
     await attachProbe(request.selector, { name: request.name, top_n: request.top_n });
   }
-}
-
-function replaceSteerEntries(entries: Iterable<[string, SteerEntry]>): void {
-  steerRack.entries.clear();
-  for (const [name, entry] of entries) steerRack.entries.set(name, clone(entry));
 }
 
 function restoreProbeRows(
@@ -175,9 +200,7 @@ function restoreProbeRows(
 }
 
 function applyLocalPlan(plan: ConversationImportPlan): void {
-  replaceSteerEntries(plan.steerEntries);
-  steerRack.subspaceAlong = plan.snapshot.subspaceAlong;
-  steerRack.customExpression = plan.snapshot.customSteeringExpression;
+  restoreRack([...plan.steerEntries].map(([name, entry]) => [name, clone(entry)]), plan.snapshot.subspaceAlong, plan.snapshot.readOnlyRecipe);
   Object.assign(samplingState, clone(plan.snapshot.samplingState));
   Object.assign(highlightState, clone(plan.snapshot.highlightState));
   probeRack.sortMode = plan.snapshot.probeRack.sortMode;
@@ -196,9 +219,7 @@ async function rollbackWorkspace(previous: WorkspaceRollback): Promise<void> {
   } catch (error) {
     failures.push(error);
   }
-  replaceSteerEntries(previous.steerEntries);
-  steerRack.subspaceAlong = previous.subspaceAlong;
-  steerRack.customExpression = previous.customSteeringExpression;
+  restoreRack(previous.steerEntries.map(([name, entry]) => [name, clone(entry)]), previous.subspaceAlong, previous.readOnlyRecipe);
   Object.assign(samplingState, previous.sampling);
   Object.assign(highlightState, previous.highlight);
   probeRack.sortMode = previous.probeSortMode;

@@ -37,6 +37,8 @@ $DROWSE_HOME/
     alignments/<safe_src>.json     pointer -> <safe_src>.layer-<L>.gen-<hex>.safetensors
     manifold_capture/              content-addressed fit captures (fit/capture_cache.py)
     lens/, sae/                    source families (lens/AGENTS.md, sae/AGENTS.md)
+    units/contrast/, units/catalog/  unit reads' contrast cache and the neuron-lens binding (units/AGENTS.md)
+    tokens/counts.safetensors + .json  corpus token counts for the S mask (`lens counts`; lens/AGENTS.md)
   .staging/<uuid>/                 scratch for one whole-folder build (base/staging.py)
   .staging/backup/<path>           the parked old folder during a swap
 ```
@@ -241,6 +243,13 @@ manifest, changed manifest (`payload_drift_sha256`, canonical JSON with
 `default/` persist until the bundle changes, then are overwritten with a warning
 (fork under `local/` to keep them). Fitted pairs and proofs carry across
 (hard-linked into staging) and `nodes_sha256` decides whether they stay current.
+A `default/<name>` whose manifest says `source: "bundled"` but which no longer
+ships (no package folder of that name, complete or not) is removed with its fits
+and a warning (one process says it; a second retiring the same folder skips
+it), so a dropped bundled manifold stops resolving and leaves the
+probe roster (`_retire_unshipped_manifolds`; 6.0 retired `honest.deceptive`,
+`refusing.compliant` and `sincere.manipulative`). Any other folder under
+`default/` is left alone.
 `refresh_bundled_manifold` is the unconditional re-copy behind `pack refresh`.
 Templates re-copy on hash or format drift and keep a `.json.bak`; none ships yet,
 and the path stays because a template-derived manifold is the one artifact that
@@ -248,10 +257,12 @@ authors model-free.
 
 Shipped in `drowse/data/manifolds/`, all `source: "bundled"`, unfitted:
 
-- **17 bipolar concepts** (2-node `pca`, `max_dim 1`, node 0 = positive pole),
-  independent signed axes tagged `epistemic` (confident.uncertain,
-  honest.deceptive, curious.disinterested), `alignment` (refusing.compliant,
-  sycophantic.blunt, sincere.manipulative), `register` (formal.casual,
+- **17 concepts** (`pca`, `max_dim 1`): 14 bipolar axes (2-node, node 0 =
+  positive pole) and 3 one-node concepts (`deceptive`, `refusing`,
+  `manipulative`, fitted against the neutral mean: the default answer is
+  their other end, so a 2-node axis put neutral on its near pole), tagged
+  `epistemic` (confident.uncertain, deceptive, curious.disinterested),
+  `alignment` (refusing, sycophantic.blunt, manipulative), `register` (formal.casual,
   direct.indirect, verbose.concise, creative.conventional, humorous.serious,
   warm.clinical, technical.accessible), `cultural` (masculine.feminine,
   individualist.collectivist, traditional.progressive, religious.secular). Known
@@ -323,12 +334,31 @@ Both use `base/shards.py`: immutable per-layer generations behind an atomic JSON
 pointer, `fit_lock` single-flighting the expensive transaction. Readers never
 mutate; the next writer collects old generations once the new pointer is durable.
 
-- **`neutral`** (format 4, capture version 1): `[N, D]` fp32 per layer, the single
+- **`neutral`** (format 5, capture version 2): `[N, D]` fp32 per layer, the single
   per-model neutral artifact. Probe-centering means are its `X.mean(0)` and the
   whitener is built from it (no `layer_means` cache). fp32 because late gemma-3
-  layers exceed the fp16 max (65504) and bf16 loses input precision. Identity
-  binds `capture_sha256`, `model_fingerprint`, `model_source_fingerprint` and the
-  layer set. `load_neutral_whitener` is the one offline whitener loader
+  layers exceed the fp16 max (65504) and bf16 loses input precision. Each
+  layer's shard also holds that block's unit statistics as `<name>_<L>` fp32
+  tensors (`neuron_mean`, `neuron_scale`, `head_mean`, `head_scale`; meaning in
+  `drowse/units/AGENTS.md`), and the sidecar's exact `units` block is
+  `{available: true, n_documents, schema: {L: {name: shape}}}` or `{available:
+  false, reason}` (a model the block description refuses: its cache is
+  otherwise complete). Each shard also holds the layer's **mid mean**
+  (`mid_mean_<L>`, `[D]` fp32: the residual after the block's attention, the
+  MLP's input, averaged at the activations' pooled positions on the same
+  forward), the centring mean of an S read of a `mid` residual as `X.mean(0)`
+  is at `out`; the sidecar's exact `mid` block is `{available: true}` or
+  `{available: false, reason}`; the store reuses either unavailable record as
+  stored, and `fit/neutral.py` recomputes it on a load whose model the block
+  description accepts (only a refusal lasts). The store validates the tensors generically
+  (names, shapes, dtype, finiteness); `load_neutral_cache` returns
+  `NeutralCache(activations, units: NeutralUnits, mid: NeutralMid, sidecar)`
+  from one digest-checked read, `load_validated_neutral_cache` the activations
+  only. Identity binds `capture_sha256`, `model_fingerprint`,
+  `model_source_fingerprint` and the layer set. A v4 cache, or a v5 cache from
+  before the mid means (capture version 1, no `mid` block), is not migrated:
+  the next load recomputes it.
+  `load_neutral_whitener` is the one offline whitener loader
   (`manifold compare`, offline bake): it never loads a model and raises
   `WhitenerError` with a populate hint. Capture on a miss is `fit/neutral.py`.
 - **`alignment`** (format 5): `models/<safe_tgt>/alignments/<safe_src>.json` over

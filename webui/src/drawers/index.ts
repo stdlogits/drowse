@@ -85,11 +85,6 @@ export const DRAWER_GROUPS: readonly { key: DrawerGroupKey; label: string }[] = 
 
 /** Declaration order is the palette order within a group. */
 export const DRAWERS: Record<DrawerName, DrawerEntry> = {
-  appearance: {
-    load: () => import("./AppearanceDrawer.svelte"),
-    narrow: true,
-    launcher: { group: "session", label: "Appearance…", keywords: "theme background wallpaper image pixel dither" },
-  },
   // ----------------------------------------------- palette-launched ----
   manifold_builder: {
     load: () => import("./ManifoldBuilderDrawer.svelte"),

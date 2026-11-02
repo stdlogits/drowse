@@ -406,6 +406,10 @@ class TestMonitor:
         mgr.clear_all()
 
         ratio = steered_tps / vanilla_tps
+        print(  # noqa: T201 — the gate reports its numbers
+            f"steered: vanilla {vanilla_tps:.1f} tok/s, "
+            f"steered {steered_tps:.1f} tok/s ({ratio:.0%})"
+        )
         assert ratio >= 0.85, (
             f"Steered throughput ({steered_tps:.1f} tok/s) is only "
             f"{ratio:.0%} of vanilla ({vanilla_tps:.1f} tok/s), expected >= 85%; "
@@ -510,6 +514,10 @@ class TestAblationPerformance:
             tok_s_combined = max(len(r_combined.tokens) / dt_combined, 1e-6)
 
             ratio = tok_s_combined / tok_s_vanilla
+            print(  # noqa: T201 — the gate reports its numbers
+                f"ablation: vanilla {tok_s_vanilla:.1f} tok/s, "
+                f"ablation + additive {tok_s_combined:.1f} tok/s ({ratio:.0%})"
+            )
             assert ratio >= 0.80, (
                 f"combined ablation + additive too slow: "
                 f"{ratio:.2%} of vanilla (vanilla={tok_s_vanilla:.1f} tok/s, "
@@ -519,6 +527,203 @@ class TestAblationPerformance:
             )
         finally:
             session.close()
+
+    @pytest.mark.perf
+    def test_throughput_with_unit_ablation(
+        self, model_and_tokenizer: Any, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Eight neurons and two heads mean-ablated (``UnitOp`` pre-hooks on
+        down and output projections) stay >= 80% of vanilla tok/s."""
+        from drowse.generation.sampling import SamplingConfig
+        from drowse.session.session import DrowseSession
+
+        monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
+        model, tokenizer = model_and_tokenizer
+        session = DrowseSession(model, tokenizer, probes=[])
+        try:
+            spec = session.units.runtime.spec()
+            n_layers, d_ff = spec.n_layers, spec.d_ff
+            n_heads = spec.blocks[0].n_heads
+            neurons = [
+                f"!neuron/L{layer}n{(97 * layer) % d_ff}"
+                for layer in range(2, n_layers, max(1, (n_layers - 2) // 8))
+            ][:8]
+            heads = [
+                f"!head/L{n_layers // 3}h{1 % n_heads}",
+                f"!head/L{2 * n_layers // 3}h{5 % n_heads}",
+            ]
+            assert len(neurons) == 8
+            expr = " + ".join(neurons + heads)
+            prompt = "Write a 200-word essay on the history of bicycles."
+            sampling = SamplingConfig(max_tokens=128, temperature=0.0, seed=0)
+
+            def synchronize() -> None:
+                if session.device.type == "cuda":
+                    torch.cuda.synchronize(session.device)
+                elif session.device.type == "mps":
+                    torch.mps.synchronize()
+
+            def timed(steering: str | None) -> float:
+                synchronize()
+                started = time.perf_counter()
+                result = session.generate(
+                    prompt, sampling=sampling, stateless=True, steering=steering,
+                ).first
+                synchronize()
+                return len(result.tokens) / max(time.perf_counter() - started, 0.1)
+
+            # The first steer builds the neutral baseline and its unit
+            # statistics; warm both paths before timing, then balance the
+            # order and compare medians (MPS drifts with warmup and heat).
+            warm = SamplingConfig(max_tokens=2, temperature=0.0, seed=0)
+            session.generate(prompt, sampling=warm, stateless=True)
+            session.generate(prompt, sampling=warm, stateless=True, steering=expr)
+            vanilla: list[float] = []
+            ablated: list[float] = []
+            for steered in (False, True, True, False, False, True):
+                (ablated if steered else vanilla).append(
+                    timed(expr if steered else None),
+                )
+            vanilla_tps = sorted(vanilla)[1]
+            ablated_tps = sorted(ablated)[1]
+            ratio = ablated_tps / vanilla_tps
+            print(  # noqa: T201 — the gate reports its numbers
+                f"unit ablation: vanilla {vanilla_tps:.1f} tok/s, "
+                f"ablated {ablated_tps:.1f} tok/s ({ratio:.0%})"
+            )
+            assert ratio >= 0.80, (
+                f"unit ablation too slow: {ratio:.0%} of vanilla "
+                f"(vanilla={vanilla_tps:.1f} tok/s, ablated={ablated_tps:.1f} tok/s; "
+                f"vanilla samples={vanilla!r}, ablated samples={ablated!r})"
+            )
+        finally:
+            session.close()
+
+
+#: Lens-fit text for the instrumented gate: two documents are enough to give
+#: the R lens its full per-layer shape (one ``d × d`` transport per source
+#: layer), which is all the live readout's cost depends on.
+_GATE_LENS_DOCS = [
+    "The history of the printing press begins in fifteenth-century Mainz, "
+    "where Johannes Gutenberg combined movable metal type with a screw press "
+    "adapted from wine-making, transforming the economics of written text.",
+    "Photosynthesis converts light energy into chemical energy in two stages: "
+    "the light-dependent reactions split water and generate ATP and NADPH, "
+    "while the Calvin cycle fixes atmospheric carbon dioxide into sugars.",
+]
+
+
+class TestDashboardPerformance:
+    """The served dashboard's decode, as a fraction of vanilla tok/s.
+
+    The other throughput gates time the steering hooks alone.  This one times
+    a reply the way ``drowse serve`` streams it to the dashboard: the default
+    probe roster scored on every token (with the inspector's subspace
+    coordinates), the R lens's live readout over every fitted layer, eight
+    alternatives per token, a loom row per token, and each token's WebSocket
+    frame built and serialized.  On SmolLM2-360M (MPS) it measures about
+    0.63 of vanilla (the lens readout is about 3 ms a token, the probes about
+    2, the envelope, row and frame about 1.5); the bar leaves room for MPS
+    drift.
+    """
+
+    @pytest.mark.perf
+    def test_throughput_with_dashboard_instruments(
+        self, model_and_tokenizer: Any, tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        import json
+
+        from drowse.generation.sampling import SamplingConfig
+        from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
+        from drowse.server.ws_events import build_token_event
+        from drowse.session.session import DrowseSession
+
+        monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
+        model, tokenizer = model_and_tokenizer
+        session = DrowseSession(model, tokenizer, probes=None)
+        try:
+            assert len(session.probes) >= 10, sorted(session.probes)
+            session.lens.runtime.lens = session.lens.fit(
+                _GATE_LENS_DOCS, corpus_spec="gpu-dashboard-gate",
+                dim_batch=64, seq_len=64,
+            )
+            live_layers = session.lens.set_live(True).layers or ()
+            assert len(live_layers) >= len(session.layers) - 1
+            prompt = "Write a 200-word essay on the history of bicycles."
+            frames: list[int] = []
+
+            def synchronize() -> None:
+                if session.device.type == "cuda":
+                    torch.cuda.synchronize(session.device)
+                elif session.device.type == "mps":
+                    torch.mps.synchronize()
+
+            def timed(instrumented: bool, max_tokens: int = 128) -> float:
+                if not instrumented:
+                    sampling = SamplingConfig(max_tokens=max_tokens, temperature=0.0, seed=0)
+                    synchronize()
+                    started = time.perf_counter()
+                    result = session.generate(prompt, sampling=sampling, stateless=True).first
+                    synchronize()
+                    return len(result.tokens) / max(time.perf_counter() - started, 0.1)
+                # The dashboard's submit frame: alternatives on, subspace
+                # coordinates on while probes sit in the rack, a loom row per
+                # token, the native WebSocket consumer's options.
+                sampling = SamplingConfig(
+                    max_tokens=max_tokens, temperature=0.0, seed=0,
+                    return_top_k=8, persist_subspace_coords=True,
+                )
+                holder: list[str | None] = [None]
+
+                def on_event(event: Any) -> None:
+                    frame = build_token_event(session, holder, event)
+                    frames.append(len(json.dumps(frame, ensure_ascii=False)))
+
+                consumer = TokenConsumer(on_event, TokenConsumerOptions(
+                    live_scores=True, lens_readout=True, sae_readout=True,
+                    perplexity=True,
+                ))
+                session.tree.reset()
+                synchronize()
+                started = time.perf_counter()
+                result = session.generate(prompt, sampling=sampling, on_token=consumer).first
+                synchronize()
+                return len(result.tokens) / max(time.perf_counter() - started, 0.1)
+
+            # Warm both paths (the first instrumented reply uploads the probe
+            # factors and the live lens stack), then balance the order and
+            # compare medians: MPS drifts with warmup and heat.
+            timed(False, 4)
+            timed(True, 4)
+            frames.clear()
+            vanilla: list[float] = []
+            served: list[float] = []
+            for instrumented in (False, True, True, False, False, True):
+                (served if instrumented else vanilla).append(timed(instrumented))
+            assert frames and all(size > 0 for size in frames)
+            vanilla_tps = sorted(vanilla)[1]
+            served_tps = sorted(served)[1]
+            ratio = served_tps / vanilla_tps
+            print(  # noqa: T201 — the gate reports its numbers
+                f"dashboard: vanilla {vanilla_tps:.1f} tok/s, "
+                f"instrumented {served_tps:.1f} tok/s ({ratio:.0%}); "
+                f"{len(session.probes)} probes, {len(live_layers)} lens layers, "
+                f"{sum(frames) // len(frames)} B/frame"
+            )
+            assert ratio >= _DASHBOARD_MIN_RATIO, (
+                f"dashboard decode too slow: {ratio:.0%} of vanilla "
+                f"(vanilla={vanilla_tps:.1f} tok/s, instrumented={served_tps:.1f} tok/s; "
+                f"vanilla samples={vanilla!r}, instrumented samples={served!r})"
+            )
+        finally:
+            session.lens.runtime.clear()
+            session.close()
+
+
+#: The instrumented gate's bar (see :class:`TestDashboardPerformance`).
+_DASHBOARD_MIN_RATIO = 0.50
 
 
 class TestDiscoverManifoldEndToEnd:
@@ -647,11 +852,11 @@ class TestDiscoverManifoldEndToEnd:
             with session.steering(
                 f"1.0 local/smoke_personas%{pos_a}@response",
             ):
-                r_a = session.generate(prompt, sampling=sampling).first
+                r_a = session.generate(prompt, sampling=sampling, thinking=False).first
             with session.steering(
                 f"1.0 local/smoke_personas%{pos_b}@response",
             ):
-                r_b = session.generate(prompt, sampling=sampling).first
+                r_b = session.generate(prompt, sampling=sampling, thinking=False).first
             assert r_a.text != r_b.text, (
                 f"steering at node {label_a!r} produced identical text "
                 f"to node {label_b!r} — the manifold hook isn't moving "

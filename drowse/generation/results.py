@@ -2,12 +2,20 @@ from __future__ import annotations
 import csv
 import json
 from dataclasses import asdict, dataclass, field
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, Literal, get_args
 
 if TYPE_CHECKING:
     import torch
 
     from drowse.readout.types import ProbeReading
+
+#: Why a generation ended.  ``"stop"`` is EOS, ``"length"`` the token budget,
+#: ``"stop_sequence"`` a matched stop string and ``"cancelled"`` an external
+#: stop (a client Stop, a closed stream or a disconnect) that cut the reply
+#: before it finished.  The loom node, the transcript and the wire carry exactly
+#: these values, and their readers refuse any other.
+FinishReason = Literal["stop", "length", "stop_sequence", "cancelled"]
+FINISH_REASONS: frozenset[str] = frozenset(get_args(FinishReason))
 
 
 @dataclass(frozen=True)
@@ -110,7 +118,7 @@ class GenerationResult:
     # Active-steering coefficient map at generation time: term -> coefficient.
     steering_alphas: dict[str, float] = field(default_factory=dict)
     prompt_tokens: int = 0
-    finish_reason: str = "stop"
+    finish_reason: FinishReason = "stop"
     # Per-completion-token ``(token_id, logprob, top_alts)`` — populated
     # only when chosen-logprob capture is live (any ``on_token`` consumer
     # or an explicit logprobs request). ``top_alts`` is a list of
@@ -268,7 +276,7 @@ class TokenEvent:
     # ``top_logprobs: list[tuple[int, float]]`` pair shape — entries now
     # carry decoded text so consumers don't re-tokenize.
     top_alts: list[TokenAlt] | None = None
-    finish_reason: str | None = None
+    finish_reason: FinishReason | None = None
     # Per-probe subspace readings computed inline against the latest
     # captured hidden state — the full coordinate readout
     # (:class:`ProbeReading`: coords + fraction + nearest + residual,
@@ -284,7 +292,7 @@ class TokenEvent:
     perplexity: float | None = None
     # The 5.x measurement envelope for this step (scope ``"token"``) — the one
     # wire record carrying every read-side channel: geometry / lens / SAE
-    # ``instruments`` plus the flat ``scores`` / ``per_layer_scores`` views
+    # ``instruments`` plus the flat ``scores`` view
     # (:func:`drowse.readout.measurements.build_measurements`).  It replaces the
     # former ``lens_readout`` / ``lens_aggregate`` / ``sae_readout`` fields and
     # the loom-owned ``captured`` record.  ``None`` when nothing was measured

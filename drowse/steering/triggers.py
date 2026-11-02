@@ -219,6 +219,14 @@ class TriggerContext:
     * ``gen_step`` — monotonically increasing index of the generated
       token position the current forward is about to produce. 0 during
       prefill and during the first decode; incremented after the sample.
+    * ``sink_column`` — the input column that holds absolute position 0
+      (the attention sink) in every row of the coming forward, or ``None``
+      when it holds none.  Unit mean-ablation leaves that column alone
+      (unit means count positions from 1).  The rest state is ``0``: a
+      forward no loop drives (a replay, a capture, a score) runs a sequence
+      from position 0.  The decode loop and the joint-logprob replay set it
+      per forward (``0`` on a prefill from position 0 or a cacheless
+      re-feed, ``None`` on an incremental step) and restore ``0`` after.
     * ``probe_scores`` — last-step monitor scores keyed by probe name
       (canonical form, e.g. ``"angry.calm"``).  Populated by the
       generation loop's score callback when at least one steering
@@ -236,12 +244,14 @@ class TriggerContext:
     is_prefill: bool = False
     thinking: bool = False
     gen_step: int = 0
+    sink_column: int | None = 0
     probe_scores: dict[str, float] = field(default_factory=dict)
 
     def reset(self) -> None:
         self.is_prefill = False
         self.thinking = False
         self.gen_step = 0
+        self.sink_column = 0
         self.probe_scores = {}
 
 

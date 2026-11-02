@@ -97,10 +97,14 @@ def test_external_lens_stays_in_provider_cache(
     assert rows[0]["source"] == "neuronpedia"
     assert rows[0]["repo_id"] == "neuronpedia/jacobian-lens"
     assert rows[0]["lens"] == "J" and rows[0]["active"]
+    # A binding's layers and documents come from the binding; an import
+    # records no split-half.
+    assert rows[0]["layers"] == {"out": [0]} and rows[0]["n_prompts"] == 12
+    assert "split_half" not in rows[0]
     assert sources.remove_lens_source(
         "org/model", SourceRef("huggingface", "neuronpedia"),
     )
-    assert sources.LENS_SOURCES.active("org/model", "output") is None
+    assert sources.LENS_SOURCES.active("org/model", "R") is None
     assert checkpoint.exists()  # provider cache ownership is preserved
 
 
@@ -136,6 +140,48 @@ def test_local_lens_layout_and_source_selection() -> None:
     assert len(rows) == 1 and rows[0]["source"] == "local:j" and rows[0]["active"]
 
 
+def test_local_rows_carry_layers_documents_and_split_half() -> None:
+    """A local row says, per site, which layers it holds and the fit's
+    split-half difference at each (the manifest's ``{layer: value}``)."""
+    from drowse.lens.sources import list_lens_sources
+
+    lens = JacobianLens(
+        {0: torch.eye(3), 2: torch.eye(3)}, n_prompts=64, d_model=3, key=LensKey("R"),
+        mid={0: torch.eye(3), 1: torch.eye(3), 2: torch.eye(3)},
+    )
+    save_lens(lens, "org/model", _PROV, split_half={"out": {0: 0.25, 2: 0.0625}})
+    (row,) = list_lens_sources("org/model")
+    assert row["sites"] == ["out", "mid"]
+    assert row["layers"] == {"out": [0, 2], "mid": [0, 1, 2]}
+    assert row["n_prompts"] == 64
+    # Only the site that recorded one carries it; keys are layer strings.
+    assert row["split_half"] == {"out": {"0": 0.25, "2": 0.0625}}
+    json.dumps(row)  # wire-safe as is
+
+
+def test_local_rows_without_split_half_omit_it() -> None:
+    from drowse.lens.sources import list_lens_sources
+
+    save_lens(JacobianLens({0: torch.eye(3)}, n_prompts=2, d_model=3), "org/model", _PROV)
+    (row,) = list_lens_sources("org/model")
+    assert row["layers"] == {"out": [0]} and row["n_prompts"] == 2
+    assert "split_half" not in row
+
+
+def test_lens_providers_cover_every_fetchable_source_by_family() -> None:
+    from drowse.lens.sources import LENS_PROVIDERS, lens_providers
+
+    rows = lens_providers()
+    assert sorted(row["source"] for row in rows) == sorted(LENS_PROVIDERS)
+    by_name = {row["source"]: row for row in rows}
+    assert by_name["rs-s"] == {
+        "source": "rs-s", "lens": "S", "family": "S",
+        "sites": ["out", "mid"], "repo_id": "stdlogits/rs-lenses",
+    }
+    assert by_name["workspace-j"]["family"] == "R"
+    assert by_name["workspace-j"]["sites"] == ["out"]
+
+
 def test_selection_is_per_side_so_output_and_input_lenses_coexist() -> None:
     """An R-lens and an S-lens read opposite sides of a unit: both stay active."""
     from drowse.lens.sources import LENS_SOURCES, remove_lens_source, use_lens_source
@@ -146,35 +192,49 @@ def test_selection_is_per_side_so_output_and_input_lenses_coexist() -> None:
             "org/model", _PROV,
         )
     # The last publication of each side wins its own slot only.
-    assert LENS_SOURCES.active("org/model", "output") == SourceRef("local", "j")
-    assert LENS_SOURCES.active("org/model", "input") == SourceRef("local", "s")
+    assert LENS_SOURCES.active("org/model", "R") == SourceRef("local", "j")
+    assert LENS_SOURCES.active("org/model", "S") == SourceRef("local", "s")
     use_lens_source("org/model", "local:r")
-    assert LENS_SOURCES.active("org/model", "output") == SourceRef("local", "r")
-    assert LENS_SOURCES.active("org/model", "input") == SourceRef("local", "s")
+    assert LENS_SOURCES.active("org/model", "R") == SourceRef("local", "r")
+    assert LENS_SOURCES.active("org/model", "S") == SourceRef("local", "s")
 
     assert remove_lens_source("org/model", SourceRef("local", "s"))
-    assert LENS_SOURCES.active("org/model", "input") is None
-    assert LENS_SOURCES.active("org/model", "output") == SourceRef("local", "r")
+    assert LENS_SOURCES.active("org/model", "S") is None
+    assert LENS_SOURCES.active("org/model", "R") == SourceRef("local", "r")
 
 
 def test_lens_source_default_preference_order() -> None:
     from drowse.lens.sources import lens_source_preference_key
 
     shuffled = [
+        "local:k",
         "local:j-chat",
+        "local:s",
         "local:j",
+        "rs-s",
         "workspace-j",
         "local:r",
         "neuronpedia",
+        "rs-r",
         "workspace-r",
+        "local:s-chat",
+        "nonsense",
     ]
+    # R family first (rs-r, workspace-r, neuronpedia, workspace-j, local:r,
+    # local:j), then the S family (rs-s, local:s, local:k), unknowns last.
     assert sorted(shuffled, key=lens_source_preference_key) == [
+        "rs-r",
         "workspace-r",
         "neuronpedia",
         "workspace-j",
         "local:r",
         "local:j",
         "local:j-chat",
+        "rs-s",
+        "local:s",
+        "local:k",
+        "local:s-chat",
+        "nonsense",
     ]
 
 
@@ -253,13 +313,13 @@ def test_neuronpedia_fetch_pins_the_resolved_model_commit(
     binding = sources.fetch_lens_source("org/model", "neuronpedia")
     assert binding.model_revision == commit
     assert binding.repo_revision == "lens-commit"
-    assert binding.key == LensKey("J")
+    assert binding.kind == "J" and binding.sites == ("out",)
     bound = binding.files[LensKey("J")]
     assert bound.path == "model/jlens/Salesforce-wikitext/model_jacobian_lens.pt"
     assert bound.sha256 == hashlib.sha256(checkpoint.read_bytes()).hexdigest()
     assert config_reads == [{"trust_remote_code": False, "revision": commit}]
     assert sources.load_external_lens_binding("org/model", "neuronpedia") == binding
-    assert sources.LENS_SOURCES.active("org/model", "output") == SourceRef(
+    assert sources.LENS_SOURCES.active("org/model", "R") == SourceRef(
         "huggingface", "neuronpedia",
     )
 
@@ -356,7 +416,7 @@ def test_workspace_lens_fetch_binds_loads_and_switches(
         monkeypatch, tmp_path, _workspace_payload("relp"),
     )
     binding = sources.fetch_lens_source("org/model", "workspace-r")
-    assert binding.key == LensKey("R") and binding.provider == "workspace-lenses"
+    assert binding.kind == "R" and binding.provider == "workspace-lenses"
     assert binding.files[LensKey("R")].path == "model/r-lens/lens.pt"
     assert len(binding.files[LensKey("R")].sha256) == 64
     assert binding.corpus == "NeelNanda/pile-10k"
@@ -393,7 +453,7 @@ def test_workspace_lens_fetch_binds_loads_and_switches(
     assert not by_name["workspace-r"]["active"]
 
     sources.use_lens_source("org/model", "workspace-r")
-    assert sources.LENS_SOURCES.active("org/model", "output") == SourceRef(
+    assert sources.LENS_SOURCES.active("org/model", "R") == SourceRef(
         "huggingface", "workspace-r",
     )
 

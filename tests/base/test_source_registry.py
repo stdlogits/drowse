@@ -128,8 +128,10 @@ def test_clear_if_active_only_matches_exactly() -> None:
 
 
 def test_slotted_family_keeps_one_selection_per_slot() -> None:
+    """Each slot is stored under its own key (the lens stores its R and S
+    families under their directions, ``output`` and ``input``)."""
     fam = _family(
-        slots=("left", "right"),
+        slots={"left": "port", "right": "starboard"},
         slot_of=lambda _model, ref: "left" if ref.name.startswith("l") else "right",
     )
     left, right = SourceRef("local", "lone"), SourceRef("local", "rone")
@@ -138,8 +140,8 @@ def test_slotted_family_keeps_one_selection_per_slot() -> None:
         fam.select("org/model", ref)
     assert json.loads(fam.active_path("org/model").read_text()) == {
         "format_version": 1, "model_id": "org/model",
-        "left": {"kind": "local", "name": "lone"},
-        "right": {"kind": "local", "name": "rone"},
+        "port": {"kind": "local", "name": "lone"},
+        "starboard": {"kind": "local", "name": "rone"},
     }
     assert fam.active("org/model", "left") == left
     assert fam.active("org/model", "right") == right
@@ -148,6 +150,11 @@ def test_slotted_family_keeps_one_selection_per_slot() -> None:
     assert fam.active("org/model", "right") == right
     assert fam.clear_if_active("org/model", right)
     assert not fam.active_path("org/model").exists()
+    # A stored key is not a slot: asking by it is a broken invariant, not
+    # an empty selection (the lens's on-disk ``output``/``input`` read as
+    # nothing selected before this check).
+    with pytest.raises(ValueError, match="no slot 'port'"):
+        fam.active("org/model", "port")
 
 
 def test_both_families_use_the_shared_family() -> None:
@@ -158,7 +165,7 @@ def test_both_families_use_the_shared_family() -> None:
     for fam in (LENS_SOURCES, SAE_SOURCES):
         assert isinstance(fam, SourceFamily)
     assert LENS_SOURCES.provider_kind == "huggingface"
-    assert LENS_SOURCES.slots == ("output", "input")
+    assert LENS_SOURCES.slots == {"R": "output", "S": "input"}
     assert SAE_SOURCES.provider_kind == "saelens"
     assert SAE_SOURCES.slots is None
 

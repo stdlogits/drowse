@@ -29,7 +29,8 @@ Wired here, documented with their own package: `SteeringComposer`, `ReadPlane`
 (`generation/read_plane.py`), `PromptRenderer`, `CompiledRuntime`,
 `ChoiceScorer`, `CorpusGenerator`, `TokenReplayer` (`loom/replay.py`),
 `JointLogprobReplayer`, `Monitor` / `GeometryInstrument` / `ProbeRoster`,
-`LensInstrument`, `SaeInstrument` / `SaeRuntime`.
+`LensInstrument`, `SaeInstrument` / `SaeRuntime`, `UnitsInstrument` /
+`UnitsRuntime`.
 
 ## Construction
 
@@ -58,7 +59,7 @@ default 1024): rebind it with `dataclasses.replace`; an in-flight generation
 keeps its own. A per-call `SamplingConfig` overrides fields for one call only.
 
 The probe roster is built last (`store/bundled_probes.py::bootstrap_probe_roster`,
-neutral baseline first). `probes=None` attaches the bundled 2-node axes tagged
+neutral baseline first). `probes=None` attaches the bundled concepts tagged
 in `PROBE_CATEGORIES` (`epistemic`, `alignment`, `register`, `cultural`),
 fitting stale ones through `self.fit`, plus every bundled multi-node manifold
 *already* fitted for this model (attach-only: fitting `personas` would block
@@ -126,12 +127,17 @@ with a `TokenTap` → `finalize` (records `last_result`), inside `transaction()`
 the single-flight guard. Its teardown is exception-hard: pop a leftover scope
 (swallowing a teardown error while another failure propagates), run the
 session's `_release_generation` (read plane ended, closed and reset, loom
-reservation cleared), then set `IDLE` and release the lock unconditionally.
+reservation cleared), remove the reply node a failure left without a token
+(`txn.provisional_node`, set from node start until `finalize`; a continuation
+node is never removed, and a node holding tokens keeps them), then set `IDLE`
+and release the lock unconditionally. An engine error therefore leaves the
+user turn, never an empty assistant turn with no finish reason.
 
 - **Composition** is `loom/recipe.py::compose_call` (rules documented there):
-  cast member < call kwargs < regen anchor < regen modifier, with the call
-  owning the observation knobs and the seed resolving modifier > call > anchor
-  > cast. The engine supplies the tiers: the cast member under
+  cast member < call kwargs < regen anchor < regen modifier, except that
+  sampling ranks cast < anchor < call < modifier (a field the call sets beats
+  the turn it anchors on), with the call owning the observation knobs and the
+  seed resolving modifier > call > anchor > cast. The engine supplies the tiers: the cast member under
   `sampling.user_role` (user seat) or `sampling.assistant_role`, falling back
   to the seat name (raw mode applies no cast), and for `recipe_override` the
   `tree.anchor_recipe(parent_node_id)` plus the modifier derived from it.
@@ -144,7 +150,7 @@ reservation cleared), then set `IDLE` and release the lock unconditionally.
 - **Thinking**: explicit `thinking` > the steering's `thinking` >
   `config.thinking` > `chat_traits.supports_thinking`.
 - **Widths**: `return_top_k` is per-call when positive, else the session
-  default; the shared logit/J-lens/SAE readout width is that or
+  default; the shared logit/lens/SAE readout width is that or
   `DEFAULT_READOUT_TOP_K = 8`.
 
 Decode routing:
@@ -225,12 +231,26 @@ stale fit is `ManifoldNotRegisteredError` (404, refit hint); a bare name fitted
 in two namespaces is `AmbiguousSelectorError`. Admitted manifolds are promoted
 to fp32 on the model device. `concretize_key` pins a bare `:sae` / `:role` /
 `:from` variant to the unique fitted tensor. `ensure_profile_registered(name)`
-tries an in-memory profile, then a reserved-namespace atom resolver (only
-`jlens` and `sae` are installed; `slens`/`neuron`/`head` raise "reserved and not
-steerable yet"), then a fitted 2-node `pca` manifold folded to one direction.
+tries an in-memory profile, then a reserved-namespace atom resolver (`jlens`,
+`sae`, `neuron` and `slens` are installed, `neuron` registering a neuron's
+write at its layer; `head` raises "reserved and not steerable yet"), then a
+fitted 2-node `pca` manifold folded to one direction. Both lazy loads run their
+miss path in the exclusive-GPU section the registry is built with (the load
+uploads to the device and an atom resolver reads the model): a caller holding
+the section re-enters it, and one that does not refuses (409) while another
+thread holds the model. The composer resolves under its blocking model lock,
+as it pushes.
 
-**Neutral baseline** (`neutral.py`). One load of the fp32 neutral-activation
-cache yields both the means (`X.mean(0)`) and the whitener. `ensure()` is
+**Neutral baseline** (`neutral.py`). One load of the fp32 neutral cache
+(`fit/neutral.py::load_or_compute_neutral_cache`) yields the means
+(`X.mean(0)`), the whitener, the resident `UnitStats` (`unit_stats`, or
+`units_unavailable` with the reason) and the mid means (`mid_means`, or
+`mid_unavailable`). `site_means(site)` is the residual centring mean the lens
+instrument takes as `neutral_means`: `out` the means, `mid` the mid means,
+built on first use under the exclusive section (reentrant, so a caller inside
+it builds in place) and `NeutralMeansError` (422) when the site has none. `session._require_unit_stats` is the
+units runtime's source: it ensures the baseline and raises
+`UnitsUnavailableError` (422) without statistics. `ensure()` is
 unguarded, for callers already holding the lock (composition, generation
 preflight, construction); `session.layer_means` / `session.whitener` are the
 guarded getters. A failed load leaves the means empty (`layer_means` raises
@@ -248,8 +268,8 @@ Monitor via `GeometryInstrument.adopt_whitener`.
   folder needs `namespace='local'` (`pack refresh` would restore its corpus); a
   role mismatch on a reused folder is a `RequestError`, and reusing a folder of
   more than two nodes is a `ManifoldSpecError` (400) before any fit, since
-  only a one- or two-node fit folds to a vector. A probe attach on an
-  unfitted multi-node manifold reaches extraction last and gets that 400.
+  only a one- or two-node fit folds to a vector. A probe attach never reaches
+  it for an installed manifold, which it fits in place (below).
 - `sae` and `role` are exclusive. The returned name carries the variant tail
   (`:sae-<release>` / `:role-<slug>`); steer with that name.
 - Author-or-reuse is decided under the folder's manifest lock; corpus
@@ -268,17 +288,29 @@ next steer or attach loads from disk.
 
 ## Reads
 
-`session.instruments` maps `geometry` / `lens` / `sae` to the
+`session.instruments` maps `geometry` / `lens` / `sae` / `units` to the
 `readout.protocol.Instrument` implementations (also `session.geometry` /
-`.lens` / `.sae`); the server's `{family}` routes iterate and validate against
-it. `ProbeRoster`, `ReadPlane` and `TokenTap` name the three families
-explicitly, so a fourth family touches them too.
+`.lens` / `.sae` / `.units`); the server's `{family}` routes iterate and
+validate against it. `ProbeRoster`, `ReadPlane`, `FinalReads` and `TokenTap`
+name the families explicitly, so a new family touches them too. The units
+family (`units/`, `drowse/units/AGENTS.md`) is wired over a `UnitsRuntime`
+that the composer shares for unit ablation; `ConsumerPlan.units` ticks unit
+probes per token (loom row or live scores, behind `session.units` live), and
+`ReadPlane.transient_hooks` (capture or the units tap) is the compiled-clean
+routing gate. `generate_batch` with unit probes and readings runs serially.
 
 `add_probe(selector, *, as_name=None, top_n=3)` routes through `ProbeRoster`:
-`jlens/…` → lens, `sae/…` → SAE, anything else → geometry. Geometry resolution
+`jlens/…` → lens, `sae/…` → SAE, `neuron/…`/`head/…` → units, anything else →
+geometry. Geometry resolution
 (`_resolve_probe_manifold`) tries a registered profile (folded to a 1-node ray),
-then a fitted manifold on disk, and as a last resort **extracts** the bare
-concept (generates a corpus and fits it under `local/`). Lens/SAE detaches are
+then a fitted manifold on disk, then an installed manifold that is not fitted
+(or is stale) for the model, which it **fits in place** inside the attach's
+exclusive section (raw and `:role-<id>` only; an `:sae-`/`:from-` variant is a
+`RequestError` naming the command that produces it), and as a last resort
+**extracts** a bare raw name that names nothing installed (generates a corpus
+and fits it under `local/`). It never substitutes another concept: a typed
+namespace or a variant that names nothing installed is a
+`ManifoldNotRegisteredError` (404), never a slugged `local/ns_name` extract. Lens/SAE detaches are
 safe mid-generation (bound runs keep a frozen roster). A roster change only
 invalidates analytics snapshots. Node recipes stamp the Monitor (geometry)
 probes and their hashes; lens and SAE probes are not in the receipt.
@@ -290,13 +322,22 @@ scores attached geometry probes against a `return_hidden=True` capture.
 **Authored capture** (`authored_capture.py`). Authored loom text
 (`recipe is None`) has no token rows of its own; the first generation whose
 prefill renders it measures those positions from the same forward and writes
-them via `LoomTree.set_authored_token_scores`. Nothing is tokenized unless the
+them via `LoomTree.set_authored_capture`, with the node's replay anchor
+(`loom/tree.py::PromptCapture`: this call's recipe steering, the render's
+resolved system prompt, thinking flag and flat mode, each channel's first
+render position and the digest of the render before the later channel). A
+node is captured once, both channels from one render; it stays pending only
+while it has no capture. Each row keeps what a generated row keeps
+(`token_row_measurements`), or every reading whole when the call set
+`persist_per_layer_scores`; the token view replays the rest through the
+anchor (`loom/replay.py`). Nothing is tokenized unless the
 Monitor or a live lens/SAE consumer will record. Matching walks backward,
 bounded before the generation header, and retries whitespace-stripped text
 (Gemma templates trim content). The first suffix token after a prefix-cache hit
-has no producer row and stays unscored. Rows persist on the first step
-callback, before the step sink advances curved feet. Row and envelope shapes
-are the loom token-row contract the browser runtime replays.
+has no producer row and stays unscored (its row replays like any other). Rows
+persist on the first step callback, before the step sink advances curved feet.
+Row and envelope shapes are the loom token-row contract the browser runtime
+replays.
 
 ## Conversation
 

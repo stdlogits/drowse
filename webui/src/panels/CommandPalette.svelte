@@ -1,18 +1,14 @@
 <script lang="ts">
-  // Searchable tool directory, opened from the workspace menu. Flattens the
-  // rail's tool registry plus instrument-tab jumps and pages into one
-  // filterable list.  The rail's category fly-outs remain as the mouse
-  // path; this is the keyboard path (and the only place everything is
-  // reachable from one input).
-
+  // Search everything (⌘K, the header's search): the rooms, the instruments, every room's sections
+  // (by what they do) and every other tool, in one filterable list, drawn as Ledger's search (a field on a wash, the chosen option under a wash2
+  // thumb that glides as the arrow keys move).
   import { tick } from "svelte";
-  import { fade, fly } from "svelte/transition";
+  import { Icon, fadeIn, fadeOut, glide, rise } from "@stdlogits/ledger";
   import { paletteState, closePalette } from "../lib/stores/palette.svelte";
-  import { paletteCommands, type PaletteCommand } from "../lib/commands";
-  import { openDrawer, setInspectorTab } from "../lib/stores.svelte";
-  import { modalIn, modalOut, scrimIn, scrimOut } from "../lib/motion";
+  import { paletteCommands, searchCommands, showInstrument, showSteerPicker, type PaletteCommand } from "../lib/commands";
+  import { openDrawer } from "../lib/stores.svelte";
+  import { goto } from "../lib/stores/rooms.svelte";
   import { containTab } from "../lib/focusTrap";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
 
   const COMMANDS = paletteCommands();
 
@@ -22,67 +18,44 @@
   let listEl: HTMLElement | null = $state(null);
   let paletteEl: HTMLElement | null = $state(null);
 
-  const filtered = $derived.by(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return COMMANDS;
-    const terms = q.split(/\s+/);
-    return COMMANDS
-      .filter((c) => {
-        const hay = `${c.label} ${c.group} ${c.keywords ?? ""}`.toLowerCase();
-        return terms.every((t) => hay.includes(t));
-      })
-      .sort((a, b) => {
-        const rank = (command: PaletteCommand): number => {
-          const label = command.label.toLowerCase();
-          if (label === q) return 0;
-          if (label.startsWith(q)) return 1;
-          if (label.includes(q)) return 2;
-          if ((command.keywords ?? "").toLowerCase().includes(q)) return 3;
-          return 4;
-        };
-        return rank(a) - rank(b);
-      });
-  });
+  const filtered = $derived(searchCommands(COMMANDS, query));
 
-  // Reset + focus on every open; clamp selection as the filter narrows.
+  // Reset and focus on every open; keep the selection inside the list as it narrows.
   $effect(() => {
-    if (paletteState.open) {
-      query = "";
-      selected = 0;
-      void tick().then(() => inputEl?.focus());
-    }
+    if (!paletteState.open) return;
+    query = "";
+    selected = 0;
+    void tick().then(() => inputEl?.focus());
   });
   $effect(() => {
     if (selected >= filtered.length) selected = Math.max(0, filtered.length - 1);
   });
   $effect(() => {
-    // Keep the keyboard selection visible while scrolling with arrows.
     void selected;
-    listEl
-      ?.querySelector('[data-selected="true"]')
-      ?.scrollIntoView({ block: "nearest" });
+    listEl?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   });
 
   function run(cmd: PaletteCommand): void {
     closePalette();
     switch (cmd.action.kind) {
-      case "drawer":
-        // Palette focus restores to its launcher first; opening the drawer
-        // in the following microtask lets the drawer remember that same
-        // launcher and return there when it closes.
-        {
-          const drawer = cmd.action.drawer;
-          queueMicrotask(() => openDrawer(drawer));
-        }
+      case "room":
+        goto(cmd.action.room);
         break;
-      case "tab":
-        setInspectorTab(cmd.action.tab);
-        window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: "controls" }));
+      case "section":
+        goto(cmd.action.room, cmd.action.section);
         break;
-      case "controls":
-        window.dispatchEvent(new CustomEvent("drowse:workspace", {
-          detail: { view: "controls", section: cmd.action.section },
-        }));
+      case "drawer": {
+        // The palette returns focus to its opener first; opening in the next microtask lets the
+        // tool remember that opener and return there when it closes.
+        const drawer = cmd.action.drawer;
+        queueMicrotask(() => openDrawer(drawer));
+        break;
+      }
+      case "instrument":
+        showInstrument(cmd.action.tab);
+        break;
+      case "steer":
+        showSteerPicker(cmd.action.with);
         break;
     }
   }
@@ -92,105 +65,53 @@
       ev.preventDefault();
       ev.stopPropagation();
       closePalette();
-      return;
-    }
-    if (ev.key === "ArrowDown") {
+    } else if (ev.key === "ArrowDown") {
       ev.preventDefault();
       selected = Math.min(filtered.length - 1, selected + 1);
-      return;
-    }
-    if (ev.key === "ArrowUp") {
+    } else if (ev.key === "ArrowUp") {
       ev.preventDefault();
       selected = Math.max(0, selected - 1);
-      return;
-    }
-    if (ev.key === "Enter") {
+    } else if (ev.key === "Enter") {
       ev.preventDefault();
       const cmd = filtered[selected];
       if (cmd) run(cmd);
     }
   }
-
-  const TAB_HUE: Record<string, string> = {
-    subspace: "var(--pillar-subspace)",
-    manifold: "var(--pillar-manifold)",
-    sae: "var(--pillar-sae)",
-    lens: "var(--pillar-lens)",
-  };
-  function hueFor(cmd: PaletteCommand): string | null {
-    return cmd.action.kind === "tab" ? TAB_HUE[cmd.action.tab] : null;
-  }
 </script>
 
 {#if paletteState.open}
-  <div
-    class="backdrop"
-    role="button"
-    tabindex="-1"
-    aria-label="Close command palette"
-    onclick={closePalette}
-    in:fade={scrimIn()}
-    out:fade={scrimOut()}
-    onkeydown={(ev) => {
-      if (ev.key === "Enter" || ev.key === " ") closePalette();
-    }}
-  ></div>
-  <div
-    bind:this={paletteEl}
-    class="palette"
-    role="dialog"
-    aria-modal="true"
-    aria-label="Command palette"
-    tabindex="-1"
-    onkeydown={(event) => { if (paletteEl) containTab(event, paletteEl); }}
-    in:fly={modalIn()}
-    out:fly={modalOut()}
-    onintrostart={(event) => { event.currentTarget.inert = false; }}
-    onoutrostart={(event) => { event.currentTarget.inert = true; }}
-  >
-    <div class="input-row">
-      <FluentIcon name="search" class="glass-icon" />
+  <div class="scrim" role="button" tabindex="-1" aria-label="Close search" onclick={closePalette}
+    onkeydown={(ev) => { if (ev.key === "Enter" || ev.key === " ") closePalette(); }} in:fadeIn out:fadeOut></div>
+  <div bind:this={paletteEl} class="palette" role="dialog" aria-modal="true" aria-label="Search everything" tabindex="-1"
+    onkeydown={(event) => { if (paletteEl) containTab(event, paletteEl); }} in:rise out:fadeOut>
+    <div class="box">
+      <span class="glass"><Icon name="search" size={18} /></span>
       <input
         bind:this={inputEl}
         bind:value={query}
+        type="search"
         role="combobox"
+        autocomplete="off"
+        spellcheck="false"
         aria-autocomplete="list"
         aria-controls="command-palette-listbox"
         aria-expanded="true"
-        aria-activedescendant={filtered.length > 0
-          ? `command-palette-option-${selected}`
-          : undefined}
-        placeholder="search…"
-        aria-label="Filter commands"
+        aria-activedescendant={filtered.length > 0 ? `command-palette-option-${selected}` : undefined}
+        placeholder="Search rooms, tools and what they do"
+        aria-label="Search everything"
         onkeydown={onKey}
       />
       <kbd>esc</kbd>
     </div>
-    <div
-      id="command-palette-listbox"
-      class="list"
-      bind:this={listEl}
-      role="listbox"
-    >
+    <div id="command-palette-listbox" class="options" bind:this={listEl} role="listbox" aria-label="Results" use:glide>
       {#if filtered.length === 0}
-        <p class="none" role="status">No commands match “{query.trim()}”. Edit or clear the search.</p>
+        <p class="none meta" role="status">Nothing matches “{query.trim()}”</p>
       {:else}
         {#each filtered as cmd, i (cmd.group + cmd.label)}
-          {@const hue = hueFor(cmd)}
-          <button
-            id={`command-palette-option-${i}`}
-            type="button"
-            class="row"
-            role="option"
-            tabindex="-1"
-            aria-selected={i === selected}
-            data-selected={i === selected}
-            onclick={() => run(cmd)}
-            onmousemove={() => (selected = i)}
-          >
-            {#if hue}<span class="dot" style:background={hue}></span>{/if}
+          <button id={`command-palette-option-${i}`} type="button" class="option" role="option" tabindex="-1"
+            aria-selected={i === selected} onclick={() => run(cmd)} onmousemove={() => (selected = i)}>
             <span class="label">{cmd.label}</span>
-            <span class="group">{cmd.group}</span>
+            <span class="meta">{cmd.group}</span>
           </button>
         {/each}
       {/if}
@@ -199,126 +120,35 @@
 {/if}
 
 <style>
-  .backdrop {
-    position: fixed;
-    inset: 0;
-    background: var(--scrim-strong);
-    backdrop-filter: blur(2px);
-    z-index: calc(var(--z-modal) + 10);
-    border: 0;
-    cursor: default;
-  }
-
+  .scrim { position: fixed; inset: 0; z-index: 52; background: color-mix(in oklab, var(--wash2) 88%, transparent); -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px); }
   .palette {
     position: fixed;
-    top: 16vh;
+    top: 12dvh;
     left: 50%;
-    transform: translateX(-50%);
-    width: min(560px, 92vw);
-    max-height: 56vh;
-    display: flex;
-    flex-direction: column;
-    z-index: calc(var(--z-modal) + 11);
-    background: var(--surface-sheen), var(--popup-bg);
-    border: 1px solid var(--popup-border);
-    border-radius: var(--popup-radius);
-    box-shadow: var(--popup-shadow);
-    overflow: hidden;
+    z-index: 53;
+    display: grid;
+    gap: var(--s2);
+    width: min(560px, calc(100vw - var(--s4) * 2));
+    max-height: 72dvh;
+    padding: var(--s2);
+    translate: -50% 0;
+    border-radius: var(--r-row);
+    background: var(--paper);
   }
-
-  .input-row {
-    display: flex;
-    align-items: center;
-    gap: var(--space-4);
-    padding: var(--surface-padding);
-  }
-  :global(.glass-icon) {
-    width: 15px;
-    height: 15px;
-    flex: none;
-    color: var(--fg-muted);
-  }
-  input {
-    flex: 1;
-    min-width: 0;
-    min-height: var(--control-target);
-    background: transparent;
-    border: 0;
-    outline: none;
-    color: var(--fg);
-    font-size: var(--text);
-    font-family: var(--font-ui);
-  }
-  input::placeholder {
-    color: var(--fg-muted);
-  }
-  kbd {
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    color: var(--fg-muted);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius-sm);
-    padding: var(--space-xs) var(--space-xs);
-  }
-
-  .list {
-    overflow-y: auto;
-    padding: 0 var(--surface-padding) var(--surface-padding);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-xs);
-  }
-  .none {
-    margin: 0;
-    padding: var(--space-5);
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    text-align: center;
-  }
-  .row {
-    display: flex;
-    flex-shrink: 0;
-    align-items: center;
-    min-height: var(--control-target);
-    gap: var(--space-4);
-    padding: var(--space-3) var(--space-5);
-    background: transparent;
-    border: 0;
-    border-radius: var(--radius);
-    text-align: start;
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    cursor: pointer;
-  }
-  .row[data-selected="true"] {
-    background: var(--accent-subtle);
-    color: var(--fg);
-  }
-  .dot {
-    width: 7px;
-    height: 7px;
-    border-radius: 50%;
-    flex: none;
-  }
-  .label {
-    flex: 1;
-    min-width: 0;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .group {
-    font-family: var(--font-ui);
-    font-size: var(--text-2xs);
-    letter-spacing: 0;
-    color: var(--fg-muted);
-    flex: none;
-  }
-
-  @media (max-width: 680px) {
-    .row { display: grid; grid-template-columns: 7px minmax(0, 1fr); gap: 0 var(--space-sm); }
-    .dot { grid-column: 1; grid-row: 1; }
-    .label { grid-column: 2; grid-row: 1; white-space: normal; overflow: visible; }
-    .group { grid-column: 2; grid-row: 2; }
-  }
+  .palette:focus { outline: none; }
+  .box { position: relative; height: 48px; border-radius: var(--r-box); background: var(--wash); color: var(--ink3); transition: color var(--fast) var(--ease); }
+  .box:focus-within { color: var(--ink); }
+  .glass { position: absolute; inset: 0 auto 0 var(--s4); display: grid; place-items: center; pointer-events: none; }
+  input { display: block; width: 100%; height: 100%; padding: 0 56px 0 46px; border: 0; border-radius: var(--r-box); background: transparent; color: var(--ink); font: var(--type-body); outline: none; appearance: none; }
+  input::placeholder { color: var(--ink3); opacity: 1; }
+  input::-webkit-search-cancel-button, input::-webkit-search-decoration { appearance: none; }
+  .box:has(input:focus-visible) { outline: 2px solid var(--ink); outline-offset: 2px; }
+  kbd { position: absolute; top: 12px; right: var(--s3); display: grid; place-items: center; min-width: 24px; height: 24px; padding: 0 var(--s2); border-radius: var(--r-chip); background: var(--paper); color: var(--ink3); font: var(--type-meta); pointer-events: none; }
+  .options { --glide-bg: var(--wash2); --glide-radius: var(--r-col); display: grid; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: 0 var(--s1) var(--s1); }
+  .option { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s3); min-height: 40px; padding: 10px var(--s3); border: 0; border-radius: var(--r-col); background: transparent; color: var(--ink2); font: var(--type-small); text-align: left; cursor: pointer; transition: color var(--fast) var(--ease); }
+  .option[aria-selected="true"] { color: var(--ink); }
+  .label { min-width: 0; overflow: hidden; font-weight: 500; white-space: nowrap; text-overflow: ellipsis; }
+  .option .meta { flex: none; }
+  .none { margin: 0; padding: var(--s2) var(--s3) var(--s3); }
+  @media (max-width: 720px) { .palette { top: var(--s4); } }
 </style>

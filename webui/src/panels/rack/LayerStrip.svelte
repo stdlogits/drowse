@@ -1,143 +1,214 @@
 <script lang="ts">
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  // Canonical per-layer strip for every rack card. The cells deliberately
-  // have no outlines: a small physical gap separates layers, while a visible
-  // neutral fill keeps zero/near-zero readings legible against the card.
-
-  import HeatmapCell from "../../lib/charts/HeatmapCell.svelte";
-
-  interface LayerCell {
-    layer: number;
-    value: number | null | undefined;
-    title: string;
-  }
+  // Where a steering term acts: one cell per layer of the model, a bar on the depth ramp as tall
+  // as the term's share there. The layers it is fitted at take a selection, drawn solid; the rest
+  // are stubs. Press and drag across the cells to paint a range (a stroke adds when it starts on an
+  // unselected cell and removes otherwise); Enter or Space toggles one. Every change writes the
+  // term's clause (lib/steering/layers.ts): every fitted layer writes none. Without ``onchange``
+  // the strip only shows where the term acts (a unit, whose layer is its own: the grammar refuses
+  // a clause on one), with ``note`` in place of the presets.
+  import {
+    layerRunsText,
+    layerTint,
+    paintLayer,
+    scopeForSelection,
+    selectedGain,
+  } from "../../lib/steering/layers";
+  import type { LayerScope } from "../../lib/types";
 
   let {
-    cells,
-    scale,
-    ariaLabel,
-    emptyMessage = "no data yet, generate a token first",
-    positiveColor,
-    negativeColor,
+    nLayers,
+    fitted,
+    share,
+    selected,
+    scope,
+    onchange,
+    note = "",
   }: {
-    cells: LayerCell[];
-    scale: number;
-    ariaLabel: string;
-    emptyMessage?: string;
-    positiveColor?: string;
-    negativeColor?: string;
+    /** The model's depth. */
+    nLayers: number;
+    /** The layers the term can act on, ascending. */
+    fitted: readonly number[];
+    /** Its share at each fitted layer (aligned with ``fitted``). */
+    share: readonly number[];
+    /** The layers it acts on now. */
+    selected: readonly number[];
+    /** Its clause as written (``workspace`` shows as the band the server resolved). */
+    scope: LayerScope;
+    /** Writes the clause; absent, the strip is fixed (no presets, no painting). */
+    onchange?: (scope: LayerScope) => void;
+    /** What a fixed strip says in place of the presets. */
+    note?: string;
   } = $props();
 
-  const CELL_SIZE = 13;
-  let activeIndex = $state(0);
-  let focused = $state(false);
+  const fixed = $derived(onchange === undefined);
 
-  $effect(() => {
-    if (activeIndex >= cells.length) activeIndex = Math.max(0, cells.length - 1);
-  });
+  const uid = $props.id();
+  const top = $derived(Math.max(0, ...share.filter(Number.isFinite)));
+  const gain = $derived(selectedGain(fitted, share, selected));
+  const cells = $derived(Array.from({ length: nLayers }, (_, L) => {
+    const at = fitted.indexOf(L);
+    const height = at < 0 ? 0 : top > 0 ? Math.max(8, Math.round(((share[at] ?? 0) / top) * 880) / 10) : 88;
+    return { layer: L, fitted: at >= 0, on: selected.includes(L), height, colour: layerTint(L, nLayers) };
+  }));
+  const allFitted = $derived(scope == null);
+  const none = $derived(Array.isArray(scope) && scope.length === 0);
+  const summary = $derived(selected.length === 0
+    ? "No layers"
+    : `L${layerRunsText(selected)} · ${selected.length} ${selected.length === 1 ? "layer" : "layers"}`);
 
-  function onKeydown(ev: KeyboardEvent): void {
-    if (cells.length === 0) return;
-    if (ev.key === "ArrowRight") activeIndex = Math.min(cells.length - 1, activeIndex + 1);
-    else if (ev.key === "ArrowLeft") activeIndex = Math.max(0, activeIndex - 1);
-    else if (ev.key === "Home") activeIndex = 0;
-    else if (ev.key === "End") activeIndex = cells.length - 1;
-    else return;
-    ev.preventDefault();
+  /** A cell's tip: its layer, and on a selected one the push composition gives it there. */
+  function tipFor(layer: number): string {
+    const at = gain.get(layer);
+    return at === undefined || stroke ? `L${layer}` : `L${layer} · ${at.toFixed(2)}`;
+  }
+
+  // A stroke: whether it adds, the selection so far, and the layer it last reached.
+  let stroke = $state<{ on: boolean; pick: number[]; last: number } | null>(null);
+  const shown = $derived(stroke ? stroke.pick : selected);
+
+  function commit(pick: number[]): void {
+    onchange?.(scopeForSelection(pick, fitted));
+  }
+
+  /** The fitted layer under the pointer, by the cells' own boxes. */
+  function layerAt(strip: HTMLElement, x: number): number | null {
+    for (const cell of strip.querySelectorAll<HTMLElement>("[data-layer]")) {
+      const box = cell.getBoundingClientRect();
+      if (x >= box.left - 2 && x <= box.right + 2) return Number(cell.dataset.layer);
+    }
+    return null;
+  }
+
+  function begin(event: PointerEvent, layer: number): void {
+    if (fixed || event.button !== 0) return;
+    event.preventDefault();
+    (event.currentTarget as HTMLElement).closest<HTMLElement>(".cells")?.setPointerCapture(event.pointerId);
+    const on = !selected.includes(layer);
+    stroke = { on, pick: paintLayer(selected, layer, on), last: layer };
+  }
+
+  function sweep(event: PointerEvent): void {
+    if (!stroke) return;
+    const layer = layerAt(event.currentTarget as HTMLElement, event.clientX);
+    if (layer === null || !fitted.includes(layer) || layer === stroke.last) return;
+    // A quick stroke passes cells between two moves: it paints every layer it crossed.
+    const [lo, hi] = layer < stroke.last ? [layer, stroke.last] : [stroke.last, layer];
+    let pick = stroke.pick;
+    for (const L of fitted) if (L >= lo && L <= hi) pick = paintLayer(pick, L, stroke.on);
+    stroke = { ...stroke, pick, last: layer };
+  }
+
+  function end(): void {
+    if (!stroke) return;
+    const pick = stroke.pick;
+    stroke = null;
+    commit(pick);
+  }
+
+  function key(event: MouseEvent, layer: number): void {
+    // A pointer press already painted; a click with no pointer (Enter, Space) toggles.
+    if (fixed || event.detail !== 0) return;
+    commit(paintLayer(selected, layer, !selected.includes(layer)));
   }
 </script>
 
-<div class="layer-strip">
-  <div
-    class="layers"
-    role="slider"
-    aria-label={ariaLabel}
-    aria-valuemin="0"
-    aria-valuemax={Math.max(0, cells.length - 1)}
-    aria-valuenow={activeIndex}
-    aria-valuetext={cells[activeIndex]?.title ?? emptyMessage}
-    tabindex={cells.length > 0 ? 0 : undefined}
-    onfocus={() => (focused = true)}
-    onblur={() => (focused = false)}
-    onkeydown={onKeydown}
-    onpointermove={(event) => {
-      if (event.pointerType === "touch" && event.buttons === 0) return;
-      const marks = [...event.currentTarget.querySelectorAll<HTMLElement>(".cell")];
-      const index = marks.findIndex(mark => { const rect = mark.getBoundingClientRect(); return event.clientX >= rect.left && event.clientX <= rect.right; });
-      if (index >= 0) { activeIndex = index; focused = true; }
-    }}
-    onpointerdown={(event) => { event.currentTarget.focus(); focused = true; }}
-  >
-    {#if cells.length === 0}
-      <div class="layers-status">{emptyMessage}</div>
-    {:else}
-      <span class="endcap" aria-hidden="true">L{cells[0].layer}</span>
-      <div class="cells">
-        {#each cells as cell, i (cell.layer)}
-          <HeatmapCell
-            value={cell.value}
-            {scale}
-            size={CELL_SIZE}
-            title={cell.title}
-            {positiveColor}
-            {negativeColor}
-            active={focused && i === activeIndex}
-          />
-        {/each}
+<div class="where">
+  <div class="dw-sec-head">
+    <span class="head" id="{uid}-where">Where</span>
+    {#if onchange}
+      <div class="presets">
+        <button type="button" class="dw-text" aria-pressed={allFitted} onclick={() => onchange(null)}>All fitted</button>
+        <button type="button" class="dw-text" aria-pressed={scope === "workspace"} onclick={() => onchange("workspace")}>Workspace</button>
+        <button type="button" class="dw-text" aria-pressed={none} onclick={() => onchange([])}>Clear</button>
       </div>
-      <span class="endcap" aria-hidden="true">L{cells[cells.length - 1].layer}</span>
+    {:else if note}
+      <span class="meta">{note}</span>
     {/if}
   </div>
-  {#if cells[activeIndex]}
-    <div class="keyboard-readout" class:visible={focused} aria-hidden={!focused} {...{ "aria-description": (cells[activeIndex].title) }}>
-      <MorphText text={cells[activeIndex].title} />
-    </div>
-  {/if}
+  <div class="cells" role="group" aria-labelledby="{uid}-where" style:--n={nLayers}
+    onpointermove={sweep} onpointerup={end} onpointercancel={end} onlostpointercapture={end}>
+    {#each cells as cell (cell.layer)}
+      {#if cell.fitted && fixed}
+        <span class="cell is-fixed" class:is-on={shown.includes(cell.layer)} style:--bar={cell.colour} aria-hidden="true">
+          <i style:height="{cell.height}%"></i>
+        </span>
+      {:else if cell.fitted}
+        <button type="button" class="cell" data-layer={cell.layer} aria-pressed={shown.includes(cell.layer)}
+          aria-label="L{cell.layer}" style:--bar={cell.colour}
+          onpointerdown={(event) => begin(event, cell.layer)} onclick={(event) => key(event, cell.layer)}>
+          <i style:height="{cell.height}%"></i>
+          <b style:bottom="calc({cell.height}% + 6px)">{tipFor(cell.layer)}</b>
+        </button>
+      {:else}
+        <span class="cell is-off" aria-hidden="true"><i></i></span>
+      {/if}
+    {/each}
+  </div>
+  <div class="ends meta"><span>L0</span><span class="sum">{summary}</span><span>L{nLayers - 1}</span></div>
 </div>
 
 <style>
-  .layer-strip {
-    min-width: 0;
-  }
-  .layers {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-    overflow-x: auto;
-    white-space: nowrap;
-    padding-top: var(--space-3);
-    padding-bottom: var(--space-2);
-    scrollbar-color: var(--glass-strong) transparent;
-    scrollbar-width: thin;
-  }
-  .layers-status {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    padding: var(--space-1) 0;
-  }
+  .where { display: grid; gap: var(--s2); min-width: 0; }
+  .presets { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); }
   .cells {
+    display: grid;
+    grid-template-columns: repeat(var(--n), minmax(0, 1fr));
+    gap: 4px;
+    height: 120px;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: none;
+  }
+  .cell {
+    position: relative;
     display: flex;
-    gap: var(--data-mark-gap);
-    flex: 0 0 auto;
+    align-items: flex-end;
+    min-width: 0;
+    height: 100%;
+    padding: 0;
+    border: 0;
+    border-radius: 2px;
+    background: transparent;
+    cursor: pointer;
   }
-  .endcap {
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
+  .cell > i {
+    display: block;
+    width: 100%;
+    border-radius: 2px;
+    background: var(--bar);
+    opacity: 0.24;
+    transition: opacity var(--fast) var(--ease), height var(--glide) var(--ease);
+  }
+  .cell[aria-pressed="true"] > i { opacity: 1; }
+  .cell.is-off, .cell.is-fixed { cursor: default; }
+  .cell.is-fixed.is-on > i { opacity: 1; }
+  .cell.is-off > i { height: 4px; background: var(--wash2); opacity: 1; }
+  .cell > b {
+    position: absolute;
+    left: 50%;
+    translate: -50% 0;
+    padding: 2px 6px;
+    border-radius: var(--r-chip);
+    background: var(--paper);
+    color: var(--ink);
+    font: var(--type-meta);
     font-variant-numeric: tabular-nums;
-    flex: 0 0 auto;
-  }
-  .keyboard-readout.visible { visibility: visible; }
-  .keyboard-readout {
-    visibility: hidden;
-    height: 1.5em;
-    line-height: 1.5;
-    overflow: hidden;
     white-space: nowrap;
-    text-overflow: ellipsis;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: var(--text-2xs);
-    padding-bottom: var(--space-2);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--fast) var(--ease);
+  }
+  .cell:focus-visible > b { opacity: 1; }
+  @media (hover: hover) {
+    .cell[aria-pressed="false"]:hover > i { opacity: 0.48; }
+    .cell:hover > b { opacity: 1; }
+  }
+  .ends { display: grid; grid-template-columns: 1fr auto 1fr; }
+  .ends > span:last-child { text-align: right; }
+  .sum { color: var(--ink2); }
+  @media (max-width: 720px) {
+    .cells { gap: 2px; height: 96px; }
+    .presets .dw-text { position: relative; }
+    .presets .dw-text::after { content: ""; position: absolute; inset: -14px -6px; }
   }
 </style>

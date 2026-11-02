@@ -106,7 +106,11 @@ the serial loop. `loom/joint_logprobs.py` calls `_sampler_candidates`,
 - A token whose lone decode contains U+FFFD is buffered and flushed as a group
   (`token_id = -1`, no logprob). Text comes from the lazy `ChatTraits.token_text`
   cache, never a full-vocab table.
-- `finish_reason`: `"stop"` (EOS or external stop), `"length"`, `"stop_sequence"`.
+- `finish_reason` (`results.FinishReason`, closed): `"stop"` (EOS), `"length"`,
+  `"stop_sequence"`, `"cancelled"` (an external stop cut the reply: a client
+  Stop, a closed stream, a disconnect; the batch fast path marks the rows its
+  stop criterion cut). The loom node and transcripts carry it and their readers
+  refuse any other value.
 
 ### KV paths
 
@@ -227,6 +231,12 @@ the capture-mode table (including each mode's finalize read) are in
   exact keys the row omits), or from the latest slices; lens/SAE keys through
   their bound runs, which stash the row for the display step. An empty capture
   scores nothing, so gates read inactive, never stale.
+- `gate_run()` is the one gate capture of a forced replay (joint logprobs, the
+  loom token and node replays of a probe-gated reply): it binds the runs with
+  a demand that captures only what the open gates read, yields
+  `gate_score_callback()` for the replay to call after each forward as the
+  decode loop does, and ends and closes the runs on exit, even when a detach
+  raises.
 - `aggregate_index` / `pooled_slice` is the one finalize pooling for all three
   families: the loop's visible endpoint when set; `None` for a stop-sequence finish
   without one; else `model/tokens.py::last_content_index` over `generated_ids`
@@ -243,9 +253,12 @@ the capture-mode table (including each mode's finalize read) are in
 
 - `TokenCallback` is positional six-argument and carries no readings.
   `TokenConsumer` receives whole `TokenEvent`s and declares what it reads in
-  `TokenConsumerOptions` (`live_scores`, `per_layer_scores`, `lens_readout`,
-  `sae_readout`, `perplexity`, `probe_readings`), which lets the engine skip
-  unconsumed work.
+  `TokenConsumerOptions` (`live_scores`, `lens_readout`, `sae_readout`,
+  `perplexity`, `probe_readings`), which lets the engine skip unconsumed work.
+  `live_scores` already means the full reading, per-layer traces included;
+  whether the loom row keeps the whole reading (not only its scores and
+  geometry shares and coordinates) is the call's
+  `persist_per_layer_scores`, never a consumer's.
 - `TokenProbePayload` keeps one reading slot per `InstrumentFamily`.
   `to_token_payload` returns `{"measurements": envelope}` from
   `readout/measurements.py::build_measurements`, no aliases beside it.

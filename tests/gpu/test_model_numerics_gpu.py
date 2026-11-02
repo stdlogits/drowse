@@ -131,3 +131,21 @@ def test_native_steering_matches_manual_intervention(loaded: tuple[Any, Any], ab
     finally:
         handle.remove()
     torch.testing.assert_close(actual, expected, atol=0, rtol=0)
+
+
+def test_verify_model_spec_accepts_the_loaded_model(loaded: tuple[Any, Any]):
+    """A covered family verifies at its load precision (bf16 on CUDA and MPS).
+
+    Held to its own bf16 forward, the fp32 description of SmolLM2-360M was
+    refused (19% of layer 4's attention update is rounding against massive
+    activations); the fp32 replay holds structure, not precision.
+    """
+    from drowse.errors import UnsupportedBlockError
+    from drowse.model.blocks import model_spec, verify_model_spec
+
+    model, _tokenizer = loaded
+    try:
+        spec = model_spec(model)
+    except UnsupportedBlockError as exc:
+        pytest.skip(f"{gpu_model_id()} is not a covered dense family: {exc}")
+    assert verify_model_spec(model, spec, length=64) is spec

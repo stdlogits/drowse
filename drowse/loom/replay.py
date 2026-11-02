@@ -4,28 +4,46 @@
 ``token_readout`` (geometry, lens, SAE).  It resolves the ``(node_id,
 raw_index)`` anchor, reopens the node's recorded steering, rebuilds the
 node's render (continue-mode, or the flat raw buffer) plus the raw decode
-prefix, and runs one capture forward pooled at the producing position.  The
+prefix, and runs one capture forward pooled at the producing position.  An
+authored turn's captured prompt token replays the same way through the
+node's :class:`~drowse.loom.tree.PromptCapture`: the capture's render up to
+the token's channel (checked against its digest) plus the channel's tokens
+before it, as one prefill under the capturing call's steering.  The
 family's own read runs inside the exclusive-GPU section through ``read``, so
 device work never races a generation.  A token fork addresses tokens through
 the same anchor (:func:`drowse.loom.ops.resolve_token_anchor`).
 
 The instruments take a replayer as their :class:`~drowse.readout.replay.TokenReplay`
 dependency; the session builds one over its tree, renderer, steering
-composer, exclusive guard and capture forward.
+composer, exclusive guard and capture forward.  :meth:`TokenReplayer.forward`
+is the same rebuild handing the producing ids to a forward of the caller's
+own (the node replay of :mod:`drowse.loom.node_replay`, with its own taps).
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Sequence
 from contextlib import AbstractContextManager, nullcontext
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, TypeVar
 
 import torch
+import torch.nn as nn
 
 from drowse.base.exclusive import ExclusiveGuard
+from drowse.errors import SteeringCompositionError
 from drowse.generation.sampling import INHERIT_SYSTEM_PROMPT
-from drowse.loom.ops import TokenAnchor, resolve_token_anchor
+from drowse.loom.ops import (
+    PromptAnchor,
+    TokenAnchor,
+    resolve_prompt_anchor,
+    resolve_token_anchor,
+)
+from drowse.loom.errors import InvalidNodeOperationError
+from drowse.loom.tree import prompt_digest
+from drowse.model.chat import logits_keep_kwarg
 from drowse.readout.replay import ReplayedToken, ReplayLayers
+from drowse.steering.triggers import Trigger, TriggerContext
 
 if TYPE_CHECKING:
     from drowse.generation.render import PromptRenderer
@@ -33,6 +51,297 @@ if TYPE_CHECKING:
     from drowse.model.chat import ChatTraits
 
 T = TypeVar("T")
+
+#: Scores the open steering's probe gates after a replay forward, as the
+#: decode loop's ``score_callback`` does after each step (the read plane's
+#: ``gate_score_callback`` under a gate-only capture): ``gen_step`` -> scores.
+GateScores = Callable[[int], dict[str, float]]
+
+
+@dataclass(frozen=True)
+class ReplayForward:
+    """The producing forward's input, as :meth:`TokenReplayer.forward` hands
+    it over: ``ids`` ``[1, T]`` (the node's prompt render, then its raw
+    decode record before the anchored token), ``prompt_length`` (the render's
+    length, so raw token ``i`` is produced at position ``prompt_length + i −
+    1``), the node's whole raw decode record and the anchored raw index.
+
+    An authored turn's prompt token is all prompt: ``ids`` is the capture's
+    render before the token, ``prompt_length`` its whole length (one
+    prefill, no decode position), ``raw_ids`` the node's captured tokens
+    (thinking, then visible) and ``raw_index`` the token's index there.
+    ``runs`` places every row of ``raw_ids`` in the token stream either way,
+    so :meth:`spans` and :meth:`producing_position` describe both."""
+
+    ids: torch.Tensor
+    prompt_length: int
+    raw_ids: tuple[int, ...]
+    raw_index: int
+    #: The gate scorer bound for this replay when the open steering has
+    #: probe-gated terms (None otherwise); :meth:`TokenReplayer.segments`
+    #: then steps the decode positions one forward at a time.
+    gate: GateScores | None = None
+    #: Where the rows of ``raw_ids`` sit in the token stream, as
+    #: ``(first_row, position)`` runs in row order, each lasting until the
+    #: next starts: a generated node's one run at ``prompt_length``; an
+    #: authored turn's thinking rows, then its visible rows, each at its
+    #: channel's render position.
+    runs: tuple[tuple[int, int], ...] = ()
+
+    @property
+    def position(self) -> int:
+        """The producing position of the anchored token (the last one)."""
+        return int(self.ids.shape[1]) - 1
+
+    def spans(self) -> tuple[tuple[int, int, int], ...]:
+        """Each run as ``(first_row, stop_row, producing position of its
+        first row)``: row ``r`` of a span is produced at that position plus
+        ``r − first_row``.  Rows past the anchored token's producing forward
+        are not in it (a caller anchors the node's last row to cover all)."""
+        runs = self.runs or ((0, self.prompt_length),)
+        stops = [first for first, _ in runs[1:]] + [len(self.raw_ids)]
+        return tuple(
+            (int(first), int(stop), int(at) - 1)
+            for (first, at), stop in zip(runs, stops, strict=True)
+        )
+
+    def producing_position(self, raw_index: int) -> int:
+        """Where row ``raw_index`` of ``raw_ids`` is produced (its input is
+        the token before it)."""
+        row = int(raw_index)
+        for first, stop, at in self.spans():
+            if first <= row < stop:
+                return at + row - first
+        raise IndexError(f"row {row} is outside the replayed rows")
+
+
+class _ReplayStop(BaseException):
+    """The last block ran: the replay needs nothing after it."""
+
+
+def _forward(model: nn.Module, ids: torch.Tensor) -> None:
+    try:
+        with torch.inference_mode():
+            model(input_ids=ids, use_cache=False)
+    except _ReplayStop:
+        pass
+
+
+@dataclass(frozen=True)
+class ReplaySegment:
+    """One forward of a replay: positions ``[start, stop)`` under one trigger
+    state (the prompt's ``prefill``, or decode step ``gen_step``: the forward
+    producing raw token ``gen_step``).  ``gate``, when set, scores the probe
+    gates after this forward for the next one (the decode loop's
+    ``score_callback``)."""
+
+    start: int
+    stop: int
+    prefill: bool
+    gen_step: int
+    gate: GateScores | None = field(default=None, compare=False, repr=False)
+
+
+def replay_segments(
+    prompt_length: int, length: int, triggers: Iterable[Trigger], *, can_think: bool,
+    gate: GateScores | None = None,
+) -> tuple[ReplaySegment, ...]:
+    """The forwards that replay ``length`` positions the way generation ran
+    them under ``triggers`` (every open steering term's trigger).
+
+    Generation prefills ``[0, prompt_length)`` in one forward, then decode
+    step ``k`` produces raw token ``k`` at position ``prompt_length + k − 1``.
+    With every trigger ``Trigger.BOTH`` each position is steered alike and
+    one forward over ``[0, length)`` is exact.  Otherwise the prefill is one
+    segment and the decode positions split wherever a trigger's activity
+    changes (``@first:N``, ``@after:N``), each segment evaluated by
+    :meth:`Trigger.active` itself.  A probe gate fires on the generation's
+    live probe scores, which the node does not record: with ``gate`` (the
+    replay's own gate scorer) every decode position is its own forward and
+    the gates read the replay's scores after each one, as the decode loop
+    reads them (joint logprobs' stepwise replay); without it the replay is
+    refused.  Raises :class:`~drowse.errors.SteeringCompositionError` (422)
+    for a probe gate without ``gate`` and, when the family can think
+    (``can_think``), for a thinking-phase window (``@after``, ``@thinking``),
+    whose firing follows the decode loop's thinking state, both only when
+    there is a decode position to replay (``length > prompt_length``): the
+    prefill fires neither.
+    """
+    windowed = list(dict.fromkeys(t for t in triggers if t != Trigger.BOTH))
+    if not windowed:
+        return (ReplaySegment(0, int(length), prefill=False, gen_step=0),)
+    # A replay with no decode position (a prompt token, or raw token 0) is
+    # the prefill alone, where every trigger reads its prompt slot and a
+    # probe gate stays shut (``Trigger.active``): nothing to refuse.
+    decoded = int(length) > int(prompt_length)
+    gated = decoded and any(t.generated and t.gate is not None for t in windowed)
+    phased = decoded and can_think and any(
+        t.generated and t.thinking != t.response for t in windowed
+    )
+    if (gated and gate is None) or phased:
+        what = " and ".join(
+            label for label, present in (
+                ("probe-gated terms (@when:…), which fire on the generation's live "
+                 "probe scores", gated and gate is None),
+                ("thinking-phase terms (@after, @thinking), which fire on the decode "
+                 "loop's thinking state", phased),
+            ) if present
+        )
+        raise SteeringCompositionError(
+            f"the replayed steering has {what}; the node does not record where "
+            "they fired, so a replay cannot reproduce them. Replay without them "
+            "(apply_steering=false drops the node's own steering)."
+        )
+    if gated:
+        prefill_stop = min(int(prompt_length), int(length))
+        stepped: list[ReplaySegment] = []
+        if prefill_stop > 0:
+            stepped.append(ReplaySegment(0, prefill_stop, prefill=True, gen_step=0, gate=gate))
+        stepped.extend(
+            ReplaySegment(
+                position, position + 1, prefill=False,
+                gen_step=position - int(prompt_length) + 1, gate=gate,
+            )
+            for position in range(prefill_stop, int(length))
+        )
+        return tuple(stepped)
+
+    def fires(step: int) -> tuple[bool, ...]:
+        ctx = TriggerContext(gen_step=step)
+        return tuple(t.active(ctx) for t in windowed)
+
+    prefill_stop = min(int(prompt_length), int(length))
+    segments: list[ReplaySegment] = []
+    if prefill_stop > 0:
+        segments.append(ReplaySegment(0, prefill_stop, prefill=True, gen_step=0))
+    start = prefill_stop
+    while start < length:
+        step = start - int(prompt_length) + 1
+        state = fires(step)
+        stop = start + 1
+        while stop < length and fires(stop - int(prompt_length) + 1) == state:
+            stop += 1
+        segments.append(ReplaySegment(start, stop, prefill=False, gen_step=step))
+        start = stop
+    return tuple(segments)
+
+
+class ReplayWindow:
+    """The running forward's span of the replayed positions, read by the taps."""
+
+    __slots__ = ("final", "start", "stop")
+
+    def __init__(self) -> None:
+        self.start = 0
+        self.stop = 0
+        self.final = True
+
+
+def drive_segments(
+    model: nn.Module,
+    ids: torch.Tensor,
+    segments: Sequence[ReplaySegment],
+    ctx: TriggerContext | None,
+    window: ReplayWindow,
+) -> None:
+    """Run ``ids`` through ``segments``, keeping ``window`` on the running one.
+
+    The one rest-state segment (every trigger fires everywhere) is one
+    cacheless forward, the context untouched.  Otherwise each segment, a
+    lone prefill included, runs on one KV cache with the context set as the
+    decode loop sets it (the attention sink in column 0 only from position
+    0; the probe scores a gated segment's predecessor scored), and the
+    context returns to its rest state after.  The taps raise
+    :class:`_ReplayStop` in the last segment only.
+    """
+    if len(segments) == 1 and not segments[0].prefill:
+        segment = segments[0]
+        window.start, window.stop, window.final = segment.start, segment.stop, True
+        _forward(model, ids[:, segment.start:segment.stop])
+        return
+    if ctx is None:
+        raise ValueError("a segmented replay needs the trigger context")
+    keep = logits_keep_kwarg(model)
+    past: Any = None
+    scores: dict[str, float] = {}
+    try:
+        with torch.inference_mode():
+            for i, segment in enumerate(segments):
+                window.start, window.stop = segment.start, segment.stop
+                window.final = i == len(segments) - 1
+                ctx.is_prefill = segment.prefill
+                ctx.thinking = False
+                ctx.gen_step = segment.gen_step
+                ctx.sink_column = 0 if segment.start == 0 else None
+                ctx.probe_scores = scores
+                kwargs: dict[str, Any] = {
+                    "input_ids": ids[:, segment.start:segment.stop], "use_cache": True,
+                }
+                if past is not None:
+                    kwargs["past_key_values"] = past
+                if keep is not None:
+                    kwargs[keep] = 1
+                try:
+                    out = model(**kwargs)
+                except _ReplayStop:
+                    if not window.final:
+                        raise RuntimeError("a replay tap stopped before the last forward") from None
+                    return
+                past = getattr(out, "past_key_values", None)
+                if past is None:
+                    raise RuntimeError(
+                        "the model returned no KV cache; a segmented replay runs on one"
+                    )
+                del out
+                # The decode loop scores the gates after each forward for the
+                # next one; ``gen_step`` is the step identity it threads.
+                scores = segment.gate(segment.gen_step) if segment.gate is not None else {}
+    finally:
+        ctx.reset()
+
+def capture_pooled(
+    model: nn.Module,
+    layers: nn.ModuleList,
+    ids: torch.Tensor,
+    *,
+    layer_indices: Sequence[int],
+    pool_index: int,
+    segments: Sequence[ReplaySegment],
+    ctx: TriggerContext | None,
+) -> dict[int, torch.Tensor]:
+    """The token replay's capture forward: ``ids`` driven through
+    ``segments`` (:func:`drive_segments`), each selected layer's output
+    pooled at ``pool_index`` as an fp32 ``(hidden,)`` copy.
+
+    The hooks register after the open steering's, so they read the steered
+    residual.  ``pool_index`` lies in the last segment; the forward stops at
+    the last selected layer there.
+    """
+    capture_layers = [int(idx) for idx in layer_indices]
+    if not capture_layers:
+        raise ValueError("layer_indices must select at least one layer")
+    terminal = max(capture_layers)
+    pool = int(pool_index)
+    window = ReplayWindow()
+    captured: dict[int, torch.Tensor] = {}
+
+    def hook_for(idx: int) -> Callable[..., None]:
+        def hook(_module: nn.Module, _args: Any, output: Any) -> None:
+            if not window.final or not window.start <= pool < window.stop:
+                return
+            hidden = output if isinstance(output, torch.Tensor) else output[0]
+            captured[idx] = hidden[0, pool - window.start].to(dtype=torch.float32, copy=True)
+            if idx == terminal:
+                raise _ReplayStop()
+        return hook
+
+    handles = [layers[idx].register_forward_hook(hook_for(idx)) for idx in capture_layers]
+    try:
+        drive_segments(getattr(model, "_orig_mod", model), ids, segments, ctx, window)
+    finally:
+        for handle in handles:
+            handle.remove()
+    return captured
 
 
 class TokenReplayer:
@@ -47,8 +356,16 @@ class TokenReplayer:
     - ``tokenizer``: decodes the replayed token's text;
     - ``open_scope``: opens a steering scope for an expression;
     - ``exclusive``: the exclusive-GPU guard;
-    - ``capture``: ``capture(ids, *, layer_indices, pool_index)`` — one
-      capture forward returning ``{layer: (hidden,) fp32}``.
+    - ``capture``: ``capture(ids, *, layer_indices, pool_index, segments,
+      ctx)`` — the capture forward (:func:`capture_pooled` over the model)
+      returning ``{layer: (hidden,) fp32}``;
+    - ``open_triggers``: the triggers of every open steering term (read
+      inside the replay's scope);
+    - ``trigger_context``: the steering's :class:`TriggerContext`, which a
+      segmented replay sets as the decode loop set it;
+    - ``gate_reads``: opens a gate-only capture for the open steering's probe
+      gates and yields its scorer (:data:`GateScores`), so a probe-gated
+      replay steps as generation did.  Without it such a replay is refused.
     """
 
     def __init__(
@@ -61,6 +378,9 @@ class TokenReplayer:
         open_scope: Callable[[str], AbstractContextManager[Any]],
         exclusive: ExclusiveGuard,
         capture: Callable[..., dict[int, torch.Tensor]],
+        open_triggers: Callable[[], Iterable[Trigger]] = tuple,
+        trigger_context: TriggerContext | None = None,
+        gate_reads: Callable[[], AbstractContextManager[GateScores]] | None = None,
     ) -> None:
         self._tree = tree
         self._renderer = renderer
@@ -69,6 +389,19 @@ class TokenReplayer:
         self._open_scope = open_scope
         self._exclusive = exclusive
         self._capture = capture
+        self._open_triggers = open_triggers
+        self._ctx = trigger_context
+        self._gate_reads = gate_reads
+
+    def segments(self, forward: "ReplayForward") -> tuple[ReplaySegment, ...]:
+        """The forwards replaying ``forward`` as the open steering fired
+        during generation (:func:`replay_segments`; inside the replay's
+        scope).  Raises :class:`~drowse.errors.SteeringCompositionError`
+        (422) for a term whose firing the node does not record."""
+        return replay_segments(
+            forward.prompt_length, int(forward.ids.shape[1]), self._open_triggers(),
+            can_think=bool(self._traits.supports_thinking), gate=forward.gate,
+        )
 
     def __call__(
         self,
@@ -95,11 +428,88 @@ class TokenReplayer:
         ``ConcurrentExtractionError`` while another model op is in flight;
         ``label`` prefixes those messages.
         """
-        anchor = resolve_token_anchor(self._tree(), node_id, raw_index, label=label)
+
+        def capture_and_read(forward: ReplayForward) -> T:
+            ids = forward.ids
+            layer_indices = list(layers() if callable(layers) else layers)
+            hidden = self._capture(
+                ids, layer_indices=layer_indices, pool_index=int(ids.shape[1]) - 1,
+                segments=self.segments(forward), ctx=self._ctx,
+            )
+            return read(hidden)
+
+        return self.forward(
+            node_id, raw_index, run=capture_and_read,
+            apply_steering=apply_steering, raw=raw, label=label,
+        )
+
+    def forward(
+        self,
+        node_id: str,
+        raw_index: int,
+        *,
+        run: Callable[[ReplayForward], T],
+        apply_steering: bool = True,
+        raw: bool = False,
+        label: str,
+    ) -> tuple[ReplayedToken, T]:
+        """The producing forward of ``node_id``'s ``raw_index``-th token,
+        run by ``run`` (the rebuild of :meth:`__call__` without its capture).
+
+        ``run`` receives the :class:`ReplayForward` and executes inside the
+        exclusive-GPU section under the node recipe's steering (when
+        ``apply_steering``), exactly where :meth:`__call__` runs its capture;
+        it owns its forward, hooks and reads.  Anchoring a node's last raw
+        token gives the forward that covers every token's producing position.
+
+        Provenance is recipe presence: an authored node's ``raw_index``
+        addresses its captured prompt tokens (thinking rows, then visible
+        rows; :func:`~drowse.loom.ops.resolve_prompt_anchor`), replayed in
+        the render and under the steering its capture recorded, so ``raw``
+        (a generated node's render choice, which it does not record) does
+        not apply.
+        """
+        tree = self._tree()
+        if tree.get(node_id).recipe is None:
+            prompt = resolve_prompt_anchor(tree, node_id, raw_index, label=label)
+            steering = prompt.capture.steering if apply_steering else None
+            return self._run(
+                steering, label=label, run=run, gated=False,
+                ids=lambda: self._prompt_ids(prompt, label=label),
+                raw_ids=prompt.token_ids, raw_index=prompt.index,
+                token_id=prompt.token_id, node_id=node_id, runs=prompt.runs,
+            )
+        anchor = resolve_token_anchor(tree, node_id, raw_index, label=label)
         recipe = anchor.node.recipe
         steering = (
             recipe.steering if (apply_steering and recipe is not None) else None
         )
+        return self._run(
+            steering, label=label, run=run, gated=True,
+            ids=lambda: self._producing_ids(anchor, raw=raw),
+            raw_ids=anchor.raw_ids, raw_index=anchor.raw_index,
+            token_id=anchor.token_id, node_id=node_id,
+        )
+
+    def _run(
+        self,
+        steering: str | None,
+        *,
+        label: str,
+        run: Callable[[ReplayForward], T],
+        gated: bool,
+        ids: Callable[[], torch.Tensor],
+        raw_ids: tuple[int, ...],
+        raw_index: int,
+        token_id: int,
+        node_id: str,
+        runs: tuple[tuple[int, int], ...] | None = None,
+    ) -> tuple[ReplayedToken, T]:
+        """Open ``steering``, take the exclusive-GPU section, build the
+        producing ids there and hand ``run`` the :class:`ReplayForward`
+        (its last ``raw_index`` positions decoded, the rest prompt; an
+        authored turn's ``runs`` place its rows, a generated node's one run
+        starts where its prompt ends)."""
         # The steering scope opens OUTSIDE the exclusive-GPU section: the
         # composer's push/pop take the generation lock blocking, so nesting
         # the scope inside the exclusive guard would self-deadlock.
@@ -112,22 +522,70 @@ class TokenReplayer:
                 # The render uploads the ids to the model's device, which is
                 # device work like the forward's: outside the section it would
                 # share MPS's one command buffer with whatever thread holds it.
-                ids = self._producing_ids(anchor, raw=raw)
-                layer_indices = list(layers() if callable(layers) else layers)
-                hidden = self._capture(
-                    ids, layer_indices=layer_indices, pool_index=ids.shape[1] - 1,
+                producing = ids()
+                decoded = raw_index if gated else 0
+                # A probe-gated steering replays one decode position at a
+                # time, its gates scored by a gate-only capture bound here.
+                stepped = (
+                    decoded > 0 and steering is not None
+                    and self._gate_reads is not None
+                    and any(t.generated and t.gate is not None for t in self._open_triggers())
                 )
-                result = read(hidden)
+                gates = self._gate_reads() if stepped and self._gate_reads else nullcontext(None)
+                prompt_length = int(producing.shape[1]) - decoded
+                with gates as gate:
+                    result = run(ReplayForward(
+                        ids=producing,
+                        prompt_length=prompt_length,
+                        raw_ids=raw_ids,
+                        raw_index=raw_index,
+                        gate=gate,
+                        runs=runs if runs is not None else ((0, prompt_length),),
+                    ))
         return (
             ReplayedToken(
                 node_id=node_id,
-                raw_index=anchor.raw_index,
-                token_id=anchor.token_id,
-                token_text=str(self._tokenizer.decode([anchor.token_id])),
+                raw_index=raw_index,
+                token_id=token_id,
+                token_text=str(self._tokenizer.decode([token_id])),
                 steering=steering,
             ),
             result,
         )
+
+    def _prompt_ids(self, anchor: PromptAnchor, *, label: str) -> torch.Tensor:
+        """The token stream that produced an authored prompt token: the
+        capture's render of the path to the node (its parameters from the
+        anchor, without a generation prompt) up to the token's channel,
+        checked against the anchor's digest, then the channel's tokens
+        before it from the node's rows.  An earlier turn edited since the
+        capture (or a template that renders the turn otherwise when it is
+        the last) fails the check, and the replay refuses rather than read
+        another prompt."""
+        capture = anchor.capture
+        rendered = self._renderer.prepare_input(
+            None,
+            raw=capture.raw,
+            thinking=capture.thinking,
+            parent_node_id=anchor.node.id,
+            system_prompt=capture.system_prompt,
+            add_generation_prompt=False,
+        )
+        head = capture.head_length
+        if int(rendered.shape[1]) < head or prompt_digest(
+            rendered[0, :head].tolist(),
+        ) != capture.digest:
+            raise InvalidNodeOperationError(
+                f"{label}: the prompt {anchor.node.id!r} was measured in no longer "
+                f"renders the same (an earlier turn changed since), so its tokens "
+                f"cannot be replayed"
+            )
+        ids = rendered[:, :anchor.channel_start]
+        prefix = anchor.channel_prefix
+        if not prefix:
+            return ids
+        tail = torch.tensor([prefix], dtype=ids.dtype, device=ids.device)
+        return torch.cat([ids, tail], dim=1)
 
     def _producing_ids(self, anchor: TokenAnchor, *, raw: bool) -> torch.Tensor:
         """The token stream the producing forward saw: the node's prompt
@@ -169,4 +627,13 @@ class TokenReplayer:
         return torch.cat([prompt_ids, prefix], dim=1)
 
 
-__all__ = ["TokenReplayer"]
+__all__ = [
+    "GateScores",
+    "ReplayForward",
+    "ReplaySegment",
+    "ReplayWindow",
+    "TokenReplayer",
+    "capture_pooled",
+    "drive_segments",
+    "replay_segments",
+]

@@ -56,8 +56,11 @@ def memory_gb(device: str) -> float:
         # on `is_available()` mirrors the cuda branch and keeps the older
         # `AttributeError` swallow as a belt-and-suspenders fallback for
         # very old torch builds.
+        # The driver's figure, not ``current_allocated_memory()``: weights
+        # loaded memory-mapped live in driver allocations the tensor
+        # allocator does not count (Qwen3-8B read 0.0 GB beside 16.4 GB).
         try:
-            return round(torch.mps.current_allocated_memory() / 1024**3, 2)
+            return round(torch.mps.driver_allocated_memory() / 1024**3, 2)
         except (AttributeError, RuntimeError):
             return 0.0
     return 0.0

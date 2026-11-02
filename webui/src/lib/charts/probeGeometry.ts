@@ -10,15 +10,16 @@
 // Every case overlays the fading trajectory trail (oldest faint -> newest
 // bright) and the current hidden-state point.
 //
-// **Camera (rank >= 3).**  The scale is derived ONCE from the static framing
-// set (nodes + neutral + overlay) and is rotation-invariant — the orbit is a
-// rigid rotation about the neutral anchor (the whitened origin), so neutral
-// sits at the plot center and the cloud's radius never changes as you drag.
-// This is what fixes the old "zooms while I rotate" bug: the
-// previous code rescaled every frame from the 2D silhouette of the rotated
-// cloud (smaller edge-on, larger broadside), and it also let a moving live
-// point rescale the whole scatter.  Zoom is now an explicit user control
-// (``orbit.zoom``, driven by the scroll wheel), never an artifact of rotation.
+// **Camera (rank >= 3).**  The orbit is a rigid rotation about the centre of
+// everything drawn (the 3-D bounding box of the nodes, neutral, the overlay,
+// the current reading and its trail), and the scale is the radius of the
+// sphere about that centre, so it is rotation-invariant: the cloud's radius
+// never changes as you drag.  This is what fixes the old "zooms while I
+// rotate" bug: the previous code rescaled every frame from the 2D silhouette
+// of the rotated cloud (smaller edge-on, larger broadside).  A reading inside
+// the box moves nothing; one outside it widens the frame rather than leaving
+// the plot.  Zoom is an explicit user control (``orbit.zoom``, driven by the
+// scroll wheel), never an artifact of rotation.
 
 import type { ProbeLayerGeometry } from "../types";
 
@@ -64,9 +65,8 @@ interface Palette {
   accent: string;
   purple: string;
   bg: string;
-  /** Node centroids — the probe's FAMILY hue (subspace white / manifold
-   *  violet), supplied by the host via ``--geom-node`` so the plot obeys
-   *  the hue ontology instead of hardcoding a color. */
+  /** Node centroids: the probe's depth colour, supplied by the host via
+   *  ``--geom-node`` so the plot draws on the ramp instead of a fixed colour. */
   node: string;
   /** Neutral anchor — hollow grey ring (achromatic: neutral is the
    *  absence of concept, so it carries no hue). */
@@ -84,25 +84,35 @@ function readPalette(el: HTMLElement): Palette {
     return got || fallback;
   };
   return {
-    fg: v("--fg-strong"),
-    fgDim: v("--fg-dim"),
-    muted: v("--fg-muted"),
-    border: v("--glass-line"),
-    accent: v("--accent"),
-    purple: v("--pillar-manifold"),
-    bg: v("--bg-deep"),
-    node: v("--geom-node", v("--pillar-manifold")),
-    neutral: v("--geom-neutral", v("--fg-subtle")),
-    live: v("--live"),
-    light: v("--accent-light"),
+    fg: v("--ink"),
+    fgDim: v("--ink2"),
+    muted: v("--ink3"),
+    border: v("--wash2"),
+    accent: v("--ink"),
+    purple: v("--tint"),
+    bg: v("--wash"),
+    node: v("--geom-node", v("--tint")),
+    neutral: v("--geom-neutral", v("--ink3")),
+    live: v("--tint"),
+    light: v("--paper"),
   };
 }
 
-/** Canvas font strings match the data voice used by the surrounding UI. */
-const FONT_LABEL = '560 10px "Martian Mono", ui-monospace, monospace';
-const FONT_AXIS = '560 9px "Martian Mono", ui-monospace, monospace';
+/** Canvas font strings: Ledger's one family, at the meta weight. */
+const FONT_LABEL = '500 11px "Wix Madefor Text", system-ui, sans-serif';
+const FONT_AXIS = '500 10px "Wix Madefor Text", system-ui, sans-serif';
 
 const PAD = 28;
+/** The rank-3 reference triad's reach past the farthest framed point; the base scale fits it in
+ *  the PAD box, so a node label (11px above its dot) and a triad name stay on the canvas. */
+const AXIS_REACH = 1.1;
+/** The gap between a triad axis's end and its name, and the name's line height (``FONT_AXIS``). */
+const AXIS_LABEL_GAP = 6;
+const AXIS_LABEL_HEIGHT = 11;
+/** How far a drawn point keeps from a triad name (a dot's radius and a little air). */
+const AXIS_LABEL_CLEAR = 6;
+/** The rank-3 view's opening zoom: fit, with everything drawn centred and inside. */
+export const DEFAULT_ORBIT_ZOOM = 1;
 
 /** Reset transform, size for devicePixelRatio, clear. */
 function prep(
@@ -217,10 +227,39 @@ function label(
   ctx.globalAlpha = 0.9;
   ctx.fillStyle = color;
   ctx.font = FONT_LABEL;
+  ctx.fillText(text, labelBox(ctx, x, y, text, width)[0], y - 4);
+  ctx.globalAlpha = 1;
+}
+
+/** Where ``label`` draws ``text`` for a dot at ``(x, y)``: ``[left, top, right, bottom]`` (the
+ *  11px label's line box, beside the dot and moved inward before it would clip). */
+function labelBox(ctx: CanvasRenderingContext2D, x: number, y: number, text: string, width: number): [number, number, number, number] {
+  ctx.font = FONT_LABEL;
   const textWidth = ctx.measureText(text).width;
   const labelX = x + 5 + textWidth <= width - 8 ? x + 5 : Math.max(8, x - 5 - textWidth);
-  ctx.fillText(text, labelX, y - 4);
-  ctx.globalAlpha = 1;
+  return [labelX, y - 15, labelX + textWidth, y - 1];
+}
+
+/** The labels a scatter can draw without two overlapping: nearest first (``order`` runs far to
+ *  near), each one whose box meets an already placed label's left out (its dot stays, and its name
+ *  shows on hover). */
+function placedLabels(
+  ctx: CanvasRenderingContext2D,
+  order: readonly number[],
+  at: (i: number) => [number, number],
+  text: (i: number) => string,
+  width: number,
+): Set<number> {
+  const boxes: Array<[number, number, number, number]> = [];
+  const kept = new Set<number>();
+  for (const i of [...order].reverse()) {
+    const [x, y] = at(i);
+    const box = labelBox(ctx, x, y, text(i), width);
+    if (boxes.some(b => box[0] < b[2] + 2 && b[0] < box[2] + 2 && box[1] < b[3] && b[1] < box[3])) continue;
+    boxes.push(box);
+    kept.add(i);
+  }
+  return kept;
 }
 
 /** Polyline with a per-vertex opacity ramp (oldest faint -> newest bright). */
@@ -485,6 +524,20 @@ interface Projected {
   z: number;
 }
 
+/** The centre of the axis-aligned box around ``points`` (the origin when there are none). */
+function boxCentre(points: Vec3[]): Vec3 {
+  if (points.length === 0) return [0, 0, 0];
+  const lo: Vec3 = [Infinity, Infinity, Infinity];
+  const hi: Vec3 = [-Infinity, -Infinity, -Infinity];
+  for (const p of points) {
+    for (let k = 0; k < 3; k++) {
+      if (p[k] < lo[k]) lo[k] = p[k];
+      if (p[k] > hi[k]) hi[k] = p[k];
+    }
+  }
+  return [(lo[0] + hi[0]) / 2, (lo[1] + hi[1]) / 2, (lo[2] + hi[2]) / 2];
+}
+
 function drawRank3(
   ctx: CanvasRenderingContext2D,
   w: number,
@@ -500,28 +553,33 @@ function drawRank3(
   const q = orbit.q;
   const zoom = orbit.zoom || 1;
 
-  // Static PCA-3D coords (independent of the orbit) for the framing set.
+  // PCA-3D coords (independent of the orbit) of everything drawn.
   const nodePca = geom.node_white.map((p) => projectPca3(p, rot));
   const neutralPca = projectPca3(geom.neutral_white, rot);
   const overlayPca = (geom.overlay?.points ?? []).map((p) => projectPca3(p, rot));
+  const trailPca = trail.map((p) => projectPca3(p, rot));
+  const livePca = live ? projectPca3(live, rot) : null;
+  const drawn = [...nodePca, neutralPca, ...overlayPca, ...trailPca, ...(livePca ? [livePca] : [])];
 
-  // Pivot = the neutral anchor (the whitened origin), so neutral sits at the
-  // plot center and the cloud shows its real displacement from neutral.  Still
-  // a fixed pivot, so the rotation-invariant base scale below is preserved (the
-  // backend's ``node_coords`` layout is neutral-anchored to match — both
-  // surfaces share neutral as their origin).
-  const C: Vec3 = neutralPca;
+  // Pivot = the centre of the box around everything drawn (a ring off to one side of neutral, the
+  // months, sat in one corner when the pivot was neutral).  The box's centre rather than the
+  // centroid: a reading inside the box moves nothing, so the cloud holds still while a reply
+  // streams.
+  const C = boxCentre(drawn);
 
-  // Rotation-invariant radius over the static framing set → fixed base scale.
+  // Rotation-invariant radius about the pivot → fixed base scale.  At zoom 1
+  // (``DEFAULT_ORBIT_ZOOM``) the reference triad's ends (``AXIS_REACH`` past the
+  // farthest point) land on the PAD box, so every point — the farthest one too, in
+  // any orientation — sits inside it with PAD left for its label.
   let rho = 0;
-  for (const p of [...nodePca, neutralPca, ...overlayPca]) {
+  for (const p of drawn) {
     const d = Math.hypot(p[0] - C[0], p[1] - C[1], p[2] - C[2]);
     if (d > rho) rho = d;
   }
   rho = rho || 1;
   const iw = w - 2 * PAD;
   const ih = h - 2 * PAD;
-  const scale = (Math.min(iw, ih) / 2 / rho) * zoom;
+  const scale = (Math.min(iw, ih) / 2 / (rho * AXIS_REACH)) * zoom;
   const ox = w / 2;
   const oy = h / 2;
 
@@ -534,8 +592,8 @@ function drawRank3(
   const neutral3 = project(neutralPca);
   hits.push({ screen: neutral3.s, label: "neutral", point: geom.neutral_white });
   const overlay3 = overlayPca.map(project);
-  const trail3 = trail.map((p) => project(projectPca3(p, rot)));
-  const live3 = live ? project(projectPca3(live, rot)) : null;
+  const trail3 = trailPca.map(project);
+  const live3 = livePca ? project(livePca) : null;
 
   // depth normalization for size/alpha cueing (from the node cloud)
   let zmin = Infinity;
@@ -547,10 +605,11 @@ function drawRank3(
   const zspan = zmax - zmin || 1;
   const depth01 = (z: number): number => (z - zmin) / zspan;
 
-  // PC1/PC2/PC3 reference triad through neutral (behind everything),
+  // PC1/PC2/PC3 reference triad through the pivot (behind everything),
   // rotating rigidly with the cloud so orientation is always readable.
   {
-    const axLen = rho * 1.1;
+    const drawnScreen = [neutral3, ...node3, ...trail3, ...(live3 ? [live3] : [])].map((p) => p.s);
+    const axLen = rho * AXIS_REACH;
     const triad: Array<{ dir: Vec3; name: string }> = [
       { dir: [1, 0, 0], name: "PC1" },
       { dir: [0, 1, 0], name: "PC2" },
@@ -577,7 +636,28 @@ function drawRank3(
       ctx.globalAlpha = 0.7;
       ctx.fillStyle = pal.muted;
       ctx.font = FONT_AXIS;
-      ctx.fillText(name, pos.s[0] + 3, pos.s[1] - 2);
+      // The name sits just past the axis's end, its box running away from the pivot, unless a
+      // drawn point (the neutral ring on PC2 in the months view) would sit under it: then it moves
+      // out along the axis's direction on screen to the reach of the whole cloud (every point lies
+      // within ``rho`` of the pivot), where nothing is drawn. Clamped to the canvas.
+      const run = Math.hypot(pos.s[0] - ox, pos.s[1] - oy);
+      const ux = run > 1e-6 ? (pos.s[0] - ox) / run : Math.SQRT1_2;
+      const uy = run > 1e-6 ? (pos.s[1] - oy) / run : -Math.SQRT1_2;
+      const tw = ctx.measureText(name).width;
+      const boxAt = (reach: number): [number, number] => {
+        const ax = ox + ux * (reach + AXIS_LABEL_GAP);
+        const ay = oy + uy * (reach + AXIS_LABEL_GAP);
+        return [
+          Math.max(2, Math.min(w - 2 - tw, ux >= 0 ? ax : ax - tw)),
+          Math.max(AXIS_LABEL_HEIGHT + 1, Math.min(h - 2, uy <= 0 ? ay : ay + AXIS_LABEL_HEIGHT)),
+        ];
+      };
+      const covers = ([tx, ty]: [number, number]): boolean => drawnScreen.some(([x, y]) =>
+        x >= tx - AXIS_LABEL_CLEAR && x <= tx + tw + AXIS_LABEL_CLEAR
+        && y >= ty - AXIS_LABEL_HEIGHT - AXIS_LABEL_CLEAR && y <= ty + AXIS_LABEL_CLEAR);
+      const atEnd = boxAt(run);
+      const [tx, ty] = covers(atEnd) ? boxAt(Math.max(run, rho * AXIS_REACH * scale)) : atEnd;
+      ctx.fillText(name, tx, ty);
     }
     ctx.globalAlpha = 1;
   }
@@ -633,16 +713,21 @@ function drawRank3(
     ctx.stroke();
   }
 
-  // nodes — painter's algorithm (far first), depth-cued size + alpha
+  // nodes — painter's algorithm (far first), depth-cued size + alpha; the front half's labels,
+  // nearest first, without two overlapping
   const order = node3
     .map((p, i) => ({ i, z: p.z }))
     .sort((a, c) => a.z - c.z);
+  const labelled = placedLabels(
+    ctx, order.map(({ i }) => i).filter((i) => depth01(node3[i].z) > 0.55),
+    (i) => node3[i].s, nodeLabel, w,
+  );
   for (const { i } of order) {
     const p = node3[i];
     hits.push({ screen: p.s, label: nodeLabel(i), point: geom.node_white[i] });
     const d = depth01(p.z);
     dot(ctx, p.s[0], p.s[1], 2.5 + 2.5 * d, pal.node, 0.4 + 0.6 * d);
-    if (d > 0.55) label(ctx, p.s[0], p.s[1], nodeLabel(i), pal.fgDim, w);
+    if (labelled.has(i)) label(ctx, p.s[0], p.s[1], nodeLabel(i), pal.fgDim, w);
   }
 
   // trail + live (always on top)

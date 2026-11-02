@@ -75,7 +75,7 @@ What it does:
 - Pydantic validates protocol request bodies; native request models reject unknown
   fields.
 - Installed manifold payloads and Drowse-owned fitted artifacts are checked
-  against their declared SHA-256 digests before use; external J-lens/SAE sources
+  against their declared SHA-256 digests before use; external lens/SAE sources
   are commit- or release-pinned through local bindings.
 
 What it does not do:
@@ -109,7 +109,7 @@ on these paths; fetching metadata must not execute repository Python.
 `drowse pack install <owner>/<name>` verifies files declared by the manifold's
 `manifold.json` integrity map, but integrity is not authorship or safety. Manifold
 metadata and corpora remain untrusted input; install only from publishers you
-trust. Provider-owned J-lens and SAE payloads remain in their provider cache and
+trust. Provider-owned lens and SAE payloads remain in their provider cache and
 are pinned through local bindings.
 
 ## Local state and conversation imports

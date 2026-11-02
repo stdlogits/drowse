@@ -30,6 +30,18 @@ def test_websocket_done_reports_applied_steering(expression: str | None):
     assert result_to_json(result)["applied_steering"] == expression
 
 
+def test_websocket_done_reports_the_engine_timing() -> None:
+    """Regression: the status line measured the rate from frame arrivals, so a page that read
+    slower than the model wrote (a resync) showed its own reading rate; done now carries the
+    engine's."""
+    from drowse.generation.results import GenerationResult
+    from drowse.server.ws_models import result_to_json
+
+    result = GenerationResult(text="Hi", tokens=[1], token_count=1024, tok_per_sec=66.5, elapsed=15.4)
+    payload = result_to_json(result)
+    assert (payload["tok_per_sec"], payload["elapsed"]) == (66.5, 15.4)
+
+
 class TestNormalizeStop:
     def test_none_passes_through(self) -> None:
         assert normalize_stop(None) is None

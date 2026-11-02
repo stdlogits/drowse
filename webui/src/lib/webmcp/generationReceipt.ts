@@ -68,7 +68,8 @@ export function awaitGenerationReceipt(options: {
     };
     const receive = (event: WSServerMessage) => {
       if (event.type === "error" && !event.request_id && [
-        "RUNTIME_CHANNEL_CLOSED", "EVENT_SEQUENCE_GAP", "TREE_RESYNC_FAILED", "RUNTIME_WORKER_FAILED",
+        "RUNTIME_CHANNEL_CLOSED", "RUNTIME_CONNECTION_LOST", "EVENT_SEQUENCE_GAP", "TREE_RESYNC_FAILED",
+        "RUNTIME_WORKER_FAILED",
       ].includes(event.code ?? "")) {
         void checkStatus();
         return;

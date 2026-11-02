@@ -8,7 +8,8 @@ import { refreshLoomTree } from "./loom.svelte";
 import { loadPersistedPreferences } from "./persistence.svelte";
 import { refreshProbeList } from "./probes.svelte";
 import { refreshSession, sessionState } from "./session.svelte";
-import { refreshManifoldList, refreshVectorList, steerRack } from "./steering.svelte";
+import { applyRecipe, refreshManifoldList, refreshVectorList, steerRack } from "./steering.svelte";
+import { ensureRuntimeChannel } from "./ws.svelte";
 
 /** Bootstrap the dashboard — call once on App mount.  Resolves only once
  * every parallel fetch settles so the UI's first paint has a real session
@@ -18,22 +19,31 @@ export async function bootstrap(): Promise<void> {
   // (it's scoped by model_id), so we serialize that step.  The other
   // refreshes parallelize as before.
   await refreshSession();
-  if (steerRack.customExpression === null && steerRack.entries.size === 0) {
-    steerRack.customExpression = sessionState.info?.default_steering ?? null;
-  }
+  // The command line's default recipe (``drowse serve -S``), applied once the manifold catalog is
+  // here so it can become chips.
+  const defaultRecipe = steerRack.readOnlyRecipe === null && steerRack.entries.size === 0
+    ? sessionState.info?.default_steering ?? null
+    : null;
   // Restore presentation preferences before attaching the persist effect so
   // we do not immediately overwrite them.  The tree always comes from the
   // authoritative server fetch below.
   loadPersistedPreferences();
   // Per-model render-mode override (base vs chat) — also model-scoped.
   loadGenUiMode();
-  await Promise.allSettled([
-    refreshVectorList(),
-    // Unified probe roster — every probe shape.
-    refreshProbeList(),
-    // Current manifold catalog.
-    refreshManifoldList(),
-    // Server tree wins — fetch and reconcile; failures remain visible.
-    refreshLoomTree(),
-  ]);
+  try {
+    // Opening the channel rehydrates: the authoritative tree, then the profiles, the probe roster
+    // and the manifold catalog. Doing it here (rather than fetching them and then opening the
+    // channel, which fetched them all again) reads each once per load.
+    await ensureRuntimeChannel({ sessionFresh: true });
+  } catch {
+    // The channel could not open (its failure is already shown); read everything once so the page
+    // still opens. The send paths reopen the channel on demand.
+    await Promise.allSettled([
+      refreshVectorList(),
+      refreshProbeList(),
+      refreshManifoldList(),
+      refreshLoomTree(),
+    ]);
+  }
+  if (defaultRecipe && steerRack.readOnlyRecipe === null && steerRack.entries.size === 0) applyRecipe(defaultRecipe);
 }

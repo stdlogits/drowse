@@ -58,7 +58,9 @@ SCHEMA_RENAMES: dict[str, str] = {
     "GeometryChannel": "GeometryInstrumentJSON",
     "LensChannel": "LensInstrumentJSON",
     "SaeChannel": "SaeInstrumentJSON",
+    "UnitsChannel": "UnitsInstrumentJSON",
     "MeasurementBinding": "MeasurementBindingJSON",
+    "LensBinding": "LensBindingJSON",
     "LensReadout": "LensReadoutBlockJSON",
     "LensReadoutLayer": "LensReadoutLayerJSON",
     "LensReadoutToken": "LensReadoutTokenJSON",
@@ -90,6 +92,9 @@ PROPERTY_OVERRIDES: dict[tuple[str, str], str] = {
     # An unfitted discover probe has no geometry yet, so its domain is the
     # empty object rather than a tagged member of the union.
     ("GeometryProbeInfo", "domain"): "ManifoldDomain | Record<string, never>",
+    # The replay sits below the server, so it carries the catalog label as a
+    # plain dict; on the wire it is the unit views' label.
+    ("ActivityPeak", "label"): "UnitLabelJSON | null",
 }
 
 #: Names the overrides pull back in from the hand-written module.  The import

@@ -1,0 +1,149 @@
+/* The dashboard's own parts, drawn in Ledger (the package supplies the tokens, faces, base styles
+ * and pieces; this file supplies the shell and workbench classes the ratified canvas draws with:
+ * the header, the three regions, the thread's rows, the reading column, the recipe chips over the
+ * composer and the inspector's sections). Flat and borderless; the one accent is --tint, set per
+ * depth by whoever draws a layer, and it only fills. */
+
+:root {
+  /* The wordmark's face: Display 600 at 20/28 (Ledger's type ladder has no mark size). */
+  --type-mark: 600 20px/28px var(--display);
+  /* A field's fill: a wash on paper. A wash surface that holds fields sets these to wash2 and
+   * paper, so its fields still read as fields (the form primitives fill with them). */
+  --field: var(--wash);
+  --field-hover: var(--wash2);
+}
+/* The wash surfaces that hold fields: the composer, an empty state, the phone's inspector sheet
+ * (Workbench) and the composer's role plan (Chat). */
+.dw-compose, .dw-empty, .sheet, .turn-plan { --field: var(--wash2); --field-hover: var(--paper); }
+
+/* ---------- the header */
+
+.dw-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s6); padding: var(--s4) var(--s6); }
+.dw-mark { color: var(--ink); font: var(--type-mark); letter-spacing: -0.02em; }
+.dw-top-end { display: flex; align-items: center; gap: var(--s2); margin-left: auto; }
+.dw-model { display: inline-flex; align-items: center; gap: var(--s2); min-width: 0; height: 36px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-control); cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+.dw-model:hover, .dw-model[aria-current="page"] { background: var(--wash2); }
+.dw-model:active { scale: 0.97; }
+.dw-model .meta { color: var(--ink3); }
+.dw-model-name { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+
+/* ---------- the workbench: Thread | Page | Inspector on paper, wrapping at narrow widths */
+
+.dw-main { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--s7); padding: var(--s4) var(--s6) var(--s8); }
+.dw-thread { flex: 0 1 200px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s4); }
+.dw-page { flex: 999 1 520px; min-width: 0; max-width: 720px; display: grid; gap: var(--s6); }
+.dw-insp { flex: 1 1 360px; max-width: 520px; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s7); align-content: start; }
+
+/* ---------- the thread: the loom as the path you are on */
+
+.dw-thread-name { min-width: 0; color: var(--ink); font: var(--type-control); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+.dw-sec-head > .meta { flex: none; white-space: nowrap; }
+.dw-nodes { display: grid; gap: 2px; }
+.dw-nodeRow { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: var(--s2); align-items: start; width: 100%; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-box); background: transparent; color: var(--ink2); font: var(--type-small); text-align: left; cursor: pointer; transition: background-color var(--fast) var(--ease); }
+.dw-nodeRow:hover { background: var(--wash); }
+.dw-nodeRow[aria-current="true"] { background: var(--wash2); color: var(--ink); }
+.dw-nodeRow .dw-snip { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.dw-nodeRow .meta { display: block; margin-top: 2px; }
+.dw-pip { width: 6px; height: 6px; margin: 7px 3px; border-radius: 50%; background: var(--ink3); }
+.dw-pip.is-model { background: var(--ink); }
+.dw-indent { margin-left: var(--s4); width: calc(100% - var(--s4)); }
+
+/* ---------- the page: the conversation as one reading column */
+
+.dw-turn { display: grid; gap: var(--s2); min-width: 0; }
+.dw-seat { color: var(--ink3); font: var(--type-meta); }
+.dw-user { justify-self: end; max-width: 88%; margin: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink); white-space: pre-wrap; overflow-wrap: anywhere; }
+.dw-said { margin: 0; color: var(--ink); font: var(--type-body); line-height: 32px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.dw-under { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); color: var(--ink3); font: var(--type-meta); }
+/* The tint key: the swatch and what the words are coloured by. */
+.dw-tintkey { position: relative; display: inline-flex; align-items: center; gap: var(--s2); padding: 0; border: 0; background: transparent; color: var(--ink2); font: var(--type-meta); cursor: pointer; transition: color var(--fast) var(--ease); }
+.dw-tintkey:hover, .dw-tintkey[aria-expanded="true"] { color: var(--ink); }
+.dw-swatch { flex: none; width: 24px; height: 8px; border-radius: 2px; background: linear-gradient(90deg, color-mix(in oklch, var(--tint) 5%, transparent), color-mix(in oklch, var(--tint) 22%, transparent)); }
+
+/* ---------- the recipe: steering terms as chips, right above the composer */
+
+.dw-recipe { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); min-width: 0; }
+.dw-term { display: inline-flex; align-items: center; gap: var(--s2); max-width: 100%; height: 36px; padding: 0 var(--s3) 0 var(--s1); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-control); white-space: nowrap; cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease), opacity var(--fast) var(--ease); }
+.dw-term:hover, .dw-term[aria-pressed="true"] { background: var(--wash2); }
+.dw-term:active { scale: 0.97; }
+.dw-term.is-off { opacity: 0.45; }
+.dw-term .meta { color: var(--ink3); }
+.dw-term-name { overflow: hidden; text-overflow: ellipsis; }
+.dw-alpha { display: grid; place-items: center; min-width: 44px; height: 28px; padding: 0 var(--s2); border-radius: var(--r-pill); background: var(--paper); color: var(--ink); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+.dw-span { position: relative; flex: none; width: 48px; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
+.dw-term:hover .dw-span, .dw-term[aria-pressed="true"] .dw-span { background: var(--paper); }
+.dw-span > i { position: absolute; top: 0; bottom: 0; border-radius: 2px; }
+.dw-add { height: 36px; padding: 0 var(--s3); border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease); }
+.dw-add:hover, .dw-add[aria-expanded="true"] { color: var(--ink); background: var(--wash); }
+
+.dw-compose { display: grid; gap: var(--s2); padding: var(--s3) var(--s3) var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+.dw-compose textarea { min-height: 48px; padding: var(--s1) 0 0; border: 0; outline: 0; resize: none; background: transparent; color: var(--ink); font: var(--type-body); }
+.dw-compose textarea::placeholder { color: var(--ink3); }
+.dw-compose-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+.dw-sampling { margin-right: auto; padding: 0; border: 0; background: transparent; color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; text-align: left; cursor: pointer; transition: color var(--fast) var(--ease); }
+.dw-sampling:hover { color: var(--ink); }
+
+/* ---------- the inspector: whatever is selected */
+
+.dw-crumbs { display: flex; align-items: center; gap: var(--s2); min-height: 36px; color: var(--ink3); font: var(--type-control); }
+.dw-crumbs button { padding: 0; border: 0; background: transparent; color: var(--ink3); font: inherit; cursor: pointer; transition: color var(--fast) var(--ease); }
+.dw-crumbs button:hover { color: var(--ink); }
+.dw-crumbs .dw-here { color: var(--ink); }
+.dw-crumbs-end { margin-left: auto; }
+.dw-title { margin: 0; color: var(--ink); font: var(--type-heading); letter-spacing: -0.02em; overflow-wrap: anywhere; }
+.dw-ws { color: var(--ink3); }
+.dw-facts { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s4); color: var(--ink3); font: var(--type-meta); font-variant-numeric: tabular-nums; }
+.dw-facts b { color: var(--ink); font-weight: 500; }
+.dw-sec { display: grid; gap: var(--s3); min-width: 0; }
+.dw-sec-head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--s4); min-width: 0; }
+.dw-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+
+/* ---------- the plain buttons: one filled, one quiet on a wash, one text only */
+
+.dw-button { display: inline-flex; align-items: center; justify-content: center; gap: var(--s2); height: 36px; padding: 0 var(--s5); border: 0; border-radius: var(--r-pill); background: var(--ink); color: var(--paper); font: var(--type-control); white-space: nowrap; cursor: pointer; transition: opacity var(--fast) var(--ease), scale var(--fast) var(--ease); }
+.dw-button:hover:not(:disabled) { opacity: 0.86; }
+.dw-button:active:not(:disabled) { scale: 0.97; }
+.dw-button:disabled { opacity: 0.4; cursor: default; }
+.dw-quiet { display: inline-flex; align-items: center; gap: var(--s2); height: 36px; padding: 0 var(--s4); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-control); white-space: nowrap; cursor: pointer; transition: background-color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+.dw-quiet:hover:not(:disabled), .dw-quiet[aria-pressed="true"] { background: var(--wash2); }
+.dw-quiet:active:not(:disabled) { scale: 0.97; }
+.dw-quiet:disabled { opacity: 0.4; cursor: default; }
+.dw-text { padding: 0; border: 0; background: transparent; color: var(--ink3); font: var(--type-control); cursor: pointer; transition: color var(--fast) var(--ease); }
+.dw-text:hover:not(:disabled), .dw-text[aria-pressed="true"] { color: var(--ink); }
+.dw-text:disabled { opacity: 0.4; cursor: default; }
+
+/* ---------- a room: its sections as tabs, then the section */
+
+.dw-room { display: grid; gap: var(--s6); min-width: 0; padding: var(--s4) var(--s6) var(--s8); }
+.dw-room-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s5); }
+.dw-empty { display: grid; gap: var(--s3); justify-items: start; max-width: 520px; padding: var(--s6); border-radius: var(--r-row); background: var(--wash); }
+.dw-empty p { color: var(--ink2); font: var(--type-small); }
+/* On a wash, the pieces that sit on a wash step up to wash2. */
+.dw-empty .dw-quiet { background: var(--wash2); }
+.dw-blocks { display: grid; gap: var(--s3); }
+.dw-blocks > i { display: block; height: 44px; border-radius: var(--r-box); background: var(--wash); }
+
+@media (max-width: 720px) {
+  .dw-top, .dw-main, .dw-room { padding-left: var(--s4); padding-right: var(--s4); }
+  .dw-main { gap: var(--s6); }
+
+  /* Phone sizes (the Phone canvas): every target 44 px. A small text button keeps a 44 px target
+   * without growing its row. */
+  .dw-top button.icon, .dw-crumbs button.icon { width: 44px; height: 44px; }
+  .dw-quiet, .dw-term, .dw-add, .dw-model, .dw-button { height: 44px; }
+  .dw-term .dw-alpha { height: 36px; }
+  .dw-sampling { min-height: 44px; }
+  .dw-crumbs button:not(.icon), .dw-compose .dw-text, .dw-tintkey { position: relative; }
+  .dw-crumbs button:not(.icon)::after, .dw-compose .dw-text::after, .dw-tintkey::after { content: ""; position: absolute; inset: -14px -8px; width: auto; height: auto; translate: none; }
+}
+
+/* Touch (the Phone canvas: every target 44 px). A text button, a segmented option, a tab and the
+ * mark keep their size and layout and gain a 44 px target: an invisible extension centred on them.
+ * Dense depth strips and atlas columns stay as drawn (their presets and rows are the touch path). */
+@media (max-width: 720px), (pointer: coarse) {
+  :where(.dw-text, .dw-mark, .seg button, [role="tab"]) { position: relative; }
+  :where(.dw-text, .dw-mark, .seg button, [role="tab"])::after {
+    content: ""; position: absolute; left: 50%; top: 50%;
+    width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%;
+  }
+}

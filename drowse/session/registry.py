@@ -17,7 +17,10 @@ a method here, so the dependent caches move with it:
   drop the monitor probes that read them.  That covers the loaded manifolds
   and the probe folds handed out by :meth:`ArtifactRegistry.fold_probe`;
 - lazy loads (``ensure_manifold_loaded`` / ``ensure_profile_registered``)
-  memoize what is already on disk and fire nothing.
+  memoize what is already on disk and fire nothing.  A miss runs in the
+  exclusive-GPU section (the load uploads to the device, and an atom
+  resolver may read the model), so it refuses rather than races a model op
+  on another thread; a caller that already holds the section re-enters it.
 
 Loading validates a fitted tensor against the live weights and capture inputs
 before it is admitted, and ``concretize_key`` pins a bare ``:sae`` / ``:role``
@@ -29,6 +32,7 @@ import json
 import threading
 import weakref
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
@@ -36,6 +40,7 @@ from typing import Any
 
 import torch
 
+from drowse.base.exclusive import ExclusiveGuard
 from drowse.errors import ManifoldNotRegisteredError, ProfileNotRegisteredError
 from drowse.geometry.fold import folded_directions, is_foldable_vector_manifold
 from drowse.geometry.manifold import Manifold
@@ -105,8 +110,11 @@ def artifact_key_matches(
 class ArtifactRegistry:
     """In-memory profiles and manifolds for one loaded model."""
 
-    def __init__(self, binding: ModelBinding) -> None:
+    def __init__(self, binding: ModelBinding, *, exclusive: ExclusiveGuard | None = None) -> None:
         self._binding = binding
+        # The exclusive-GPU section a lazy load runs in (``None``: no model
+        # shares this registry, as in offline tools).
+        self._exclusive = exclusive
         self._profiles: dict[str, Tensors] = {}
         self._manifolds: dict[str, Manifold] = {}
         self._on_swap: list[Callable[[Swaps], None]] = []
@@ -449,6 +457,21 @@ class ArtifactRegistry:
         loaded = self._manifolds.get(key)
         if loaded is not None:
             return loaded
+        with self._section(f"loading manifold '{key}'"):
+            loaded = self._manifolds.get(key)
+            if loaded is not None:
+                return loaded
+            return self._load_manifold(key)
+
+    def _section(self, what: str) -> Any:
+        """The exclusive-GPU section a lazy load runs in."""
+        if self._exclusive is None:
+            return nullcontext()
+        return self._exclusive(
+            f"{what} while another model operation is in flight; retry shortly"
+        )
+
+    def _load_manifold(self, key: str) -> Manifold:
         from drowse.base.paths import (
             encode_release_id, manifold_dir, manifolds_dir,
             tensor_filename_for_variant,
@@ -577,10 +600,12 @@ class ArtifactRegistry:
                 raise ProfileNotRegisteredError(
                     f"'{ns}/' atoms are reserved and not steerable yet ({name!r})"
                 )
-            return self._profiles[resolver(atom)]
-        folded = self.fold_manifold(name, role=role)
-        self._profiles[name] = folded
-        return folded
+            with self._section(f"resolving '{name}'"):
+                return self._profiles[resolver(atom)]
+        with self._section(f"resolving '{name}'"):
+            folded = self.fold_manifold(name, role=role)
+            self._profiles[name] = folded
+            return folded
 
     def fold_manifold(self, name: str, *, role: str = "vector") -> Tensors:
         """Load the fitted manifold ``name`` and fold it to a direction profile.

@@ -56,5 +56,24 @@ try {
   assert.match(manifoldJobs.current.error, /Test fit error/);
   dismissManifoldJob();
   assert.equal(manifoldJobs.current, null);
-  console.log("Manifold progress: counts, batch compatibility, ETA, stalls, stage chaining, cancellation, and failures passed");
+
+  // The band's note is a state, never an instruction: what to do next rides the library button's tip.
+  const { jobNote } = await server.ssrLoadModule("/src/lib/manifolds/jobNote.ts");
+  const job = (phase, status, fitAfterwards = false) => ({ phase, status, fitAfterwards });
+  assert.deepEqual(jobNote(job("generating", "running", true), true), { note: "Step 1 of 2 · Keep this tab open", tip: "" });
+  assert.deepEqual(jobNote(job("fitting", "waiting", true), false), { note: "Step 2 of 2", tip: "" });
+  assert.deepEqual(jobNote(job("fitting", "cancelling"), false), { note: "", tip: "" });
+  assert.equal(jobNote(job("fitting", "complete"), false).note, "Saved and ready to steer or probe.", "drowse.ai's creation e2e matches this sentence");
+  assert.equal(jobNote(job("extracting", "complete"), false).note, "Saved and ready to steer or probe.");
+  for (const phase of ["generating", "scoring", "installing"]) {
+    const { note, tip } = jobNote(job(phase, "complete"), false);
+    assert.equal(note, "", `${phase}: the title already says it is done`);
+    assert.ok(tip.length > 0, `${phase}: what to do next is a tip`);
+  }
+  for (const status of ["failed", "cancelled"]) assert.deepEqual(jobNote(job("fitting", status), false), { note: "Saved concept groups are kept", tip: "Reopen the creator or library to try again" });
+  for (const phase of ["generating", "fitting", "extracting", "installing", "scoring"]) for (const status of ["running", "waiting", "cancelling", "complete", "cancelled", "failed"]) {
+    const { note } = jobNote(job(phase, status, true), true);
+    assert.ok(!/\. \S|: see|\bwhen ready\b|try again/.test(note), `${phase}/${status}: "${note}" tells rather than shows`);
+  }
+  console.log("Manifold progress: counts, batch compatibility, ETA, stalls, stage chaining, cancellation, failures and the band's notes passed");
 } finally { await server.close(); }

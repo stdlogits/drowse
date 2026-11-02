@@ -6,7 +6,8 @@
   import { describeError } from "../runtime/errors";
   import { steerRack } from "../stores/steering.svelte";
   import { steeringDrawerFor } from "../manifolds/fitKind";
-  import Button from "./Button.svelte";
+  import { runtimeClient } from "../runtime/client";
+  import { jobNote } from "../manifolds/jobNote";
 
   let { compact = false }: { compact?: boolean } = $props();
   let now = $state(Date.now());
@@ -21,6 +22,9 @@
   const timing = $derived(job?.status === "waiting" ? "Fitting starts next"
     : job?.status === "cancelling" ? "Waiting for the current step to stop"
     : !busy ? "" : remaining === null ? "Estimating this step…" : `${etaLabel(remaining)} in this step`);
+  // The browser runtime does the work in this tab; the server does not need it open.
+  const keepOpen = runtimeClient.mode !== "http";
+  const next = $derived(job ? jobNote(job, keepOpen) : { note: "", tip: "" });
   const announcement = $derived(job ? `${job.namespace}/${job.name}: ${title}${busy && fraction !== null ? `, ${Math.floor(fraction * 10) * 10}% of this step` : ""}` : "");
 
   $effect(() => {
@@ -46,56 +50,53 @@
 
 <p class="sr-only" role="status" aria-live="polite" aria-atomic="true">{announcement}</p>
 {#if job}
-  <section class="job-progress" class:compact aria-label={`Creation progress for ${job.namespace}/${job.name}`}>
-    <div class="job-heading">
-      <div class="job-copy"><strong>{title}</strong><span class="identifier">{job.namespace}/{job.name}</span></div>
-      <span class="elapsed">{elapsedLabel((job.finishedAt ?? now) - job.startedAt)} elapsed</span>
-    </div>
-    {#if busy || job.status === "complete"}
-      <div class="meter" role="progressbar" aria-label={job.phase === "generating" ? "Examples generated" : job.progress.label}
-        aria-valuemin="0" aria-valuemax="100" aria-valuenow={fraction === null ? undefined : Math.floor(fraction * 100)}
-        aria-valuetext={fraction === null ? title : `${job.progress.completed} of ${job.progress.total} completed in this step`}>
-        <span class="meter-fill" class:unknown={fraction === null} style:transform={`scaleX(${fraction ?? 0})`}></span>
-      </div>
-    {/if}
-    <div class="job-meta">
-      <span>{job.progress.completed !== null && job.progress.total !== null ? `${job.progress.completed} / ${job.progress.total} ${job.phase === "generating" ? "examples" : "completed"}` : job.progress.detail}</span>
-      <span>{timing}</span>
-    </div>
-    {#if job.error}<p class="job-error">{job.error}</p>{/if}
-    <div class="job-footer">
-      <p>{busy ? job.phase === "generating" && job.fitAfterwards ? "Step 1 of 2 · Fitting follows. Keep this tab open; you can use other tools." : job.fitAfterwards ? "Step 2 of 2 · Keep this tab open. You can use other tools." : "Keep this tab open. You can move between tools while this runs."
-        : job.status === "complete" ? job.phase === "generating" ? "Examples saved. Fit them from the concept library when ready." : job.phase === "scoring" ? "Choice scoring is complete. Inspect the returned sum and mean probabilities." : job.phase === "installing" ? "Artifact installed. Inspect its model fits before steering or probing." : "Saved and ready to steer or probe."
-        : "Saved concept groups are kept. Reopen the creator or library to try again."}</p>
-      <div class="job-actions">
+  <section class="job" class:compact aria-label={`Creation progress for ${job.namespace}/${job.name}`}>
+    <div class="row">
+      <span class="id"><span class="title">{title}</span><span class="meta name">{job.namespace}/{job.name}</span></span>
+      {#if busy || job.status === "complete"}
+        <span class="meter" role="progressbar" aria-label={job.phase === "generating" ? "Examples generated" : job.progress.label}
+          aria-valuemin="0" aria-valuemax="100" aria-valuenow={fraction === null ? undefined : Math.floor(fraction * 100)}
+          aria-valuetext={fraction === null ? title : `${job.progress.completed} of ${job.progress.total} completed in this step`}>
+          <i style:transform={`scaleX(${fraction ?? 0})`}></i>
+        </span>
+      {/if}
+      <span class="meta">{job.progress.completed !== null && job.progress.total !== null ? `${job.progress.completed} / ${job.progress.total} ${job.phase === "generating" ? "examples" : "completed"}` : job.progress.detail}</span>
+      {#if timing}<span class="meta">{timing}</span>{/if}
+      <span class="meta">{elapsedLabel((job.finishedAt ?? now) - job.startedAt)} elapsed</span>
+      <span class="actions">
         {#if busy && job.cancellable}
-          <Button size="sm" disabled={job.status !== "running"} onclick={() => void cancel()}>Cancel</Button>
+          <button type="button" class="dw-text" disabled={job.status !== "running"} onclick={() => void cancel()}>Cancel</button>
         {:else if !busy}
-          <Button size="sm" onclick={openResult}>Open library</Button>
-          <Button size="sm" variant="flat" onclick={dismissManifoldJob}>Dismiss</Button>
+          <button type="button" class="dw-quiet" data-tip={next.tip || undefined} onclick={openResult}>Open library</button>
+          <button type="button" class="dw-text" onclick={dismissManifoldJob}>Dismiss</button>
         {/if}
-      </div>
+      </span>
     </div>
+    {#if job.error}<p class="error">{job.error}</p>{/if}
+    {#if next.note}<p class="meta">{next.note}</p>{/if}
   </section>
 {/if}
 
 <style>
-  .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .job-progress { display: grid; gap: var(--space-sm); padding: var(--surface-padding); background: var(--workspace-field-bg); color: var(--fg); font-size: var(--text-sm); border-radius: var(--popup-radius); min-width: 0; }
-  .job-heading, .job-meta, .job-footer { display: flex; align-items: center; justify-content: space-between; gap: var(--space-sm); flex-wrap: wrap; }
-  .job-copy { display: grid; gap: var(--space-xs); min-width: 0; }
-  .job-copy strong { text-wrap: balance; }
-  .identifier { font-family: var(--font-mono); overflow-wrap: anywhere; color: var(--fg-dim); }
-  .elapsed, .job-meta { font-variant-numeric: tabular-nums; color: var(--fg-dim); }
-  .elapsed { white-space: nowrap; }
-  .job-meta { min-height: 1.4em; }
-  .meter { overflow: hidden; block-size: 6px; border-radius: var(--radius); background: var(--bg-hover); }
-  .meter-fill { display: block; block-size: 100%; background: var(--fg); transform-origin: left; }
-  .meter-fill.unknown { transform: translateX(40%) scaleX(0.2) !important; opacity: 0.5; }
-  .job-footer p { margin: 0; flex: 1 1 16rem; color: var(--fg-dim); line-height: 1.5; text-wrap: pretty; }
-  .job-actions { display: flex; gap: var(--space-sm); flex-wrap: wrap; }
-  .job-error { margin: 0; color: var(--accent-red); overflow-wrap: anywhere; line-height: 1.5; text-wrap: pretty; }
-  .compact { border-radius: 0; }
-  @media (prefers-reduced-motion: no-preference) { .meter-fill { transition: transform 600ms var(--ease-out); } }
-  @media (forced-colors: active) { .meter { border: 1px solid CanvasText; } .meter-fill { background: Highlight; } }
+  /* A running job, drawn as the Lens room draws a fit: its name, a meter on the ramp, the count and
+   * the time left, on a wash band. */
+  .job { display: grid; gap: var(--s1); min-width: 0; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink2); }
+  .compact { padding: var(--s3) var(--s6); border-radius: 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); min-width: 0; }
+  .id { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s1) var(--s3); min-width: 0; }
+  .title { color: var(--ink); font: var(--type-control); }
+  .name { overflow-wrap: anywhere; }
+  .meter { position: relative; flex: none; width: 96px; height: 4px; border-radius: 2px; background: var(--wash2); overflow: hidden; }
+  .meter i { position: absolute; inset: 0; border-radius: 2px; background: var(--tint); transform-origin: left; transition: transform var(--glide) var(--ease); }
+  .actions { display: flex; align-items: center; gap: var(--s3); margin-left: auto; }
+  .actions .dw-quiet { background: var(--wash2); }
+  p { margin: 0; }
+  .error { color: var(--ink); font: var(--type-small); overflow-wrap: anywhere; }
+  @media (max-width: 720px) {
+    .compact { padding: var(--s3) var(--s4); }
+    /* A 44 px target for the text button, without growing the band. */
+    .actions .dw-text { position: relative; }
+    .actions .dw-text::after { content: ""; position: absolute; inset: -12px -6px; }
+  }
+  @media (forced-colors: active) { .meter { outline: 1px solid CanvasText; } .meter i { background: Highlight; } }
 </style>

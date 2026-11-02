@@ -40,7 +40,8 @@ import {
 } from "./instruments.svelte";
 import { loomTree } from "./loom.svelte";
 import { invalidateCorrelation } from "./steering.svelte";
-import { savedProbeSummary } from "../probeHistory";
+import { savedProbeReading, savedProbeSummary } from "../probeHistory";
+import { readingLayers } from "../tokenRows";
 
 /** Sparkline depth (tokens).  Exported because the lens aggregate history
  *  and the SAE activation history are capped to the same window — the
@@ -103,15 +104,27 @@ function _primaryPerLayer(
   return out;
 }
 
-/** Read one probe card through the token-hover overlay. Token rows retain the
- * primary scalar, multi-axis coordinates, and layer strip; lens/SAE cards can
- * additionally fill from retained live/on-demand hover snapshots. */
+/** The hovered generated row's own value of a probe (its primary scalar), or null: a curved
+ *  probe's share and a flat one's axis 0 from its geometry reading, else its score. */
+function _rowValue(info: ProbeInfo, name: string): number | null {
+  const finite = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) ? v : null);
+  const row = tokenHoverState.rowGeometry?.[name];
+  if (info.family === "geometry" && row) return finite(info.is_affine ? row.coords[0] : row.fraction);
+  return finite(tokenHoverState.probes?.[name]);
+}
+
+/** Read one probe card through the token-hover overlay. A live token carries every reading; a
+ * generated row keeps each probe's value (its score) and a geometry probe's coordinates, so the
+ * card shows those at once and the token's replayed reading (``tokenHoverState.replayedReadings``:
+ * geometry, and the lens and SAE probes') once it lands, which also brings every layer strip;
+ * lens/SAE cards can additionally fill from retained live/on-demand hover snapshots. */
 export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
   const base = probeRack.entries.get(name);
   if (!base || !tokenHoverState.active) return base;
+  const replayed = tokenHoverState.replayedReadings?.[name] ?? null;
+  const captured = tokenHoverState.probeReadings?.[name] ?? null;
 
-  let reading: AnyReadingJSON | null =
-    tokenHoverState.probeReadings?.[name] ?? null;
+  let reading: AnyReadingJSON | null = captured ?? replayed;
   if (!reading) {
     let scalar = tokenHoverState.probes?.[name];
     let scalarUnit: string | null = null;
@@ -119,13 +132,11 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
     if (scalar === undefined && tokenCoords?.[0] !== undefined) {
       scalar = tokenCoords[0];
     }
-    const perLayer: Record<string, number> = {};
-    for (const [layer, scores] of Object.entries(tokenHoverState.perLayerScores ?? {})) {
-      const value = scores[name];
-      if (typeof value === "number" && Number.isFinite(value)) perLayer[layer] = value;
-    }
+    const perLayer: Record<string, number> = replayed ? _primaryPerLayer(base.info, replayed) : {};
 
-    if (scalar === undefined && base.info.family === "lens") {
+    // A ``jlens/`` probe's word can fill from the R lens's hovered read; an ``slens/`` probe's
+    // footprint z is its own channel, never the R lens's probability.
+    if (scalar === undefined && base.info.family === "lens" && base.info.namespace === "jlens") {
       const word = base.info.word;
       const aggregate = tokenHoverState.lensAggregate?.find(
         ([token]) => token === word,
@@ -166,10 +177,12 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
           reading: {
             value,
             unit: scalarUnit ?? (base.info.family === "lens"
-              ? "mean_token_probability"
-              : ((base.info as SaeProbeInfo).max_act != null
-                ? "activation_over_max"
-                : "raw_activation")),
+              ? (base.info.namespace === "slens" ? "mean_footprint_z" : "mean_token_probability")
+              : base.info.family === "units"
+                ? "activation_over_scale"
+                : ((base.info as SaeProbeInfo).max_act != null
+                  ? "activation_over_max"
+                  : "raw_activation")),
             per_layer: perLayer,
             depth: null,
           },
@@ -177,6 +190,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
           savedAggregate: null,
           savedCoordinates: [],
           savedFraction: null,
+          savedReading: null,
         };
       }
       const usesCoords = base.info.is_affine;
@@ -194,6 +208,10 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
         fraction_per_layer: usesCoords ? {} : perLayer,
         coords_per_layer: usesCoords ? coordsPerLayer : {},
         residual_per_layer: {},
+        assignment: [],
+        membership: 1,
+        depth_com: [],
+        depth_spread: [],
       };
     }
   }
@@ -210,17 +228,22 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       nearest: [],
       trajectory: [],
     };
   }
-  const current = _primaryScalar(base.info, reading);
+  // A replay stands in for the reading a generated row did not keep; the value stays the row's.
+  const current = (captured ? null : _rowValue(base.info, name)) ?? _primaryScalar(base.info, reading);
+  const ownLayers = _primaryPerLayer(base.info, reading);
   return {
     ...base,
     current,
     previous: current,
     sparkline: [current],
-    perLayer: _primaryPerLayer(base.info, reading),
+    perLayer: Object.keys(ownLayers).length === 0 && replayed
+      ? _primaryPerLayer(base.info, replayed)
+      : ownLayers,
     reading,
     // ProbeCard's settled-only fields (residual and mini-map dot) should also
     // describe the hovered token, so the ephemeral view fills both slots.
@@ -228,6 +251,7 @@ export function probeEntryForDisplay(name: string): ProbeRackEntry | undefined {
     savedAggregate: null,
     savedCoordinates: [],
     savedFraction: null,
+    savedReading: null,
     nearest: _readingNearest(reading),
     trajectory: [],
   };
@@ -267,8 +291,9 @@ export function probeRequestFromInfo(info: ProbeInfo): ProbeRequest {
     return { selector: info.manifold, name: info.name, top_n: info.top_n };
   }
   if (info.family === "lens") {
-    return { selector: `jlens/${info.word}`, name: info.name };
+    return { selector: `${info.namespace}/${info.word}`, name: info.name };
   }
+  if (info.family === "units") return { selector: info.unit, name: info.name };
   return { selector: `sae/${info.feature_id}`, name: info.name };
 }
 
@@ -288,6 +313,7 @@ function _emptyProbeEntry(
     savedAggregate: null,
     savedCoordinates: [],
     savedFraction: null,
+    savedReading: null,
     nearest: [],
     trajectory: [],
     subspaceTrail: [],
@@ -351,12 +377,18 @@ export function highlightScale(target: string | null): number {
   return probeAxisScale(base, axis);
 }
 
+/** How the name sort reads a probe: as its row is titled, without the namespace
+ *  (``default/months`` sorts as ``months``), the full key breaking a tie. */
+export function probeSortName(name: string): string {
+  return name.split("/").pop() || name;
+}
+
 /** Computed: probe names sorted per the chosen sort mode.  Fresh array each
  *  access; consumers use it as a ``$derived`` read-only view. */
 export function activeProbeNames(): string[] {
   const arr = [...probeRack.active];
   if (probeRack.sortMode === "name") {
-    arr.sort();
+    arr.sort((a, b) => probeSortName(a).localeCompare(probeSortName(b)) || (a < b ? -1 : a > b ? 1 : 0));
   } else if (probeRack.sortMode === "value") {
     arr.sort((a, b) => {
       const av = probeRack.entries.get(a)?.current ?? 0;
@@ -494,6 +526,7 @@ export function resetProbeStreams(): void {
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       trajectory: [],
       subspaceTrail: [],
     });
@@ -557,6 +590,7 @@ export function updateProbesFromReadings(
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       nearest,
       trajectory,
       subspaceTrail,
@@ -579,6 +613,7 @@ export function setProbeAggregates(
       savedAggregate: null,
       savedCoordinates: [],
       savedFraction: null,
+      savedReading: null,
       current: _primaryScalar(prev.info, agg),
       perLayer: _primaryPerLayer(prev.info, agg),
       nearest: _readingNearest(agg),
@@ -611,18 +646,25 @@ export function hydrateProbeRackFromActiveNode(): void {
     : undefined;
   const readings = node?.aggregate_readings ?? {};
   for (const [name, prev] of probeRack.entries) {
-    const { value, coordinates, fraction } = savedProbeSummary(prev.info, readings);
+    // The node keeps each probe's axis-0 aggregate and the aggregate reading itself (a curved
+    // probe's share, nearest, residual, depth, a lens probe's band), so a reload shows what the
+    // live view showed but the trail.
+    const saved = savedProbeReading(prev.info, name, node) ?? savedProbeReading(prev.info, prev.info.name, node);
+    const { value, coordinates, fraction } = savedProbeSummary(prev.info, readings, saved);
+    const geometry = saved && !isScalarReading(saved) ? saved : null;
+    const share = prev.info.family === "geometry" && !prev.info.is_affine;
     probeRack.entries.set(name, {
       ...prev,
       current: value ?? 0,
       previous: prev.current,
-      perLayer: {},
+      perLayer: readingLayers(saved, share) ?? {},
       reading: null,
       aggregate: null,
       savedAggregate: value,
       savedCoordinates: coordinates,
       savedFraction: fraction,
-      nearest: [],
+      savedReading: saved,
+      nearest: geometry ? geometry.nearest.map(([label, distance]) => [label, distance] as [string, number]) : [],
       trajectory: [],
       subspaceTrail: [],
     });

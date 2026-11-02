@@ -28,6 +28,7 @@ in :mod:`drowse.loom.errors`.
 from __future__ import annotations
 
 import gzip
+import hashlib
 import json
 import os
 import secrets
@@ -40,6 +41,7 @@ from dataclasses import dataclass, field, replace
 from typing import Any, BinaryIO, Callable, Iterator, Literal, Mapping, Sequence, cast
 
 from drowse.events import EventBus, LoomMutated
+from drowse.generation.results import FINISH_REASONS, FinishReason
 from drowse.loom.errors import (
     InvalidNodeOperationError,
     LoomTreeError,
@@ -50,6 +52,13 @@ from drowse.loom.errors import (
 )
 from drowse.loom.recipe import CastMember, Recipe
 from drowse.model.role_templates import InvalidRoleError, validate_role
+from drowse.readout.measurements import (
+    GEOMETRY_SUMMARY_KEYS,
+    GEOMETRY_TRACE_KEYS,
+    MEASUREMENTS_VERSION,
+    ROW_GEOMETRY_KEYS,
+    Measurements,
+)
 
 # ---------------------------------------------------------------------------
 # ulid — tiny inline implementation
@@ -87,11 +96,12 @@ def _read_json_bounded(stream: BinaryIO | gzip.GzipFile, max_bytes: int, label: 
 
 _NODE_FIELDS = frozenset({
     "id", "parent_id", "role", "text", "role_label", "thinking_text",
-    "recipe", "aggregate_readings", "applied_steering", "finish_reason",
+    "recipe", "aggregate_readings", "aggregate_measurements",
+    "applied_steering", "finish_reason",
     "starred", "notes", "created_at", "edited_at", "edit_count",
     "mean_logprob", "mean_surprise",
 })
-_TOKEN_FIELDS = frozenset({"tokens", "thinking_tokens", "raw_token_ids"})
+_TOKEN_FIELDS = frozenset({"tokens", "thinking_tokens", "raw_token_ids", "prompt_capture"})
 _NODE_FIELDS_WITH_TOKENS = _NODE_FIELDS | _TOKEN_FIELDS
 _TREE_FIELDS = frozenset({
     "tree_format", "drowse_version", "model_id", "session_id", "name", "rev",
@@ -108,6 +118,313 @@ Role = Literal["user", "assistant", "system"]
 
 def _copy_list(value: list[Any] | None) -> list[Any] | None:
     return list(value) if value is not None else None
+
+
+#: The keys a token row may carry (``TokenTap``, authored capture, the
+#: browser runtime's ``sampler_entropy``).
+_TOKEN_ROW_FIELDS = frozenset({
+    "token_id", "text", "logprob", "sampler_entropy", "perplexity",
+    "raw_index", "top_alts", "measurements",
+})
+
+_PRE_6_ROW = (
+    "a loom token row in the pre-6.0 shape ({detail}) is not read: this build "
+    "reads a generated row's scores and geometry shares and coordinates "
+    "(readout.measurements.token_row_measurements), or a row kept whole with "
+    "its traces (readout.measurements.summary_measurements)"
+)
+
+#: The envelope channels a generated (slim) token row carries.
+_SLIM_ROW_CHANNELS = frozenset({"geometry"})
+
+
+def _check_row_measurements(rows: list[Any] | None) -> None:
+    """Refuse token rows of another shape: an envelope of another version,
+    a pre-6.0 row, or a lens readout without its vocabulary ids.
+
+    A row is one of two shapes: a generated row
+    (``token_row_measurements``: ``scores`` and each geometry reading's
+    ``fraction`` and ``coords``, no other channel), or a row kept whole
+    (``summary_measurements(per_layer=True)``: authored capture, or a call
+    that set ``persist_per_layer_scores``), each geometry reading carrying
+    its summary and all three traces.  Rows reach a tree through the token
+    sidecar and through ``PUT /tree`` (the dashboard's restore, which
+    carries them inline); a row of another shape is refused rather than
+    handed to a reader that expects this one.  Token sidecar 3 and envelope
+    version 2 were never released before 6.0 (5.4.0 wrote sidecar 2 and
+    envelope 1), so their earlier unreleased shapes are refused by what they
+    carry: a row-level ``probes`` or ``per_layer_scores`` copy, an envelope
+    ``per_layer_scores`` map, a geometry reading with the inspector's
+    ``subspace_coords_per_layer``, with its summary but not all of its
+    traces, and a lens readout entry without its id (readers key the
+    readout by id).
+    """
+    for row in rows or ():
+        if not isinstance(row, dict):
+            raise LoomTreeError("loom token rows must be objects")
+        retired = sorted({"probes", "per_layer_scores"} & row.keys())
+        if retired:
+            raise LoomTreeError(_PRE_6_ROW.format(detail=f"row field {retired[0]!r}"))
+        unknown = sorted(row.keys() - _TOKEN_ROW_FIELDS)
+        if unknown:
+            raise LoomTreeError(f"unknown loom token row field {unknown[0]!r}")
+        envelope = row.get("measurements")
+        if envelope is None:
+            continue
+        if not isinstance(envelope, dict):
+            raise LoomTreeError("token row field 'measurements' must be an object or null")
+        if envelope.get("version") != MEASUREMENTS_VERSION:
+            raise LoomTreeError(
+                f"unsupported token measurements version {envelope.get('version')!r} "
+                f"(this build reads {MEASUREMENTS_VERSION})"
+            )
+        if "per_layer_scores" in envelope:
+            raise LoomTreeError(_PRE_6_ROW.format(detail="an envelope per_layer_scores map"))
+        _check_geometry_readings(envelope)
+        _check_lens_readout_ids(envelope)
+
+
+def _check_geometry_readings(envelope: dict[str, Any]) -> None:
+    instruments = envelope.get("instruments")
+    if not isinstance(instruments, dict):
+        return
+    geometry = instruments.get("geometry")
+    readings = geometry.get("readings") if isinstance(geometry, dict) else None
+    if not isinstance(readings, dict):
+        return
+    slim = frozenset(ROW_GEOMETRY_KEYS)
+    summary = frozenset(GEOMETRY_SUMMARY_KEYS)
+    whole = summary | frozenset(GEOMETRY_TRACE_KEYS)
+    shapes: set[str] = set()
+    for name, reading in readings.items():
+        if not isinstance(reading, dict):
+            raise LoomTreeError(f"token row reading {name!r} must be an object")
+        if "subspace_coords_per_layer" in reading:
+            raise LoomTreeError(_PRE_6_ROW.format(
+                detail=f"subspace coordinates on reading {name!r}",
+            ))
+        keys = reading.keys()
+        if keys == slim or keys == whole:
+            shapes.add("generated" if keys == slim else "whole")
+            continue
+        if summary <= keys:
+            raise LoomTreeError(_PRE_6_ROW.format(
+                detail=f"reading {name!r} keeps its summary without all its traces",
+            ))
+        raise LoomTreeError(
+            f"token row reading {name!r} carries {sorted(reading)}; a generated "
+            f"row's geometry reading is {sorted(slim)}, a row kept whole carries "
+            f"{sorted(whole)}"
+        )
+    # A generated row carries no channel but geometry; a row with another
+    # family's channel was kept whole.
+    if "generated" in shapes and ("whole" in shapes or instruments.keys() - _SLIM_ROW_CHANNELS):
+        raise LoomTreeError(
+            "a token row mixes a generated row's geometry readings with readings "
+            "kept whole"
+        )
+
+
+def _check_aggregate_measurements(envelope: Any) -> None:
+    """A node's ``aggregate_measurements``: null, or an aggregate envelope of
+    this version whose geometry readings carry exactly their summary and
+    which keeps no ``scores`` (``readout.measurements.aggregate_measurements``)."""
+    if envelope is None:
+        return
+    if not isinstance(envelope, dict):
+        raise LoomTreeError("loom node field 'aggregate_measurements' must be an object or null")
+    if envelope.get("version") != MEASUREMENTS_VERSION:
+        raise LoomTreeError(
+            f"unsupported aggregate measurements version {envelope.get('version')!r} "
+            f"(this build reads {MEASUREMENTS_VERSION})"
+        )
+    if envelope.get("scope") != "aggregate" or "scores" in envelope:
+        raise LoomTreeError(
+            "loom node field 'aggregate_measurements' must be an aggregate envelope "
+            "without scores (aggregate_readings is its flat view)"
+        )
+    instruments = envelope.get("instruments")
+    if not isinstance(instruments, dict):
+        raise LoomTreeError("loom node aggregate_measurements must carry its instruments")
+    geometry = instruments.get("geometry")
+    readings = geometry.get("readings") if isinstance(geometry, dict) else {}
+    summary = frozenset(GEOMETRY_SUMMARY_KEYS)
+    for name, reading in (readings or {}).items():
+        if not isinstance(reading, dict) or reading.keys() != summary:
+            raise LoomTreeError(
+                f"loom node aggregate reading {name!r} must carry exactly "
+                f"{sorted(summary)}"
+            )
+    _check_lens_readout_ids(envelope)
+
+
+def _check_lens_readout_ids(envelope: dict[str, Any]) -> None:
+    instruments = envelope.get("instruments")
+    lens = instruments.get("lens") if isinstance(instruments, dict) else None
+    readout = lens.get("readout") if isinstance(lens, dict) else None
+    if readout is None:
+        return
+    if not isinstance(readout, dict):
+        raise LoomTreeError("the lens readout of a token row must be an object")
+    entries: list[Any] = list(readout.get("aggregate") or ())
+    for layer in readout.get("layers") or ():
+        entries.extend(layer.get("tokens") or () if isinstance(layer, dict) else (None,))
+    for entry in entries:
+        token_id = entry.get("id") if isinstance(entry, dict) else None
+        if not isinstance(token_id, int) or isinstance(token_id, bool):
+            raise LoomTreeError(
+                "a token row's lens readout entry has no vocabulary id; rows "
+                "written before drowse 6.0, or by a producer that omits ids, "
+                "are not read"
+            )
+
+
+def prompt_digest(ids: Sequence[int]) -> str:
+    """The SHA-256 (hex) of ``ids`` written as decimal ids joined by commas
+    (UTF-8): how a :class:`PromptCapture` pins the render it was measured in."""
+    return hashlib.sha256(",".join(str(int(i)) for i in ids).encode("utf-8")).hexdigest()
+
+
+@dataclass(frozen=True)
+class PromptCapture:
+    """Where an authored node's prompt rows were measured: their replay anchor.
+
+    A generation that re-reads an uncaptured authored turn measures its
+    tokens once, in the prefill (``session/authored_capture.py``).  The
+    node keeps what a replay needs to run that forward again, so the replay
+    never depends on the capturing reply, which may later be deleted:
+
+    - ``steering``: the capturing call's recipe steering.  A prompt token is
+      a prefill position, where a term fires exactly when it has a prompt
+      slot and no probe gate (:meth:`~drowse.steering.triggers.Trigger.active`),
+      so the whole expression replays the capture's prompt-phase steering.
+    - ``system_prompt``, ``thinking``, ``raw``: the render's resolved system
+      prompt, thinking flag and flat (raw) mode.
+    - ``start`` / ``thinking_start``: the render position of the first
+      visible / thinking row's token, ``None`` for a channel the capture
+      did not find (then the node has no rows for it).
+    - ``digest``: :func:`prompt_digest` of the render before the later
+      channel (the head).  A replay renders the path to the node with these
+      parameters, checks the head against it, and appends the channel's own
+      tokens from its rows (as a generated replay appends its raw decode
+      record), so an edit of the node's text keeps reading the original
+      while an edited earlier turn refuses instead of reading another prompt.
+
+    The node's captured tokens are addressed by one index, thinking rows
+    first, then visible rows (render order); rows carry no ``raw_index``.
+    """
+
+    steering: str | None
+    system_prompt: str | None
+    thinking: bool
+    raw: bool
+    start: int | None
+    thinking_start: int | None
+    digest: str
+
+    @property
+    def head_length(self) -> int:
+        """The positions :attr:`digest` covers: up to the later channel."""
+        return max(p for p in (self.start, self.thinking_start) if p is not None)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "steering": self.steering,
+            "system_prompt": self.system_prompt,
+            "thinking": self.thinking,
+            "raw": self.raw,
+            "start": self.start,
+            "thinking_start": self.thinking_start,
+            "digest": self.digest,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> "PromptCapture":
+        if not isinstance(data, dict):
+            raise LoomTreeError("loom node field 'prompt_capture' must be an object or null")
+        require_fields(data, _PROMPT_CAPTURE_FIELDS, "loom prompt capture")
+        for name in ("steering", "system_prompt"):
+            if data[name] is not None and not isinstance(data[name], str):
+                raise LoomTreeError(f"prompt capture field {name!r} must be a string or null")
+        for name in ("thinking", "raw"):
+            if not isinstance(data[name], bool):
+                raise LoomTreeError(f"prompt capture field {name!r} must be a boolean")
+        for name in ("start", "thinking_start"):
+            value = data[name]
+            if value is not None and (
+                not isinstance(value, int) or isinstance(value, bool) or value < 0
+            ):
+                raise LoomTreeError(
+                    f"prompt capture field {name!r} must be a non-negative integer or null"
+                )
+        if data["start"] is None and data["thinking_start"] is None:
+            raise LoomTreeError("a prompt capture places at least one channel")
+        digest = data["digest"]
+        if not isinstance(digest, str) or len(digest) != 64 or any(
+            c not in "0123456789abcdef" for c in digest
+        ):
+            raise LoomTreeError("prompt capture field 'digest' must be a SHA-256 hex digest")
+        return cls(
+            steering=data["steering"],
+            system_prompt=data["system_prompt"],
+            thinking=data["thinking"],
+            raw=data["raw"],
+            start=data["start"],
+            thinking_start=data["thinking_start"],
+            digest=digest,
+        )
+
+
+_PROMPT_CAPTURE_FIELDS = frozenset({
+    "steering", "system_prompt", "thinking", "raw", "start", "thinking_start", "digest",
+})
+
+
+def _check_prompt_capture(
+    capture: PromptCapture | None,
+    *,
+    recipe: Recipe | None,
+    tokens: list[Any] | None,
+    thinking_tokens: list[Any] | None,
+) -> None:
+    """An authored node's rows and its capture agree: rows exactly where the
+    capture placed a channel, none on a generated node, and no authored row
+    carrying a ``raw_index`` (its index is its place in the capture)."""
+    if recipe is not None:
+        if capture is not None:
+            raise LoomTreeError("a generated loom node has no prompt capture")
+        return
+    for name, rows, start in (
+        ("tokens", tokens, capture.start if capture is not None else None),
+        ("thinking_tokens", thinking_tokens,
+         capture.thinking_start if capture is not None else None),
+    ):
+        # An empty list is no rows (a turn opened by ``begin_assistant``).
+        if bool(rows) != (start is not None):
+            raise LoomTreeError(
+                f"an authored loom node has {name} exactly when its prompt_capture "
+                "places that channel (authored rows written before their replay "
+                "anchor are not read)"
+            )
+        for row in rows or ():
+            if not isinstance(row, dict):
+                continue  # _check_row_measurements refuses it
+            if "raw_index" in row:
+                raise LoomTreeError(
+                    "an authored token row has no raw_index (its index is its place "
+                    "in the node's prompt capture)"
+                )
+            token_id = row.get("token_id")
+            if not isinstance(token_id, int) or isinstance(token_id, bool):
+                raise LoomTreeError(
+                    "an authored token row carries its token_id (the replay appends it)"
+                )
+    if (
+        capture is not None and capture.start is not None
+        and capture.thinking_start is not None
+        and capture.thinking_start + len(thinking_tokens or ()) > capture.start
+    ):
+        raise LoomTreeError("a prompt capture's thinking channel must precede its visible one")
 
 
 @dataclass
@@ -148,8 +465,18 @@ class LoomNode:
     thinking_tokens: list[TokenRow] | None = None
     recipe: Recipe | None = None
     aggregate_readings: dict[str, float] = field(default_factory=dict)
+    # The reply's settled aggregate envelope as a node keeps it
+    # (``readout.measurements.aggregate_measurements``: each reading's
+    # summary, no traces, no scores; ``aggregate_readings`` is its flat
+    # view), stamped at finalize.  The rack and the probe inspector draw it
+    # after a reload; ``None`` for an authored or imported turn and a reply
+    # that measured nothing.
+    aggregate_measurements: Measurements | None = None
     applied_steering: str | None = None
-    finish_reason: str | None = None
+    # Why the generation ended (``FinishReason``); ``None`` for an authored
+    # or imported turn and while a reply streams.  ``"cancelled"`` marks a
+    # reply a client Stop or disconnect cut short.
+    finish_reason: FinishReason | None = None
     starred: bool = False
     notes: str = ""
     created_at: float = field(default_factory=time.time)
@@ -176,6 +503,11 @@ class LoomNode:
     # ``None`` remains a legitimate current value for transcript-imported
     # turns, and is persisted explicitly rather than inferred from absence.
     raw_token_ids: list[int] | None = None
+    # An authored node's prompt rows' replay anchor (:class:`PromptCapture`),
+    # set with the rows by the one-shot authored capture; ``None`` for a
+    # generated node and an authored one no generation has measured yet.
+    # Persisted in the token sidecar beside the rows it anchors.
+    prompt_capture: PromptCapture | None = None
 
     @property
     def steering_expr(self) -> str | None:
@@ -197,6 +529,7 @@ class LoomNode:
             "role_label": self.role_label,
             "thinking_text": self.thinking_text,
             "aggregate_readings": dict(self.aggregate_readings),
+            "aggregate_measurements": self.aggregate_measurements,
             "applied_steering": self.applied_steering,
             "finish_reason": self.finish_reason,
             "starred": self.starred,
@@ -214,6 +547,9 @@ class LoomNode:
             out["tokens"] = _copy_list(self.tokens)
             out["thinking_tokens"] = _copy_list(self.thinking_tokens)
             out["raw_token_ids"] = _copy_list(self.raw_token_ids)
+            out["prompt_capture"] = (
+                self.prompt_capture.to_dict() if self.prompt_capture is not None else None
+            )
         return out
 
     @classmethod
@@ -234,12 +570,18 @@ class LoomNode:
         for field_name in ("text", "notes"):
             if not isinstance(data[field_name], str):
                 raise LoomTreeError(f"loom node field {field_name!r} must be a string")
-        for field_name in ("role_label", "thinking_text", "applied_steering", "finish_reason"):
+        for field_name in ("role_label", "thinking_text", "applied_steering"):
             value = data[field_name]
             if value is not None and not isinstance(value, str):
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a string or null"
                 )
+        reason = data["finish_reason"]
+        if reason is not None and (not isinstance(reason, str) or reason not in FINISH_REASONS):
+            raise LoomTreeError(
+                "loom node field 'finish_reason' must be null or one of "
+                + ", ".join(sorted(FINISH_REASONS))
+            )
         if not isinstance(data["aggregate_readings"], dict) or any(
             not isinstance(name, str) or not is_number(value)
             for name, value in data["aggregate_readings"].items()
@@ -247,6 +589,7 @@ class LoomNode:
             raise LoomTreeError(
                 "loom node field 'aggregate_readings' must map strings to numbers"
             )
+        _check_aggregate_measurements(data["aggregate_measurements"])
         if not isinstance(data["starred"], bool):
             raise LoomTreeError("loom node field 'starred' must be a boolean")
         if not is_number(data["created_at"]):
@@ -262,18 +605,29 @@ class LoomNode:
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a number or null"
                 )
-        for field_name in _TOKEN_FIELDS & data.keys():
+        for field_name in _TOKEN_FIELDS & data.keys() - {"prompt_capture"}:
             value = data[field_name]
             if value is not None and not isinstance(value, list):
                 raise LoomTreeError(
                     f"loom node field {field_name!r} must be a list or null"
                 )
+        for field_name in ("tokens", "thinking_tokens"):
+            _check_row_measurements(data.get(field_name))
         raw_token_ids = data.get("raw_token_ids")
         if raw_token_ids is not None and any(
             not isinstance(token_id, int) or isinstance(token_id, bool)
             for token_id in raw_token_ids
         ):
             raise LoomTreeError("loom node raw_token_ids must contain integers")
+        raw_capture = data.get("prompt_capture")
+        prompt_capture = (
+            PromptCapture.from_dict(raw_capture) if raw_capture is not None else None
+        )
+        if "tokens" in data:
+            _check_prompt_capture(
+                prompt_capture, recipe=recipe,
+                tokens=data["tokens"], thinking_tokens=data["thinking_tokens"],
+            )
         return cls(
             id=data["id"],
             parent_id=data["parent_id"],
@@ -285,6 +639,7 @@ class LoomNode:
             thinking_tokens=data.get("thinking_tokens"),
             recipe=recipe,
             aggregate_readings=dict(data["aggregate_readings"]),
+            aggregate_measurements=data["aggregate_measurements"],
             applied_steering=data["applied_steering"],
             finish_reason=data["finish_reason"],
             starred=data["starred"],
@@ -295,6 +650,7 @@ class LoomNode:
             mean_logprob=data["mean_logprob"],
             mean_surprise=data["mean_surprise"],
             raw_token_ids=data.get("raw_token_ids"),
+            prompt_capture=prompt_capture,
         )
 
 
@@ -309,7 +665,7 @@ class LoomNode:
 TREE_FORMAT_VERSION = 2
 _TREE_MAX_LOAD_BYTES = 64 * 1024 * 1024
 _TOKEN_SIDECAR_MAX_LOAD_BYTES = 256 * 1024 * 1024
-TOKEN_SIDECAR_FORMAT_VERSION = 2
+TOKEN_SIDECAR_FORMAT_VERSION = 3
 
 
 class LoomTree:
@@ -731,6 +1087,7 @@ class LoomTree:
             node.thinking_tokens = []
             node.recipe = recipe
             node.aggregate_readings = {}
+            node.aggregate_measurements = None
             node.applied_steering = None
             node.finish_reason = None
             node.mean_logprob = None
@@ -771,21 +1128,25 @@ class LoomTree:
                     node.tokens = []
                 node.tokens.append(score)
 
-    def set_authored_token_scores(
+    def set_authored_capture(
         self,
         node_id: str,
-        scores: list[TokenRow],
+        capture: PromptCapture,
         *,
-        thinking: bool = False,
+        tokens: list[TokenRow] | None,
+        thinking_tokens: list[TokenRow] | None,
     ) -> None:
-        """Attach captured prompt-token measurements to an authored node.
+        """Attach an authored node's captured prompt rows and their anchor.
 
-        Unlike :meth:`append_token`, this is a one-shot tree mutation: prompt
-        rows arrive together after prefill, so the revision advances once and
-        clients receive the updated node through the ordinary loom delta.
-        Existing rows are never merged here; the session calls this only for a
-        previously uncaptured authored channel so its original capture remains
-        immutable across later generations.
+        One-shot per node: the first generation that measures the node's
+        prompt tokens sets both channels at once (``None`` for a channel it
+        did not find) with the :class:`PromptCapture` that replays them, so
+        the capture and the index it defines (thinking rows, then visible
+        rows) stay immutable across later generations.  Unlike
+        :meth:`append_token`, the rows arrive together after the prefill:
+        the revision advances once and clients receive the node through the
+        ordinary loom delta.  Refuses a generated node and a node already
+        captured.
         """
         with self._lock:
             node = self.nodes.get(node_id)
@@ -793,12 +1154,23 @@ class LoomTree:
                 raise UnknownNodeError(node_id)
             if node.recipe is not None:
                 raise InvalidNodeOperationError(
-                    "set_authored_token_scores requires an authored node"
+                    "set_authored_capture requires an authored node"
                 )
-            if thinking:
-                node.thinking_tokens = list(scores)
-            else:
-                node.tokens = list(scores)
+            if node.prompt_capture is not None:
+                raise InvalidNodeOperationError(
+                    f"authored node {node_id!r} was already captured"
+                )
+            new_tokens = list(tokens) if tokens is not None else None
+            new_thinking = list(thinking_tokens) if thinking_tokens is not None else None
+            try:
+                _check_prompt_capture(
+                    capture, recipe=None, tokens=new_tokens, thinking_tokens=new_thinking,
+                )
+            except LoomTreeError as error:
+                raise InvalidNodeOperationError(str(error)) from error
+            node.tokens = new_tokens
+            node.thinking_tokens = new_thinking
+            node.prompt_capture = capture
             self.rev += 1
             self._emit(LoomMutated(
                 op="capture_authored",
@@ -813,8 +1185,9 @@ class LoomTree:
         *,
         text: str,
         aggregate_readings: dict[str, float] | None = None,
+        aggregate_measurements: Measurements | None = None,
         applied_steering: str | None = None,
-        finish_reason: str | None = None,
+        finish_reason: FinishReason | None = None,
         mean_logprob: float | None = None,
         mean_surprise: float | None = None,
         raw_token_ids: list[int] | None = None,
@@ -835,6 +1208,10 @@ class LoomTree:
         ``raw_token_ids`` is the engine's exact ``generated_ids`` decode
         sequence (delimiters included) — the forceable prefix a logit
         fork replays.  ``None`` leaves the node's prior value untouched.
+
+        ``aggregate_measurements`` is the reply's aggregate envelope as a
+        node keeps it (``readout.measurements.aggregate_measurements``),
+        ``None`` when the reply measured nothing.
         """
         with self._lock:
             node = self.nodes.get(node_id)
@@ -843,6 +1220,7 @@ class LoomTree:
             node.text = text
             if aggregate_readings is not None:
                 node.aggregate_readings = dict(aggregate_readings)
+            node.aggregate_measurements = aggregate_measurements
             node.applied_steering = applied_steering
             node.finish_reason = finish_reason
             node.mean_logprob = mean_logprob
@@ -913,8 +1291,10 @@ class LoomTree:
                 node.thinking_text = (node.thinking_text or "") + thinking_text
             node.tokens = None
             node.thinking_tokens = None
+            node.prompt_capture = None
             node.recipe = None
             node.aggregate_readings = {}
+            node.aggregate_measurements = None
             node.applied_steering = None
             node.finish_reason = "stop"
             node.mean_logprob = None
@@ -1456,6 +1836,10 @@ class LoomTree:
                         "tokens": node.tokens,
                         "thinking_tokens": node.thinking_tokens,
                         "raw_token_ids": node.raw_token_ids,
+                        "prompt_capture": (
+                            node.prompt_capture.to_dict()
+                            if node.prompt_capture is not None else None
+                        ),
                     }
             token_payload = None
             if token_nodes:
@@ -1569,5 +1953,7 @@ class LoomTree:
 __all__ = [
     "LoomNode",
     "LoomTree",
+    "PromptCapture",
     "TREE_FORMAT_VERSION",
+    "prompt_digest",
 ]

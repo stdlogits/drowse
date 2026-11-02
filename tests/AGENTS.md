@@ -12,7 +12,7 @@ goldens the drowse.ai browser runtime replays.
 |---|---|
 | `pytest -q -m "not gpu"` | The CPU suite. CI runs exactly this (plus informational `--cov`) on Python 3.11, 3.12 and 3.13. |
 | `pytest -q -n auto -m "not perf"` | Everything this machine can run, GPU included (about 80 s on Apple Silicon with MPS). |
-| `pytest -m perf -p no:xdist` | The two throughput gates, serially, on an otherwise idle machine. |
+| `pytest -m perf -p no:xdist` | The four throughput gates, serially, on an otherwise idle machine. |
 | `pytest tests/gpu/test_smoke.py` | Real-model smoke tests only. |
 
 - `--strict-markers` is in `addopts` and `xfail_strict = true`: a new marker
@@ -48,7 +48,8 @@ so keep test modules exactly one directory deep.
 | `store/` | manifold folders and tensors, selectors, templates, bundled materialization, archive, hub, install, alignment, neutral cache |
 | `steering/` | expression grammar, triggers, steering scopes, hooks, installation, subspace/manifold steering, ablation |
 | `readout/` | monitor, probe roster, read planner, captures, measurements envelope, instrument types, geometry replay, `score_hidden` |
-| `lens/`, `sae/` | J-lens math, fit, RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
+| `lens/`, `sae/` | lens math, the transport estimator (against the autograd oracle), RelP, store, sources, corpus, lifecycle, runtime, atoms, decompose, `scripts/migrate_lens_v7.py`; SAE backend, runtime, artifacts, descriptions |
+| `units/` | neutral unit statistics (against a hand computation), the tap, unit probes and gates through a tiny session, replay, unit ablation against hand-patched forwards, neuron pushes, refusals; static unit reads, `top` and `find` against hand computations with hand-built R/S lenses, the neuron-lens catalog over a monkeypatched Hub with tiny parquets, the unit routes |
 | `generation/` | decode loop, sampling, logits, prefix cache, render, results, scoring, token payloads |
 | `fit/` | extraction pipeline, capture, bake, monopolar fits, preflight, naturalness, transfer alignment |
 | `loom/` | tree, ops, diff, filter, transcript, recipe overrides, token rows, token replay, joint logprobs, concurrency |
@@ -66,7 +67,7 @@ so keep test modules exactly one directory deep.
 |---|---|---|
 | `gpu` | Needs CUDA or MPS; may download weights. CI deselects it. | `tests/gpu/` except `test_gpu_model.py` (CPU tests of the skip helper); the `mps` params of `tests/model/test_model_numerics.py` and `tests/generation/test_generation_metadata.py`; `tests/generation/test_scoring.py::test_real_forward_score_choices_distribution`. A test that requests `gpu_session` is marked automatically. |
 | `gpu_gemma` | Needs explicit gated Gemma model and artifact access. | `tests/gpu/test_sae_lens_smoke.py` (also `gpu`, and opt-in via `DROWSE_TEST_SAELENS`). |
-| `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s) and `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower). Both are also `gpu`. |
+| `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s), `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower) and `test_throughput_with_unit_ablation` (8 neurons and 2 heads mean-ablated ≥ 80%) and `test_throughput_with_dashboard_instruments` (the served dashboard's decode ≥ 50%: the default roster scored per token with subspace coordinates, the live R readout over a micro-fit lens's every layer, eight alternatives, a loom row and a serialized WebSocket frame per token; about 63% on SmolLM2/MPS). All are also `gpu`. |
 
 GPU modules load with `device="auto"` (cuda > mps > cpu) and skip without CUDA
 or MPS. `load_or_skip_inaccessible` skips when loading fails on access (a gated
@@ -141,10 +142,11 @@ set session privates.
 | Module | Provides |
 |---|---|
 | `composer.py` | `SteeringRig`: a real `SteeringComposer` with its `ArtifactRegistry`, `NeutralBaseline` and `SteeringManager`, no model; `attach_engine()` adds a `GenerationEngine` on the rig's lock. |
-| `read_plane.py` | `ReadRig`: a real `ReadPlane`, the three instruments and the `ProbeRoster` over a swappable `CaptureSlot` (any instrument can be replaced by a fake); `finalize` runs the finalize reads through `finalize_generation` as the engine does; `gate_refs(expr)`; `fake_readout_family`; `geometry_instrument`. |
+| `read_plane.py` | `ReadRig`: a real `ReadPlane`, the four instruments (units over a model-less runtime) and the `ProbeRoster` over a swappable `CaptureSlot` (any instrument can be replaced by a fake); `finalize` runs the finalize reads through `finalize_generation` as the engine does; `gate_refs(expr)`; `fake_readout_family`; `geometry_instrument`. |
 | `engine.py` | `engine_over(host, ...)`: a `GenerationEngine` with an inert runtime, for call composition without a model. |
 | `lens.py` | `LensHarness` (a `LensInstrument` on the toy model, recording `on_change` and exclusive sections), `lens_instrument`/`lens_kwargs` (constructor arguments with inert defaults), `FakeCapture`. |
 | `sae.py` | `MockSaeBackend` (identity encode/decode by default), `sae_instrument` (a real `SaeInstrument` + `SaeRuntime`; registry effects land on `.effects`), `make_resident` (installs a residency without the load path). |
+| `units.py` | `inert_units_instrument` (a real `UnitsInstrument` over a model-less runtime, for rigs), `random_unit_stats(spec)`, `patched_forward_logits(model, ids, {module: patch})` (the hand-patched forward unit hooks are checked against), `GEMMA4_MIXED_HEADS` (a tiny Gemma 4 chat family with 8- and 16-wide heads, for `TinyCheckpoint`). |
 | `replay.py` | `ReplayRig` (a real `TokenReplayer` over the toy model and a real `LoomTree`, recording renders, scopes, exclusive sections and capture forwards; hand `rig.replay` to the instrument under test), `unwired_replay` (fails loudly if called). |
 | `geometry.py` | `stub_geometry_instrument(stub)`: a real `GeometryInstrument` reading a hand-built stub's attributes per call. For the remaining stub suites; new tests use `tiny_session`. |
 | `capture.py` | `install_capture` (swaps `fit.capture._encode_and_capture_all_batch` for a synthetic per-row encoder and pins the baseline prompts to one), `StubHandle` (identity layers + a covering synthetic whitener), for model-free `ManifoldExtractionPipeline` tests. |
@@ -153,7 +155,9 @@ set session privates.
 | `manifolds.py` | `loop_manifold`, `open_manifold`, `disk_manifold`: curved fits through circle centroids with a 20.0 common-mode offset (without it the kernel's norm cap fires); `stamp_current_geometry`, `euclidean_shares`. |
 | `artifacts.py` | `author_manifold` (a two-node discover folder under `local/`, fitted for `MODEL`), `write_fitted_manifold`. |
 | `decode.py` | `FakeLogitsModel`/`make_logits_model`, `scripted_model`/`scripted_logits`, `NoCacheModel`, `StopTokenizer`, `CharTokenizer`, for decode-loop, scoring, naturalness and joint-logprob tests. |
-| `jlens_toys.py` | `frozen_toy(n_layers)`: an HF-shaped frozen block stack for lens math, with its own `CharTokenizer`. |
+| `jlens_toys.py` | `frozen_toy(n_layers)`: a genuine tiny llama (`TOY_D` wide, `TOY_VOCAB` tokens, weights re-drawn) the lens transport fits, with its own `CharTokenizer`. |
+| `lens_oracle.py` | The autograd lens oracle: `oracle_estimate`/`oracle_lens` compute every kind and site by autograd through the model's own modules, with the RelP rules as derivative patches (`relp_backward_rules`). The reference the transport is tested against. |
+| `blocks.py` | `tiny_dense_model(model_type)`: a float64 tiny model of each dense family (`DENSE_FAMILIES`) with every weight, norm and scalar re-drawn and windows that bind; `default_init_model(model_type, seed=, dtype=)`: the same architecture at its default initialization in a low precision (bf16), the rounding a verification must not take for a term; `spec_forward(spec, ids)`: mids, block outputs and logits from a `ModelSpec` alone, the oracle for `BlockSpec` and transport layer maps. |
 | `server.py` | `mock_session`, `script_generate`, `StubSession` (below). |
 | `cli.py` | `FakeSession`, `install_fake_session` (patches `DrowseSession.from_pretrained`, the CLI's one construction seam, so the real narration, YAML defaults and close-on-exit run), `poison_session` (any model load raises). |
 | `chat_templates.py` | Per-family templates emitting each family's exact role-header bytes, and `FakeTokenizer` (Jinja render, whitespace tokens). |
@@ -162,7 +166,7 @@ set session privates.
 
 **Route tests.** `mock_session(**overrides)` is
 `create_autospec(DrowseSession, instance=True)` shaped as an idle session: idle
-tree, the three instrument faces idle with no probes, the Monitor, a working
+tree, the four instrument faces idle with no probes, the Monitor, a working
 event bus. A name the class does not define raises `AttributeError` and every
 method call is signature-checked, so a route that calls a removed or renamed
 method fails. Overrides apply last; `script_generate(session, tokens)` makes
@@ -181,6 +185,7 @@ files from it, so their paths are part of its interface:
 | `tests/fixtures/browser_steering_expression.json` | The parity test (accepted cases parse and match `referenced_selectors`; rejected ones raise `SteeringExprError`) and drowse.ai's TypeScript parser test. |
 | `tests/browser_drowse_archive_bridge.py` | drowse.ai's archive round-trip test runs `export\|install FIXTURE HOME ARCHIVE`. It calls `store.manifold_authoring.create_discover_manifold_folder`, `store.archive.export_drowse_archive`, `store.install.install_manifold` and `store.manifold_folder.ManifoldFolder`, so those signatures are seam too. |
 | `tests/fixtures/loom_tree_v2.json` | `webui/scripts/conversation-snapshot.test.mjs` (`npm run check`): a `tree_format` 2 tree save. No Python test reads it; keep it in step with the tree format. |
+| `tests/fixtures/token_rows.json` | `tests/loom/test_loom.py` and `webui/scripts/conversation-snapshot.test.mjs`: the token rows (`accepted`/`refused`) and authored nodes with their `prompt_capture` (`authored`) both readers accept and refuse; a shape change edits it on both sides at once. |
 
 - Never rename, move or reformat these files. The goldens are byte-frozen: a
   diff under `tests/fixtures/browser/` is a seam change, never a side effect of
@@ -191,8 +196,18 @@ files from it, so their paths are part of its interface:
   `schemaVersion` (`-v1`, `post-block-rank-one-v2`).
 - Add a case to `browser_steering_expression.json` only once drowse.ai's
   TypeScript parser agrees: both sides run the same table.
+- `tests/fixtures/steering_ir.json` is the parsed-IR golden, Python-only for
+  now (`tests/steering/test_steering_ir.py`): per accepted expression, the
+  ordered terms (key, kind, coefficient or along/onto, operands, position,
+  layer scope, trigger text and fields, term text) and the canonical
+  `format_expr` string; per rejected one, the error class. It carries its own
+  manifold registry, installed into a fresh home before parsing. It is the
+  target drowse.ai's parser will match; once it does, the browser fixture can
+  grow to this scope. After a deliberate grammar change, regenerate it with
+  `PYTHONPATH=. python -m tests.steering.test_steering_ir` (inputs stay,
+  outputs recompute).
 - The measurement envelope wire shape is part of the same seam
-  (`measurement-envelope-v1.json`, plus the exact key sets in
+  (`measurement-envelope-v2.json`, plus the exact key sets in
   `tests/readout/test_measurements_envelope.py`).
 
 ## Invariant tests

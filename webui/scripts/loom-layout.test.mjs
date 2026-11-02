@@ -39,7 +39,27 @@ try {
     "hidden control-token gaps must not invent raw token identities");
 
   // Loom dialog helpers: fan-out strengths and go-to-turn id prefixes.
-  const { parseStrengthList, resolveNodeIdPrefix } = await server.ssrLoadModule("/src/panels/loom/loomCommands.ts");
+  const { parseStrengthList, resolveNodeIdPrefix, fanoutConcepts, fanoutRecipe } = await server.ssrLoadModule("/src/panels/loom/loomCommands.ts");
+  // Regression: the guided-variation dialog took a free-text "steering direction" and built
+  // ``steering=${alpha} ${text}``, so any expression could be typed there. It now picks a fitted
+  // flat concept and a node, and each variation's recipe is the chips' own term for it.
+  const concept = (name, fit_mode, fitted, labels) => ({
+    namespace: "default", name, fit_mode, resolved_fit_mode: fit_mode === "auto" ? null : fit_mode, fitted_for_session: fitted,
+    node_count: labels.length, node_labels: labels, node_coords: labels.map((_, i) => [i === 0 ? 1 : -1]),
+  });
+  const catalog = [
+    concept("verbose.concise", "pca", true, ["verbose", "concise"]),
+    concept("emotions", "spectral", true, ["wonder", "dread"]),
+    concept("calm.anxious", "pca", false, ["calm", "anxious"]),
+    concept("tone", "auto", true, ["warm", "cold"]),
+  ];
+  assert.deepEqual(fanoutConcepts(catalog).map((row) => row.name), ["verbose.concise"], "fitted flat concepts only");
+  assert.equal(fanoutRecipe(catalog[0], "concise", -0.5), "steering=-0.5 default/verbose.concise%concise");
+  assert.equal(fanoutRecipe(catalog[0], "verbose", 0.1 + 0.2), "steering=0.3 default/verbose.concise%verbose", "the strength as %g");
+  assert.equal(fanoutRecipe(catalog[0], "0.3 jlens/x + verbose", 0.3), null, "only one of its nodes");
+  // A variation's sampling is the call's (the composer's), which outranks the anchor it composes
+  // onto (compose_call; tests/fixtures/browser/recipe-compose-v1.json), so the partial recipe
+  // carries the steering alone.
   assert.deepEqual(parseStrengthList("0, 0.3, -1"), [0, 0.3, -1]);
   assert.deepEqual(parseStrengthList("linspace(-1, 1, 5)"), [-1, -0.5, 0, 0.5, 1]);
   assert.deepEqual(parseStrengthList("0:1:0.25"), [0, 0.25, 0.5, 0.75, 1]);
@@ -87,6 +107,23 @@ try {
   const sizedSegment = segmentLoom(bulk, new Set()).find(part => part.id === "bulk3");
   assert.equal(segmentWidth(sizedSegment), segmentWidth({ ...sizedSegment }));
   assert.ok(segmentHeightEstimate(sizedSegment, segmentWidth(sizedSegment), false) > 105);
+  // The estimate mirrors LoomNode's geometry: these turns measured 136 and 204 px in Chrome at
+  // 1440. An estimate far from the measured height moves the layout under a centred camera.
+  const measuredTurn = (id, texts, generated) => ({
+    id, parentId: null, depth: 0, memberIds: [id], start: 0, end: texts.length, shared: false,
+    node: {
+      id, parent_id: "p", role: generated ? "assistant" : "user", recipe: generated ? {} : null, notes: null,
+      text: texts.join(""), mean_logprob: generated ? -0.5 : null,
+      tokens: texts.map((text, index) => ({ text, raw_index: index, token_id: index, logprob: -0.1 })),
+    },
+  });
+  const askedTurn = measuredTurn("asked", ["Write", " two", " sentences", " about", " the", " night", " sky", " over", " the", " sea", "."], false);
+  assert.equal(segmentHeightEstimate(askedTurn, 276, false), 136);
+  assert.equal(segmentHeightEstimate(askedTurn, 276, true), 152, "touch tools are 44 px tall");
+  const repliedTurn = measuredTurn("replied", [" hung", " low", " over", " the", " vast", " expanse", " of", " water", ",", " the",
+    " night", " sky", " was", " bat", "hed", " in", " a", " soft", ",", " e", "the", "real", " glow", ",", " with", " countless",
+    " stars", " twinkling", " like", " diamonds", " scattered", " across", " the", " dark", " canvas", " below", "."], true);
+  assert.equal(segmentHeightEstimate(repliedTurn, 414, false), 204);
   const source = [prompt, makeReply("a", ["A", "B", "C"]), makeReply("b", ["A", "B", "D"]),
     makeReply("c", ["A", "E"]), makeReply("next", ["Next"], "b")];
   const saved = JSON.stringify(source);
@@ -134,13 +171,55 @@ try {
     centerLoomRect,
     fitLoomCamera,
     resizeLoomCamera,
+    settleLoomCenter,
     LOOM_MAX_ZOOM,
     LOOM_MIN_ZOOM,
     zoomLoomAt,
   } = await server.ssrLoadModule("/src/panels/loom/loomViewport.ts");
-  const { splitTokenSentences } = await server.ssrLoadModule(
+  const { leadingSpace, splitTokenSentences, tokenWords } = await server.ssrLoadModule(
     "/src/panels/loom/loomSentences.ts",
   );
+
+  // Word boxes: text drawn one button per token breaks lines only where it has a space.
+  const kaleidoscope = [" a", " kaleid", "oscope", " of", " colors", ",", "\n\n", "Next"].map(text => ({ text }));
+  assert.deepEqual(tokenWords(kaleidoscope), [
+    { start: 0, end: 0 }, { start: 1, end: 2 }, { start: 3, end: 3 }, { start: 4, end: 5 }, { start: 6, end: 6 }, { start: 7, end: 7 },
+  ], "a sub-word token and trailing punctuation stay in their word; a line break stands alone");
+  assert.deepEqual(tokenWords(kaleidoscope, 2, 5), [{ start: 2, end: 2 }, { start: 3, end: 3 }, { start: 4, end: 5 }],
+    "a range keeps absolute indexes and starts a word at its first token");
+  assert.deepEqual(tokenWords(kaleidoscope, 3, 2), []);
+  assert.deepEqual(tokenWords([{ text: "東京" }, { text: "都" }]), [{ start: 0, end: 1 }], "text with no spaces is one word");
+  // The space a word opens with is drawn outside its box, so a wrapped line does not start indented.
+  assert.deepEqual([" kaleid", "  indent", "oscope", " ", "\n\nNext", " \nNext", ""].map(leadingSpace),
+    [" ", "  ", "", "", "", "", ""], "only plain spaces ahead of something visible move out of the token");
+
+  // Centring follows a turn while the turns a move brings into view take their measured heights,
+  // and hands the camera back as soon as anything else moves it.
+  const settleHost = (placements, interfereAt = -1) => {
+    let pass = 0;
+    let view = { x: 0, y: 0, zoom: 1 };
+    const centred = [];
+    return {
+      centred,
+      host: {
+        placement: () => placements[Math.min(pass, placements.length - 1)],
+        center: (rect) => { centred.push(rect.y); view = centerLoomRect({ width: 400, height: 300 }, rect, 1.17); return { ...view }; },
+        camera: () => view,
+        remeasured: async () => { pass += 1; if (pass === interfereAt) view = { ...view, x: view.x + 40 }; },
+      },
+    };
+  };
+  const turnAt = (y) => ({ x: 120, y, width: 276, height: 136 });
+  let settle = settleHost([turnAt(1900), turnAt(1200), turnAt(1180), turnAt(1180)]);
+  assert.equal(await settleLoomCenter(settle.host), 3);
+  assert.deepEqual(settle.centred, [1900, 1200, 1180], "each remeasure that moves the turn moves the camera after it");
+  settle = settleHost([turnAt(1900), turnAt(1200)], 1);
+  assert.equal(await settleLoomCenter(settle.host), 1, "a pan or zoom during the settle wins");
+  settle = settleHost([turnAt(1900), null]);
+  assert.equal(await settleLoomCenter(settle.host), 1, "a removed or superseded target ends the follow");
+  assert.equal(await settleLoomCenter(settleHost([null]).host), 0);
+  settle = settleHost([0, 10, 20, 30, 40, 50, 60].map(turnAt));
+  assert.equal(await settleLoomCenter(settle.host, 4), 5, "a placement that never holds stops after the pass budget");
   const { pinchMetrics, scaleFromPinch } = await server.ssrLoadModule(
     "/src/lib/pointerGesture.ts",
   );
@@ -233,6 +312,14 @@ try {
   assert.equal(loomTextMatches("anything", "  "), false);
   assert.equal(loomSearchExcerpt("x".repeat(200) + " HELLO world", "hello").match, "HELLO");
   assert.ok(loomSearchExcerpt("x".repeat(200) + " HELLO world", "hello").before.startsWith("…"));
+
+  // Regression: a reply that is all thinking read "Empty" in the loom.
+  const { loomNodeSnippet } = await server.ssrLoadModule("/src/lib/loomSearch.ts");
+  assert.equal(loomNodeSnippet({ text: " Hi\n there ", thinking_text: null }), "Hi there");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: "hmm", thinking_tokens: [1, 2, 3] }), "Thinking only · 3 tokens");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: "hmm", thinking_tokens: null }), "Thinking only");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: null }), "Empty turn");
+  assert.equal(loomNodeSnippet({ text: "", thinking_text: "" }, "Empty"), "Empty");
 
   const varied = layoutLoom([
     { id: "short", parentId: null, depth: 0, height: 136 },
@@ -351,6 +438,23 @@ try {
   assert.equal(zoomed.zoom, LOOM_MAX_ZOOM);
   assert.equal((anchor.x - zoomed.x) / zoomed.zoom, anchor.x - 100);
   assert.equal((anchor.y - zoomed.y) / zoomed.zoom, anchor.y - 60);
+
+  // A per-token diff repeats one side's token while the other side catches up (the server's
+  // byte-offset walk), so each pane shows its tokens once, in order, keyed by their own index.
+  const { diffSideTokens } = await server.ssrLoadModule("/src/panels/loom/loomDiff.ts");
+  const span = (a_index, b_index, a_text, b_text, aligned = false) => ({ a_index, b_index, a_text, b_text, aligned, reading_deltas: [] });
+  const drift = [
+    span(0, 0, "The", "The", true),
+    span(1, 1, " sun", " su", false),
+    span(1, 2, " sun", "n", false),
+    span(2, 3, " rose", " rose", true),
+    span(3, -1, ".", ""),
+    span(-1, 4, "", "!"),
+  ];
+  assert.deepEqual(diffSideTokens(drift, "a").map(row => row.a_text), ["The", " sun", " rose", "."]);
+  assert.deepEqual(diffSideTokens(drift, "b").map(row => row.b_text), ["The", " su", "n", " rose", "!"]);
+  assert.equal(new Set(diffSideTokens(drift, "a").map(row => row.a_index)).size, 4, "no repeated A keys");
+  assert.deepEqual(diffSideTokens([], "b"), []);
   console.log("loom layout passed");
 } finally {
   await server.close();

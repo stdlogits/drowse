@@ -18,9 +18,11 @@ from typing import Any
 import pytest
 import torch
 
+from drowse.errors import RequestError
 from drowse.lens.jlens import JacobianLens, JacobianLensError
 from drowse.lens.lifecycle import (
     CORPUS_HASH_KIND,
+    LensReplaceRefused,
     LensFitCorpus,
     LensFitIdentity,
     LensFitPlan,
@@ -29,7 +31,7 @@ from drowse.lens.lifecycle import (
     fit_covers_layers,
     plan_lens_fit,
     raw_corpus_sha256,
-    resolve_fit_sources,
+    resolve_fit_layers,
 )
 from drowse.model.fingerprint import loaded_model_fingerprint
 from drowse.lens.store import (
@@ -66,7 +68,7 @@ def _identity(
         raw_count=len(rows),
     )
     return LensFitIdentity(
-        kind="J", corpus=corpus, sources=sources, seq_len=128,
+        kind="J", corpus=corpus, layers={"out": sources}, seq_len=128,
         model_fingerprint="fp", policy=_POLICY,
     )
 
@@ -130,12 +132,12 @@ def test_plan_noop_prefers_the_matching_resident() -> None:
     identity = _identity(_ROWS)
     durable = _sidecar(identity, n=4, layers=[0, 1])
     resident = ResidentLens(
-        n_prompts=4, layers=frozenset({0, 1}), identity=lens_identity(durable),
+        n_prompts=4, layers={"out": frozenset({0, 1})}, identity=lens_identity(durable),
     )
     assert plan_lens_fit(
         identity, durable=durable, checkpoint=None, resident=resident,
     ) == LensFitPlan("noop", durable="resident")
-    stale = ResidentLens(n_prompts=4, layers=frozenset({0, 1}), identity="old")
+    stale = ResidentLens(n_prompts=4, layers={"out": frozenset({0, 1})}, identity="old")
     assert plan_lens_fit(
         identity, durable=durable, checkpoint=None, resident=stale,
     ) == LensFitPlan("noop", durable="selective")
@@ -145,10 +147,10 @@ def test_plan_tops_up_missing_layers_and_their_checkpoint() -> None:
     identity = _identity(_ROWS, sources=(0, 1, 2))
     durable = _sidecar(identity, n=4, layers=[0, 1])
     plan = plan_lens_fit(identity, durable=durable, checkpoint=None, resident=None)
-    assert plan == LensFitPlan("topup", durable="full", missing=(2,))
+    assert plan == LensFitPlan("topup", durable="full", missing={"out": (2,)})
     partial = _sidecar(identity, n=2, layers=[2], checkpoint=True)
     plan = plan_lens_fit(identity, durable=durable, checkpoint=partial, resident=None)
-    assert plan == LensFitPlan("topup", durable="full", missing=(2,), checkpoint=True)
+    assert plan == LensFitPlan("topup", durable="full", missing={"out": (2,)}, checkpoint=True)
 
 
 def test_plan_resumes_from_a_durable_prefix_or_a_farther_checkpoint() -> None:
@@ -183,16 +185,42 @@ def test_plan_skips_a_durable_artifact_that_cannot_be_a_base() -> None:
 def test_plan_refuses_to_extend_a_subset_of_durable_layers() -> None:
     identity = _identity(_ROWS, sources=(0,))
     durable = _sidecar(identity, n=2, layers=[0, 1])
-    with pytest.raises(JacobianLensError, match="full durable layer set"):
+    # Its own class, so the server can offer the forced fit for this refusal only.
+    with pytest.raises(LensReplaceRefused, match="layers the request omits"):
         plan_lens_fit(identity, durable=durable, checkpoint=None, resident=None)
+
+
+def test_plan_refuses_to_replace_a_larger_or_wider_durable_fit() -> None:
+    """A fit over another corpus publishes over the artifact, so it never
+    silently replaces one over more documents (the default count dropped
+    from 100 to 25) or one holding a layer the request omits."""
+    identity = _identity(_ROWS[:2])
+    larger = _sidecar(_identity(_ROWS), n=4, layers=[0, 1])
+    with pytest.raises(LensReplaceRefused, match="over 4 documents; fitting 2 .* would replace it"):
+        plan_lens_fit(identity, durable=larger, checkpoint=None, resident=None)
+    # A resumable checkpoint of the smaller corpus would publish over it too.
+    partial = _sidecar(identity, n=1, layers=[0, 1], checkpoint=True)
+    with pytest.raises(LensReplaceRefused, match="would replace it"):
+        plan_lens_fit(identity, durable=larger, checkpoint=partial, resident=None)
+    wider = _sidecar(_identity([[9] * 20] * 4), n=4, layers=[0, 1, 2])
+    with pytest.raises(LensReplaceRefused, match=r"layers this request omits \({'out': \[2\]}\)"):
+        plan_lens_fit(_identity(_ROWS), durable=wider, checkpoint=None, resident=None)
+    # force replaces it, and an artifact of other semantics is not this fit's.
+    assert plan_lens_fit(
+        identity, durable=larger, checkpoint=None, resident=None, force=True,
+    ) == LensFitPlan("fresh")
+    other_length = _sidecar(_identity(_ROWS), n=4, layers=[0, 1], seq_len=64)
+    assert plan_lens_fit(
+        identity, durable=other_length, checkpoint=None, resident=None,
+    ) == LensFitPlan("fresh")
 
 
 def test_checkpoint_must_cover_exactly_the_requested_layers() -> None:
     identity = _identity(_ROWS)
     wrong_layers = _sidecar(identity, n=3, layers=[0], checkpoint=True)
-    assert not identity.checkpoint_matches(wrong_layers, identity.sources)
+    assert not identity.checkpoint_matches(wrong_layers, identity.layers)
     empty = _sidecar(identity, n=0, layers=[0, 1], checkpoint=True)
-    assert not identity.checkpoint_matches(empty, identity.sources)
+    assert not identity.checkpoint_matches(empty, identity.layers)
 
 
 def test_corpus_identity_hashes_token_rows_as_lists() -> None:
@@ -209,32 +237,58 @@ def test_corpus_identity_hashes_token_rows_as_lists() -> None:
     ).hexdigest()
 
 
-def test_fit_sources_refuse_sample_and_drop_band() -> None:
-    assert resolve_fit_sources(None, n_layers=5) == [0, 1, 2, 3]
-    assert resolve_fit_sources([3, 1, 1], n_layers=5) == [1, 3]
-    assert resolve_fit_sources("workspace", n_layers=11) == [4, 5, 6, 7, 8, 9]
+def test_fit_layers_resolve_per_site_and_refuse_sample() -> None:
+    both = resolve_fit_layers(None, kind="J", n_layers=5)
+    assert both == {"out": (0, 1, 2, 3), "mid": (0, 1, 2, 3, 4)}
+    assert resolve_fit_layers(None, kind="S", n_layers=5) == {
+        "out": (0, 1, 2, 3, 4), "mid": (0, 1, 2, 3, 4),
+    }
+    assert resolve_fit_layers([3, 1, 1], kind="R", n_layers=5, sites=["out"]) == {"out": (1, 3)}
+    assert resolve_fit_layers("workspace", kind="J", n_layers=11, sites=["out"]) == {
+        "out": (4, 5, 6, 7, 8, 9),
+    }
+    # The last block is an output kind's mid layer, never its out layer.
+    assert resolve_fit_layers([4], kind="R", n_layers=5, sites=["mid"]) == {"mid": (4,)}
+    assert resolve_fit_layers([3, 4], kind="R", n_layers=5) == {"out": (3,), "mid": (3, 4)}
+    with pytest.raises(RequestError, match="no requested layer"):
+        resolve_fit_layers([4], kind="R", n_layers=5)
+    with pytest.raises(RequestError, match="belong to no requested"):
+        resolve_fit_layers([3, 4], kind="J", n_layers=5, sites=["out"])
+    with pytest.raises(RequestError, match=r"\[0, 5\)"):
+        resolve_fit_layers([5], kind="S", n_layers=5)
     for mode in ("sample", "band"):
-        with pytest.raises(ValueError, match="unknown layer mode"):
-            resolve_fit_sources(mode, n_layers=5)
+        with pytest.raises(RequestError, match="all, workspace or an index list"):
+            resolve_fit_layers(mode, kind="J", n_layers=5)
+    with pytest.raises(RequestError, match="sites"):
+        resolve_fit_layers(None, kind="J", n_layers=5, sites=["top"])
 
 
 def test_fit_covers_layers_resolves_modes_against_the_recorded_depth() -> None:
-    sidecar = {"sites": {"out": {"layers": [0, 1, 2]}}, "model_layer_count": 4}
-    assert fit_covers_layers(sidecar, None)
-    assert fit_covers_layers(sidecar, "all")
-    assert fit_covers_layers(sidecar, [1, 2])
-    assert not fit_covers_layers(sidecar, [3])
-    assert not fit_covers_layers({**sidecar, "model_layer_count": None}, "all")
+    sidecar = {"kind": "J", "sites": {"out": {"layers": [0, 1, 2]}}, "model_layer_count": 4}
+    assert fit_covers_layers(sidecar, None, sites=["out"])
+    assert fit_covers_layers(sidecar, "all", sites=["out"])
+    assert fit_covers_layers(sidecar, [1, 2], sites=["out"])
+    assert not fit_covers_layers(sidecar, [1, 2])  # no mid site
+    assert not fit_covers_layers(sidecar, [3], sites=["mid"])
+    assert not fit_covers_layers({**sidecar, "model_layer_count": None}, "all", sites=["out"])
+    both = {
+        "kind": "R", "model_layer_count": 4,
+        "sites": {"out": {"layers": [0, 1, 2]}, "mid": {"layers": [0, 1, 2, 3]}},
+    }
+    assert fit_covers_layers(both, None)
+    assert fit_covers_layers(both, [3], sites=["mid"])
+    # An explicit last block leaves an output kind's out site empty: refused.
+    assert not fit_covers_layers(both, [3])
 
 
 def test_fit_rejects_an_unfittable_kind() -> None:
     with pytest.raises(ValueError, match="lens kind"):
-        LensHarness().lens.fit(_PROMPTS, kind="K")
+        LensHarness().lens.fit(_PROMPTS, kind="Q", sites=("out",))
 
 
 def test_fit_uses_the_kind_directory_and_policy() -> None:
     harness = LensHarness()
-    fitted = harness.lens.fit(_PROMPTS, kind="J")
+    fitted = harness.lens.fit(_PROMPTS, kind="J", sites=("out",))
     assert fitted.key.kind == "J"
     assert lens_manifest_path(_MODEL_ID, "j").exists()
     assert not lens_manifest_path(_MODEL_ID, "r").exists()
@@ -247,27 +301,27 @@ def test_fit_is_noop_proves_a_pinned_corpus_fit_before_streaming() -> None:
     # Stamped the way the loader stamps it (drowse.model.load).
     setattr(harness.model, "_drowse_source_fingerprint", "toy-source")
     spec = "hf:org/data/cfg@" + "a" * 40 + ";preprocess=1;doc_chars=4000"
-    assert harness.lens.fit_is_noop(len(_PROMPTS), kind="J", corpus_spec=spec) is None
-    harness.lens.fit(_PROMPTS, kind="J", corpus_spec=spec, source_layers=[0, 1])
+    assert harness.lens.fit_is_noop(len(_PROMPTS), kind="J", corpus_spec=spec, sites=("out",)) is None
+    harness.lens.fit(_PROMPTS, kind="J", corpus_spec=spec, layers=[0, 1], sites=("out",))
 
     proven = harness.lens.fit_is_noop(
-        len(_PROMPTS), kind="J", corpus_spec=spec, source_layers=[1],
+        len(_PROMPTS), kind="J", corpus_spec=spec, layers=[1], sites=("out",),
     )
     assert proven is not None and proven["corpus_spec"] == spec
     for kwargs in (
         {"kind": "R"},
         {"corpus_spec": spec.replace("cfg", "other")},
-        {"source_layers": [2]},
+        {"layers": [2]},
         {"seq_len": 64},
     ):
-        call = {"kind": "J", "corpus_spec": spec, "source_layers": [1], **kwargs}
+        call = {"kind": "J", "corpus_spec": spec, "layers": [1], "sites": ("out",), **kwargs}
         assert harness.lens.fit_is_noop(len(_PROMPTS), **call) is None
     assert harness.lens.fit_is_noop(
-        len(_PROMPTS) + 1, kind="J", corpus_spec=spec, source_layers=[1],
+        len(_PROMPTS) + 1, kind="J", corpus_spec=spec, layers=[1], sites=("out",),
     ) is None
     setattr(harness.model, "_drowse_source_fingerprint", "other-source")
     assert harness.lens.fit_is_noop(
-        len(_PROMPTS), kind="J", corpus_spec=spec, source_layers=[1],
+        len(_PROMPTS), kind="J", corpus_spec=spec, layers=[1], sites=("out",),
     ) is None
 
 
@@ -291,7 +345,7 @@ def _save_checkpoint(
         }, sort_keys=True).encode()).hexdigest(),
     )
     return save_lens_checkpoint(
-        sums, partial.n_prompts, partial.d_model, model_id,
+        {"out": sums}, partial.n_prompts, partial.d_model, model_id,
         LensProvenance(**kwargs), kind=partial.key.kind,
         consumed_prefix_sha256=consumed,
     )
@@ -316,7 +370,7 @@ class _CountingTokenizer(CharTokenizer):
 
 def test_fit_persists_and_property_loads() -> None:
     s = LensHarness()
-    fitted = s.lens.fit(_PROMPTS, corpus_spec="test")
+    fitted = s.lens.fit(_PROMPTS, corpus_spec="test", sites=("out",))
     assert fitted.n_prompts == len(_PROMPTS)
 
     on_disk = load_lens(_MODEL_ID)
@@ -356,21 +410,25 @@ def test_terminal_checkpoint_is_promoted_without_second_tensor_write(
 
     monkeypatch.setattr(integrity, "hash_file", _counting_hash)
     fitted = LensHarness().lens.fit(
-        _PROMPTS[:2], force=True, checkpoint_every=2,
+        _PROMPTS[:2], force=True, checkpoint_every=2, sites=("out",),
     )
 
     assert fitted.n_prompts == 2
-    # One checkpoint shard per fitted layer; promotion only switches the
-    # durable sidecar pointer and performs no second serialization pass.
-    assert writes == len(fitted.source_layers)
+    # One checkpoint shard per fitted layer plus its odd-half shard;
+    # promotion only switches the durable sidecar pointer and performs no
+    # second serialization pass.
+    assert writes == 2 * len(fitted.source_layers)
     assert hashes == 0
+    final = json.loads(lens_manifest_path(_MODEL_ID, "j").read_text())
+    assert "odd" not in final["sites"]["out"]
+    assert set(final["sites"]["out"]["split_half"]) == {"0", "1"}
     assert load_lens(_MODEL_ID) is not None
     assert load_lens_checkpoint(_MODEL_ID, "j") is None
 
 
 def test_refit_rebuilds_live_lens_probes_and_evicts_directions() -> None:
     s = LensHarness()
-    s.lens.fit(_PROMPTS, source_layers=[0])
+    s.lens.fit(_PROMPTS, layers=[0], sites=("out",))
     s.lens.enable_live(layers=[0])
     live = s.lens.live
     assert live is not None
@@ -380,7 +438,7 @@ def test_refit_rebuilds_live_lens_probes_and_evicts_directions() -> None:
         "word": "a", "token_id": 1, "layers": [0],
     }
 
-    fitted = s.lens.fit(_PROMPTS, source_layers=[1], force=True)
+    fitted = s.lens.fit(_PROMPTS, layers=[1], force=True, sites=("out",))
 
     assert fitted.source_layers == [1]
     live = s.lens.live
@@ -396,7 +454,7 @@ def test_fit_already_done_short_circuits(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     s = LensHarness()
-    first = s.lens.fit(_PROMPTS)
+    first = s.lens.fit(_PROMPTS, sites=("out",))
     messages: list[str] = []
     import drowse.lens.store as lens_io
 
@@ -406,7 +464,7 @@ def test_fit_already_done_short_circuits(
             AssertionError("same-session no-op should reuse the resident lens")
         ),
     )
-    again = s.lens.fit(_PROMPTS, on_progress=messages.append)
+    again = s.lens.fit(_PROMPTS, on_progress=messages.append, sites=("out",))
     assert any("nothing to do" in m for m in messages)
     for layer in first.source_layers:
         assert torch.equal(first.jacobians[layer], again.jacobians[layer])
@@ -414,9 +472,9 @@ def test_fit_already_done_short_circuits(
 
 def test_subset_noop_keeps_full_durable_lens_resident() -> None:
     s = LensHarness()
-    full = s.lens.fit(_PROMPTS, source_layers=[0, 1], force=True)
+    full = s.lens.fit(_PROMPTS, layers=[0, 1], force=True, sites=("out",))
 
-    selected = s.lens.fit(_PROMPTS, source_layers=[1])
+    selected = s.lens.fit(_PROMPTS, layers=[1], sites=("out",))
 
     assert selected.source_layers == [1]
     assert full.source_layers == [0, 1]
@@ -424,12 +482,44 @@ def test_subset_noop_keeps_full_durable_lens_resident() -> None:
     assert s.lens.resident().source_layers == [0, 1]
 
 
+def test_selective_noop_on_a_two_site_lens_never_stamps_a_view() -> None:
+    """A fit asks for out-site layers; a durable lens may also hold a mid site.
+
+    The selective load reads only the out site, the fit returns it, and the
+    partial view is never adopted under the whole artifact's identity.
+    """
+    import dataclasses
+
+    from drowse.lens.store import load_local_lens, save_lens
+
+    LensHarness().lens.fit(_PROMPTS, layers=[0, 1], force=True, sites=("out",))
+    loaded = load_local_lens(_MODEL_ID, "j")
+    assert loaded is not None
+    lens, sidecar = loaded
+    provenance = LensProvenance(**{
+        field.name: sidecar[field.name]
+        for field in dataclasses.fields(LensProvenance) if field.name != "skip_first"
+    })
+    mid = {layer: torch.eye(lens.d_model) for layer in range(3)}  # mid covers the last layer
+    save_lens(
+        JacobianLens(lens.jacobians, mid=mid, n_prompts=lens.n_prompts, d_model=lens.d_model, key=lens.key),
+        _MODEL_ID, provenance,
+    )
+
+    session = LensHarness()
+    selected = session.lens.fit(_PROMPTS, layers=[0, 1], sites=("out",))
+    assert selected.sites == ("out",) and selected.source_layers == [0, 1]
+    assert session.lens.resident_lens is None
+    resident = session.lens.resident()
+    assert resident.sites == ("out", "mid") and resident.layers("mid") == [0, 1, 2]
+
+
 def test_fresh_subset_noop_reads_only_requested_shard_and_preserves_disk_union(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import drowse.lens.store as lens_io
 
-    LensHarness().lens.fit(_PROMPTS, source_layers=[0, 1], force=True)
+    LensHarness().lens.fit(_PROMPTS, layers=[0, 1], force=True, sites=("out",))
     payload_reads: list[str] = []
     real_safe_open = lens_io.safe_open
 
@@ -457,7 +547,7 @@ def test_fresh_subset_noop_reads_only_requested_shard_and_preserves_disk_union(
 
     monkeypatch.setattr(lens_io, "safe_open", _TrackingSafeOpen)
     session = LensHarness()
-    selected = session.lens.fit(_PROMPTS, source_layers=[1])
+    selected = session.lens.fit(_PROMPTS, layers=[1], sites=("out",))
 
     assert payload_reads == ["layer_1"]
     assert selected.source_layers == [1]
@@ -477,7 +567,7 @@ def test_fresh_partial_extension_rejects_before_payload_and_preserves_union(
     import drowse.lens.store as lens_io
 
     writer = LensHarness()
-    writer.lens.fit(_PROMPTS[:2], source_layers=[0, 1], force=True)
+    writer.lens.fit(_PROMPTS[:2], layers=[0, 1], force=True, sites=("out",))
     resident_ref = weakref.ref(writer.lens.resident_lens)
     del writer
     gc.collect()
@@ -491,8 +581,8 @@ def test_fresh_partial_extension_rejects_before_payload_and_preserves_union(
         return real_load(*args, **kwargs)
 
     monkeypatch.setattr(lens_io, "_load_lens_verified", record_load)
-    with pytest.raises(JacobianLensError, match="full durable layer set"):
-        LensHarness().lens.fit(_PROMPTS, source_layers=[0])
+    with pytest.raises(JacobianLensError, match="layers the request omits"):
+        LensHarness().lens.fit(_PROMPTS, layers=[0], sites=("out",))
 
     assert payload_reads == []
     monkeypatch.setattr(lens_io, "_load_lens_verified", real_load)
@@ -504,12 +594,12 @@ def test_fresh_partial_extension_rejects_before_payload_and_preserves_union(
 
 def test_overlapping_partial_extension_requires_explicit_replacement() -> None:
     LensHarness(n_layers=4).lens.fit(
-        _PROMPTS[:2], source_layers=[0, 1], force=True,
+        _PROMPTS[:2], layers=[0, 1], force=True, sites=("out",),
     )
 
-    with pytest.raises(JacobianLensError, match="full durable layer set"):
+    with pytest.raises(JacobianLensError, match="layers the request omits"):
         LensHarness(n_layers=4).lens.fit(
-            _PROMPTS, source_layers=[1, 2],
+            _PROMPTS, layers=[1, 2], sites=("out",),
         )
 
     durable = load_lens(_MODEL_ID)
@@ -518,7 +608,7 @@ def test_overlapping_partial_extension_requires_explicit_replacement() -> None:
     assert durable[0].n_prompts == 2
 
     replaced = LensHarness(n_layers=4).lens.fit(
-        _PROMPTS, source_layers=[1, 2], force=True,
+        _PROMPTS, layers=[1, 2], force=True, sites=("out",),
     )
     assert replaced.source_layers == [1, 2]
     durable = load_lens(_MODEL_ID)
@@ -529,7 +619,7 @@ def test_overlapping_partial_extension_requires_explicit_replacement() -> None:
 
 def test_exact_noop_reaps_checkpoint_left_after_final_publication() -> None:
     s = LensHarness()
-    full = s.lens.fit(_PROMPTS, force=True)
+    full = s.lens.fit(_PROMPTS, force=True, sites=("out",))
     loaded = load_lens(_MODEL_ID)
     assert loaded is not None
     sidecar = loaded[1]
@@ -545,7 +635,7 @@ def test_exact_noop_reaps_checkpoint_left_after_final_publication() -> None:
     )
     assert load_lens_checkpoint(_MODEL_ID, "j") is not None
 
-    selected = s.lens.fit(_PROMPTS)
+    selected = s.lens.fit(_PROMPTS, sites=("out",))
 
     assert selected.source_layers == full.source_layers
     assert load_lens_checkpoint(_MODEL_ID, "j") is None
@@ -553,7 +643,7 @@ def test_exact_noop_reaps_checkpoint_left_after_final_publication() -> None:
 
 def test_resident_noop_does_not_reap_checkpoint_when_final_payload_corrupt() -> None:
     s = LensHarness()
-    full = s.lens.fit(_PROMPTS, force=True)
+    full = s.lens.fit(_PROMPTS, force=True, sites=("out",))
     loaded = load_lens(_MODEL_ID)
     assert loaded is not None
     sidecar = loaded[1]
@@ -574,7 +664,7 @@ def test_resident_noop_does_not_reap_checkpoint_when_final_payload_corrupt() -> 
 
     # The resident lens makes the fit a no-op, but it is not proof that the
     # current on-disk payload is sound enough to discard the recovery point.
-    selected = s.lens.fit(_PROMPTS)
+    selected = s.lens.fit(_PROMPTS, sites=("out",))
 
     assert selected.source_layers == full.source_layers
     assert load_lens_checkpoint(_MODEL_ID, "j") is not None
@@ -582,9 +672,9 @@ def test_resident_noop_does_not_reap_checkpoint_when_final_payload_corrupt() -> 
 
 def test_overlapping_topup_keeps_preserved_extra_layer_resident() -> None:
     s = LensHarness(n_layers=4)
-    s.lens.fit(_PROMPTS, source_layers=[0, 1], force=True)
+    s.lens.fit(_PROMPTS, layers=[0, 1], force=True, sites=("out",))
 
-    selected = s.lens.fit(_PROMPTS, source_layers=[1, 2])
+    selected = s.lens.fit(_PROMPTS, layers=[1, 2], sites=("out",))
 
     assert selected.source_layers == [1, 2]
     assert s.lens.resident_lens.source_layers == [0, 1, 2]
@@ -594,14 +684,14 @@ def test_overlapping_topup_keeps_preserved_extra_layer_resident() -> None:
 def test_resident_lens_is_not_reused_after_external_artifact_replacement() -> None:
     corpus_b = [f"replacement corpus prompt {i} with enough content" for i in range(4)]
     session_a = LensHarness()
-    resident_a = session_a.lens.fit(_PROMPTS, force=True)
-    disk_b = LensHarness().lens.fit(corpus_b, force=True)
+    resident_a = session_a.lens.fit(_PROMPTS, force=True, sites=("out",))
+    disk_b = LensHarness().lens.fit(corpus_b, force=True, sites=("out",))
     assert any(
         not torch.equal(resident_a.jacobians[layer], disk_b.jacobians[layer])
         for layer in resident_a.source_layers
     )
 
-    refreshed = session_a.lens.fit(corpus_b)
+    refreshed = session_a.lens.fit(corpus_b, sites=("out",))
 
     for layer in disk_b.source_layers:
         assert torch.allclose(
@@ -628,8 +718,8 @@ def test_fit_serializes_complete_cross_session_transaction(
     first = LensHarness()
     second = LensHarness()
     results: list[str] = []
-    thread_a = threading.Thread(target=lambda: results.append(first.lens.fit(_PROMPTS)))
-    thread_b = threading.Thread(target=lambda: results.append(second.lens.fit(_PROMPTS)))
+    thread_a = threading.Thread(target=lambda: results.append(first.lens.fit(_PROMPTS, sites=("out",))))
+    thread_b = threading.Thread(target=lambda: results.append(second.lens.fit(_PROMPTS, sites=("out",))))
     thread_a.start()
     assert first_entered.wait(timeout=1.0)
     thread_b.start()
@@ -666,7 +756,7 @@ def test_fresh_fit_does_not_promote_stale_incompatible_checkpoint() -> None:
         model_fingerprint="WRONG",
     )
 
-    fitted = LensHarness().lens.fit(prompts, checkpoint_every=25)
+    fitted = LensHarness().lens.fit(prompts, checkpoint_every=25, sites=("out",))
     durable = load_lens(_MODEL_ID)
 
     assert durable is not None
@@ -678,10 +768,10 @@ def test_fresh_fit_does_not_promote_stale_incompatible_checkpoint() -> None:
 def test_fit_noop_revalidates_token_ids_before_loading_tensor() -> None:
     tokenizer = _CountingTokenizer()
     s = LensHarness(tokenizer=tokenizer)
-    s.lens.fit(_PROMPTS)
+    s.lens.fit(_PROMPTS, sites=("out",))
     tokenizer.calls = 0
 
-    again = s.lens.fit(_PROMPTS, source_layers=[1])
+    again = s.lens.fit(_PROMPTS, layers=[1], sites=("out",))
 
     assert again.source_layers == [1]
     assert tokenizer.calls == len(_PROMPTS)
@@ -689,7 +779,7 @@ def test_fit_noop_revalidates_token_ids_before_loading_tensor() -> None:
 
 def test_fit_changed_tokenizer_invalidates_cache() -> None:
     s = LensHarness()
-    s.lens.fit(_PROMPTS)
+    s.lens.fit(_PROMPTS, sites=("out",))
     original = load_lens(_MODEL_ID)
     assert original is not None
 
@@ -701,7 +791,7 @@ def test_fit_changed_tokenizer_invalidates_cache() -> None:
             result["input_ids"] = (result["input_ids"] + 1) % 13
             return result
 
-    LensHarness(tokenizer=_ShiftedTokenizer()).lens.fit(_PROMPTS)
+    LensHarness(tokenizer=_ShiftedTokenizer()).lens.fit(_PROMPTS, sites=("out",))
     changed = load_lens(_MODEL_ID)
     assert changed is not None
     assert changed[1]["corpus_sha256"] != original[1]["corpus_sha256"]
@@ -709,17 +799,17 @@ def test_fit_changed_tokenizer_invalidates_cache() -> None:
 
 def test_fit_resumes_from_partial_and_matches_full_fit() -> None:
     s = LensHarness()
-    full = s.lens.fit(_PROMPTS, force=True)
+    full = s.lens.fit(_PROMPTS, force=True, sites=("out",))
 
     # A normal smaller-corpus artifact carries the hash of that actual prefix.
     # Extending 2 -> N must recognize it without the old test-only trick of
     # stamping the prefix tensor with the future full-corpus hash.
     partial = LensHarness()
-    partial.lens.fit(_PROMPTS[:2], force=True)
+    partial.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
 
     resumed_session = LensHarness()
     messages: list[str] = []
-    resumed = resumed_session.lens.fit(_PROMPTS, on_progress=messages.append)
+    resumed = resumed_session.lens.fit(_PROMPTS, on_progress=messages.append, sites=("out",))
     assert any("resuming from 2 prompts" in m for m in messages)
     assert any("prompt 4/4" in m for m in messages)
     assert resumed.n_prompts == len(_PROMPTS)
@@ -747,21 +837,21 @@ def test_fit_tops_up_a_hub_corpus_by_prefix(
     )
     corpus = HfLensCorpus("org/shuffled", "default", "a" * 40)
     first_docs, spec = _collect_lens_corpus(2, corpus)
-    LensHarness().lens.fit(first_docs, corpus_spec=spec, force=True)
+    LensHarness().lens.fit(first_docs, corpus_spec=spec, force=True, sites=("out",))
 
-    real_fit = jlens_module.fit_jacobian_lens
+    real_fit = jlens_module.fit_lens
     fitted_widths: list[int] = []
 
     def counted_fit(*args: Any, **kwargs: Any) -> Any:
         fitted_widths.append(len(args[2]))
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_module, "fit_jacobian_lens", counted_fit)
+    monkeypatch.setattr(jlens_module, "fit_lens", counted_fit)
     docs, grown_spec = _collect_lens_corpus(4, corpus)
     assert grown_spec == spec and docs == _PROMPTS
     messages: list[str] = []
     grown = LensHarness().lens.fit(
-        docs, corpus_spec=spec, on_progress=messages.append,
+        docs, corpus_spec=spec, on_progress=messages.append, sites=("out",),
     )
     assert any("resuming from 2 prompts" in m for m in messages)
     assert fitted_widths == [2]
@@ -794,20 +884,20 @@ def test_fit_tops_up_a_corpus_mix_by_prefix(
         HfLensCorpus("zh/web", "default", "b" * 40),
     ), (1, 1))
     first_docs, spec = _collect_lens_corpus(2, mix)
-    LensHarness().lens.fit(first_docs, corpus_spec=spec, force=True)
+    LensHarness().lens.fit(first_docs, corpus_spec=spec, force=True, sites=("out",))
 
-    real_fit = jlens_module.fit_jacobian_lens
+    real_fit = jlens_module.fit_lens
     fitted_widths: list[int] = []
 
     def counted_fit(*args: Any, **kwargs: Any) -> Any:
         fitted_widths.append(len(args[2]))
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_module, "fit_jacobian_lens", counted_fit)
+    monkeypatch.setattr(jlens_module, "fit_lens", counted_fit)
     docs, grown_spec = _collect_lens_corpus(4, mix)
     assert grown_spec == spec and docs == _PROMPTS
     messages: list[str] = []
-    LensHarness().lens.fit(docs, corpus_spec=spec, on_progress=messages.append)
+    LensHarness().lens.fit(docs, corpus_spec=spec, on_progress=messages.append, sites=("out",))
     assert any("resuming from 2 prompts" in m for m in messages)
     assert fitted_widths == [2]
     sidecar = load_lens_sidecar(_MODEL_ID)
@@ -815,22 +905,34 @@ def test_fit_tops_up_a_corpus_mix_by_prefix(
     assert sidecar["corpus_spec"].startswith("mix:1*hf:en/web/default@")
 
 
+def test_a_smaller_refit_keeps_the_larger_durable_lens() -> None:
+    """Refitting fewer documents without force would replace hours of
+    compute: it refuses, the artifact stays, and force replaces it."""
+    harness = LensHarness()
+    harness.lens.fit(_PROMPTS, kind="R", sites=["out"], force=True)
+    with pytest.raises(JacobianLensError, match="over 4 documents"):
+        harness.lens.fit(_PROMPTS[:2], kind="R", sites=["out"])
+    sidecar = json.loads(lens_manifest_path(_MODEL_ID, "r").read_text())
+    assert sidecar["n_prompts"] == 4
+    assert harness.lens.fit(_PROMPTS[:2], kind="R", sites=["out"], force=True).n_prompts == 2
+
+
 def test_fit_changed_prefix_restarts_from_zero(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import drowse.lens.fit as jlens_module
 
-    LensHarness().lens.fit(_PROMPTS[:2], force=True)
+    LensHarness().lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     changed = ["a changed first prompt that is long enough", *_PROMPTS[1:]]
-    real_fit = jlens_module.fit_jacobian_lens
+    real_fit = jlens_module.fit_lens
     fitted_widths: list[int] = []
 
     def counted_fit(*args: Any, **kwargs: Any) -> Any:
         fitted_widths.append(len(args[2]))
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_module, "fit_jacobian_lens", counted_fit)
-    result = LensHarness().lens.fit(changed)
+    monkeypatch.setattr(jlens_module, "fit_lens", counted_fit)
+    result = LensHarness().lens.fit(changed, sites=("out",))
     assert result.n_prompts == len(changed)
     assert fitted_widths == [len(changed)]
 
@@ -841,27 +943,27 @@ def test_fit_loaded_weight_change_invalidates_cache(
     import drowse.lens.fit as jlens_module
 
     first = LensHarness()
-    first.lens.fit(_PROMPTS)
+    first.lens.fit(_PROMPTS, sites=("out",))
     changed = LensHarness()
     changed_model: Any = changed.model
     with torch.no_grad():
-        changed_model.model.layers[0].w1.data.reshape(-1)[1] += 0.125
-    real_fit = jlens_module.fit_jacobian_lens
+        changed_model.model.layers[0].mlp.up_proj.weight.data.reshape(-1)[1] += 0.125
+    real_fit = jlens_module.fit_lens
     fitted_widths: list[int] = []
 
     def counted_fit(*args: Any, **kwargs: Any) -> Any:
         fitted_widths.append(len(args[2]))
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_module, "fit_jacobian_lens", counted_fit)
-    changed.lens.fit(_PROMPTS)
+    monkeypatch.setattr(jlens_module, "fit_lens", counted_fit)
+    changed.lens.fit(_PROMPTS, sites=("out",))
     assert fitted_widths == [len(_PROMPTS)]
 
 
 def test_fit_extends_real_prefix_checkpoint_without_full_artifact() -> None:
-    full = LensHarness().lens.fit(_PROMPTS, force=True)
+    full = LensHarness().lens.fit(_PROMPTS, force=True, sites=("out",))
     head_session = LensHarness()
-    head = head_session.lens.fit(_PROMPTS[:2], force=True)
+    head = head_session.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     lens_manifest_path(_MODEL_ID, "j").unlink()
     consumed_prefix = [
         [int(tok) for tok in head_session.tokenizer(
@@ -889,7 +991,7 @@ def test_fit_extends_real_prefix_checkpoint_without_full_artifact() -> None:
     )
 
     messages: list[str] = []
-    resumed = head_session.lens.fit(_PROMPTS, on_progress=messages.append)
+    resumed = head_session.lens.fit(_PROMPTS, on_progress=messages.append, sites=("out",))
 
     assert any("resuming from checkpoint at 2 prompts" in m for m in messages)
     assert resumed.n_prompts == len(_PROMPTS)
@@ -907,9 +1009,9 @@ def test_fit_checkpoint_survives_two_interruptions(
     import drowse.lens.fit as jlens_mod
     import drowse.lens.store as lens_io
 
-    full = LensHarness().lens.fit(_PROMPTS, force=True)
+    full = LensHarness().lens.fit(_PROMPTS, force=True, sites=("out",))
     head_session = LensHarness()
-    head = head_session.lens.fit(_PROMPTS[:2], force=True)
+    head = head_session.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     consumed = [
         [int(tok) for tok in head_session.tokenizer(
             prompt, return_tensors="pt",
@@ -930,7 +1032,7 @@ def test_fit_checkpoint_survives_two_interruptions(
         ),
     )
 
-    real_fit = jlens_mod.fit_jacobian_lens
+    real_fit = jlens_mod.fit_lens
 
     def _interrupt_after_one(*args: Any, **kwargs: Any) -> Any:
         prompts = list(args[2])
@@ -940,15 +1042,15 @@ def test_fit_checkpoint_survives_two_interruptions(
         real_fit(*args, **kwargs)
         raise RuntimeError("simulated second interruption")
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", _interrupt_after_one)
+    monkeypatch.setattr(jlens_mod, "fit_lens", _interrupt_after_one)
     with pytest.raises(RuntimeError, match="second interruption"):
-        LensHarness().lens.fit(_PROMPTS)
+        LensHarness().lens.fit(_PROMPTS, sites=("out",))
 
     checkpoint = load_lens_checkpoint(_MODEL_ID, "j")
     assert checkpoint is not None
     assert checkpoint[0].n_prompts == 3
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", real_fit)
+    monkeypatch.setattr(jlens_mod, "fit_lens", real_fit)
     monkeypatch.setattr(
         lens_io, "load_lens",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(
@@ -959,7 +1061,7 @@ def test_fit_checkpoint_survives_two_interruptions(
         ),
     )
     messages: list[str] = []
-    resumed = LensHarness().lens.fit(_PROMPTS, on_progress=messages.append)
+    resumed = LensHarness().lens.fit(_PROMPTS, on_progress=messages.append, sites=("out",))
     assert any("checkpoint at 3 prompts" in message for message in messages)
     for layer in full.source_layers:
         assert torch.allclose(
@@ -973,7 +1075,7 @@ def test_corrupt_farther_checkpoint_falls_back_to_durable_prefix(
     import drowse.lens.fit as jlens_mod
 
     session = LensHarness()
-    durable = session.lens.fit(_PROMPTS[:2], force=True)
+    durable = session.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     consumed = [
         [int(tok) for tok in session.tokenizer(
             prompt, return_tensors="pt",
@@ -999,16 +1101,16 @@ def test_corrupt_farther_checkpoint_falls_back_to_durable_prefix(
     payload[-1] ^= 1
     checkpoint_tensor.write_bytes(payload)
 
-    real_fit = jlens_mod.fit_jacobian_lens
+    real_fit = jlens_mod.fit_lens
     initial_counts: list[int | None] = []
 
     def capture_initial(*args: Any, **kwargs: Any) -> Any:
-        initial = kwargs.get("initial_lens")
+        initial = kwargs.get("initial")
         initial_counts.append(initial.n_prompts if initial is not None else None)
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", capture_initial)
-    result = session.lens.fit(_PROMPTS)
+    monkeypatch.setattr(jlens_mod, "fit_lens", capture_initial)
+    result = session.lens.fit(_PROMPTS, sites=("out",))
 
     assert initial_counts == [2]
     assert result.n_prompts == len(_PROMPTS)
@@ -1023,7 +1125,7 @@ def test_matching_checkpoint_evicts_incompatible_resident_before_load(
     import drowse.lens.store as lens_io
 
     session = LensHarness()
-    session.lens.fit(_PROMPTS[:2], force=True)
+    session.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     resident = session.lens.resident_lens
     assert resident is not None
     resident_ref = weakref.ref(resident)
@@ -1058,7 +1160,7 @@ def test_matching_checkpoint_evicts_incompatible_resident_before_load(
         return real_load(*args, **kwargs)
 
     monkeypatch.setattr(lens_io, "load_lens_checkpoint", observe_load)
-    result = session.lens.fit(changed)
+    result = session.lens.fit(changed, sites=("out",))
 
     assert resident_gone_at_load == [True]
     assert result.n_prompts == len(changed)
@@ -1070,14 +1172,14 @@ def test_resident_prefix_is_reloaded_after_resume_failure(
     import drowse.lens.fit as jlens_mod
 
     session = LensHarness()
-    session.lens.fit(_PROMPTS[:2], force=True)
+    session.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     durable_pair = load_lens(_MODEL_ID)
     assert durable_pair is not None
     durable = durable_pair[0]
     expected = {
         layer: tensor.clone() for layer, tensor in durable.jacobians.items()
     }
-    real_fit = jlens_mod.fit_jacobian_lens
+    real_fit = jlens_mod.fit_lens
 
     def fail_after_one(*args: Any, **kwargs: Any) -> Any:
         prompts = list(args[2])
@@ -1086,9 +1188,9 @@ def test_resident_prefix_is_reloaded_after_resume_failure(
         real_fit(*args, **kwargs)
         raise RuntimeError("injected resident resume failure")
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", fail_after_one)
+    monkeypatch.setattr(jlens_mod, "fit_lens", fail_after_one)
     with pytest.raises(RuntimeError, match="resident resume"):
-        session.lens.fit(_PROMPTS)
+        session.lens.fit(_PROMPTS, sites=("out",))
 
     assert session.lens.resident_lens is not None
     assert session.lens.resident_lens.n_prompts == 2
@@ -1105,7 +1207,7 @@ def test_subset_resume_releases_unrequested_resident_matrices(
     import drowse.lens.fit as jlens_mod
 
     session = LensHarness()
-    session.lens.fit(_PROMPTS[:2], force=True, source_layers=[0, 1])
+    session.lens.fit(_PROMPTS[:2], force=True, layers=[0, 1], sites=("out",))
     assert session.lens.resident_lens is not None
     session.lens.runtime.transport_stack(session.lens.resident_lens, [0, 1], torch.device("cpu"))
     assert session.lens.runtime._stacks
@@ -1116,7 +1218,7 @@ def test_subset_resume_releases_unrequested_resident_matrices(
     }
     del old_live_stack
     resident_ref = weakref.ref(session.lens.resident_lens)
-    real_fit = jlens_mod.fit_jacobian_lens
+    real_fit = jlens_mod.fit_lens
     released: list[bool] = []
 
     def observe_release(*args: Any, **kwargs: Any) -> Any:
@@ -1128,8 +1230,8 @@ def test_subset_resume_releases_unrequested_resident_matrices(
         )
         return real_fit(*args, **kwargs)
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", observe_release)
-    resumed = session.lens.fit(_PROMPTS, source_layers=[0], force=True)
+    monkeypatch.setattr(jlens_mod, "fit_lens", observe_release)
+    resumed = session.lens.fit(_PROMPTS, layers=[0], force=True, sites=("out",))
 
     assert released == [True]
     assert resumed.source_layers == [0]
@@ -1141,7 +1243,7 @@ def test_finalization_failure_rebuilds_evicted_resident(
     import drowse.lens.store as lens_io
 
     session = LensHarness()
-    session.lens.fit(_PROMPTS[:2], force=True)
+    session.lens.fit(_PROMPTS[:2], force=True, sites=("out",))
     durable_pair = load_lens(_MODEL_ID)
     assert durable_pair is not None
     expected = durable_pair[0]
@@ -1155,7 +1257,7 @@ def test_finalization_failure_rebuilds_evicted_resident(
 
     monkeypatch.setattr(lens_io, "promote_lens_checkpoint", fail_promotion)
     with pytest.raises(OSError, match="promotion failure"):
-        session.lens.fit(_PROMPTS, checkpoint_every=1)
+        session.lens.fit(_PROMPTS, checkpoint_every=1, sites=("out",))
 
     assert session.lens.resident_lens is not None
     assert session.lens.resident_lens.n_prompts == expected.n_prompts
@@ -1173,13 +1275,13 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
     import drowse.lens.store as lens_io
     from drowse.base import integrity
     full = LensHarness().lens.fit(
-        _PROMPTS, force=True, source_layers=[0, 1],
+        _PROMPTS, force=True, layers=[0, 1], sites=("out",),
     )
-    LensHarness().lens.fit(_PROMPTS, force=True, source_layers=[0])
-    real_fit = jlens_mod.fit_jacobian_lens
+    LensHarness().lens.fit(_PROMPTS, force=True, layers=[0], sites=("out",))
+    real_fit = jlens_mod.fit_lens
 
     def _interrupt_topup(*args: Any, **kwargs: Any) -> Any:
-        assert kwargs.get("source_layers") == [1]
+        assert kwargs.get("layers") == {"out": [1]}
         prompts = list(args[2])
         args = (*args[:2], prompts[:2], *args[3:])
         kwargs["input_id_rows"] = kwargs["input_id_rows"][:2]
@@ -1187,16 +1289,16 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
         real_fit(*args, **kwargs)
         raise RuntimeError("simulated topup interruption")
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", _interrupt_topup)
+    monkeypatch.setattr(jlens_mod, "fit_lens", _interrupt_topup)
     with pytest.raises(RuntimeError, match="topup interruption"):
-        LensHarness().lens.fit(_PROMPTS, source_layers=[0, 1])
+        LensHarness().lens.fit(_PROMPTS, layers=[0, 1], sites=("out",))
 
     checkpoint = load_lens_checkpoint(_MODEL_ID, "j")
     assert checkpoint is not None
     assert checkpoint[0].source_layers == [1]
     assert checkpoint[0].n_prompts == 2
 
-    monkeypatch.setattr(jlens_mod, "fit_jacobian_lens", real_fit)
+    monkeypatch.setattr(jlens_mod, "fit_lens", real_fit)
     real_save = lens_io.save_lens
     reused: list[set[int]] = []
     hashes = 0
@@ -1216,7 +1318,7 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
     monkeypatch.setattr(lens_io, "save_lens", _capture_reuse)
     messages: list[str] = []
     resumed = LensHarness().lens.fit(
-        _PROMPTS, source_layers=[0, 1], on_progress=messages.append,
+        _PROMPTS, layers=[0, 1], on_progress=messages.append, sites=("out",),
     )
     assert any("missing-layer checkpoint at 2" in message for message in messages)
     assert reused == [{0}]
@@ -1230,7 +1332,7 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
 def test_fit_drops_short_prompts() -> None:
     s = LensHarness()
     messages: list[str] = []
-    fitted = s.lens.fit(["tiny", *_PROMPTS], on_progress=messages.append)
+    fitted = s.lens.fit(["tiny", *_PROMPTS], on_progress=messages.append, sites=("out",))
     assert fitted.n_prompts == len(_PROMPTS)
     assert any("dropped 1 too-short prompts" in m for m in messages)
 

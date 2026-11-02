@@ -4,10 +4,8 @@
   import { ToolError } from "../../lib/webmcp/types";
   import { onMount as onInterfaceMount } from "svelte";
 
-  import MorphText from "../../lib/ui/MorphText.svelte";
-  import FluentIcon from "../../lib/ui/FluentIcon.svelte";
-  import { slidingSelection } from "../../lib/slidingSelection";
-  
+  import { Icon, IconButton, MorphText, Segmented, Tabs } from "@stdlogits/ledger";
+
   import RollingNumber from "../../lib/ui/RollingNumber.svelte";
   // Conversation loom. Turns advance from left to right and sibling
   // continuations separate vertically around their shared parent.
@@ -18,7 +16,7 @@
   import { onMount, tick, untrack } from "svelte";
   import { createLoomLiveNode, segmentHeightEstimate, segmentWidth } from "./loomMapModel";
   import { MediaQuery, SvelteMap, SvelteSet } from "svelte/reactivity";
-  import { fade, slide } from "svelte/transition";
+  import { expand, fadeOut } from "@stdlogits/ledger";
   import {
     applyTreeFilter,
     chatLog,
@@ -58,32 +56,27 @@
     loomBranchJunctions,
     type LoomLayoutEdge,
   } from "./loomLayout";
-  import { tokenSentences } from "./loomSentences";
+  import { leadingSpace, tokenSentences, tokenWords } from "./loomSentences";
   import {
     centerLoomRect,
     fitLoomCamera,
     LOOM_MAX_ZOOM,
     LOOM_MIN_ZOOM,
     resizeLoomCamera,
+    settleLoomCenter,
     zoomLoomAt,
     type LoomCamera,
+    type LoomRect,
   } from "./loomViewport";
-  import Select from "../../lib/Select.svelte";
-  import NumberInput from "../../lib/NumberInput.svelte";
   import type { LoomNodeJSON } from "../../lib/types";
   import { userFacingError } from "../../lib/runtime/userFacingError";
-  import { loomSearchExcerpt, loomTextMatches } from "../../lib/loomSearch";
+  import { loomNodeSnippet, loomSearchExcerpt, loomTextMatches } from "../../lib/loomSearch";
   
   import {
     pinchMetrics,
     scaleFromPinch,
     type GesturePoint,
   } from "../../lib/pointerGesture";
-  import {
-    collapseIn,
-    collapseOut,
-    scrimOut,
-  } from "../../lib/motion";
 
   let { active = true, headersVisible = true }: { active?: boolean; headersVisible?: boolean } = $props();
 
@@ -421,9 +414,7 @@
       zoomView(1);
       await tick();
     }
-    centerNode(segment.id);
-    await tick();
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    await centerSettled(segment.id);
     const card = viewportEl?.querySelector<HTMLElement>(`[data-node-id="${CSS.escape(segment.id)}"]`);
     const sentence = [...(card?.querySelectorAll<HTMLElement>(".sentence-node") ?? [])].find(element =>
       filterState.mode === "text" && loomTextMatches(element.querySelector(".sentence-tokens")?.textContent ?? "", filterState.expr));
@@ -541,21 +532,6 @@
   } | null = null;
   let suppressNodeClickUntil = 0;
 
-  const loomDepthStyle = $derived.by(() => {
-    const nearScale = 1 + (camera.zoom - 1) * 0.32;
-    const farScale = 1 + (camera.zoom - 1) * 0.12;
-    const nearSpacing = 40 * nearScale;
-    const farSpacing = 76 * farScale;
-    return [
-      `--loom-grid-size:${nearSpacing.toFixed(3)}px`,
-      `--loom-grid-x:${((camera.x * 0.32) % nearSpacing).toFixed(3)}px`,
-      `--loom-grid-y:${((camera.y * 0.32) % nearSpacing).toFixed(3)}px`,
-      `--loom-far-size:${farSpacing.toFixed(3)}px`,
-      `--loom-far-x:${((camera.x * 0.12) % farSpacing).toFixed(3)}px`,
-      `--loom-far-y:${((camera.y * 0.12) % farSpacing).toFixed(3)}px`,
-    ].join(";");
-  });
-
   function setCameraMotion(enabled: boolean): void {
     if (cameraAnimationTimer !== null) {
       clearTimeout(cameraAnimationTimer);
@@ -593,7 +569,7 @@
       return;
     }
     camera.zoom = 0.9;
-    if (loomTree.active_node_id) centerNode(loomTree.active_node_id);
+    if (loomTree.active_node_id) void centerSettled(loomTree.active_node_id);
     else fitView();
   }
 
@@ -831,34 +807,53 @@
     el.focus({ preventScroll: true });
   }
 
-  function centerNode(nodeId: string): void {
+  function placedRect(nodeId: string): LoomRect | null {
     const placed = graph.nodes.find((node) => node.id === nodeId);
-    if (!placed || !viewportEl) return;
+    return placed ? { x: placed.x, y: placed.y, width: placed.width, height: placed.height } : null;
+  }
+
+  function centerOn(rect: LoomRect): LoomCamera {
     cameraFitted = false;
     setCameraMotion(cameraInitialized);
-    camera = centerLoomRect(viewportSize(), {
-      x: placed.x,
-      y: placed.y,
-      width: placed.width,
-      height: placed.height,
-    }, camera.zoom);
+    camera = centerLoomRect(viewportSize(), rect, camera.zoom);
     cameraInitialized = true;
     lastViewportSize = viewportSize();
+    return { ...camera };
+  }
+
+  function centerNode(nodeId: string): void {
+    const rect = placedRect(nodeId);
+    if (rect && viewportEl) centerOn(rect);
+  }
+
+  const nextFrames = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+  /** A newer centring supersedes a settling one. */
+  let centering = 0;
+
+  /** Centre on a turn and follow it while the turns brought into view replace their estimated
+   *  heights with measured ones (which moves everything below and beside them). */
+  async function centerSettled(nodeId: string): Promise<void> {
+    if (!viewportEl) return;
+    const run = ++centering;
+    await settleLoomCenter({
+      placement: () => (run === centering && viewportEl ? placedRect(nodeId) : null),
+      center: centerOn,
+      camera: () => ({ ...camera }),
+      remeasured: () => nextFrames().then(() => tick()),
+    });
   }
 
   function centerCurrent(): void {
     if (!loomTree.active_node_id) return;
     if (compactMap) void expandMapNode(loomTree.active_node_id);
-    else centerNode(loomTree.active_node_id);
+    else void centerSettled(loomTree.active_node_id);
   }
 
   async function expandMapNode(nodeId: string): Promise<void> {
     if (performance.now() < suppressNodeClickUntil) return;
     zoomView(1);
     await tick();
-    centerNode(nodeId);
-    await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-    centerNode(nodeId);
+    await centerSettled(nodeId);
     await focusNode(nodeId, false);
   }
 
@@ -874,7 +869,7 @@
   }
 
   function readableNodeText(node: LoomNodeJSON): string {
-    return (node.text ?? "").replace(/\s+/g, " ").trim() || "Empty turn";
+    return loomNodeSnippet(node);
   }
 
   function nodeRole(node: LoomNodeJSON): string {
@@ -1475,230 +1470,130 @@
   aria-label="Conversation loom panel"
   bind:this={asideEl}
 >
+  <div class="loom-top">
+    <Tabs label="Loom views" scroll value={loomUiState.view} onchange={(view) => setLoomView(view)} options={[
+      { value: "weave", label: "Weave" },
+      { value: "map", label: "Map" },
+      { value: "path", label: "Path", count: String(pathSnippets.length) },
+      { value: "options", label: "Options", count: String(optionNodes.length) },
+      { value: "saved", label: "Starred", count: String(savedRows.length) },
+    ]} />
+  </div>
+
   {#if headersVisible}
-  <header class="loom-header" id="loom-tools-header" inert={!headersVisible} in:slide={collapseIn()} out:slide={collapseOut()}>
-    <div class="loom-heading">
-      <span class="title">Conversation loom</span>
-      <span class="loom-subtitle">Explore, branch, and return to any point.</span>
-    </div>
-    <!-- Tree-scope actions — clear / save / load act on the whole
-         conversation tree, not on the active chat path, so they live in
-         the threads-column header rather than buried in the chat. -->
-    <button
-      type="button"
-      class="action-btn"
-      onclick={clearChat}
-      {...{ "aria-description": "Start a new path from the root; keep all existing branches" }}
-    >
-      Start over
-    </button>
-    <button type="button" class="action-btn" disabled={genStatus.active || !loomTree.loaded || loomTree.nodes.size <= 1}
-      {...{ "aria-description": "Save this conversation and start with an empty loom" }}
-      onclick={() => void dialog?.open("clear", loomTree.root_id)}>Clear loom…</button>
-    <button type="button" class="action-btn"
-      disabled={!loomTree.active_node_id || loomTree.active_node_id === loomTree.root_id || loomNodeIntersectsGeneration(loomTree.active_node_id)}
-      {...{ "aria-description": "Remove the current turn and all branches that follow it" }}
-      onclick={() => void dialog?.open("delete", loomTree.active_node_id)}>Cut branch…</button>
-    <button
-      type="button"
-      class="action-btn"
-      onclick={() => openDrawer("save_conversation")}
-    >
-      Save
-    </button>
-    <button
-      type="button"
-      class="action-btn"
-      onclick={() => openDrawer("load_conversation")}
-    >
-      Open
-    </button>
-    <button
-      type="button"
-      class="action-btn"
-      onclick={compareBranch}
-      disabled={comparableNodes.length < 2}
-      {...{ "aria-description": "Compare alternate replies to the same message" }}
-    >
+  <!-- Tree-scope actions: clear, save and open act on the whole conversation tree, not on the
+       active path, so they live with the loom rather than in the chat. -->
+  <div class="loom-actions" id="loom-tools-header" inert={!headersVisible} transition:expand>
+    <button type="button" class="dw-text" onclick={compareBranch} disabled={comparableNodes.length < 2}
+      {...{ "aria-description": "Compare alternate replies to the same message" }}>
       {comparableNodes.length >= 2 ? `Compare ${comparableNodes.length}` : "Compare"}
     </button>
-    <button
-      type="button"
-      class="icon-btn"
-      onclick={fullRefresh}
-      {...{ "aria-description": "refresh" }}
-      aria-label="Refresh"
-    ><FluentIcon name="refresh" /></button>
-  </header>
-
-  {/if}
-  <nav class="loom-views" aria-label="Loom views" use:slidingSelection>
-    <button
-      type="button"
-      class:active={loomUiState.view === "weave"}
-      aria-current={loomUiState.view === "weave" ? "page" : undefined}
-      onclick={() => setLoomView("weave")}
-    ><strong>Weave</strong><span>Text & alternatives</span></button>
-    <button
-      type="button"
-      class:active={loomUiState.view === "map"}
-      aria-current={loomUiState.view === "map" ? "page" : undefined}
-      onclick={() => setLoomView("map")}
-    ><strong>Map</strong><span>All branches</span></button>
-    <button
-      type="button"
-      class:active={loomUiState.view === "path"}
-      aria-current={loomUiState.view === "path" ? "page" : undefined}
-      onclick={() => setLoomView("path")}
-    ><strong>Current path</strong><span>{pathSnippets.length} {pathSnippets.length === 1 ? "snippet" : "snippets"}</span></button>
-    <button
-      type="button"
-      class:active={loomUiState.view === "options"}
-      aria-current={loomUiState.view === "options" ? "page" : undefined}
-      onclick={() => setLoomView("options")}
-    ><strong>Next options</strong><span>{optionNodes.length} available</span></button>
-    <button
-      type="button"
-      class:active={loomUiState.view === "saved"}
-      aria-current={loomUiState.view === "saved" ? "page" : undefined}
-      onclick={() => setLoomView("saved")}
-    ><strong>Starred</strong><span>{savedRows.length} {savedRows.length === 1 ? "point" : "points"}</span></button>
-  </nav>
-
-  <div class="compact-loom-view">
-    <span>View</span>
-    <Select ariaLabel="Loom view" value={loomUiState.view} options={[
-      { value: "weave", label: "Weave · Text and alternatives" },
-      { value: "map", label: "Map · All branches" },
-      { value: "path", label: "Current path" },
-      { value: "options", label: "Next options" },
-      { value: "saved", label: "Starred" },
-    ]} onchange={value => setLoomView(value as LoomView)} />
+    <button type="button" class="dw-text" onclick={() => openDrawer("save_conversation")}>Save</button>
+    <button type="button" class="dw-text" onclick={() => openDrawer("load_conversation")}>Open</button>
+    <button type="button" class="dw-text" onclick={clearChat}
+      {...{ "aria-description": "Start a new path from the root; keep all existing branches" }}>Start over</button>
+    <button type="button" class="dw-text" disabled={!loomTree.active_node_id || loomTree.active_node_id === loomTree.root_id || loomNodeIntersectsGeneration(loomTree.active_node_id)}
+      {...{ "aria-description": "Remove the current turn and all branches that follow it" }}
+      onclick={() => void dialog?.open("delete", loomTree.active_node_id)}>Cut branch…</button>
+    <button type="button" class="dw-text" disabled={genStatus.active || !loomTree.loaded || loomTree.nodes.size <= 1}
+      {...{ "aria-description": "Save this conversation and start with an empty loom" }}
+      onclick={() => void dialog?.open("clear", loomTree.root_id)}>Clear loom…</button>
+    <button type="button" class="dw-text" onclick={fullRefresh} aria-label="Refresh">Refresh</button>
   </div>
+  {/if}
 
   {#if loomUiState.view === "map" || loomUiState.view === "saved"}
     <div class="filter-bar">
-    <label class="filter-field">
-    <span>{filterState.mode === "text" ? "Search messages" : "Advanced filters"}</span>
-    <input
-      type="search"
-      class="filter-input"
-      bind:this={searchInput}
-      value={filterState.expr}
-      oninput={(event) => editFilter(event.currentTarget.value)}
-      onkeydown={onFilterKey}
-      placeholder={filterState.mode === "text" ? "Words or a phrase…" : "starred, text:fox"}
-      aria-invalid={filterState.error ? true : undefined}
-      aria-describedby="loom-search-status"
-    />
-    </label>
-    <Select value={filterState.mode} options={[{ value: "text", label: "Text" }, { value: "advanced", label: "Advanced" }]}
-      ariaLabel="Search mode" onchange={changeSearchMode} />
-    {#if filterState.mode === "advanced"}
-      <button type="button" class="quiet-action" onclick={() => void applyTreeFilter(filterState.expr)}>Apply</button>
-    <!-- Logit-pass (Decision 8): help popover for the filter grammar.
-         Clicked-toggle keeps the popover anchored without stealing
-         keyboard focus from the filter input.  The grammar text mirrors
-         tree_filter.py's accepted forms plus the client-side sort
-         directive added in Phase 4. -->
-    <button
-      type="button"
-      class="icon-btn help-btn"
-      class:on={loomUiState.filterHelpOpen}
-      onclick={() => (loomUiState.filterHelpOpen = !loomUiState.filterHelpOpen)}
-
-      aria-label="How advanced filters work"
-      aria-expanded={loomUiState.filterHelpOpen}
-    ><FluentIcon name="help" /></button>
-    {/if}
-    {#if filterState.expr}
-      <button
-        type="button"
-        class="icon-btn"
-        onclick={() => { clearTreeFilter(); searchInput?.focus(); }}
-
-        aria-label="Clear search"
-      ><FluentIcon name="dismiss" /></button>
-    {/if}
+      <label class="filter-field">
+        <span class="sr-only">{filterState.mode === "text" ? "Search messages" : "Advanced filters"}</span>
+        <input
+          type="search"
+          class="filter-input"
+          bind:this={searchInput}
+          value={filterState.expr}
+          oninput={(event) => editFilter(event.currentTarget.value)}
+          onkeydown={onFilterKey}
+          placeholder={filterState.mode === "text" ? "Search every branch" : "starred, text:fox"}
+          aria-invalid={filterState.error ? true : undefined}
+          aria-describedby="loom-search-status"
+        />
+        {#if filterState.expr}
+          <button type="button" class="clear" onclick={() => { clearTreeFilter(); searchInput?.focus(); }}
+            aria-label="Clear search"><Icon name="close" /></button>
+        {/if}
+      </label>
+      <Segmented label="Search mode" value={filterState.mode} onchange={changeSearchMode}
+        options={[{ value: "text", label: "Text" }, { value: "advanced", label: "Advanced" }]} />
+      {#if filterState.mode === "advanced"}
+        <button type="button" class="dw-quiet" onclick={() => void applyTreeFilter(filterState.expr)}>Apply</button>
+        <!-- The filter grammar, opened in place without taking focus from the field; it mirrors
+             tree_filter.py's forms plus the client-side sort directive. -->
+        <button type="button" class="dw-text" aria-pressed={loomUiState.filterHelpOpen}
+          onclick={() => (loomUiState.filterHelpOpen = !loomUiState.filterHelpOpen)}
+          aria-label="How advanced filters work" aria-expanded={loomUiState.filterHelpOpen}>How</button>
+      {/if}
     </div>
     <div class="search-feedback">
-      <p id="loom-search-status" class:err={filterState.error !== null} role="status">
+      <p id="loom-search-status" class="meta" role="status">
         <MorphText text={filterState.loading ? "Searching…" : filterState.error ?? (filterState.matchingIds !== null
-          ? searchResults.length === 0 ? "No messages match. Try different words or clear the search."
+          ? searchResults.length === 0 ? "No messages match"
             : `${searchIndex >= 0 ? `${searchIndex + 1} of ` : ""}${searchResults.length} matching ${searchResults.length === 1 ? "message" : "messages"}`
-          : filterState.mode === "advanced" ? "Press Enter or Apply to run the filters." : "Search all branches. Enter moves to the next match; Shift+Enter moves back.")} />
+          : "")} />
       </p>
       {#if searchResult && searchExcerpt}
         <div class="search-result">
           <button type="button" class="search-excerpt" aria-label="Show match in map" onclick={() => void showSearchMatch()}>
-            <span class="snippet-role">{nodeRole(searchResult)}</span>
+            <span class="meta">{nodeRole(searchResult)}</span>
             <span dir="auto">{searchExcerpt.before}<mark>{searchExcerpt.match}</mark>{searchExcerpt.after}</span>
           </button>
-          <button type="button" class="icon-btn" aria-label="Previous match" onclick={() => void showSearchMatch(-1)}><FluentIcon name="up" /></button>
-          <button type="button" class="icon-btn" aria-label="Next match" onclick={() => void showSearchMatch(1)}><FluentIcon name="down" /></button>
+          <IconButton icon="up" label="Previous match" onclick={() => void showSearchMatch(-1)} />
+          <IconButton icon="down" label="Next match" onclick={() => void showSearchMatch(1)} />
         </div>
       {/if}
     </div>
   {/if}
 
   {#if filterState.mode === "advanced" && loomUiState.filterHelpOpen && (loomUiState.view === "map" || loomUiState.view === "saved")}
-    <!-- Inline grammar reference + worked examples.  Dismissible by
-         clicking the ? again or pressing Esc on the sidebar. -->
-    <div class="filter-help" role="region" aria-label="Filter grammar help" in:slide={collapseIn()} out:slide={collapseOut()}>
-      <p>Combine filters with commas. A branch must match every filter.</p>
+    <div class="filter-help" role="region" aria-label="Filter grammar help" transition:expand>
+      <p>Commas join filters; a branch must match every one.</p>
       <ul>
         <li><code>text:&lt;words&gt;</code> searches message text</li>
-        <li><code>starred</code> shows saved branches</li>
+        <li><code>starred</code> keeps saved branches</li>
         <li><code>&lt;measurement&gt; &gt; &lt;number&gt;</code> filters by a reading</li>
-        <li><code>agg:</code>, <code>any:</code>, or <code>last:</code> chooses where to measure</li>
-        <li><code>sort:surprise</code> or <code>sort:confidence</code> changes reply order</li>
+        <li><code>agg:</code>, <code>any:</code> or <code>last:</code> chooses where to measure</li>
+        <li><code>sort:surprise</code> or <code>sort:confidence</code> orders replies</li>
       </ul>
-      <p>Examples</p>
       <ul class="examples">
         <li><code>agg:angry.calm &gt; 0.4</code></li>
         <li><code>starred, text:fox</code></li>
-        <li><code>sort:surprise, agg:honest &lt; 0</code></li>
+        <li><code>sort:surprise, agg:deceptive &gt; 0.5</code></li>
       </ul>
     </div>
   {/if}
 
-  <!-- Logit-pass: edges are always surprise-weighted — stroke width and
-       opacity thicken toward surprising children (low mean_logprob), and
-       every node carries its mean_logprob badge.  Only surfaces a bar
-       when a ``sort:`` filter directive is active. -->
-  {#if loomUiState.siblingSort !== "default"}
-    <div class="weight-bar">
-      <span class="weight-label" {...{ "aria-description": "sibling sort" }}>
-        sort:{loomUiState.siblingSort}
-      </span>
+  {#if loomUiState.siblingSort !== "default" || nodeSelection.ids.length > 0 || cursorNode}
+    <div class="loom-status meta">
+      <!-- Edges are always surprise-weighted (stroke width and opacity thicken toward surprising
+           children); a sort directive orders the replies too. -->
+      {#if loomUiState.siblingSort !== "default"}<span {...{ "aria-description": "sibling sort" }}>sort:{loomUiState.siblingSort}</span>{/if}
+      {#if cursorNode}
+        <span class="focused-branch" aria-label="Focused branch summary">
+          {#if cursorNode.id === createdBranchId}<span role="status">Branch created</span>{/if}
+          <span><MorphText text={cursorNode.role_label || cursorNode.role} numbers={false} /></span>
+          <span><MorphText text={`depth ${rowById.get(cursorNode.id)?.depth ?? 0}`} /></span>
+          <span><MorphText text={`${cursorNode.tokens?.length ?? 0} tokens`} /></span>
+        </span>
+      {/if}
+      {#if nodeSelection.ids.length > 0}
+        <span class="selection-bar">
+          <span><MorphText text={`${nodeSelection.ids.length} selected`} /></span>
+          <button type="button" class="dw-text" onclick={menuCompareSelected} disabled={nodeSelection.ids.length < 2}>Compare</button>
+          <button type="button" class="dw-text" onclick={clearNodeSelection}>Clear</button>
+        </span>
+      {/if}
     </div>
   {/if}
 
-  {#if nodeSelection.ids.length > 0}
-    <div class="selection-bar">
-      <span><MorphText text={`${nodeSelection.ids.length} selected`} /></span>
-      <button
-        type="button"
-        class="action-btn"
-        onclick={menuCompareSelected}
-        disabled={nodeSelection.ids.length < 2}
-      >compare</button>
-      <button
-        type="button"
-        class="action-btn"
-        onclick={clearNodeSelection}
-      >clear</button>
-    </div>
-  {/if}
-
-  {#if cursorNode}
-    <div class="focused-branch" aria-label="Focused branch summary">
-      {#if cursorNode.id === createdBranchId}<span role="status">Branch created</span>{/if}
-      <span><MorphText text={cursorNode.role_label || cursorNode.role} numbers={false} /></span>
-      <span><MorphText text={`Depth ${rowById.get(cursorNode.id)?.depth ?? 0}`} /></span>
-      <span><MorphText text={`${cursorNode.tokens?.length ?? 0} recorded tokens`} /></span>
-    </div>
-  {/if}
   <div class="weave-host" hidden={loomUiState.view !== "weave" || !!loomTree.error}>
     {#key loomTree.root_id}
       <LoomWeave
@@ -1710,53 +1605,33 @@
   </div>
 
   {#if loomTree.error}
-    <div class="empty err">
-      <p>tree unavailable</p>
-      <button type="button" onclick={fullRefresh}>retry</button>
+    <div class="empty" role="alert">
+      <p>The loom could not load.</p>
+      <button type="button" class="dw-quiet" onclick={fullRefresh}>Retry</button>
     </div>
   {:else if loomUiState.view !== "weave"}
   {#if treeRows.length === 0}
     <div class="empty">
       <p>No branches yet</p>
-      <p>Send a message in Conversation to create the first path.</p>
     </div>
   {:else if loomUiState.view === "map"}
     <div class="loom-map-bar">
-      <div class="loom-map-summary">
-        <strong>Conversation map</strong>
+      <div class="loom-map-summary meta">
         <span><MorphText text={treeRows.length} /> {treeRows.length === 1 ? "turn" : "turns"}</span>
-        <span class="map-separator" aria-hidden="true">·</span>
         <span><MorphText text={branchPointCount} /> {branchPointCount === 1 ? "fork" : "forks"}</span>
         {#if visibleTokenCount > 0}
-          <span class="map-separator" aria-hidden="true">·</span>
           <span><MorphText text={visibleTokenCount} /> {visibleTokenCount === 1 ? "token" : "tokens"}</span>
         {/if}
-        <span class="path-key"><i aria-hidden="true"></i> current path</span>
+        <span class="path-key"><i aria-hidden="true"></i>current path</span>
       </div>
       <div class="loom-view-controls" role="group" aria-label="Loom view controls">
-        <button
-          type="button"
-          onclick={() => zoomView(camera.zoom - 0.12)}
-          data-cursor="zoom-out"
-          disabled={camera.zoom <= LOOM_MIN_ZOOM}
-          aria-label="Zoom out"
-
-        ><FluentIcon name="subtract" /></button>
-        <output aria-label="Loom zoom"><RollingNumber value={Math.round(camera.zoom * 100)} />%</output>
-        <button
-          type="button"
-          onclick={() => zoomView(camera.zoom + 0.12)}
-          data-cursor="zoom-in"
-          disabled={camera.zoom >= LOOM_MAX_ZOOM}
-          aria-label="Zoom in"
-
-        ><FluentIcon name="add" /></button>
-        <button type="button" onclick={() => fitView()} aria-label="Fit whole loom" >
-          Fit
-        </button>
-        <button type="button" onclick={centerCurrent} aria-label="Center current path" >
-          Current
-        </button>
+        <button type="button" class="step" onclick={() => zoomView(camera.zoom - 0.12)} data-cursor="zoom-out"
+          disabled={camera.zoom <= LOOM_MIN_ZOOM} aria-label="Zoom out">−</button>
+        <output class="meta" aria-label="Loom zoom"><RollingNumber value={Math.round(camera.zoom * 100)} />%</output>
+        <button type="button" class="step" onclick={() => zoomView(camera.zoom + 0.12)} data-cursor="zoom-in"
+          disabled={camera.zoom >= LOOM_MAX_ZOOM} aria-label="Zoom in">+</button>
+        <button type="button" class="dw-text" onclick={() => fitView()} aria-label="Fit whole loom">Fit</button>
+        <button type="button" class="dw-text" onclick={centerCurrent} aria-label="Center current path">Current</button>
       </div>
     </div>
     <div
@@ -1776,9 +1651,8 @@
       onpointercancel={endViewportGesture}
       onlostpointercapture={endViewportGesture}
     >
-      <p id="loom-touch-help" class="touch-gesture-hint">Drag to move · pinch to zoom</p>
+      <p id="loom-touch-help" class="sr-only">Drag to move, pinch to zoom</p>
       {#if active}
-      <div class="loom-depth-field" aria-hidden="true" style={loomDepthStyle}></div>
       <div
         class="loom-canvas"
         class:camera-animating={cameraAnimating}
@@ -1800,17 +1674,8 @@
           {#each graph.edges as edge (`${edge.parentId}|${edge.childId}`)}
             <path
               d={edge.path}
-              class="edge-depth"
-              class:active-edge={edgeIsActive(edge)}
-              class:quiet-edge={!edgeIsActive(edge)}
-              class:filtered-edge={edgeIsFiltered(edge)}
-              style={edgeStyle(edge)}
-            />
-            <path
-              d={edge.path}
               class="edge-line"
               class:active-edge={edgeIsActive(edge)}
-              class:quiet-edge={!edgeIsActive(edge)}
               class:filtered-edge={edgeIsFiltered(edge)}
               style={edgeStyle(edge)}
               data-loom-edge={`${edge.parentId}|${edge.childId}`}
@@ -1818,18 +1683,11 @@
           {/each}
           {#each branchJunctions as junction (junction.id)}
             <circle
-              class="junction-halo"
+              class="junction"
               class:active-junction={mapRowById.get(junction.id)?.isActivePath}
               cx={junction.x}
               cy={junction.y}
-              r="9"
-            />
-            <circle
-              class="junction-core"
-              class:active-junction={mapRowById.get(junction.id)?.isActivePath}
-              cx={junction.x}
-              cy={junction.y}
-              r="4"
+              r="3.5"
               data-loom-junction={junction.id}
             />
           {/each}
@@ -1867,9 +1725,9 @@
                 onkeydown={onSidebarKey}
                 onclick={() => void expandMapNode(placed.id)}
               >
-                <span>{nodeRole(row.node)}{segment.shared ? ` · ${segment.memberIds.length} paths` : ""}</span>
+                <span class="meta">{nodeRole(row.node)}{segment.shared ? ` · ${segment.memberIds.length} paths` : ""}</span>
                 <span class="map-summary-text">{readableNodeText(row.node).slice(0, 240)}</span>
-                <span>{segment.end - segment.start} tokens · zoom to explore</span>
+                <span class="meta">{segment.end - segment.start} tokens</span>
               </button>
             {:else}
             <LoomNode
@@ -1912,16 +1770,7 @@
       {/if}
     </div>
   {:else if loomUiState.view === "path"}
-    <section class="loom-projection path-projection" aria-labelledby="current-path-title">
-      <header class="projection-heading">
-        <div>
-          <h2 id="current-path-title">Current path</h2>
-          <p>Each generated sentence is a branch point. Choose one to keep it and explore a different continuation.</p>
-        </div>
-        {#if loomTree.active_node_id}
-          <button type="button" class="secondary-action" onclick={() => setLoomView("options")}>See alternatives</button>
-        {/if}
-      </header>
+    <section class="loom-projection" aria-label="Current path">
       <div class="path-stream" role="list" aria-label="Current conversation path">
         {#each pathSnippets as snippet, index (snippet.key)}
           {@const boundary = snippet.end >= 0 ? snippet.node.tokens?.[snippet.end] : null}
@@ -1929,33 +1778,19 @@
           <article
             class="path-snippet"
             class:current-snippet={loomTree.active_node_id === snippet.node.id && index === pathSnippets.length - 1}
+            class:model={snippet.node.role === "assistant"}
             data-path-snippet={snippet.key}
             role="listitem"
           >
-            <div class="snippet-rail" aria-hidden="true">
-              <span></span>
-            </div>
-            <div class="snippet-card">
-              <header>
-                <span class="snippet-role">{nodeRole(snippet.node)}</span>
-                {#if snippet.sentenceIndex !== null}
-                  <span class="snippet-index">sentence {snippet.sentenceIndex + 1}</span>
-                {/if}
-                {#if loomTree.active_node_id === snippet.node.id}
-                  <span class="current-label">current</span>
-                {/if}
-                <button
-                  type="button"
-                  class="snippet-actions"
-                  aria-label={`Actions for ${nodeRole(snippet.node)}`}
-                  onclick={(ev) => openMenu(ev, snippet.node.id)}
-                >•••</button>
+            <span class="dw-pip" class:is-model={snippet.node.role === "assistant"} aria-hidden="true"></span>
+            <div class="snippet-body">
+              <header class="row-head meta">
+                <span>{nodeRole(snippet.node)}{snippet.sentenceIndex !== null ? ` · sentence ${snippet.sentenceIndex + 1}` : ""}</span>
+                <button type="button" class="more" aria-label={`Actions for ${nodeRole(snippet.node)}`}
+                  onclick={(ev) => openMenu(ev, snippet.node.id)}>•••</button>
               </header>
               {#if snippet.sentenceIndex !== null && snippet.node.tokens}
-                <div class="snippet-tokens">
-                  {#each snippet.node.tokens.slice(snippet.start, snippet.end + 1) as token, offset (`${token.raw_index ?? snippet.start + offset}:${token.token_id ?? token.text}`)}
-                    {@const tokenIndex = snippet.start + offset}
-                    <button
+                <p class="snippet-tokens">{#each tokenWords(snippet.node.tokens, snippet.start, snippet.end) as word (word.start)}{@const lead = leadingSpace(snippet.node.tokens[word.start].text)}{lead}<span class="word">{#each snippet.node.tokens.slice(word.start, word.end + 1) as token, offset (`${token.raw_index ?? word.start + offset}:${token.token_id ?? token.text}`)}{@const tokenIndex = word.start + offset}<button
                       type="button"
                       class="path-token"
                       data-cursor="inspect"
@@ -1965,60 +1800,53 @@
                       aria-label={`Open token ${tokenIndex + 1}: ${token.text.trim() || "whitespace"}`}
                       aria-haspopup="dialog"
                       onclick={() => void inspectLoomToken(snippet.node, tokenIndex)}
-                    >{token.text || "∅"}</button>
-                  {/each}
-                </div>
+                    >{(offset === 0 ? token.text.slice(lead.length) : token.text) || "∅"}</button>{/each}</span>{/each}</p>
               {:else}
                 <button type="button" class="snippet-text" onclick={() => void usePath(snippet.node)}>
                   {readableNodeText(snippet.node)}
                 </button>
               {/if}
-              <footer>
-                <button type="button" class="quiet-action" onclick={() => void usePath(snippet.node)}>
-                  Use this point
-                </button>
+              <footer class="dw-row">
+                <button type="button" class="dw-text" onclick={() => void usePath(snippet.node)}>Use this point</button>
                 {#if snippet.sentenceIndex !== null}
                   <button
                     type="button"
-                    class="branch-action"
+                    class="dw-text"
                     disabled={!canBranch}
                     {...{ "aria-description": (canBranch
                       ? "Keep everything through this sentence and generate a new continuation"
                       : "Exact sentence replay is unavailable while the model is busy") }}
                     onclick={() => void branchAfterToken(snippet.node, snippet.end)}
-                  >Branch after sentence</button>
+                  >Branch after this</button>
                 {/if}
               </footer>
             </div>
           </article>
         {/each}
       </div>
+      {#if loomTree.active_node_id}
+        <button type="button" class="dw-text see-options" onclick={() => setLoomView("options")}>See alternatives</button>
+      {/if}
     </section>
   {:else if loomUiState.view === "options"}
-    <section class="loom-projection options-projection" aria-labelledby="next-options-title">
-      <header class="projection-heading">
-        <div>
-          <h2 id="next-options-title">Next options</h2>
-          <p>{cursorNode ? readableNodeText(cursorNode) : "Choose a point in the map to see its alternatives."}</p>
-        </div>
-        {#if cursorNode}
-          <div class="projection-actions">
-            <button type="button" class="primary-action" disabled={genStatus.active} onclick={() => void growFromNode(cursorNode)}>
+    <section class="loom-projection" aria-label="Next options">
+      {#if cursorNode}
+        <div class="projection-head">
+          <p class="anchor" dir="auto">{readableNodeText(cursorNode)}</p>
+          <div class="dw-row">
+            <button type="button" class="dw-button" disabled={genStatus.active} onclick={() => void growFromNode(cursorNode)}>
               <MorphText text={genStatus.active ? "Generating…" : "Generate another"} />
             </button>
             {#if cursorNode.parent_id}
-              <button type="button" class="secondary-action" onclick={(ev) => branchFromNode(cursorNode, ev.currentTarget as HTMLElement)}>
-                Write an alternative
-              </button>
+              <button type="button" class="dw-quiet" onclick={(ev) => branchFromNode(cursorNode, ev.currentTarget as HTMLElement)}>Write an alternative</button>
             {/if}
           </div>
-        {/if}
-      </header>
-      {#if optionNodes.length === 0}
-        <div class="projection-empty">
-          <strong>No alternatives here yet</strong>
-          <p>Generate another reply to make this point branch.</p>
         </div>
+      {:else}
+        <p class="meta">Choose a point on the map</p>
+      {/if}
+      {#if optionNodes.length === 0}
+        <div class="empty"><p>No alternatives here yet</p></div>
       {:else}
         <div class="option-grid" role="list" aria-label="Alternative paths">
           {#each optionNodes as node, index (node.id)}
@@ -2028,20 +1856,17 @@
               role="listitem"
               data-option-node={node.id}
             >
-              <header>
-                <span class="option-number">Option {index + 1}</span>
-                <span class="snippet-role">{nodeRole(node)}</span>
-                {#if loomTree.active_node_id === node.id}<span class="current-label">current</span>{/if}
-                {#if node.starred}<span class="saved-mark">saved</span>{/if}
-                <button type="button" class="snippet-actions" aria-label={`Actions for option ${index + 1}`} onclick={(ev) => openMenu(ev, node.id)}>•••</button>
+              <header class="row-head meta">
+                <span>{index + 1} · {nodeRole(node)}{loomTree.active_node_id === node.id ? " · current" : ""}{node.starred ? " · starred" : ""}</span>
+                <button type="button" class="more" aria-label={`Actions for option ${index + 1}`} onclick={(ev) => openMenu(ev, node.id)}>•••</button>
               </header>
-              <button type="button" class="option-preview" onclick={() => void usePath(node)}>
+              <button type="button" class="option-preview" dir="auto" onclick={() => void usePath(node)}>
                 {readableNodeText(node)}
               </button>
-              <footer>
-                <button type="button" class="primary-action" onclick={() => void usePath(node)}>Use this path</button>
-                <button type="button" class="quiet-action" onclick={() => void loomStar(node.id, !node.starred)}>
-                  <MorphText text={node.starred ? "Remove saved" : "Save for later"} />
+              <footer class="dw-row">
+                <button type="button" class="dw-quiet" onclick={() => void usePath(node)}>Use this path</button>
+                <button type="button" class="dw-text" onclick={() => void loomStar(node.id, !node.starred)}>
+                  <MorphText text={node.starred ? "Unstar" : "Star"} />
                 </button>
               </footer>
             </article>
@@ -2050,31 +1875,25 @@
       {/if}
     </section>
   {:else}
-    <section class="loom-projection saved-projection" aria-labelledby="saved-points-title">
-      <header class="projection-heading">
-        <div>
-          <h2 id="saved-points-title">Starred points</h2>
-          <p>Keep useful branches close without changing the current conversation.</p>
-        </div>
-      </header>
+    <section class="loom-projection" aria-label="Starred points">
       {#if savedRows.length === 0}
-        <div class="projection-empty">
-          <strong><MorphText text={filterState.matchingIds !== null ? "No starred messages match" : "Nothing saved yet"} /></strong>
-          <p>{filterState.matchingIds !== null ? "Try different words or clear the search." : "Use a node’s menu and choose “Save this branch.”"}</p>
+        <div class="empty">
+          <p><MorphText text={filterState.matchingIds !== null ? "No starred messages match" : "Nothing starred yet"} /></p>
         </div>
       {:else}
         <div class="saved-list" role="list" aria-label="Starred conversation points">
           {#each savedRows as row (row.node.id)}
             <article class="saved-card" role="listitem" data-saved-node={row.node.id}>
+              <span class="dw-pip" class:is-model={row.node.role === "assistant"} aria-hidden="true"></span>
               <div class="saved-copy">
-                <span class="snippet-role">{nodeRole(row.node)}</span>
-                <strong>{readableNodeText(row.node)}</strong>
+                <span class="meta">{nodeRole(row.node)}</span>
+                <strong dir="auto">{readableNodeText(row.node)}</strong>
                 {#if row.node.notes}<p>{row.node.notes}</p>{/if}
               </div>
-              <div class="saved-actions">
-                <button type="button" class="primary-action" onclick={() => void usePath(row.node)}>Use this path</button>
-                <button type="button" class="quiet-action" onclick={() => void loomStar(row.node.id, false)}>Remove</button>
-                <button type="button" class="snippet-actions" aria-label={`Actions for ${nodeRole(row.node)}`} onclick={(ev) => openMenu(ev, row.node.id)}>•••</button>
+              <div class="dw-row saved-actions">
+                <button type="button" class="dw-text" onclick={() => void usePath(row.node)}>Use this path</button>
+                <button type="button" class="dw-text" onclick={() => void loomStar(row.node.id, false)}>Unstar</button>
+                <button type="button" class="more" aria-label={`Actions for ${nodeRole(row.node)}`} onclick={(ev) => openMenu(ev, row.node.id)}>•••</button>
               </div>
             </article>
           {/each}
@@ -2088,7 +1907,7 @@
 
 {#if menu.open && menu.nodeId}
   {@const menuNode = loomTree.nodes.get(menu.nodeId)}
-  {@const menuPreview = (menuNode?.text ?? "").replace(/\s+/g, " ").trim() || "Empty turn"}
+  {@const menuPreview = menuNode ? loomNodeSnippet(menuNode) : "Empty turn"}
   {@const menuRole = menuNode?.role_label?.trim() || menuNode?.role || "turn"}
   {@const cmpParentId =
     menuNode?.recipe === null && menuNode?.role !== "system"
@@ -2111,10 +1930,10 @@
     bind:this={menuEl}
     use:portal
     onkeydown={onMenuKey}
-    out:fade={scrimOut()}
+    out:fadeOut
   >
     <div class="loom-menu-context" role="presentation">
-      <span>{menuRole}</span>
+      <span class="meta">{menuRole}</span>
       <strong>{menuPreview}</strong>
     </div>
     <div class="loom-menu-section" role="presentation">
@@ -2134,7 +1953,7 @@
     </div>
     <div class="loom-menu-section" role="presentation">
       <button type="button" role="menuitem" onclick={menuStar}>
-        <MorphText text={menuNode?.starred ? "Remove saved marker" : "Save this branch"} />
+        <MorphText text={menuNode?.starred ? "Unstar this branch" : "Star this branch"} />
       </button>
       <button type="button" role="menuitem" onclick={menuNote}>Add a note…</button>
     </div>
@@ -2160,12 +1979,11 @@
       >Compare replies…</button>
       <button type="button" role="menuitem" onclick={menuFanOut}>Create guided variations…</button>
     </div>
-    <div class="loom-menu-section danger-section" role="presentation">
+    <div class="loom-menu-section" role="presentation">
       <button
         type="button"
         role="menuitem"
         onclick={menuDelete}
-        class="danger"
         disabled={menu.nodeId !== null && loomNodeIntersectsGeneration(menu.nodeId)}
         {...{ "aria-description": (menu.nodeId !== null && loomNodeIntersectsGeneration(menu.nodeId)
           ? LOOM_DELETE_DURING_GENERATION_MESSAGE
@@ -2184,1251 +2002,176 @@
 />
 
 <style>
-  .focused-branch { display: flex; flex-wrap: wrap; gap: 8px 16px; padding: var(--space-1) var(--surface-padding); color: var(--fg-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; }
-  .weave-host { display: flex; flex: 1; min-height: 0; min-width: 0; }
+  /* Clipped top and bottom only: every row inside handles its own width, and a focus ring on a
+   * control flush with either side (the search field) must not lose its edge. */
+  .loom-sidebar { display: flex; flex-direction: column; gap: var(--s3); height: 100%; min-width: 0; min-height: 0; overflow-x: visible; overflow-y: clip; color: var(--ink2); font: var(--type-small); }
+  .loom-top, .loom-actions, .filter-bar, .search-feedback, .loom-status, .loom-map-bar { flex: none; min-width: 0; }
+  .loom-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); margin-top: calc(var(--s2) * -1); }
+  .loom-actions .dw-text { font: var(--type-meta); }
+  .weave-host { display: flex; flex: 1; min-height: 0; min-width: 0; container: loom / inline-size; }
   .weave-host[hidden] { display: none; }
-  .loom-sidebar {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    color: var(--fg);
-    font-family: var(--font-reading);
-    font-size: var(--text-sm);
-    min-width: 0;
-    min-height: 0;
-    overflow: clip;
-  }
 
-  /* Section bars are borderless — typography + their own padding carry
-   * the divide between them. */
-  .filter-bar {
-    display: flex;
-    flex: 0 0 auto;
-    gap: var(--space-2);
-    align-items: center;
-    flex-wrap: wrap;
-    padding: var(--space-4) var(--surface-gutter);
-  }
-  .filter-field { display: grid; flex: 1 1 16rem; gap: var(--space-2); min-width: 0; color: var(--fg-dim); }
-  .filter-field > span { font-size: var(--text-xs); }
-  .filter-bar :global(.sk-select) { align-self: end; width: 7.5rem; flex: 0 0 7.5rem; }
-  .filter-bar > button { align-self: end; }
-  .search-feedback { flex: none; padding: 0 var(--surface-gutter) var(--space-4); }
-  .search-feedback p { margin: 0; font-size: var(--text-xs); line-height: 1.5; color: var(--fg-dim); }
-  .search-feedback p.err { color: var(--accent-red); }
-  .search-result { display: flex; align-items: center; gap: var(--space-2); margin-top: var(--space-3); }
-  .search-excerpt { display: grid; flex: 1; min-width: 0; gap: var(--space-2); padding: var(--space-3); background: var(--input-well); text-align: start; border: 0; border-radius: var(--radius); color: var(--fg); line-height: 1.5; overflow-wrap: anywhere; }
-  .search-excerpt mark { background: var(--accent-subtle); color: inherit; text-decoration: underline; text-underline-offset: 2px; }
-  .search-excerpt > span:last-child { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
-  .tree-node-wrap.search-match :global(.node) { outline: 1px solid var(--accent); outline-offset: 2px; }
-  .tree-node-wrap.search-current :global(.node) { outline-width: 3px; outline-offset: 4px; }
-  .filter-input {
-    flex: 1 1 auto;
-    min-height: var(--control-field);
-    /* Recessed input well — the accent focus ring is the only border. */
-    background: var(--input-well);
-    color: var(--fg-strong);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-2) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    min-width: 0;
-  }
-  .filter-input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
+  /* ---------- search */
+  .filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2); }
+  .filter-field { position: relative; display: flex; flex: 1 1 240px; min-width: 0; }
+  .filter-input { flex: 1 1 auto; min-width: 0; height: 40px; padding: 0 40px 0 var(--s4); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-small); }
   .filter-input::-webkit-search-cancel-button { -webkit-appearance: none; }
+  .clear { position: absolute; top: 4px; right: 4px; display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .clear:hover { background: var(--wash2); color: var(--ink); }
+  .search-feedback { display: grid; gap: var(--s2); }
+  .search-feedback p:empty { display: none; }
+  .search-result { display: flex; align-items: center; gap: var(--s1); }
+  .search-excerpt { display: grid; flex: 1; gap: 2px; min-width: 0; padding: var(--s2) var(--s3); border: 0; border-radius: var(--r-box); background: var(--wash); color: var(--ink2); font: var(--type-small); text-align: start; overflow-wrap: anywhere; cursor: pointer; transition: background-color var(--fast) var(--ease); }
+  .search-excerpt:hover { background: var(--wash2); }
+  .search-excerpt mark { --mark: color-mix(in oklch, var(--tint) 22%, transparent); border-radius: 2px; background: var(--mark); box-shadow: 0 0 0 2px var(--mark); color: var(--ink); }
+  .search-excerpt > span:last-child { display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+  .filter-help { display: grid; gap: var(--s2); max-height: 224px; overflow: auto; padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); color: var(--ink2); font: var(--type-small); }
+  .filter-help ul { display: grid; gap: 2px; }
+  .filter-help code { color: var(--ink); font-weight: 500; }
+  .filter-help .examples { color: var(--ink3); }
+  .loom-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s4); }
+  .focused-branch, .selection-bar { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); }
+  .selection-bar { color: var(--ink); }
+  .selection-bar .dw-text, .loom-map-bar .dw-text { font: var(--type-meta); }
 
-  /* Logit-pass: help affordance, help popover, weight-mode picker. */
-  .help-btn.on {
-    color: var(--accent);
-  }
-  .filter-help {
-    padding: var(--space-4) var(--surface-gutter);
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    line-height: 1.45;
-    max-height: 14em;
-    overflow: auto;
-  }
-  .filter-help code {
-    color: var(--accent);
-    background: transparent;
-    font-family: var(--font-mono);
-  }
-  .filter-help ul {
-    margin: var(--space-1) 0 var(--space-3) var(--space-sm);
-    padding: 0;
-    list-style: disc;
-  }
-  .filter-help li {
-    margin: var(--space-1) 0;
-  }
-  .filter-help .examples code {
-    color: var(--fg-strong);
-  }
-  .weight-bar {
-    display: flex;
-    gap: var(--space-3);
-    align-items: center;
-    padding: var(--space-4) var(--surface-gutter);
-    font-size: var(--text-xs);
-    color: var(--fg-dim);
-  }
-  .weight-label {
-    text-transform: uppercase;
-    letter-spacing: 0;
-  }
+  /* ---------- the map: a drawing on paper. Turns are fills, edges thin ink lines at low alpha,
+   * the current path in the depth accent. */
+  .loom-map-bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s2) var(--s4); }
+  .loom-map-summary { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1) var(--s3); min-width: 0; }
+  .path-key { display: inline-flex; align-items: center; gap: var(--s2); }
+  .path-key i { display: block; width: 20px; height: 2px; border-radius: 1px; background: var(--tint); }
+  .loom-view-controls { display: flex; align-items: center; gap: var(--s1) var(--s3); }
+  .loom-view-controls output { min-width: 40px; text-align: center; }
+  .step { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink2); font: var(--type-control); cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+  .step:hover:not(:disabled) { background: var(--wash2); color: var(--ink); }
+  .step:active:not(:disabled) { scale: 0.97; }
+  .step:disabled { opacity: 0.4; cursor: default; }
 
-  .selection-bar {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    padding: var(--space-4) var(--surface-gutter);
-    color: var(--accent);
-    font-size: var(--text-xs);
-  }
-  .action-btn {
-    background: var(--glass);
-    color: var(--fg-strong);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-1) var(--space-4);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    min-height: var(--control-target);
-  }
-  .action-btn:hover:not(:disabled) {
-    background: var(--glass-strong);
-    color: var(--accent);
-  }
-  .action-btn:disabled {
-    color: var(--fg-muted);
-    cursor: not-allowed;
-  }
+  .tree-scroll { position: relative; flex: 1 1 auto; min-height: 0; overflow: clip; overscroll-behavior: contain; touch-action: none; cursor: grab; border-radius: var(--r-row); background: var(--paper); }
+  .tree-scroll.dragging, .tree-scroll.dragging :global(*) { cursor: grabbing !important; }
+  .loom-canvas { position: relative; z-index: 1; width: 100%; height: 100%; transform-origin: 0 0; }
+  .loom-canvas.camera-animating { transition: transform var(--glide) var(--ease); }
+  .loom-edges { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+  .loom-edges path { fill: none; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; transition: stroke var(--fast) var(--ease), opacity var(--fast) var(--ease); }
+  .loom-edges .edge-line { stroke: var(--ink3); stroke-width: var(--edge-width, 1.25px); opacity: calc(var(--edge-opacity, 0.55) * 0.6); }
+  .loom-edges .edge-line.active-edge { stroke: var(--tint); stroke-width: calc(var(--edge-width, 1.25px) + 0.75px); opacity: 1; }
+  .loom-edges .edge-line.filtered-edge { opacity: 0.12; }
+  .loom-edges .junction { fill: var(--ink3); opacity: 0.5; }
+  .loom-edges .junction.active-junction { fill: var(--tint); opacity: 1; }
+  .map-summary { display: flex; flex-direction: column; justify-content: space-between; gap: var(--s2); width: 100%; height: 100%; padding: var(--s3) var(--s4); overflow: hidden; border: 0; border-radius: var(--r-box); background: var(--wash); color: var(--ink2); font: var(--type-small); text-align: start; cursor: zoom-in; }
+  .active-path-node .map-summary { background: color-mix(in oklch, var(--tint) 6%, var(--paper)); color: var(--ink); }
+  .current-node .map-summary { background: color-mix(in oklch, var(--tint) 11%, var(--paper)); }
+  .map-summary-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+  .tree-node-wrap { position: absolute; z-index: calc(10 + var(--branch-depth, 0)); min-width: 0; min-height: 0; transition: left var(--in) var(--ease), top var(--in) var(--ease), opacity var(--fast) var(--ease); }
+  .tree-node-wrap.active-path-node { z-index: calc(30 + var(--branch-depth, 0)); }
+  .tree-node-wrap.current-node { z-index: 60; }
+  .tree-node-wrap.dead-node { z-index: calc(5 + var(--branch-depth, 0)); }
+  .tree-node-wrap.filtered-out { opacity: 0.45; }
+  .tree-node-wrap.filtered-out:hover { opacity: 1; }
+  /* Search hits: wash2 for a match, a 22% tint fill for the one in view. */
+  .tree-node-wrap.search-match :global(.node) { background: var(--wash2); }
+  .tree-node-wrap.search-current :global(.node) { background: color-mix(in oklch, var(--tint) 22%, var(--paper)); }
+  /* Chosen for comparison: an ink ring (interaction is ink); a pin, a softer one. */
+  .tree-node-wrap.selected :global(.node) { box-shadow: 0 0 0 2px var(--ink); }
+  .tree-node-wrap.pinned :global(.node) { box-shadow: 0 0 0 2px var(--ink3); }
 
-  .loom-header {
-    display: flex;
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--surface-padding);
-  }
-  .loom-heading {
-    display: flex;
-    flex: 1 1 18rem;
-    flex-direction: column;
-    gap: var(--space-1);
-    min-width: 0;
-  }
-  .title {
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-weight: var(--weight-display);
-    letter-spacing: -0.02em;
-    font-size: var(--text-md);
-  }
-  .loom-subtitle {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .loom-views {
-    display: grid;
-    flex: 0 0 auto;
-    grid-template-columns: repeat(5, minmax(0, 1fr));
-    gap: var(--space-2);
-    padding: 0 var(--surface-gutter) var(--space-4);
-  }
-  .compact-loom-view { display: none; }
-  .loom-views button {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: var(--space-xs);
-    min-width: 0;
-    min-height: var(--control-target);
-    padding: var(--space-3) var(--space-4);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    background: var(--input-well);
-    color: var(--fg-muted);
-    cursor: pointer;
-    text-align: start;
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .loom-views button:hover,
-  .loom-views button:focus-visible {
-    color: var(--fg);
-    background: var(--glass);
-    outline: none;
-  }
-  .loom-views button:focus-visible {
-    border-color: var(--focus-ring);
-  }
-  .loom-views button:active {
-    transform: scale(var(--press-scale));
-  }
-  .loom-views button.active {
-    color: var(--fg);
-    border-color: color-mix(in srgb, var(--accent) 35%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent) 9%, var(--bg-elev));
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent);
-  }
-  .loom-views strong {
-    overflow: hidden;
-    max-width: 100%;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .loom-views span {
-    overflow: hidden;
-    max-width: 100%;
-    font-family: var(--font-data);
-    font-size: var(--text-2xs);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .icon-btn {
-    background: transparent;
-    border: 0;
-    color: var(--fg-dim);
-    cursor: pointer;
-    padding: var(--space-1) var(--space-2);
-    border-radius: var(--radius-sm);
-    font: inherit;
-    font-family: var(--font-mono);
-    min-width: var(--control-target);
-    min-height: var(--control-target);
-  }
-  .icon-btn:hover {
-    color: var(--accent);
-  }
+  /* ---------- path, options, starred: rows and washes in the reading column */
+  .loom-projection { display: flex; flex: 1 1 auto; flex-direction: column; gap: var(--s5); min-height: 0; margin: 0 -4px; padding: 4px 4px var(--s6); overflow: auto; overscroll-behavior: contain; }
+  .row-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s3); min-height: 28px; }
+  .more { display: grid; place-items: center; flex: none; width: 28px; height: 28px; padding: 0; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--ink3); font: var(--type-meta); cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .more:hover { background: var(--wash2); color: var(--ink); }
+  .path-stream { display: grid; gap: 2px; }
+  .path-snippet { display: grid; grid-template-columns: 12px minmax(0, 1fr); gap: var(--s2); align-items: start; padding: var(--s2) var(--s3); border-radius: var(--r-box); transition: background-color var(--fast) var(--ease); }
+  .path-snippet:hover { background: var(--wash); }
+  .path-snippet.current-snippet { background: var(--wash2); }
+  .path-snippet .dw-pip { margin-top: 11px; }
+  .snippet-body { display: grid; gap: var(--s1); min-width: 0; }
+  .snippet-tokens, .snippet-text { margin: 0; color: var(--ink); font: var(--type-body); line-height: 28px; overflow-wrap: anywhere; }
+  .snippet-text { padding: 0; border: 0; background: transparent; text-align: start; white-space: pre-wrap; cursor: pointer; }
+  /* A word holds together (a token is a button, atomic in the line) and a longer one wraps inside;
+   * the space before a word is text, which a wrapped line hangs at its end. */
+  .snippet-tokens { white-space: pre-wrap; }
+  .snippet-tokens .word { display: inline-block; max-width: 100%; }
+  .path-token { display: inline; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; font: inherit; white-space: pre-wrap; cursor: pointer; transition: background-color var(--fast) var(--ease), box-shadow var(--fast) var(--ease); }
+  .path-token:hover { background: var(--paper); box-shadow: 0 0 0 2px var(--paper); }
+  .path-snippet:not(:hover):not(.current-snippet) .path-token:hover { background: var(--wash2); box-shadow: 0 0 0 2px var(--wash2); }
+  .path-snippet footer { gap: var(--s4); }
+  .path-snippet footer .dw-text { font: var(--type-meta); }
+  .see-options { align-self: start; }
 
-  .loom-projection {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    min-height: 0;
-    overflow: auto;
-    overscroll-behavior: contain;
-    padding: var(--surface-padding);
-    background:
-      radial-gradient(circle at 50% 0, color-mix(in srgb, var(--accent) 4%, transparent), transparent 40%),
-      var(--bg);
-  }
-  .projection-heading {
-    display: flex;
-    align-items: flex-start;
-    justify-content: space-between;
-    gap: var(--space-5);
-    margin: 0 auto var(--space-6);
-    width: min(100%, 960px);
-  }
-  .projection-heading > div:first-child {
-    min-width: 0;
-  }
-  .snippet-role,
-  .snippet-index,
-  .option-number,
-  .saved-mark,
-  .current-label {
-    font-family: var(--font-data);
-    font-size: var(--text-2xs);
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-  }
-  .projection-heading h2 {
-    margin: 0 0 var(--space-2);
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-display);
-    letter-spacing: -0.025em;
-  }
-  .projection-heading p,
-  .projection-empty p {
-    margin: 0;
-    color: var(--fg-muted);
-    line-height: 1.5;
-  }
-  .projection-actions,
-  .saved-actions {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .primary-action,
-  .secondary-action,
-  .quiet-action,
-  .branch-action {
-    min-height: var(--control-target);
-    padding: var(--space-2) var(--space-4);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    cursor: pointer;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-medium);
-    transition:
-      color var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out),
-      border-color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .primary-action {
-    color: var(--text-on-accent);
-    background: var(--accent);
-  }
-  .primary-action:hover:not(:disabled),
-  .primary-action:focus-visible:not(:disabled) {
-    background: var(--accent-light);
-    outline: none;
-  }
-  .secondary-action {
-    color: var(--fg);
-    background: var(--glass);
-  }
-  .quiet-action {
-    color: var(--fg-dim);
-    background: transparent;
-  }
-  .secondary-action:hover,
-  .quiet-action:hover,
-  .secondary-action:focus-visible,
-  .quiet-action:focus-visible {
-    color: var(--fg);
-    background: var(--glass-bright);
-    outline: none;
-  }
-  .branch-action {
-    color: var(--accent);
-    border-color: color-mix(in srgb, var(--accent) 28%, transparent);
-    background: color-mix(in srgb, var(--accent) 8%, transparent);
-  }
-  .branch-action:hover:not(:disabled),
-  .branch-action:focus-visible:not(:disabled) {
-    background: color-mix(in srgb, var(--accent) 15%, transparent);
-    outline: none;
-  }
-  .primary-action:active:not(:disabled),
-  .secondary-action:active:not(:disabled),
-  .quiet-action:active:not(:disabled),
-  .branch-action:active:not(:disabled) {
-    transform: scale(var(--press-scale));
-  }
-  .primary-action:disabled,
-  .branch-action:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-  .path-stream {
-    display: flex;
-    flex-direction: column;
-    width: min(100%, 820px);
-    margin: 0 auto;
-  }
-  .path-snippet {
-    display: grid;
-    grid-template-columns: 28px minmax(0, 1fr);
-    min-width: 0;
-  }
-  .snippet-rail {
-    position: relative;
-    display: flex;
-    justify-content: center;
-  }
-  .snippet-rail::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 1px;
-    background: color-mix(in srgb, var(--fg-muted) 38%, transparent);
-  }
-  .path-snippet:first-child .snippet-rail::before {
-    top: 24px;
-  }
-  .path-snippet:last-child .snippet-rail::before {
-    bottom: calc(100% - 24px);
-  }
-  .snippet-rail span {
-    position: relative;
-    z-index: 1;
-    width: 9px;
-    height: 9px;
-    margin-top: var(--space-md);
-    border: 2px solid var(--bg);
-    border-radius: 50%;
-    background: var(--fg-muted);
-    box-shadow: 0 0 0 1px color-mix(in srgb, var(--fg-muted) 48%, transparent);
-  }
-  .current-snippet .snippet-rail span {
-    background: var(--accent);
-    box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .snippet-card {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    min-width: 0;
-    margin: 0 0 var(--space-3) var(--space-2);
-    padding: var(--surface-padding);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--bg-elev);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 4%, transparent);
-  }
-  .current-snippet .snippet-card {
-    border-color: color-mix(in srgb, var(--accent) 42%, var(--glass-line));
-    background: var(--surface-sheen), color-mix(in srgb, var(--accent) 5%, var(--bg-elev));
-  }
-  .snippet-card > header,
-  .option-card > header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .snippet-role {
-    color: var(--fg-dim);
-  }
-  .snippet-index,
-  .option-number {
-    color: var(--fg-muted);
-  }
-  .current-label {
-    padding: var(--space-xs) var(--space-xs);
-    border-radius: var(--radius-pill);
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-  }
-  .snippet-actions {
-    display: inline-grid;
-    place-items: center;
-    width: var(--control-target);
-    height: var(--control-target);
-    margin-inline-start: auto;
-    padding: 0;
-    border: 0;
-    border-radius: var(--radius-pill);
-    color: var(--fg-muted);
-    background: transparent;
-    cursor: pointer;
-    font-family: var(--font-data);
-  }
-  .snippet-actions:hover,
-  .snippet-actions:focus-visible {
-    color: var(--fg);
-    background: var(--glass-bright);
-    outline: none;
-  }
-  .snippet-text,
-  .option-preview {
-    width: 100%;
-    min-width: 0;
-    padding: 0;
-    border: 0;
-    color: var(--fg);
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-reading);
-    font-size: var(--text-md);
-    line-height: 1.5;
-    text-align: start;
-  }
-  .snippet-text:focus-visible,
-  .option-preview:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 4px;
-  }
-  .snippet-tokens {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    gap: 0;
-    min-width: 0;
-  }
-  .path-token {
-    min-width: 24px;
-    min-height: 24px;
-    font-family: var(--font-reading) !important;
-    font-weight: var(--weight-reading) !important;
-    padding: 0;
-    border: 0;
-    border-radius: var(--radius-sm);
-    color: var(--fg);
-    background: transparent;
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-reading);
-    font-size: var(--text-md);
-    line-height: 1.45;
-    text-align: start;
-  }
-  .path-token:hover,
-  .path-token:focus-visible {
-    color: var(--accent);
-    background: color-mix(in srgb, var(--accent) 10%, transparent);
-    outline: none;
-  }
-  @media (pointer: coarse) {
-    .path-token { min-width: var(--control-target); min-height: var(--control-target); }
-  }
-  .snippet-card > footer,
-  .option-card > footer {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    gap: var(--space-2);
-  }
-  .option-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
-    gap: var(--space-4);
-    width: min(100%, 1080px);
-    margin: 0 auto;
-  }
-  .option-card {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-height: 210px;
-    padding: var(--surface-padding);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius);
-    background: var(--bg-elev);
-    box-shadow: inset 0 1px 0 color-mix(in srgb, var(--fg) 4%, transparent);
-  }
-  .option-card.active-option {
-    border-color: color-mix(in srgb, var(--accent) 48%, var(--glass-line));
-    background: color-mix(in srgb, var(--accent) 5%, var(--bg-elev));
-  }
-  .option-preview {
-    display: -webkit-box;
-    overflow: hidden;
-    flex: 1 1 auto;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 6;
-    line-clamp: 6;
-  }
-  .saved-mark {
-    color: var(--accent-yellow);
-  }
-  .projection-empty {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: var(--space-2);
-    min-height: 240px;
-    text-align: center;
-  }
-  .projection-empty strong {
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-display);
-  }
-  .saved-list {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-    width: min(100%, 900px);
-    margin: 0 auto;
-  }
-  .saved-card {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-5);
-    padding: var(--surface-padding);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius-lg);
-    background: var(--surface-sheen), var(--bg-elev);
-  }
-  .saved-copy {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-  }
-  .saved-copy strong {
-    overflow: hidden;
-    color: var(--fg);
-    font-family: var(--font-reading);
-    font-weight: var(--weight-reading-medium);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .saved-copy p {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
+  .projection-head { display: grid; gap: var(--s3); }
+  .anchor { margin: 0; color: var(--ink2); display: -webkit-box; -webkit-line-clamp: 3; line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+  .option-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: var(--s3); }
+  .option-card { display: flex; flex-direction: column; gap: var(--s2); min-width: 0; padding: var(--s3) var(--s4) var(--s4); border-radius: var(--r-row); background: var(--wash); }
+  .option-card.active-option { background: var(--wash2); }
+  .option-card .dw-quiet { background: var(--wash2); }
+  .option-card.active-option .dw-quiet, .option-card .dw-quiet:hover { background: var(--paper); }
+  .option-card footer { gap: var(--s4); margin-top: auto; padding-top: var(--s2); }
+  .option-preview { display: -webkit-box; flex: 1 1 auto; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 7; line-clamp: 7; padding: 0; border: 0; background: transparent; color: var(--ink); font: var(--type-small); line-height: 22px; text-align: start; overflow-wrap: anywhere; cursor: pointer; }
+  .saved-list { display: grid; gap: 2px; }
+  .saved-card { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; gap: var(--s2) var(--s3); align-items: start; padding: var(--s2) var(--s3); border-radius: var(--r-box); transition: background-color var(--fast) var(--ease); }
+  .saved-card:hover { background: var(--wash); }
+  .saved-card .dw-pip { margin-top: 7px; }
+  .saved-copy { display: grid; gap: 2px; min-width: 0; }
+  .saved-copy strong { overflow: hidden; color: var(--ink); font: var(--type-small); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+  .saved-copy p { color: var(--ink3); font: var(--type-meta); }
+  .saved-actions { gap: var(--s4); }
+  .saved-actions .dw-text { font: var(--type-meta); }
 
-  .loom-map-bar {
-    display: flex;
-    flex: 0 0 auto;
-    flex-wrap: wrap;
-    align-items: center;
-    justify-content: space-between;
-    gap: var(--space-4);
-    padding: var(--space-3) var(--surface-gutter);
-    color: var(--fg-muted);
-    font-family: var(--font-data);
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
-  }
-  .loom-map-summary,
-  .loom-view-controls {
-    display: flex;
-    align-items: center;
-  }
-  .loom-map-summary {
-    min-width: 0;
-    gap: var(--space-2);
-    white-space: nowrap;
-  }
-  .loom-map-summary strong {
-    color: var(--fg-strong);
-    font-family: var(--font-structure);
-    font-weight: var(--weight-medium);
-  }
-  .map-separator {
-    color: var(--fg-subtle);
-  }
-  .path-key {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    margin-inline-start: var(--space-3);
-  }
-  .path-key i {
-    display: block;
-    width: 1.4rem;
-    height: 2px;
-    border-radius: var(--radius-pill);
-    background: var(--accent);
-  }
-  .loom-view-controls {
-    flex: none;
-    font-size: var(--text-sm);
-    gap: var(--space-xs);
-    padding: var(--space-xs);
-    border-radius: var(--radius-group);
-    background: var(--surface-sheen), var(--input-well);
-  }
-  .loom-view-controls button,
-  .loom-view-controls output {
-    display: inline-grid;
-    min-width: var(--control-target);
-    min-height: var(--control-target);
-    padding: 0 var(--space-2);
-    place-items: center;
-    border: 0;
-    border-radius: var(--radius-inset);
-    color: var(--fg-dim);
-    background: transparent;
-    font: inherit;
-  }
-  .loom-view-controls button {
-    cursor: pointer;
-  }
-  .loom-view-controls button:hover:not(:disabled),
-  .loom-view-controls button:focus-visible {
-    color: var(--fg);
-    background: var(--glass-bright);
-    outline: none;
-  }
-  .loom-view-controls button:active:not(:disabled) {
-    transform: scale(var(--press-scale));
-  }
-  .loom-view-controls button:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-  .loom-view-controls output {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    white-space: nowrap;
-    color: var(--fg-muted);
-    font-variant-numeric: tabular-nums;
-  }
+  .empty { display: grid; gap: var(--s3); justify-items: start; color: var(--ink3); font: var(--type-small); }
 
-  .tree-scroll {
-    position: relative;
-    isolation: isolate;
-    overflow: clip;
-    overscroll-behavior: contain;
-    padding: 0;
-    min-height: 0;
-    flex: 1 1 auto;
-    touch-action: none;
-    cursor: grab;
-    background: color-mix(in srgb, var(--bg) 90%, var(--bg-alt));
-  }
-  .tree-scroll::after {
-    content: "";
-    position: absolute;
-    inset: 0;
-    pointer-events: none;
-    z-index: 4;
-    box-shadow:
-      inset 0 1px 0 color-mix(in srgb, var(--fg) 5%, transparent),
-      var(--loom-canvas-shade);
-  }
-  .tree-scroll.dragging,
-  .tree-scroll.dragging :global(*) {
-    cursor: grabbing !important;
-  }
-  .touch-gesture-hint {
-    display: none;
-  }
-
-  .loom-depth-field {
-    position: absolute;
-    z-index: 0;
-    inset: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .loom-depth-field::before,
-  .loom-depth-field::after {
-    content: "";
-    position: absolute;
-    inset: calc(-12% - 48px);
-    pointer-events: none;
-    background-repeat: repeat;
-  }
-  .loom-depth-field::before {
-    background-image: radial-gradient(
-      circle,
-      color-mix(in srgb, var(--fg-subtle) 42%, transparent) 1px,
-      transparent 1.4px
-    );
-    background-size: var(--loom-grid-size) var(--loom-grid-size);
-    background-position: var(--loom-grid-x) var(--loom-grid-y);
-    opacity: 0.52;
-  }
-  .loom-depth-field::after {
-    background-image: radial-gradient(
-      circle,
-      color-mix(in srgb, var(--fg-subtle) 30%, transparent) 0.7px,
-      transparent 1.1px
-    );
-    background-size: var(--loom-far-size) var(--loom-far-size);
-    background-position: var(--loom-far-x) var(--loom-far-y);
-    opacity: 0.35;
-  }
-
-  .loom-canvas {
-    position: relative;
-    z-index: 1;
-    width: 100%;
-    height: 100%;
-    transform-origin: 0 0;
-  }
-  .loom-canvas.camera-animating {
-    transition: transform var(--dur) var(--ease-enter);
-  }
-  .loom-edges {
-    position: absolute;
-    inset: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-  .map-summary {
-    display: flex;
-    flex-direction: column;
-    justify-content: space-between;
-    gap: var(--space-2);
-    width: 100%;
-    height: 100%;
-    padding: var(--surface-padding);
-    border: 1px solid var(--glass-line);
-    border-radius: var(--radius-lg);
-    background: var(--bg-elev);
-    color: var(--fg);
-    font: inherit;
-    text-align: start;
-    cursor: zoom-in;
-    overflow: hidden;
-  }
-  .active-path-node .map-summary { border-color: var(--accent); }
-  .map-summary-text {
-    display: -webkit-box;
-    -webkit-box-orient: vertical;
-    -webkit-line-clamp: 3;
-    line-clamp: 3;
-    overflow: hidden;
-  }
-  .loom-edges path {
-    fill: none;
-    stroke-linecap: round;
-    stroke-linejoin: round;
-    vector-effect: non-scaling-stroke;
-    transition:
-      stroke var(--dur-fast) var(--ease-out),
-      opacity var(--dur-fast) var(--ease-out);
-  }
-  .loom-edges path.edge-depth {
-    stroke: var(--loom-edge-depth);
-    stroke-width: calc(var(--edge-width, 1.5px) + 7px);
-    opacity: 0.5;
-    transform: translateY(3px);
-    filter: blur(1.5px);
-  }
-  .loom-edges path.edge-line {
-    stroke: color-mix(in srgb, var(--fg-muted) 58%, var(--bg));
-    stroke-width: var(--edge-width, 1.5px);
-    opacity: var(--edge-opacity, 0.55);
-  }
-  .loom-edges path.edge-depth.active-edge {
-    stroke: color-mix(in srgb, var(--accent) 32%, var(--loom-edge-depth));
-    opacity: 0.7;
-  }
-  .loom-edges path.edge-line.active-edge {
-    stroke: var(--accent);
-    opacity: 0.92;
-  }
-  .loom-edges path.filtered-edge {
-    opacity: 0.18;
-  }
-  .loom-edges circle.junction-halo {
-    fill: color-mix(in srgb, var(--bg) 72%, transparent);
-    stroke: transparent;
-  }
-  .loom-edges circle.junction-halo.active-junction {
-    fill: color-mix(in srgb, var(--accent) 14%, transparent);
-  }
-  .loom-edges circle.junction-core {
-    fill: var(--bg-elev);
-    stroke: var(--fg-muted);
-    stroke-width: 1.5px;
-  }
-  .loom-edges circle.junction-core.active-junction {
-    fill: var(--accent);
-    stroke: color-mix(in srgb, var(--accent) 30%, var(--bg));
-  }
-  .tree-node-wrap {
-    position: absolute;
-    box-sizing: border-box;
-    z-index: calc(10 + var(--branch-depth, 0));
-    min-width: 0;
-    min-height: 0;
-    transition:
-      left var(--dur) var(--ease-out),
-      top var(--dur) var(--ease-out),
-      opacity var(--dur-fast) var(--ease-out);
-  }
-  .tree-node-wrap.active-path-node {
-    z-index: calc(30 + var(--branch-depth, 0));
-  }
-  .tree-node-wrap.current-node {
-    z-index: 60;
-  }
-  .tree-node-wrap.dead-node {
-    z-index: calc(5 + var(--branch-depth, 0));
-  }
-
-  .tree-node-wrap.filtered-out :global(.node) {
-    color: var(--fg-muted);
-    opacity: 0.55;
-  }
-  .tree-node-wrap.filtered-out:hover :global(.node) {
-    color: var(--fg);
-    opacity: 1;
-  }
-  .tree-node-wrap.selected {
-    --loom-node-outline: var(--accent);
-  }
-  .tree-node-wrap.selected :global(.node) {
-    background: var(--accent-subtle);
-  }
-  .tree-node-wrap.pinned {
-    --loom-node-outline: var(--fg-muted);
-  }
-
-  @media (prefers-reduced-motion: reduce) {
-    .tree-node-wrap,
-    .loom-edges path {
-      transition: none;
-    }
-  }
-
-  @media (prefers-contrast: more), (forced-colors: active) {
-    .loom-depth-field {
-      display: none;
-    }
-  }
-
-  @media (max-width: 560px) {
-    .loom-header {
-      padding-inline: var(--surface-padding);
-    }
-    .loom-heading {
-      flex-basis: 100%;
-    }
-    .loom-subtitle {
-      display: none;
-    }
-    .loom-views {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      padding-inline: var(--space-4);
-    }
-    .loom-views button {
-      padding-inline: var(--space-3);
-    }
-    .loom-projection {
-      padding-inline: var(--surface-padding);
-    }
-    .projection-heading,
-    .saved-card {
-      align-items: stretch;
-      flex-direction: column;
-    }
-    .projection-actions,
-    .saved-actions {
-      width: 100%;
-    }
-    .projection-actions button,
-    .saved-actions .primary-action,
-    .saved-actions .quiet-action {
-      flex: 1 1 auto;
-    }
-    .path-snippet {
-      grid-template-columns: 18px minmax(0, 1fr);
-    }
-    .snippet-card,
-    .option-card,
-    .saved-card {
-      padding: var(--surface-padding);
-    }
-    .snippet-card > footer,
-    .option-card > footer {
-      align-items: stretch;
-      flex-direction: column;
-    }
-    .snippet-card > footer button,
-    .option-card > footer button {
-      width: 100%;
-    }
-    .loom-map-bar {
-      align-items: flex-start;
-      flex-direction: column;
-    }
-    .loom-view-controls {
-      width: 100%;
-    }
-    .loom-view-controls button,
-    .loom-view-controls output {
-      flex: 1 1 auto;
-    }
-    .path-key {
-      display: none;
-    }
-  }
-
-  /* Short screens keep the view chooser on one touch-sized row. */
-  @media (max-width: 560px), (max-height: 600px) {
-    .loom-header {
-      flex: 0 0 auto;
-      flex-wrap: nowrap;
-      gap: var(--space-1);
-      padding: var(--surface-padding);
-      overflow-x: auto;
-      overscroll-behavior-inline: contain;
-      scrollbar-width: none;
-    }
-
-    .loom-header::-webkit-scrollbar,
-    .loom-views::-webkit-scrollbar,
-    .loom-map-bar::-webkit-scrollbar {
-      display: none;
-    }
-
-    .loom-heading {
-      flex: 0 0 auto;
-    }
-
-    .title {
-      font-size: var(--text-sm);
-      white-space: nowrap;
-    }
-
-    .loom-subtitle {
-      display: none;
-    }
-
-    .loom-header .action-btn,
-    .loom-header .icon-btn {
-      flex: 0 0 auto;
-      min-height: var(--control-target);
-      padding-inline: var(--space-3);
-    }
-
-    .loom-views {
-      display: none;
-    }
-
-    .compact-loom-view { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: var(--space-sm); flex: 0 0 auto; padding: var(--space-xs) var(--surface-gutter); font-size: var(--text-sm); color: var(--fg-muted); }
-
-    .loom-views button {
-      flex: 0 0 auto;
-      flex-direction: row;
-      align-items: center;
-      min-height: var(--control-target);
-      padding: var(--space-2) var(--space-3);
-    }
-
-    .loom-views span {
-      display: none;
-    }
-
-    .filter-bar {
-      flex: 0 0 auto;
-      padding: var(--space-1) var(--surface-gutter);
-    }
-
-    .filter-input {
-      min-height: var(--control-target);
-    }
-    .filter-field { flex-basis: 8rem; }
-
-    .loom-map-bar {
-      flex: 0 0 auto;
-      flex-wrap: nowrap;
-      flex-direction: row;
-      align-items: center;
-      gap: var(--space-1);
-      padding: var(--space-1) var(--surface-gutter);
-      overflow-x: auto;
-      overscroll-behavior-inline: contain;
-      scrollbar-width: none;
-    }
-
-    .loom-map-summary {
-      display: none;
-    }
-
-    .loom-view-controls {
-      width: max-content;
-      min-width: 0;
-      margin-inline: auto;
-      padding: 0;
-      background: transparent;
-    }
-
-    .loom-view-controls button,
-    .loom-view-controls output {
-      flex: 0 0 auto;
-      min-width: var(--control-target);
-      min-height: var(--control-target);
-      background: var(--input-well);
-    }
-
-    .tree-scroll {
-      min-height: min(6rem, 25dvh);
-    }
-
-    .loom-projection {
-      padding: var(--surface-padding);
-    }
-
-    .projection-heading {
-      margin-bottom: var(--space-4);
-    }
-  }
-
-  @media (max-width: 760px), (max-height: 600px) {
-    .filter-input {
-      font-size: var(--text-input-touch);
-    }
-  }
-
-  @media (max-height: 450px) {
-    .compact-loom-view,
-    .focused-branch,
-    .loom-map-bar {
-      padding-block: 0;
-    }
-
-    .search-feedback {
-      padding-bottom: 0;
-    }
-  }
-
-  @media (pointer: coarse) {
-    .loom-edges path.edge-depth { filter: none; }
-    .touch-gesture-hint {
-      position: absolute;
-      inset-inline-start: var(--space-3);
-      bottom: var(--space-3);
-      z-index: 5;
-      display: block;
-      margin: 0;
-      padding: var(--space-1) var(--space-3);
-      border-radius: var(--radius-pill);
-      color: var(--fg-muted);
-      background: color-mix(in srgb, var(--bg) 78%, transparent);
-      font-size: var(--text-2xs);
-      pointer-events: none;
-      backdrop-filter: blur(8px);
-    }
-  }
-
-  .empty {
-    padding: var(--space-5);
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-3);
-  }
-  .empty:not(.err) {
-    flex: 1 1 auto;
-    align-items: center;
-    justify-content: center;
-    text-align: center;
-  }
-  .empty:not(.err) p:first-child {
-    color: var(--fg);
-    font-family: var(--font-structure);
-    font-size: var(--text-lg);
-    font-weight: var(--weight-display);
-  }
-  .empty p {
-    margin: 0;
-  }
-  .empty.err {
-    color: var(--accent-red);
-  }
-  .empty button {
-    align-self: flex-start;
-    background: var(--danger-bg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    color: var(--accent-red);
-    padding: var(--space-1) var(--space-4);
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-mono);
-    min-height: var(--control-target);
-  }
-  .empty button:hover {
-    background: var(--danger-hover);
-  }
-
-  .hint {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-
+  /* ---------- the node menu: a wash2 popup, no line and no shadow */
   .loom-menu {
     position: fixed;
-    box-sizing: border-box;
-    margin: 0;
-    z-index: var(--z-modal);
-    background: var(--surface-sheen), var(--popup-bg);
-    border: 1px solid var(--popup-border);
-    border-radius: var(--popup-radius);
-    padding: var(--surface-padding);
-    box-shadow: var(--popup-shadow);
-    min-width: 248px;
+    z-index: 100;
+    display: grid;
+    gap: var(--s2);
     width: min(280px, calc(100vw - 24px));
-    max-width: calc(100vw - 16px);
     max-height: min(680px, calc(100dvh - 24px));
+    margin: 0;
+    padding: var(--s1);
     overflow-y: auto;
     overscroll-behavior: contain;
-    display: flex;
-    flex-direction: column;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
+    border-radius: var(--r-box);
+    background: var(--wash2);
     opacity: 0;
     pointer-events: none;
   }
-  .loom-menu.positioned {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .loom-menu-context {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-    padding: var(--space-4) var(--space-4) var(--space-5);
-  }
-  .loom-menu-context span {
-    color: var(--accent);
-    font-family: var(--font-data);
-    font-size: var(--text-2xs);
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-  }
-  .loom-menu-context strong {
-    overflow: hidden;
-    color: var(--fg);
-    font-family: var(--font-reading);
-    font-weight: var(--weight-reading-medium);
-    line-height: 1.35;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .loom-menu-section {
-    display: flex;
-    flex-direction: column;
-    padding: var(--space-2) 0;
-    border-top: 1px solid color-mix(in srgb, var(--glass-line) 72%, transparent);
-  }
-  .loom-menu button {
-    background: transparent;
-    border: 0;
-    text-align: start;
-    padding: var(--space-3) var(--space-4);
-    color: var(--fg-strong);
-    cursor: pointer;
-    font: inherit;
-    font-family: var(--font-structure);
-    font-weight: var(--weight-reading-medium);
-    min-height: var(--control-target);
-    border-radius: var(--radius);
-  }
-  .loom-menu button:hover:not(:disabled),
-  .loom-menu button:focus-visible:not(:disabled) {
-    background: var(--bg-elev);
-    color: var(--accent);
-    outline: none;
-  }
-  .loom-menu button.danger {
-    color: var(--accent-red);
-  }
-  .loom-menu button.danger:hover {
-    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
-  }
-  .loom-menu button:disabled {
-    color: var(--fg-muted);
-    cursor: not-allowed;
-  }
-  .loom-menu .danger-section {
-    padding-bottom: 0;
-  }
+  .loom-menu:focus { outline: none; }
+  .loom-menu.positioned { opacity: 1; pointer-events: auto; }
+  .loom-menu-context { display: grid; gap: 2px; min-width: 0; padding: var(--s2) var(--s3) var(--s1); }
+  .loom-menu-context strong { overflow: hidden; color: var(--ink); font: var(--type-small); font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+  .loom-menu-section { display: grid; }
+  .loom-menu button { display: flex; align-items: center; min-height: 40px; padding: 0 var(--s3); border: 0; border-radius: var(--r-col); background: transparent; color: var(--ink2); font: var(--type-control); text-align: start; cursor: pointer; transition: color var(--fast) var(--ease), background-color var(--fast) var(--ease), scale var(--fast) var(--ease); }
+  .loom-menu button:active:not(:disabled) { scale: 0.97; }
+  .loom-menu button:disabled { opacity: 0.4; cursor: default; }
+  .loom-menu button:focus-visible { outline-offset: -2px; }
+  @media (hover: hover) { .loom-menu button:hover:not(:disabled) { background: var(--paper); color: var(--ink); } }
 
+  @media (prefers-reduced-motion: reduce) {
+    .tree-node-wrap, .loom-edges path { transition: none; }
+  }
+  @media (pointer: coarse) {
+    /* Every target 44 px on touch: the text actions grow to it, a token's line is 44 px tall. */
+    .loom-menu button { min-height: 44px; }
+    .step, .more { width: 44px; height: 44px; }
+    .filter-input { height: 44px; }
+    .clear { top: 6px; }
+    .loom-actions { gap: 0 var(--s4); }
+    .dw-text { min-height: 44px; }
+    .loom-view-controls .dw-text { min-width: 44px; }
+    .snippet-tokens { line-height: 44px; }
+  }
+  @media (max-width: 720px) {
+    /* One row of actions that scrolls sideways, as the view tabs do. */
+    .loom-actions { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-inline: contain; mask-image: linear-gradient(to right, var(--ink) calc(100% - 24px), transparent); padding-right: var(--s5); }
+    .loom-actions::-webkit-scrollbar { display: none; }
+    .loom-actions .dw-text { flex: none; white-space: nowrap; }
+    .loom-map-summary { display: none; }
+    .loom-map-bar { justify-content: flex-end; }
+    .tree-scroll { min-height: min(96px, 25dvh); }
+    .filter-input { font-size: 16px; }
+    .saved-card { grid-template-columns: 12px minmax(0, 1fr); }
+    .saved-actions { grid-column: 2; }
+  }
 </style>

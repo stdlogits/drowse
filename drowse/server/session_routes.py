@@ -10,15 +10,19 @@ from drowse.errors import DrowseError
 from drowse.server.response_models import (
     SessionInfo,
     SessionListResponse,
+    SteeringPartJSON,
     SteeringValidationResponse,
 )
-from drowse.server.runtime import session_lock, session_router
+from drowse.server.runtime import (
+    exclusive_or_busy, run_in_thread, session_lock_or_busy, session_router,
+)
 from drowse.server.session_models import (
     PatchSessionRequest,
     ValidateSteeringRequest,
     session_info,
 )
-from drowse.steering.grammar import format_expr, parse_expr
+from drowse.steering.composer import TermLayers
+from drowse.steering.grammar import TermPart, format_expr, parse_expr, term_parts
 
 
 def register_session_routes(app: FastAPI) -> None:
@@ -61,8 +65,17 @@ def register_session_routes(app: FastAPI) -> None:
         variants, and atoms and composes the hooks exactly as a generation
         would, then rolls straight back — so a green validation cannot hide a
         rack-time failure.  It touches shared hook state, so it serializes on
-        the session lock.  A rejected expression is an in-band form result
-        (``valid: false``), not a failed request.
+        the session lock, and it runs in a worker thread holding the model
+        lock: while a generation, fit or training holds either it answers
+        409 rather than waiting (a generation holds the session lock for the
+        whole reply, and on the event loop a wait for the model lock would
+        stall every other request).  A rejected expression is an in-band form
+        result (``valid: false``), not a failed request.  A valid one also
+        reports the model's depth and where each term acts (its fitted
+        layers, its share there, the layers its clause selects): the term
+        editor's depth strip, and each term in order with its fields
+        (``parts``: what the recipe row needs to show a recipe that came from
+        elsewhere as chips; the server's parser is the only parser).
         """
         expression = req.expression.strip()
         if not expression:
@@ -71,12 +84,61 @@ def register_session_routes(app: FastAPI) -> None:
             parsed = parse_expr(expression)
         except DrowseError as exc:
             return {"valid": False, "expression": expression, "error": exc.user_message()[1]}
-        async with session_lock(app):
+
+        def dry_install() -> dict[str, TermLayers]:
+            with exclusive_or_busy(session), session.steering(parsed) as scope:
+                return scope.term_layers()
+
+        async with session_lock_or_busy(app):
             try:
-                with session.steering(parsed):
-                    pass
+                terms = await run_in_thread(dry_install)
             except DrowseError as exc:
-                return {"valid": False, "expression": expression, "error": exc.user_message()[1]}
-        return {"valid": True, "expression": format_expr(parsed), "error": None}
+                status, message = exc.user_message()
+                if status == 409:
+                    raise
+                return {"valid": False, "expression": expression, "error": message}
+        return {
+            "valid": True,
+            "expression": format_expr(parsed),
+            "error": None,
+            "n_layers": len(session.layers),
+            "terms": [
+                {
+                    "key": key,
+                    "fitted": list(where.fitted),
+                    "share": list(where.share),
+                    "layers": list(where.layers),
+                }
+                for key, where in terms.items()
+            ],
+            "parts": [_part_json(part) for part in term_parts(parsed)],
+        }
 
     app.include_router(router)
+
+
+def _part_json(part: TermPart) -> SteeringPartJSON:
+    """One :class:`~drowse.steering.grammar.TermPart` on the wire."""
+    position = part.position
+    layers = part.layers
+    return {
+        "text": part.text,
+        "op": part.op,
+        "target": part.target,
+        "coeff": part.coeff,
+        "onto": part.onto,
+        "position": list(position) if isinstance(position, tuple) else position,
+        "layers": list(layers) if isinstance(layers, tuple) else layers,
+        "trigger": part.trigger,
+        "phase": part.phase,
+        "first_n": part.first_n,
+        "after_n": part.after_n,
+        "gate": None if part.gate is None else {
+            "probe": part.gate.probe, "op": part.gate.op,
+            "threshold": part.gate.threshold,
+        },
+        "projection": None if part.projection is None else {
+            "base": part.projection[0], "operator": part.projection[1],
+            "onto": part.projection[2],
+        },
+    }

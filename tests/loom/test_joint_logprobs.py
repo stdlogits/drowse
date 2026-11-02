@@ -753,3 +753,59 @@ def test_session_joint_logprobs_cross_evaluates_real_siblings(make_tiny_session:
     assert "".join(b_tokens[i] for i in sorted(b_tokens)).startswith(session.tree.get(b_id).text)
     self_lps = [lp for row in joint.rows for lp in (row.lp_a_in_a, row.lp_b_in_b) if lp is not None]
     assert self_lps and all(math.isfinite(lp) and lp <= 0.0 for lp in self_lps)
+
+
+def test_chunked_replay_ablates_every_forced_column_past_the_first_chunk(
+    make_tiny_session: Any,
+) -> None:
+    """Regression: the teacher-forced replay fed its later chunks on the KV
+    cache with ``sink_column`` at its rest value 0, so a static unit
+    ablation skipped column 0 of every chunk after the first: an absolute
+    position 128 tokens on, not the attention sink.  A forced span longer
+    than one chunk must see the unit's mean at every position but 0."""
+    replies = itertools.cycle([
+        "".join(chr(ord("a") + (i + shift) % 26) for i in range(300))
+        for shift in (0, 7)
+    ])
+    session, _script = make_tiny_session.scripted(lambda _label, _prompt: next(replies))
+    first = session.generate(
+        "Describe the sea.", steering="!neuron/L1n3",
+        sampling=SamplingConfig(max_tokens=320, temperature=0.0),
+    )
+    a_id = first.node_ids[0]
+    user_id = session.tree.get(a_id).parent_id
+    second = session.generate(
+        None, parent_node_id=user_id, steering="!neuron/L1n3",
+        sampling=SamplingConfig(max_tokens=320, temperature=0.0),
+    )
+    b_id = second.node_ids[0]
+    assert len(session.tree.get(a_id).text) >= 300
+
+    block = session.units.runtime.spec().blocks[1]
+    mean = float(session.units.runtime.stats().layer(1).neuron_mean[3])
+    seen: list[torch.Tensor] = []
+
+    def record(_module: Any, args: Any, _output: Any) -> None:
+        # A forward hook sees the input after the unit pre-hook rewrote it.
+        seen.append(args[0][0, :, 3].detach().float().clone())
+
+    manager = session._steering
+    assert manager.ctx.sink_column == 0
+    handle = block.mlp.down.register_forward_hook(record)
+    try:
+        session.joint_logprobs(a_id, b_id)
+    finally:
+        handle.remove()
+    # Each branch: one prefill from position 0 (longer than a chunk: the
+    # prompt plus the first chunk of forced rows), then chunks fed on the
+    # cache, none of which carries the sink.
+    prefills = [values for values in seen if values.numel() > 128]
+    cached = [values for values in seen if values.numel() <= 128]
+    assert len(prefills) == 2 and len(cached) >= 2
+    full = torch.full_like
+    for values in prefills:
+        assert float(values[0]) != pytest.approx(mean)
+        assert torch.allclose(values[1:], full(values[1:], mean), atol=1e-6)
+    for values in cached:
+        assert torch.allclose(values, full(values, mean), atol=1e-6)
+    assert manager.ctx.sink_column == 0  # the rest state again

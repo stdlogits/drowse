@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { Switch } from "@stdlogits/ledger";
   import { chatViewSchema } from "../lib/interfaceSchemas";
   import { registerInterfaceController } from "../lib/workspaceController";
   import { ToolError } from "../lib/webmcp/types";
@@ -11,14 +12,16 @@
     arrivals.track(pending?.tokens ?? [], genStatus.active, "response");
     arrivals.track(pending?.thinkingTokens ?? [], genStatus.active, "thinking");
   });
-  import MorphText from "../lib/ui/MorphText.svelte";
+  import { MorphText } from "@stdlogits/ledger";
+  import { aggregateReadingText } from "../lib/charts/depth";
   import { createTokenViewCache } from "../lib/runtime/tokenViews";
-  import { tokenInspectorUi } from "../lib/stores/drawers.svelte";
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
-  import StateIcon from "../lib/ui/StateIcon.svelte";
-  import { Blobatar } from "@blobatar/svelte";
-  import { savedConversationState } from "../lib/stores/savedConversations.svelte";
-  let { headersVisible = true }: { headersVisible?: boolean } = $props();
+  import { Icon } from "@stdlogits/ledger";
+  import { Expander } from "@stdlogits/ledger";
+  import RecipeBar from "./RecipeBar.svelte";
+  import { selection, clearSelection } from "../lib/stores/selection.svelte";
+  import { workbenchUi } from "../lib/stores/workbench.svelte";
+  /** On a phone the workbench lays the log, the inspector sheet and this dock out as one column. */
+  let { phone = false }: { phone?: boolean } = $props();
   // Chat panel: collapsible thinking per turn, per-token tinted spans,
   // optional compare-two stripe overlay, click-token drilldown, send /
   // stop, and an A/B split-view container.
@@ -43,18 +46,10 @@
   import { onMount, tick, untrack } from "svelte";
   import { registerComposerController } from "../lib/workspaceController";
   import { SvelteMap } from "svelte/reactivity";
-  import { fly, slide } from "svelte/transition";
+  import { expand, fadeOut, reducedMotion, rise, GLIDE } from "@stdlogits/ledger";
   import StatusFooter from "./StatusFooter.svelte";
   import PendingBubbles from "./PendingBubbles.svelte";
   import RawBuffer from "./RawBuffer.svelte";
-  import TokenLogitsPopover from "../lib/ui/TokenLogitsPopover.svelte";
-  import {
-    collapseIn,
-    collapseOut,
-    contentIn,
-    contentOut,
-    motionDuration,
-  } from "../lib/motion";
   import {
     autoRegenState,
     abState,
@@ -89,6 +84,7 @@
     disableAutoRegen,
     setAutoRegenMode,
     setAutoRegenCustom,
+    customComparisonProblem,
     effectiveRawMode,
     genUiMode,
     roleDisplayLabel,
@@ -104,15 +100,13 @@
   import {
     ENTROPY_TARGET,
     SURPRISE_TARGET,
+    tokenLead,
   } from "../lib/tokens";
   import {
     highlightStyleString,
   } from "../lib/highlight";
   import Select from "../lib/Select.svelte";
   import Combobox from "../lib/Combobox.svelte";
-  import Checkbox from "../lib/Checkbox.svelte";
-  import Button from "../lib/ui/Button.svelte";
-  import InfoTip from "../lib/ui/InfoTip.svelte";
   import { runtimeOperationAvailability } from "../lib/runtime/ui-capabilities";
 
   function startsCompact(): boolean {
@@ -139,10 +133,10 @@
     y: number;
     height: number;
   } | null>(null);
-  const COMPOSER_MIN_HEIGHT = 64;
-  const COMPOSER_DEFAULT_HEIGHT = 80;
-  const COMPACT_COMPOSER_MIN_HEIGHT = 64;
-  const COMPACT_COMPOSER_DEFAULT_HEIGHT = 72;
+  const COMPOSER_MIN_HEIGHT = 48;
+  const COMPOSER_DEFAULT_HEIGHT = 48;
+  const COMPACT_COMPOSER_MIN_HEIGHT = 32;
+  const COMPACT_COMPOSER_DEFAULT_HEIGHT = 32;
   let composerMinHeight = $state(
     startsCompact() ? COMPACT_COMPOSER_MIN_HEIGHT : COMPOSER_MIN_HEIGHT,
   );
@@ -211,61 +205,81 @@
     queueMicrotask(autosize);
   }
 
-  function clampComposerHeight(value: number): number {
-    return Math.max(composerMinHeight, Math.min(composerMaxHeight, value));
+  // The reading tools (word colours, automatic comparison) fold under the composer row.
+  let readingOpen = $state(false);
+  // On a phone the composer's extras (who writes, reasoning, colours, clear) fold behind More.
+  let extrasOpen = $state(false);
+  // Stop's slot stays a moment after the reply ends (the button hidden and inert): the row's
+  // controls shift when it goes, and a quick second click on Stop would land on Clear.
+  const STOP_SLOT_HOLD_MS = 1200;
+  let stopSlotHeld = $state(false);
+  $effect(() => {
+    if (genStatus.active) { stopSlotHeld = true; return; }
+    const timer = setTimeout(() => { stopSlotHeld = false; }, STOP_SLOT_HOLD_MS);
+    return () => clearTimeout(timer);
+  });
+  const modelShort = $derived(sessionState.info?.model_id.split("/").at(-1) ?? "drowse");
+  /** A sampling value as the line shows it: the user's, else the model's default. */
+  function shown(value: number | null | undefined): string {
+    return value === null || value === undefined || !Number.isFinite(value) ? "default" : String(Number(value.toFixed(2)));
   }
+  const samplingSummary = $derived([
+    `temperature ${shown(samplingState.temperature ?? sessionState.info?.config.temperature)}`,
+    `top-p ${shown(samplingState.top_p ?? sessionState.info?.config.top_p)}`,
+    `${samplingState.max_tokens ?? sessionState.info?.config.max_tokens ?? "default"} tokens`,
+  ].join(" · "));
 
-  function resizeComposerTo(value: number): void {
-    composerManuallySized = true;
-    composerHeight = clampComposerHeight(value);
-    queueMicrotask(autosize);
-  }
-
-  function beginComposerResize(event: PointerEvent): void {
-    if (event.button !== 0 || !textareaRef) return;
-    const target = event.currentTarget as HTMLElement;
-    updateComposerBounds();
-    resizeStart = {
-      pointerId: event.pointerId,
-      y: event.clientY,
-      height: textareaRef.getBoundingClientRect().height,
-    };
-    target.setPointerCapture(event.pointerId);
-    event.preventDefault();
-  }
-
-  function moveComposerResize(event: PointerEvent): void {
-    if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
-    resizeComposerTo(resizeStart.height + resizeStart.y - event.clientY);
-  }
-
-  function endComposerResize(event: PointerEvent): void {
-    if (!resizeStart || resizeStart.pointerId !== event.pointerId) return;
-    const target = event.currentTarget as HTMLElement;
-    if (target.hasPointerCapture(event.pointerId)) {
-      target.releasePointerCapture(event.pointerId);
+  /** The sampling line opens the instruments: their Sampling section, or the phone's sheet. */
+  function openSampling(): void {
+    clearSelection();
+    if (phone) {
+      workbenchUi.sheet = true;
+      workbenchUi.sheetOpen = true;
     }
-    resizeStart = null;
+    void tick().then(() => document.getElementById("instrument-sampling")?.scrollIntoView({ block: "start", behavior: "smooth" }));
   }
 
-  function resizeComposerWithKeyboard(event: KeyboardEvent): void {
-    const current = textareaRef?.getBoundingClientRect().height
-      ?? composerHeight
-      ?? composerDefaultHeight;
-    let next: number | null = null;
-    if (event.key === "ArrowUp") next = current + 24;
-    else if (event.key === "ArrowDown") next = current - 24;
-    else if (event.key === "Home") next = composerMinHeight;
-    else if (event.key === "End") next = composerMaxHeight;
-    if (next === null) return;
-    event.preventDefault();
-    resizeComposerTo(next);
+  /** A seat reads You and the model's short name; a role label the user set reads as itself. */
+  function seatLabel(turn: ChatTurn): string {
+    const label = roleDisplayLabel(turn.role, turn.roleLabel);
+    if (turn.role === "user" && label === defaultUserLabel) return "You";
+    if (turn.role === "assistant" && label === defaultAssistantLabel) return modelShort;
+    return label;
   }
 
-  function resetComposerHeight(): void {
-    composerManuallySized = false;
-    composerHeight = null;
-    queueMicrotask(autosize);
+  /** What the words are coloured by, for the key under a reply (the swatch and its name). */
+  const tintKey = $derived.by(() => {
+    const target = highlightState.target;
+    if (!target) return null;
+    const label = highlightOptions.find((option) => option.value === target)?.label ?? target;
+    const second = highlightState.compareTwo ? highlightState.compareTarget : null;
+    if (!second) return label;
+    return `${label} and ${compareOptions.find((option) => option.value === second)?.label ?? second}`;
+  });
+
+  // A selected token stays in view: on a phone the sheet rises under it and shrinks the log. Out of
+  // view, the log stops following the reply's end (which would scroll it away again) and brings
+  // the token in.
+  $effect(() => {
+    if (selection.current.kind !== "token") return;
+    const delay = phone && !reducedMotion() ? GLIDE + 40 : 0;
+    const timer = setTimeout(() => {
+      const token = chatRef?.querySelector<HTMLElement>(".tok.sel");
+      if (!token || !logRef) return;
+      const view = logRef.getBoundingClientRect();
+      const at = token.getBoundingClientRect();
+      if (at.top >= view.top && at.bottom <= view.bottom) return;
+      pauseAutoScroll();
+      token.scrollIntoView({ block: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
+    }, delay);
+    return () => clearTimeout(timer);
+  });
+
+  function isSelectedToken(turnIdx: number, tokenIdx: number, thinking: boolean): boolean {
+    const current = selection.current;
+    if (current.kind !== "token") return false;
+    const at = current.params as { turnIdx?: number; tokenIdx?: number; isThinking?: boolean } | null;
+    return at?.turnIdx === turnIdx && at?.tokenIdx === tokenIdx && Boolean(at?.isThinking) === thinking;
   }
 
   $effect(() => {
@@ -397,11 +411,10 @@
       shell.querySelector<HTMLElement>(open ? ".plan-minimize" : ".turn-plan-summary")
         ?.focus({ preventScroll: true });
     }
-    const duration = motionDuration(220);
+    const duration = reducedMotion() ? 0 : GLIDE;
     if (duration === 0) return;
     const endHeight = shell.getBoundingClientRect().height;
-    const easing = getComputedStyle(shell).getPropertyValue("--ease-move").trim()
-      || "ease-in-out";
+    const easing = getComputedStyle(shell).getPropertyValue("--ease").trim();
     shell.style.overflow = "hidden";
     const animation = shell.animate(
       [{ height: `${startHeight}px` }, { height: `${endHeight}px` }],
@@ -490,10 +503,11 @@
     !loomTree.loaded || !rolesValid || (!hasText && generatedRole === null),
   );
 
-  const inputPlaceholder = $derived(`Write as ${authoredLabel}…`);
-  const sendLabel = $derived(
-    appendSelected ? "Add message" : hasText ? "Send" : "Generate reply",
+  const inputPlaceholder = $derived(
+    authoredRole === "user" && authoredLabel === defaultUserLabel ? `Message ${modelShort}` : `Write as ${authoredLabel}…`,
   );
+  // One short label, so the compose row stays one line; the tip says what an empty send does.
+  const sendLabel = $derived(appendSelected ? "Add" : "Send");
 
   function doSend(): void {
     const text = hasText ? input : "";
@@ -1072,9 +1086,6 @@
    * starting at the first non-whitespace token. */
   const visibleResponseTokens = createTokenViewCache<TokenScore>();
 
-  let tokenPopup = $state<{
-    token: TokenScore; anchor: HTMLElement; turnIdx: number; tokenIdx: number; isThinking: boolean;
-  } | null>(null);
   const tokenFocusIndices = new SvelteMap<string, number>();
 
   function tokenClicked(
@@ -1087,12 +1098,7 @@
     const turn = chatLog.turns[turnIdx];
     const token = (isThinking ? turn?.thinkingTokens : turn?.tokens)?.[tokenIdx];
     if (!token) return;
-    if (tokenInspectorUi.docked) {
-      tokenPopup = null;
-      openDrawer("token_drilldown", { turnIdx, tokenIdx, isThinking });
-      return;
-    }
-    tokenPopup = { token, anchor: ev.currentTarget as HTMLElement, turnIdx, tokenIdx, isThinking };
+    openDrawer("token_drilldown", { turnIdx, tokenIdx, isThinking });
   }
 
   function tokenKeydown(ev: KeyboardEvent, turnIdx: number, tokenIdx: number, isThinking = false): void {
@@ -1160,121 +1166,11 @@
 </script>
 
 <div class="chat-panel">
-  {#if headersVisible}
-  <header class="chat-header" id="chat-tools-header" inert={!headersVisible}
-    in:slide={collapseIn()} out:slide={collapseOut()}>
-    <div class="reading-tools">
-      <div class="color-control">
-        <label class="ctl">
-          <span class="ctl-label">Color words by</span>
-          <!-- Logit-pass: ``surprise`` tints tokens by ``-logprob /
-               (1 - logprob)`` per Decision 4.  Sentinel value sits next to
-               real probe names in the same picker so a single dropdown
-               covers both axes. -->
-          <span class="ctl-select">
-            <Select
-              value={highlightState.target ?? ""}
-              options={highlightOptions}
-              onchange={onHighlightChange}
-              ariaLabel={rawMode ? "Color completion tokens by" : "Color generated words by"}
-            />
-          </span>
-        </label>
-
-        <InfoTip
-          label="About word colors"
-          text={rawMode
-            ? "Colors show recorded readings in both editing and inspection views, and pause for unsaved edits. Open Inspect tokens for exact values. Surprisal and entropy use the sampling distribution; greedy decoding can record zero for both."
-            : "Color words by token surprisal, sampler entropy, or an attached model reading. Select a word for its exact value."}
-        />
-      </div>
-
-    {#if compareColorAvailable}
-      <button
-        type="button"
-        class="compare-color"
-        class:active={highlightState.compareTwo}
-        aria-pressed={highlightState.compareTwo}
-        onclick={onCompareToggle}
-      >{highlightState.compareTwo ? "Use one color" : "Compare colors"}</button>
-      {/if}
-
-    {#if highlightState.compareTwo}
-      <label class="ctl">
-        <span class="ctl-label">With</span>
-        <!-- Allow surprise as the B-stripe target too — "probe X vs.
-             surprise" is a useful axis ("does probe X light up at the
-             surprising tokens?"). -->
-        <span class="ctl-select">
-          <Select
-            value={highlightState.compareTarget ?? ""}
-            options={compareOptions}
-            onchange={onCompareChange}
-            disabled={!highlightState.compareTwo}
-            ariaLabel="Second word color"
-          />
-        </span>
-      </label>
-      {/if}
-
-    </div>
-
-    <!-- Conversation actions. -->
-    <div class="header-actions">
-      {#if automaticComparisonAvailable}
-        <div class="comparison-control">
-          <span class="ctl ctl-inline">
-            <Checkbox
-              checked={autoRegenState.enabled}
-              onchange={toggleAutoRegen}
-              label="Compare replies"
-            />
-          </span>
-          <InfoTip
-            label="About automatic comparison"
-            text="Create a second version after every reply using the comparison settings."
-          />
-        </div>
-        {#if autoRegenState.enabled}
-          <span class="ctl-select">
-            <Select
-              value={autoRegenState.mode}
-              options={AUTO_REGEN_MODES}
-              onchange={onAutoRegenModeChange}
-              disabled={abState.processingAb}
-              ariaLabel="Automatic comparison style"
-            />
-          </span>
-          {#if autoRegenState.mode === "custom"}
-            <input
-              type="text"
-              class="ctl-input"
-              value={autoRegenState.custom}
-              disabled={abState.processingAb}
-              oninput={(ev) =>
-                setAutoRegenCustom(
-                  (ev.currentTarget as HTMLInputElement).value,
-                )}
-              placeholder="Example: seed=42, temperature=1.5"
-              aria-label="Custom automatic comparison recipe"
-            />
-          {/if}
-        {/if}
-      {/if}
-    </div>
-  </header>
-  {/if}
-
 <div class="chat" aria-label={rawMode ? "Text completion" : "Chat"} bind:this={chatRef}>
-  <div
-    class="sr-only"
-    role="status"
-    aria-live="polite"
-    aria-atomic="true"
-  >{streamAnnouncement}</div>
+  <div class="sr-only" role="status" aria-live="polite" aria-atomic="true">{streamAnnouncement}</div>
 
   {#if rawMode}
-    <RawBuffer />
+    <div class="raw-host"><RawBuffer /></div>
   {:else}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions (The scrollable conversation supports keyboard scrolling.) -->
   <div
@@ -1307,60 +1203,54 @@
   >
     <div class="log-content" bind:this={logContentRef}>
     {#if chatLog.turns.length === 0}
-      <div
-        class="conversation-empty"
-        in:fly={contentIn(8)}
-        out:fly={contentOut()}
-      >
-        <p>Type a prompt to get started</p>
+      <div class="empty" in:rise out:fadeOut>
+        <span class="dw-mark">{modelShort}</span>
+        <p class="meta">{sessionState.info?.is_base_model ? "Write the opening text below" : "Write the first message below"}</p>
+      </div>
+    {:else if twoColumns && !pinnedActive}
+      <!-- An automatic comparison, one row a turn so each comparison sits beside the reply it
+           compares: a prompt spans both columns, a reply pairs with its comparison. Comparisons
+           are stateless and never alter the loom. -->
+      <div class="ab-grid ab-rows">
+        <span aria-hidden="true"></span>
+        <div class="pin-head">
+          <span class="head">Comparison</span>
+          <button type="button" class="dw-text" onclick={hideComparison}>Hide</button>
+        </div>
+        {#each chatLog.turns as turn, turnIdx (turnIdx)}
+          {#if !turn.generated || turn.role === "system"}
+            <div class="ab-span">{@render bubble(turn, turnIdx, false)}</div>
+          {:else}
+            <div class="ab-cell">{@render bubble(turn, turnIdx, false)}</div>
+            <div class="ab-cell">
+              {#if turn.abPair}
+                {@render bubble(turn.abPair, turnIdx, true)}
+              {:else}
+                <div class="dw-turn" aria-hidden="true">
+                  <span class="dw-seat">{seatLabel(turn)}</span>
+                  <span class="meta">{abState.pendingTurnIdx === turnIdx ? "Writing the comparison…" : "Not compared"}</span>
+                </div>
+              {/if}
+            </div>
+          {/if}
+        {/each}
       </div>
     {:else if twoColumns}
-      <!-- Two-column split. The right column is a pinned branch path or a
-           stateless automatic comparison. Comparisons never alter the loom. -->
+      <!-- Two columns: the right is a pinned branch path, which runs its own length. -->
       <div class="ab-grid">
-        <div class="ab-col ab-primary">
+        <div class="ab-col">
           {#each chatLog.turns as turn, turnIdx (turnIdx)}
             {@render bubble(turn, turnIdx, false)}
           {/each}
         </div>
-        <div class="ab-col ab-shadow">
-          {#if pinnedActive}
-            <header class="pin-header">
-              <span class="pin-tag">pinned</span>
-              <code class="pin-id">{pinnedComparison.nodeId?.slice(0, 12)}</code>
-              <button
-                type="button"
-                class="pin-unpin"
-                onclick={unpinComparison}
-                {...{ "aria-description": "Unpin" }}
-              >unpin</button>
-            </header>
-            {#each pinnedPath as turn, idx (idx)}
-              {@render bubble(turn, idx, true)}
-            {/each}
-          {:else}
-            <header class="pin-header">
-              <span class="pin-tag">Comparison</span>
-              <Button size="sm" variant="flat" onclick={hideComparison}>Hide comparison</Button>
-            </header>
-            {#each chatLog.turns as turn, turnIdx (turnIdx)}
-              {#if !turn.generated || turn.role === "system"}
-                {@render bubble(turn, turnIdx, false)}
-              {:else if turn.abPair}
-                {@render bubble(turn.abPair, turnIdx, true)}
-              {:else}
-                <div class="msg placeholder" aria-hidden="true">
-                  <div class="who">
-                    {@render speaker(turn, false)}
-                    <span class="who-meta">(alt)</span>
-                  </div>
-                  <span class="placeholder-text">
-                    {abState.pendingTurnIdx === turnIdx ? "Generating comparison…" : "Not compared"}
-                  </span>
-                </div>
-              {/if}
-            {/each}
-          {/if}
+        <div class="ab-col">
+          <div class="pin-head">
+            <span class="head">Pinned branch</span>
+            <button type="button" class="dw-text" onclick={unpinComparison}>Unpin</button>
+          </div>
+          {#each pinnedPath as turn, idx (idx)}
+            {@render bubble(turn, idx, true)}
+          {/each}
         </div>
       </div>
     {:else}
@@ -1371,203 +1261,124 @@
     </div>
   </div>
 
-  <div
-    class="composer-resizer-shell"
-    class:dragging={resizeStart !== null}
-  >
-    <input
-      type="range"
-      class="composer-resizer"
-      min={composerMinHeight}
-      max={composerMaxHeight}
-      value={composerControlHeight}
-      aria-label="Resize writing area"
-      aria-orientation="vertical"
-      aria-controls="conversation-composer"
-      aria-valuetext={`${composerControlHeight} pixel writing area`}
-      aria-describedby="composer-resize-help"
-      onpointerdown={beginComposerResize}
-      onpointermove={moveComposerResize}
-      onpointerup={endComposerResize}
-      onpointercancel={endComposerResize}
-      onkeydown={resizeComposerWithKeyboard}
-      ondblclick={resetComposerHeight}
-    />
-    <span aria-hidden="true"></span>
-    <p class="sr-only" id="composer-resize-help">Use arrow keys to resize. Double-click to reset.</p>
-  </div>
-
-  <StatusFooter />
-
-  <PendingBubbles />
-
-  <div class="turn-plan-shell" bind:this={rolePlanShell}>
-  {#if rolePlanOpen}
-    <div
-      id="turn-role-controls"
-      class="turn-plan"
-      aria-label="Next turn"
-      in:fly={contentIn(2)}
-    >
-    <div class="plan-card">
-      <span class="plan-actor">You</span>
-      <Combobox
-        value={authoredRoleValue}
-        options={roleLabelOptions}
-        onchange={selectAuthoredRole}
-        disabled={!roleSupportsCustomLabel(authoredRole)}
-        invalid={!authoredRoleValid}
-        placeholder={authoredRole === "user" ? defaultUserLabel : defaultAssistantLabel}
-        ariaLabel="You write as"
-        ariaDescribedby={!authoredRoleValid ? "role-label-error" : undefined}
-      />
-    </div>
-
-    <div class="plan-card">
-      <span class="plan-actor">Model</span>
-      <Combobox
-        value={continuationRole === "none" ? "" : continuationRoleValue}
-        options={roleLabelOptions}
-        onchange={selectContinuationRole}
-        disabled={!continuationRoleEditable}
-        invalid={!continuationRoleValid}
-        placeholder={continuationRole === "user" ? defaultUserLabel : defaultAssistantLabel}
-        ariaLabel="Model writes as"
-        ariaDescribedby={!continuationRoleValid ? "role-label-error" : undefined}
-      />
-    </div>
-
-    <div class="plan-actions">
-      <Button
-        variant="flat"
-        size="sm"
-        disabled={!canSwapPlan}
-        onclick={swapPlanRoles}
-        ariaLabel="Swap writer roles"
-      >Swap</Button>
-      <label class="reply-toggle">
-        <Checkbox
-          checked={generatedRole !== null}
-          onchange={setReplyEnabled}
-          ariaLabel="Generate a model reply"
-        />
-        <span>Reply</span>
-      </label>
-      <Button
-        size="sm"
-        variant="flat"
-        disabled={!rolesValid}
-        onclick={() => openDrawer("cast")}
-      >Role settings</Button>
-      <button
-        type="button"
-        class="plan-minimize"
-        aria-expanded="true"
-        aria-controls="turn-role-controls"
-        onclick={() => setRolePlanOpen(false)}
-      >Collapse roles</button>
-    </div>
-    </div>
-  {:else}
-    <button
-      type="button"
-      class="turn-plan-summary"
-      aria-expanded="false"
-      aria-controls="turn-role-controls"
-      onclick={() => setRolePlanOpen(true)}
-      in:fly={contentIn(2)}
-    >
-      <span class="summary-label">Roles</span>
-      <span class="summary-value"><MorphText text={rolePlanSummary} numbers={false} /></span>
-      <span class="summary-action">Edit roles</span>
-    </button>
-  {/if}
-  </div>
-
-  {#if !rolesValid}
-    <p id="role-label-error" class="role-error" role="alert">
-      Use lowercase letters, numbers, periods, underscores, or hyphens for role names.
-    </p>
-  {/if}
-
-  {#if thinkingInputSupported}
-    <div class="thinking-row">
-      <div class="thinking-control">
-        <Button
-          variant="flat"
-          size="sm"
-          accent={thinkingDraft.trim() !== "" ? "var(--pillar-manifold)" : undefined}
-          onclick={() => (thinkingOpen = !thinkingOpen)}
-          title="Add private reasoning text to the next authored line"
-        >{thinkingOpen ? "Hide reasoning" : "Add reasoning"}</Button>
-      </div>
-      {#if thinkingOpen}
-        <div class="thinking-box" in:slide={collapseIn()} out:slide={collapseOut()}>
-          <textarea
-            class="thinking-input field-focus"
-            bind:value={thinkingDraft}
-            dir="auto"
-            placeholder="Optional reasoning for this line…"
-            rows="2"
-            spellcheck="false"
-            aria-label="Reasoning for the next authored line"
-          ></textarea>
-          {#if stripsHistoryThinking}
-            <p class="thinking-warn" role="note">This model uses it for one turn only.</p>
+  <div class="dock">
+    <PendingBubbles />
+    {#if readingOpen}
+      <div class="reading" id="chat-reading-tools" transition:expand>
+        <label class="ctl">
+          <span class="ctl-label" data-tip="Color words by token surprisal, sampler entropy, or an attached reading. Select a word for its exact value.">Color words by</span>
+          <Select value={highlightState.target ?? ""} options={highlightOptions} onchange={onHighlightChange}
+            ariaLabel={rawMode ? "Color completion tokens by" : "Color generated words by"} />
+        </label>
+        {#if compareColorAvailable}
+          <button type="button" class="dw-text" aria-pressed={highlightState.compareTwo} onclick={onCompareToggle}>
+            {highlightState.compareTwo ? "One color" : "Compare two colors"}
+          </button>
+        {/if}
+        {#if highlightState.compareTwo}
+          <label class="ctl">
+            <span class="ctl-label">With</span>
+            <Select value={highlightState.compareTarget ?? ""} options={compareOptions} onchange={onCompareChange}
+              disabled={!highlightState.compareTwo} ariaLabel="Second word color" />
+          </label>
+        {/if}
+        {#if automaticComparisonAvailable}
+          <Switch checked={autoRegenState.enabled} onchange={toggleAutoRegen} label="Compare replies"
+            hint="Create a second version after every reply using the comparison settings." />
+          {#if autoRegenState.enabled}
+            <Select value={autoRegenState.mode} options={AUTO_REGEN_MODES} onchange={onAutoRegenModeChange}
+              disabled={abState.processingAb} ariaLabel="Automatic comparison style" />
+            {#if autoRegenState.mode === "custom"}
+              {@const customProblem = customComparisonProblem(autoRegenState.custom)}
+              <input type="text" class="ctl-input" value={autoRegenState.custom} disabled={abState.processingAb}
+                oninput={(ev) => setAutoRegenCustom((ev.currentTarget as HTMLInputElement).value)}
+                placeholder="seed=42, temperature=1.5" aria-label="Custom automatic comparison sampling"
+                aria-invalid={customProblem !== null} aria-describedby={customProblem ? "custom-comparison-problem" : undefined} />
+              {#if customProblem}<span id="custom-comparison-problem" class="ctl-label" role="alert">{customProblem}</span>{/if}
+            {/if}
           {/if}
+        {/if}
+      </div>
+    {/if}
+
+    <StatusFooter />
+    <RecipeBar />
+
+    <div class="turn-plan-shell" bind:this={rolePlanShell}>
+      {#if rolePlanOpen}
+        <div id="turn-role-controls" class="turn-plan" aria-label="Next turn" in:rise>
+          <label class="plan-card">
+            <span class="head">You write as</span>
+            <Combobox value={authoredRoleValue} options={roleLabelOptions} onchange={selectAuthoredRole}
+              disabled={!roleSupportsCustomLabel(authoredRole)} invalid={!authoredRoleValid}
+              placeholder={authoredRole === "user" ? defaultUserLabel : defaultAssistantLabel}
+              ariaLabel="You write as" ariaDescribedby={!authoredRoleValid ? "role-label-error" : undefined} />
+          </label>
+          <label class="plan-card">
+            <span class="head">The model writes as</span>
+            <Combobox value={continuationRole === "none" ? "" : continuationRoleValue} options={roleLabelOptions}
+              onchange={selectContinuationRole} disabled={!continuationRoleEditable} invalid={!continuationRoleValid}
+              placeholder={continuationRole === "user" ? defaultUserLabel : defaultAssistantLabel}
+              ariaLabel="Model writes as" ariaDescribedby={!continuationRoleValid ? "role-label-error" : undefined} />
+          </label>
+          <div class="dw-row plan-actions">
+            <button type="button" class="dw-text" disabled={!canSwapPlan} onclick={swapPlanRoles}>Swap</button>
+            <Switch checked={generatedRole !== null} onchange={setReplyEnabled} label="Reply" hint="Generate a model reply" />
+            <button type="button" class="dw-text" disabled={!rolesValid} onclick={() => openDrawer("cast")}>Role settings</button>
+            <button type="button" class="dw-text plan-minimize" aria-expanded="true" aria-controls="turn-role-controls"
+              onclick={() => setRolePlanOpen(false)}>Done</button>
+          </div>
         </div>
       {/if}
     </div>
-  {/if}
 
-  <form
-    id="conversation-composer"
-    class="input-row"
-    class:pointer-held={composerPointerHeld}
-    class:has-draft={hasText}
-    class:generating={genStatus.active}
-    onsubmit={(ev) => { ev.preventDefault(); doSend(); }}
-  >
-    <div class="steering-status" aria-label="Steering for next reply">
-      <span>{nextSteering ? "Next reply · Steering" : "Next reply · No steering"}</span>
-      {#if nextSteering}<code>{nextSteering}</code>{/if}
-      <Button size="sm" variant="flat"
-        onmousedown={(event) => { if (event.button === 0) event.preventDefault(); }}
-        onclick={() => window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: { view: "controls", section: "response" } }))}
-      >Edit steering</Button>
-      {#if !nextSteering && probeRack.entries.size > 0}
-        <span class="probe-note">Probes measure replies. Add steering to change them.</span>
-      {/if}
-    </div>
-    <textarea
-      class="input field-focus"
-      bind:this={textareaRef}
-      bind:value={input}
-      dir="auto"
-      onkeydown={onKeydown}
-      placeholder={inputPlaceholder}
-      rows="3"
-      aria-label={`Compose as ${authoredLabel}`}
-    ></textarea>
-    <div class="input-actions-reveal">
-      <div class="input-actions">
-        <Button
-          type="submit"
-          variant="solid"
-          disabled={primaryDisabled}
-          title={appendSelected ? "Enter · add your message only" : "Enter · send and generate a reply"}
-        ><StateIcon icons={["add", "send", "conversation"]} name={appendSelected ? "add" : hasText ? "send" : "conversation"} /><MorphText text={sendLabel} numbers={false} /></Button>
-        <Button
-          variant="danger"
-          onclick={sendStop}
-          disabled={!genStatus.active}
-          title="Escape · stop the current reply"
-        ><FluentIcon name="stop" />Stop</Button>
+    {#if !rolesValid}
+      <p id="role-label-error" class="meta role-error" role="alert">
+        Use lowercase letters, numbers, periods, underscores, or hyphens for role names.
+      </p>
+    {/if}
+
+    {#if thinkingInputSupported && thinkingOpen}
+      <div class="thinking-box" transition:expand>
+        <textarea class="thinking-input" bind:value={thinkingDraft} dir="auto" rows="2" spellcheck="false"
+          placeholder="Reasoning for this line" aria-label="Reasoning for the next authored line"></textarea>
+        {#if stripsHistoryThinking}<p class="meta">This model uses it for one turn only.</p>{/if}
+      </div>
+    {/if}
+
+    <form
+      id="conversation-composer"
+      class="dw-compose"
+      class:pointer-held={composerPointerHeld}
+      onsubmit={(ev) => { ev.preventDefault(); doSend(); }}
+    >
+      <textarea
+        class="input"
+        bind:this={textareaRef}
+        bind:value={input}
+        dir="auto"
+        onkeydown={onKeydown}
+        placeholder={inputPlaceholder}
+        rows={phone ? 1 : 2}
+        aria-label={`Compose as ${authoredLabel}`}
+      ></textarea>
+      <div class="dw-compose-row">
+        <button type="button" class="dw-sampling" onclick={openSampling} data-tip="Sampling">{samplingSummary}</button>
+        {#if phone}
+          <button type="button" class="dw-text small more" aria-expanded={extrasOpen} aria-controls="composer-extras"
+            onclick={() => (extrasOpen = !extrasOpen)}>More</button>
+        {/if}
+        <span class="extras" id="composer-extras" class:folded={phone && !extrasOpen}>
+        <button type="button" class="dw-text small turn-plan-summary" aria-expanded={rolePlanOpen} aria-controls="turn-role-controls"
+          onclick={() => setRolePlanOpen(!rolePlanOpen)} data-tip="Who writes the next turn">{rolePlanSummary}</button>
+        {#if thinkingInputSupported}
+          <button type="button" class="dw-text small" aria-pressed={thinkingOpen || thinkingDraft.trim() !== ""}
+            onclick={() => (thinkingOpen = !thinkingOpen)}>Reasoning</button>
+        {/if}
+        <button type="button" class="dw-text small" aria-expanded={readingOpen} aria-controls="chat-reading-tools"
+          onclick={() => (readingOpen = !readingOpen)}>Colors</button>
         {#if canClearConversation}
-          <button
-            type="button"
-            class="clear-conversation"
-            class:confirm-clear={clearConversationArmed}
+          <button type="button" class="dw-text small clear-conversation" class:armed={clearConversationArmed}
             onmousedown={(event) => {
               if (event.button !== 0) return;
               event.preventDefault();
@@ -1575,146 +1386,62 @@
             }}
             onclick={requestClearConversation}
             onblur={() => (clearConversationArmed = false)}
-            onkeydown={(event) => {
-              if (event.key === "Escape") clearConversationArmed = false;
-            }}
-            {...{ "aria-description": (clearConversationArmed
-              ? "Clear the current view and start a new path"
-              : "Start a blank conversation; existing branches remain available") }}
+            onkeydown={(event) => { if (event.key === "Escape") clearConversationArmed = false; }}
+            data-tip={clearConversationArmed ? "Start a new path; the branches stay in the loom" : "Start a blank conversation; the branches stay in the loom"}
             aria-label={clearConversationArmed ? "Confirm clear conversation" : "Clear conversation"}
-          >
-            <span class="clear-icon"><FluentIcon name={clearConversationArmed ? "check" : "refresh"} /></span>
-            <span class="clear-label">{clearConversationArmed ? "Confirm clear" : "Clear conversation"}</span>
-          </button>
+          >{clearConversationArmed ? "Confirm clear" : "Clear"}</button>
         {/if}
+        </span>
+        <span class="send">
+          {#if genStatus.active || stopSlotHeld}
+            <button type="button" class="dw-quiet stop" class:held={!genStatus.active} inert={!genStatus.active}
+              aria-hidden={!genStatus.active} onclick={sendStop} data-tip="Escape stops the reply">Stop</button>
+          {/if}
+          <button type="submit" class="dw-button" disabled={primaryDisabled}
+            data-tip={appendSelected ? "Enter adds your message only" : hasText ? "Enter sends and generates a reply" : "Generates the next reply"}>
+            <MorphText text={sendLabel} numbers={false} />
+          </button>
+        </span>
       </div>
-    </div>
-  </form>
+    </form>
+  </div>
   {/if}
 </div>
 
-{#if tokenPopup}
-  {@const popup = tokenPopup}
-  {#key popup.anchor}
-    <TokenLogitsPopover token={popup.token} anchor={popup.anchor}
-      isCurrent={anchor => tokenPopup?.anchor === anchor}
-      source={chatLog.turns[popup.turnIdx]?.generated ? "Model token" : "User text · recorded"}
-      onclose={() => tokenPopup = null}
-      ondetails={() => openDrawer("token_drilldown", { turnIdx: popup.turnIdx, tokenIdx: popup.tokenIdx, isThinking: popup.isThinking, initialTab: "logits" })} />
-  {/key}
-{/if}
 </div>
-
-{#snippet speaker(turn: ChatTurn, interactive = true)}
-  <span class="role-chip">
-    {#if turn.role === "assistant"}
-      {#if interactive}
-        <button type="button" class="model-avatar" aria-label="Edit chat name and avatar"
-          onclick={() => window.dispatchEvent(new CustomEvent("drowse:workspace", { detail: { view: "controls", section: "chat" } }))}>
-          <Blobatar name={savedConversationState.avatarSeed ?? sessionState.info?.model_id ?? "drowse"} size={40} background="circle" alt="" />
-        </button>
-      {:else}
-        <span class="speaker-marker" aria-hidden="true"><Blobatar name={savedConversationState.avatarSeed ?? sessionState.info?.model_id ?? "drowse"} size={40} background="circle" alt="" /></span>
-      {/if}
-    {:else}
-      <span class="speaker-marker" aria-hidden="true"><span class="user-avatar"></span></span>
-    {/if}
-    <span class="role-label"><MorphText text={roleDisplayLabel(turn.role, turn.roleLabel)} numbers={false} /></span>
-  </span>
-{/snippet}
 
 {#snippet bubble(turn: ChatTurn, turnIdx: number, isShadow: boolean)}
   {#if turn.role === "system"}
-    <!-- Stage direction — a note about the scene, not a speaker. -->
-    <div
-      class="stage"
-      class:shadow={isShadow}
-      dir="auto"
-      {...{ "aria-description": "system prompt" }}
-      in:fly={contentIn()}
-    >{turn.text}</div>
-  {:else}
-  <div
-    class="msg"
-    class:shadow={isShadow}
-    class:historical={turnIdx < chatLog.turns.length - 8}
-    class:generation-active={genStatus.active && (isShadow ? abState.pendingTurnIdx === turnIdx : !abState.processingAb && chatLog.pendingIndex === turnIdx)}
-    in:fly={contentIn()}
-  >
-    <div class="who">
-      {@render speaker(turn)}
-      {#if turn.nodeId}
-        <Button
-          size="sm"
-          variant="flat"
-          onclick={() => regenMessage(turn)}
-          title="reroll this message"
-          ariaLabel={`Reroll ${roleDisplayLabel(turn.role, turn.roleLabel)} message`}
-        ><FluentIcon name="refresh" /></Button>
-      {/if}
-      {#if (turn.tokens?.length ?? 0) > 0 || (turn.thinkingTokens?.length ?? 0) > 0}
-        <Button
-          size="sm"
-          variant="flat"
-          onclick={() => inspectTurnTokens(turn, turnIdx)}
-          ariaLabel={`Inspect tokens in ${roleDisplayLabel(turn.role, turn.roleLabel)} message`}
-        >inspect tokens</Button>
-      {/if}
-      {#if genStatus.active && (isShadow ? abState.pendingTurnIdx === turnIdx : !abState.processingAb && chatLog.pendingIndex === turnIdx)}
-        <span class="who-meta generation-label" role="status"><MorphText text={(turn.tokens?.length ?? 0) > 0 ? "Writing…" : (turn.thinkingTokens?.length ?? 0) > 0 ? "Thinking…" : "Preparing reply…"} numbers={false} /></span>
-      {/if}
-      {#if turn.meanLogprob != null && Number.isFinite(turn.meanLogprob)}
-        <span
-          class="prov"
-          {...{ "aria-description": "sequence perplexity" }}
-        >seq ppl <MorphText text={Math.exp(-turn.meanLogprob).toFixed(1)} /></span>
-      {/if}
+    <!-- A stage direction: a note about the scene, not a speaker. -->
+    <div class="dw-turn stage" class:shadow={isShadow} in:rise>
+      <span class="dw-seat">System</span>
+      <p class="stage-text" dir="auto">{turn.text}</p>
     </div>
-
-    {#if turn.generated && turn.finishReason != null && turn.appliedSteering !== undefined}
-      <div class="steering-status recorded-steering" aria-label="Recorded steering">
-        <span>{turn.appliedSteering ? "Steering recipe" : "No steering"}</span>
-        {#if turn.appliedSteering}<code>{turn.appliedSteering}</code>{/if}
-      </div>
-    {/if}
-    {#if turn.generated && turn.finishReason != null && Object.keys(turn.aggregateReadings ?? {}).length > 0}
-      <details class="recorded-readings">
-        <summary>Recorded probe readings</summary>
-        <dl>
-          {#each Object.entries(turn.aggregateReadings ?? {}) as [name, value] (name)}
-            {#if Number.isFinite(value)}
-              <div><dt>{name}</dt><dd>{value.toLocaleString(undefined, { maximumFractionDigits: 4 })}</dd></div>
-            {/if}
-          {/each}
-        </dl>
-      </details>
-    {/if}
+  {:else}
+  {@const generating = genStatus.active && (isShadow ? abState.pendingTurnIdx === turnIdx : !abState.processingAb && chatLog.pendingIndex === turnIdx)}
+  {@const user = turn.role === "user"}
+  <div class="dw-turn msg" class:user class:shadow={isShadow} class:historical={turnIdx < chatLog.turns.length - 8} in:rise>
+    <span class="dw-seat" class:end={user}>{seatLabel(turn)}</span>
 
     {#if (turn.thinkingTokens?.length ?? 0) > 0 || turn.thinking}
-      <div class="thinking-block" class:collapsed={turnCollapsed(turnIdx, turn)}>
-        <button
-          type="button"
-          class="thinking-toggle"
-          onclick={() => toggleThinking(turnIdx)}
-          aria-expanded={!turnCollapsed(turnIdx, turn)}
-        >
-          <span class="caret" class:collapsed={turnCollapsed(turnIdx, turn)}><FluentIcon name="down" /></span>
-          <span>thinking{turnCollapsed(turnIdx, turn) ? "…" : ""}</span>
+      <div class="thinking-block">
+        <button type="button" class="dw-text small thinking-toggle" onclick={() => toggleThinking(turnIdx)}
+          aria-expanded={!turnCollapsed(turnIdx, turn)}>
+          <span class="caret" class:open={!turnCollapsed(turnIdx, turn)}><Icon name="down" /></span>Thinking
         </button>
         {#if !turnCollapsed(turnIdx, turn)}
-          <div
-            class="thinking-body"
-            dir="auto"
-            in:slide={collapseIn()}
-            out:slide={collapseOut()}
-          >
+          <div class="thinking-body" dir="auto" transition:expand>
             {#each turn.thinkingTokens ?? [] as tok, tokenIdx (tokenIdx)}
-              <span
+              {@const tint = highlightStyleString(tok)}
+              {@const chosen = isSelectedToken(turnIdx, tokenIdx, true)}
+              {@const parts = tokenLead(tok.text)}
+              {parts.lead}<span
                 class="tok"
+                class:sel={chosen}
                 use:arrivals.reveal={genStatus.active ? tok : null}
                 data-cursor="inspect"
-                class:tinted={highlightState.target !== null}
-                style={highlightStyleString(tok)}
+                class:tinted={tint !== ""}
+                style={chosen ? "" : tint}
                 onpointerenter={() => beginTokenHover(tok, turn.nodeId)}
                 onpointerleave={endTokenHover}
                 onfocus={() => { tokenFocusIndices.set(`${turn.nodeId ?? turnIdx}:thinking`, tokenIdx); beginTokenHover(tok, turn.nodeId); }}
@@ -1723,24 +1450,28 @@
                 onkeydown={(ev) => tokenKeydown(ev, turnIdx, tokenIdx, true)}
                 role="button"
                 tabindex={tokenIdx === (tokenFocusIndices.get(`${turn.nodeId ?? turnIdx}:thinking`) ?? 0) ? 0 : -1}
-                aria-haspopup="dialog"
+                aria-pressed={chosen}
                 aria-label={`Inspect token ${tok.text.trim() || "whitespace"}`}
-              >{tok.text}</span>
+              >{parts.body}</span>
             {/each}
           </div>
         {/if}
       </div>
     {/if}
 
-    <div class="response-body" dir="auto">
+    <div class={user ? "dw-user" : "dw-said"} dir="auto">
       {#if (turn.tokens?.length ?? 0) > 0}
         {#each visibleResponseTokens(turn.tokens ?? []) as { tok, originalIdx }, visibleIdx (originalIdx)}
-          <span
+          {@const tint = highlightStyleString(tok)}
+          {@const chosen = isSelectedToken(turnIdx, originalIdx, false)}
+          {@const parts = tokenLead(tok.text)}
+          {parts.lead}<span
             class="tok"
-                use:arrivals.reveal={genStatus.active ? tok : null}
+            class:sel={chosen}
+            use:arrivals.reveal={genStatus.active ? tok : null}
             data-cursor="inspect"
-            class:tinted={highlightState.target !== null}
-            style={highlightStyleString(tok)}
+            class:tinted={tint !== ""}
+            style={chosen ? "" : tint}
             onpointerenter={() => beginTokenHover(tok, turn.nodeId)}
             onpointerleave={endTokenHover}
             onfocus={() => { tokenFocusIndices.set(`${turn.nodeId ?? turnIdx}:response`, originalIdx); beginTokenHover(tok, turn.nodeId); }}
@@ -1749,20 +1480,58 @@
             onkeydown={(ev) => tokenKeydown(ev, turnIdx, originalIdx)}
             role="button"
             tabindex={(tokenFocusIndices.has(`${turn.nodeId ?? turnIdx}:response`) ? tokenFocusIndices.get(`${turn.nodeId ?? turnIdx}:response`) === originalIdx : visibleIdx === 0) ? 0 : -1}
-            aria-haspopup="dialog"
+            aria-pressed={chosen}
             aria-label={`Inspect token ${tok.text.trim() || "whitespace"}`}
-          >{tok.text}</span>
+          >{parts.body}</span>
         {/each}
       {:else}
         <span class="plain">{plainResponseText(turn)}</span>
       {/if}
     </div>
-    {#if turn.generated && !isShadow && turn.appliedSteering && automaticComparisonAvailable}
-      <div class="reply-actions">
-        <Button size="sm" variant="flat" disabled={genStatus.active}
-          onclick={() => compareWithoutSteering(turnIdx)}
-          title="Replay the preceding messages with the current system prompt and saved sampling settings, with steering removed"
-        >Compare without steering</Button>
+
+    <div class="dw-under" class:end={user}>
+      {#if generating}
+        <span role="status"><MorphText text={(turn.tokens?.length ?? 0) > 0 ? "Writing" : (turn.thinkingTokens?.length ?? 0) > 0 ? "Thinking" : "Preparing the reply"} numbers={false} /></span>
+      {:else if turn.generated && (turn.tokens?.length ?? 0) > 0}
+        <span>{turn.tokens?.length} tokens</span>
+      {/if}
+      {#if !generating && turn.finishReason === "cancelled"}
+        <span class="dw-cut" data-tip="A Stop or a closed page ended this reply before the model finished">stopped early</span>
+      {/if}
+      {#if turn.meanLogprob != null && Number.isFinite(turn.meanLogprob)}
+        <span data-tip="Sequence perplexity">perplexity <MorphText text={Math.exp(-turn.meanLogprob).toFixed(1)} /></span>
+      {/if}
+      {#if turn.generated && turn.finishReason != null && turn.appliedSteering !== undefined}
+        <span data-tip={turn.appliedSteering ?? "No steering"}>{turn.appliedSteering ? "steered" : "unsteered"}</span>
+      {/if}
+      {#if tintKey && turn.generated && (turn.tokens?.length ?? 0) > 0}
+        <button type="button" class="dw-tintkey" aria-expanded={readingOpen} aria-controls="chat-reading-tools"
+          onclick={() => (readingOpen = !readingOpen)} data-tip="What the words are coloured by"><span class="dw-swatch" aria-hidden="true"></span>{tintKey}</button>
+      {/if}
+      {#if turn.nodeId}
+        <button type="button" class="dw-text small" onclick={() => regenMessage(turn)}
+          aria-label={`Reroll ${roleDisplayLabel(turn.role, turn.roleLabel)} message`}>Reroll</button>
+      {/if}
+      {#if (turn.tokens?.length ?? 0) > 0 || (turn.thinkingTokens?.length ?? 0) > 0}
+        <button type="button" class="dw-text small" onclick={() => inspectTurnTokens(turn, turnIdx)}
+          aria-label={`Inspect tokens in ${roleDisplayLabel(turn.role, turn.roleLabel)} message`}>Inspect</button>
+      {/if}
+      {#if turn.generated && !isShadow && turn.appliedSteering && automaticComparisonAvailable}
+        <button type="button" class="dw-text small" disabled={genStatus.active} onclick={() => compareWithoutSteering(turnIdx)}
+          data-tip="Replay the preceding messages with the saved sampling settings and no steering">Compare unsteered</button>
+      {/if}
+    </div>
+    {#if turn.generated && turn.finishReason != null && Object.keys(turn.aggregateReadings ?? {}).length > 0}
+      <div class="readings">
+        <Expander label="Readings">
+          <dl>
+            {#each Object.entries(turn.aggregateReadings ?? {}) as [name, value] (name)}
+              {#if Number.isFinite(value)}
+                <div><dt>{name}</dt><dd>{aggregateReadingText(name, value)}</dd></div>
+              {/if}
+            {/each}
+          </dl>
+        </Expander>
       </div>
     {/if}
   </div>
@@ -1770,1002 +1539,91 @@
 {/snippet}
 
 <style>
-  .chat-panel {
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    gap: var(--space-2);
-    height: 100%;
-    min-width: 0;
-    min-height: 0;
-  }
-  .chat {
-    --chat-scrollbar-width: 0px;
-    --chat-base-inset: var(--surface-padding);
-    --chat-inset: max(var(--chat-base-inset), var(--chat-scrollbar-width, 0px));
-    --chat-radius: calc(var(--radius-lg) + var(--chat-inset));
-    display: flex;
-    flex: 1 1 auto;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    overflow-y: auto;
-    overscroll-behavior: contain;
-    scrollbar-gutter: auto;
-    gap: var(--space-2);
-    font-family: var(--font-reading);
-    font-size: var(--text);
-    color: var(--fg);
-    padding: var(--chat-inset);
-    padding-inline-end: calc(var(--chat-inset) - var(--chat-scrollbar-width, 0px));
-    border-radius: var(--chat-radius);
-    background: var(--workspace-panel-bg);
-  }
+  .chat-panel, .chat { display: flex; flex-direction: column; flex: 1 1 0; min-height: 0; min-width: 0; }
+  .log { flex: 1 1 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; scrollbar-gutter: stable; }
+  .log:focus-visible { outline-offset: -2px; border-radius: var(--r-box); }
+  .log-content { display: grid; align-content: start; gap: var(--s6); min-width: 0; padding: var(--s1) var(--s1) var(--s5); }
+  .raw-host { flex: 1 1 0; min-height: 0; display: flex; flex-direction: column; }
+  .empty { display: grid; gap: var(--s2); justify-items: start; padding-top: var(--s7); }
 
-  .sr-only {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    padding: 0;
-    margin: -1px;
-    overflow: hidden;
-    clip: rect(0, 0, 0, 0);
-    white-space: nowrap;
-    border: 0;
-  }
+  .dw-seat.end { justify-self: end; }
+  .dw-under.end { justify-content: flex-end; }
+  .msg.historical { content-visibility: auto; contain-intrinsic-size: auto 120px; }
+  .msg.user .dw-user { display: block; }
+  .dw-said, .dw-user { min-width: 0; }
+  .stage-text { color: var(--ink2); font: var(--type-small); font-style: italic; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .shadow .dw-said { color: var(--ink2); }
+  .plain { white-space: pre-wrap; }
 
-  .chat-header {
-    display: grid;
-    flex: 0 0 auto;
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--group-gap);
-    padding-bottom: var(--space-2);
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-  }
-  .reading-tools {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--cluster-gap);
-    min-width: 0;
-  }
-  .color-control,
-  .comparison-control {
-    display: flex;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-  .ctl {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-  }
-  .ctl-inline {
-    cursor: pointer;
-    user-select: none;
-  }
-  .ctl-label {
-    color: var(--fg-dim);
-    font-family: var(--font-structure);
-    font-weight: var(--weight-structure);
-    letter-spacing: 0;
-  }
-  /* Layout host for the themed Select — Select owns its own theme. */
-  .ctl-select {
-    display: inline-flex;
-    min-width: 9em;
-  }
+  /* One token: joined to its word, a wash on hover, ink when it is the one selected. The
+   * highlight's own fill rides its inline style. The space before a word sits outside the box
+   * (lib/tokens.ts::tokenLead), so a token that wraps starts its box on its own line. The wash and
+   * the ink grow only up and down (inline padding never moves the line), so a chip never paints
+   * over the glyph beside it. */
+  .tok { border-radius: 4px; cursor: pointer; transition: background-color var(--fast) var(--ease), color var(--fast) var(--ease); }
+  .tok:not(.tinted):hover { background: var(--wash2); padding-block: 2px; }
+  .tok.sel, .tok.sel:hover { background: var(--ink); color: var(--paper); padding-block: 2px; }
+  .tok:focus-visible { outline-offset: 1px; }
 
-  .compare-color {
-    min-height: var(--control-target);
-    padding: var(--space-1) var(--space-3);
-    border: 0;
-    border-radius: var(--radius);
-    background: transparent;
-    color: var(--fg-dim);
-    font: inherit;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-structure);
-    cursor: pointer;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .compare-color:hover,
-  .compare-color.active {
-    background: var(--glass);
-    color: var(--fg);
-  }
-  .compare-color:active { transform: scale(var(--press-scale)); }
+  .thinking-block { display: grid; gap: var(--s2); min-width: 0; }
+  .thinking-toggle { display: inline-flex; align-items: center; gap: var(--s1); justify-self: start; }
+  .caret { display: grid; rotate: -90deg; transition: rotate var(--glide) var(--ease); }
+  .caret.open { rotate: 0deg; }
+  .thinking-body { color: var(--ink2); font: var(--type-small); font-style: italic; line-height: 24px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .readings { min-width: 0; }
+  .readings dl { display: grid; gap: var(--s1); margin: 0; }
+  .readings dl > div { display: flex; justify-content: space-between; gap: var(--s4); color: var(--ink2); font: var(--type-small); }
+  .readings dt { overflow-wrap: anywhere; }
+  .readings dd { margin: 0; color: var(--ink); font-variant-numeric: tabular-nums; }
 
-  /* Conversation-actions strip — inline, pushed to the right edge of
-   * the header.  Wraps onto a second row on narrow layouts. */
-  .header-actions {
-    display: flex;
-    align-items: center;
-    gap: var(--cluster-gap);
-    flex-wrap: nowrap;
-    justify-content: flex-end;
-  }
-  .ctl-input {
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-1) var(--space-3);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    min-width: 14em;
-  }
-  .ctl-input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
+  .ab-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s5); min-width: 0; }
+  .ab-col { display: grid; align-content: start; gap: var(--s6); min-width: 0; }
+  .ab-rows { row-gap: var(--s6); align-items: start; }
+  .ab-span { grid-column: 1 / -1; min-width: 0; }
+  .ab-cell { min-width: 0; }
+  .pin-head { display: flex; align-items: center; justify-content: space-between; gap: var(--s2); }
 
-  .log {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    overflow-x: hidden;
-    min-height: 0;
-  }
+  .dock { display: grid; gap: var(--s2); flex: none; min-width: 0; padding-top: var(--s2); }
+  .reading { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s2) var(--s4); padding: var(--s2) 0; }
+  .ctl { display: inline-flex; align-items: center; gap: var(--s2); color: var(--ink2); font: var(--type-control); }
+  .ctl-input { height: 36px; padding: 0 var(--s3); border: 0; border-radius: var(--r-pill); background: var(--wash); color: var(--ink); font: var(--type-small); }
+  .turn-plan { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s3) var(--s4); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .plan-card { display: grid; gap: var(--s1); min-width: 0; }
+  .plan-actions { grid-column: 1 / -1; gap: var(--s4); }
+  .role-error { color: var(--ink); }
+  .thinking-box { display: grid; gap: var(--s1); padding: var(--s3) var(--s4); border-radius: var(--r-box); background: var(--wash); }
+  .thinking-input { width: 100%; min-height: 40px; padding: 0; border: 0; outline: 0; resize: vertical; background: transparent; color: var(--ink); font: var(--type-small); font-style: italic; }
 
-  .log-content {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-md);
-    min-height: 100%;
-  }
-
-  .conversation-empty {
-    display: flex;
-    flex: 1 1 auto;
-    align-items: center;
-    justify-content: center;
-    margin: auto;
-    padding: var(--space-8) var(--space-5);
-    text-align: center;
-  }
-
-  .conversation-empty p {
-    margin: 0;
-    color: var(--fg-dim);
-    font-size: var(--text);
-  }
-
-  .log.ab {
-    /* Container itself stays vertical scroll; the inner ab-grid handles
-     * the two-column rendering so each column shares the same scroll
-     * surface. */
-    display: block;
-  }
-  .ab-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: var(--space-4);
-  }
-  .ab-col {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-width: 0;
-  }
-  .pin-header {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: color-mix(in srgb, var(--pillar-manifold) 10%, transparent);
-    border-radius: var(--radius);
-    color: var(--pillar-manifold);
-    font-size: var(--text-xs);
-    margin-bottom: var(--space-2);
-  }
-  .pin-tag {
-    text-transform: lowercase;
-    letter-spacing: 0;
-  }
-  .pin-id {
-    color: var(--accent-yellow);
-    flex: 1 1 auto;
-  }
-  .pin-unpin {
-    background: var(--glass);
-    color: var(--fg-dim);
-    border: 0;
-    border-radius: var(--radius-sm);
-    padding: var(--space-1) var(--space-2);
-    font: inherit;
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    cursor: pointer;
-    min-height: var(--control-target);
-  }
-  .pin-unpin:hover {
-    color: var(--accent-red);
-    background: color-mix(in srgb, var(--accent-red) 12%, transparent);
-  }
-  /* The neutral fill groups each turn; the border marks A/B comparisons. */
-  .msg {
-    border: 1px solid transparent;
-    border-radius: var(--radius-lg);
-    background: var(--workspace-message-bg, var(--surface-card));
-    box-shadow: var(--shadow-rack);
-    padding: var(--surface-padding);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    min-width: 0;
-    word-break: break-word;
-  }
-  .msg.historical {
-    content-visibility: auto;
-    contain-intrinsic-block-size: auto 160px;
-  }
-  .msg.shadow {
-    border-color: color-mix(in srgb, var(--pillar-manifold) 26%, transparent);
-  }
-  .msg.generation-active {
-    box-shadow: var(--shadow-rack);
-  }
-  .generation-label { display: inline-flex; align-items: center; gap: var(--space-2); }
-
-  .who {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-  .role-chip {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-3);
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--fg-dim);
-    padding: 0;
-    border-radius: var(--radius-sm);
-    background: transparent;
-    max-width: 40%;
-    white-space: nowrap;
-  }
-  .role-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-family: var(--font-structure); font-weight: var(--weight-display); }
-  .model-avatar, .speaker-marker { display: inline-grid; align-items: center; justify-items: start; width: max(40px, var(--control-target)); height: max(40px, var(--control-target)); flex: none; }
-  .model-avatar { padding: 0; border: 0; border-radius: var(--radius-pill); background: transparent; cursor: pointer; }
-  .model-avatar:hover { background: var(--bg-hover); }
-  .model-avatar:active { transform: scale(0.96); }
-  .model-avatar:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .model-avatar :global(img), .speaker-marker :global(img) { display: block; width: 40px; height: 40px; border-radius: var(--radius-pill); outline: 1px solid oklch(1 0 0 / 0.1); outline-offset: -1px; }
-  :global(:root[data-theme="light"]) .model-avatar :global(img), :global(:root[data-theme="light"]) .speaker-marker :global(img) { outline-color: oklch(0 0 0 / 0.1); }
-  .user-avatar { width: 32px; height: 32px; border-radius: var(--radius-pill); background: var(--accent); }
-  @media (forced-colors: active) { .msg { border-color: CanvasText; } .user-avatar { background: Highlight; forced-color-adjust: none; } }
-  .who-meta {
-    color: var(--fg-muted);
-    font-family: var(--font-data);
-    font-size: var(--text-xs);
-  }
-  .steering-status {
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: var(--space-2) var(--space-3);
-    min-width: 0;
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    line-height: 1.5;
-  }
-  .steering-status code {
-    min-width: 0;
-    overflow-wrap: anywhere;
-    font-family: var(--font-data);
-    color: var(--fg);
-  }
-  .recorded-steering { margin-block: var(--space-2); }
-  .reply-actions { margin-top: var(--space-3); }
-  .probe-note { flex-basis: 100%; }
-  .recorded-readings { margin-block: var(--space-2); font-size: var(--text-xs); color: var(--fg-dim); }
-  .recorded-readings summary { cursor: pointer; }
-  .recorded-readings dl { display: grid; gap: var(--space-2); margin-block: var(--space-3); }
-  .recorded-readings dl > div { display: flex; justify-content: space-between; gap: var(--space-3); }
-  .recorded-readings dt { min-width: 0; overflow-wrap: anywhere; }
-  .recorded-readings dd { margin: 0; font-family: var(--font-data); font-variant-numeric: tabular-nums; }
-  .prov {
-    margin-inline-start: auto;
-    color: var(--fg-muted);
-    font-family: var(--font-data);
-    font-size: var(--text-2xs);
-    font-variant-numeric: tabular-nums;
-    flex: none;
-  }
-
-  /* Stage direction — the system prompt as a note about the scene. */
-  .stage {
-    font-style: italic;
-    color: var(--fg-subtle);
-    font-size: var(--text-sm);
-    line-height: 1.5;
-    padding: var(--space-1) var(--space-5);
-    white-space: pre-wrap;
-    word-break: break-word;
-  }
-  .stage.shadow {
-    opacity: 0.7;
-  }
-
-  .msg.placeholder {
-    color: var(--fg-muted);
-    font-style: italic;
-    opacity: 0.6;
-  }
-  .placeholder-text {
-    font-size: var(--text-sm);
-  }
-
-  .response-body {
-    white-space: pre-wrap;
-    word-break: break-word;
-    color: var(--fg-strong);
-    font-size: var(--workspace-message-size, var(--text-md));
-    line-height: 1.55;
-  }
-  .plain {
-    white-space: pre-wrap;
-  }
-
-  /* Thinking-collapsible block — visible-only header when collapsed,
-   * with the body indented when expanded.  Borderless: the caret + the
-   * italic dim body delimit it; no rules. */
-  .thinking-block {
-    margin-bottom: var(--space-1);
-  }
-  .thinking-toggle {
-    background: transparent;
-    border: 0;
-    color: var(--fg-dim);
-    font: inherit;
-    font-family: var(--font-mono);
-    padding: var(--space-1) 0;
-    cursor: pointer;
-    text-align: start;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    width: 100%;
-    min-height: var(--control-target);
-  }
-  .thinking-toggle:hover {
-    color: var(--fg-strong);
-  }
-  .thinking-toggle .caret {
-    color: var(--fg-muted);
-    display: inline-flex;
-    transition: transform var(--dur) var(--ease-out);
-  }
-  .thinking-toggle .caret.collapsed { transform: rotate(-90deg); }
-  .thinking-body {
-    /* The inline-start pad is a hanging indent tuned to the caret width. */
-    padding-block: var(--space-1) var(--space-2);
-    padding-inline: var(--space-md) 0;
-    color: var(--fg-dim);
-    font-style: italic;
-    white-space: pre-wrap;
-    line-height: 1.4;
-  }
-  .thinking-body .tok {
-    font-style: italic;
-  }
-
-  /* Tokens — minimal padding so the tinted span hugs the glyph.  The
-   * click handler attaches regardless of highlight state; ``.tinted``
-   * marks rows whose background is being painted by the score so the
-   * untinted hover outline only fires when there's no other visual.
-   * Hover outline gives the click affordance even when highlighting is
-   * off (matches the user-visible click contract). */
-  .tok {
-    cursor: pointer;
-    border-radius: var(--radius);
-  }
-  .tok:hover {
-    outline: 1px solid var(--fg-muted);
-  }
-
-  /* The visible next-turn plan names roles; each option carries its structural
-   * seat internally so the composer never makes the user manage both. */
-  .turn-plan-shell {
-    min-width: 0;
-  }
-  .turn-plan {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius-group);
-    background: transparent;
-    --control-field: var(--control-target);
-    --control-compact: var(--control-target);
-  }
-  .plan-card {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr);
-    align-items: center;
-    gap: var(--space-3);
-    min-width: 0;
-  }
-  .plan-actor {
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    letter-spacing: 0;
-    text-transform: none;
-    color: var(--fg-muted);
-  }
-  .reply-toggle {
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-2);
-    color: var(--fg-muted);
-    font-family: var(--font-structure);
-    font-size: var(--text-xs);
-    cursor: pointer;
-  }
-  .plan-actions {
-    align-self: center;
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    min-height: var(--control-target);
-  }
-  .plan-minimize,
-  .turn-plan-summary {
-    border: 0;
-    font: inherit;
-    font-family: var(--font-structure);
-    cursor: pointer;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      box-shadow var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .plan-minimize {
-    min-height: var(--control-target);
-    padding: var(--space-2) var(--space-3);
-    border-radius: var(--radius);
-    background: var(--glass);
-    box-shadow: var(--shadow-control);
-    color: var(--fg-dim);
-    font-size: var(--text-xs);
-    font-weight: var(--weight-structure);
-    white-space: nowrap;
-  }
-  .plan-minimize:hover {
-    background: var(--glass-strong);
-    box-shadow: var(--shadow-control-hover);
-    color: var(--fg);
-  }
-  .turn-plan-summary {
-    display: grid;
-    grid-template-columns: auto minmax(0, 1fr) auto;
-    align-items: center;
-    gap: var(--space-sm);
-    width: 100%;
-    min-height: var(--control-target);
-    padding: calc(2 * var(--space-unit));
-    border-radius: var(--radius-lg);
-    background: var(--workspace-panel-bg);
-    color: var(--fg-dim);
-    text-align: start;
-  }
-  .turn-plan-summary:hover {
-    background: var(--glass);
-    color: var(--fg);
-  }
-  .plan-minimize:active,
-  .turn-plan-summary:active {
-    transform: scale(var(--press-scale));
-  }
-  .plan-minimize:focus-visible,
-  .turn-plan-summary:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .summary-label,
-  .summary-action {
-    font-size: var(--text-xs);
-    font-weight: var(--weight-structure);
-  }
-  .summary-label {
-    color: var(--fg-muted);
-    text-transform: none;
-    letter-spacing: 0;
-  }
-  .summary-value {
-    min-width: 0;
-    overflow: hidden;
-    color: var(--fg-dim);
-    font-family: var(--font-mono);
-    font-size: var(--text-xs);
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .summary-action {
-    color: var(--accent);
-  }
-  .role-error {
-    margin: calc(-1 * var(--space-2)) var(--space-6) 0;
-    color: var(--accent-red);
-    font-size: var(--text-sm);
-    line-height: 1.45;
-  }
+  .dw-compose .input { width: 100%; }
+  .dw-compose-row { gap: var(--s2) var(--s4); }
+  .extras { display: contents; }
+  .small { font: var(--type-meta); }
+  /* The sampling summary takes the row's free space, so Send keeps the right edge on one line and,
+   * when the row wraps, its own auto margin keeps it there instead of flush left. */
+  .dw-sampling { min-width: 0; flex: 1 1 auto; }
+  .send { display: inline-flex; align-items: center; gap: var(--s2); margin-left: auto; }
+  .stop.held { visibility: hidden; }
+  .turn-plan-summary { max-width: 24ch; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .clear-conversation.armed { color: var(--ink); }
+  .dw-compose .dw-button, .dw-compose .dw-quiet { flex: none; }
 
   @media (max-width: 720px) {
-    .turn-plan {
-      grid-template-columns: minmax(0, 1fr);
-      align-items: stretch;
-      padding: var(--space-4);
-    }
-    .plan-actions {
-      grid-column: 1;
-      justify-self: start;
-      flex-wrap: wrap;
-    }
+    .log { padding: var(--s4) var(--s4) 0; }
+    .ab-grid { grid-template-columns: minmax(0, 1fr); }
+    .dock { padding: var(--s2) var(--s4) var(--s4); }
+    .turn-plan { grid-template-columns: minmax(0, 1fr); }
+    .dw-compose { gap: var(--s1); padding: var(--s2) var(--s2) var(--s2) var(--s4); }
+    .dw-compose .input { min-height: 32px; }
+    .dw-compose-row { min-height: 44px; flex-wrap: wrap; gap: 0 var(--s3); }
+    .dw-compose-row .dw-sampling { flex: 1 1 0; min-width: 0; min-height: 44px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; margin-right: 0; }
+    .more { flex: none; min-height: 44px; }
+    .extras { order: 3; display: flex; flex: 1 0 100%; gap: var(--s4); overflow-x: auto; scrollbar-width: none; }
+    .extras.folded { display: none; }
+    .extras > * { flex: none; min-height: 44px; }
+    .extras .turn-plan-summary { max-width: none; }
+    .dw-compose .dw-button, .dw-compose .dw-quiet { height: 44px; }
   }
-
-  @media (max-width: 560px) {
-    .ab-grid {
-      grid-template-columns: minmax(0, 1fr);
-    }
-  }
-
-  @media (min-width: 381px) and (max-width: 560px) {
-    .turn-plan {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      grid-template-rows: auto auto;
-      gap: var(--space-2);
-      padding: var(--space-3);
-    }
-    .plan-card {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-2);
-    }
-    .plan-card:first-child {
-      grid-column: 1;
-      grid-row: 1;
-    }
-    .plan-card:nth-child(2) {
-      grid-column: 2;
-      grid-row: 1;
-    }
-    .plan-actions {
-      grid-column: 1 / -1;
-      grid-row: 2;
-      justify-self: stretch;
-      justify-content: space-between;
-    }
-  }
-
-  .thinking-row {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: 0 var(--space-1);
-  }
-  .thinking-control {
-    align-self: flex-start;
-  }
-  .thinking-box {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .thinking-input {
-    background: var(--workspace-field-bg);
-    color: var(--fg-dim);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    font-family: var(--font-reading);
-    font-size: var(--text-sm);
-    padding: var(--surface-padding);
-    resize: vertical;
-    min-height: 44px;
-    transition: box-shadow var(--dur-fast) var(--ease-out);
-  }
-  .thinking-input:focus-visible {
-    outline: none;
-    color: var(--fg);
-  }
-  .thinking-warn {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-    font-style: italic;
-  }
-
-  .composer-resizer-shell {
-    position: relative;
-    display: grid;
-    flex: 0 0 auto;
-    place-items: center;
-    width: 100%;
-    min-height: var(--control-target);
-    margin-block: 0;
-    border-radius: var(--radius-sm);
-    pointer-events: none;
-  }
-  .composer-resizer {
-    position: absolute;
-    inset-inline: 0;
-    inset-block: 0;
-    z-index: 1;
-    width: 5.5rem;
-    height: 100%;
-    margin: 0 auto;
-    opacity: 0;
-    cursor: row-resize;
-    touch-action: none;
-    pointer-events: auto;
-  }
-  .composer-resizer-shell span {
-    width: 3.5rem;
-    height: 3px;
-    border-radius: var(--radius-pill);
-    background: var(--glass-strong);
-    transition:
-      width var(--dur-fast) var(--ease-out),
-      background var(--dur-fast) var(--ease-out);
-  }
-  .composer-resizer:hover + span,
-  .composer-resizer-shell:focus-within span,
-  .composer-resizer-shell.dragging span {
-    width: 4.5rem;
-    background: var(--accent);
-  }
-  .composer-resizer-shell:focus-within span {
-    box-shadow: 0 0 0 2px var(--bg), 0 0 0 4px var(--focus-ring);
-  }
-
-  .input-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: 0;
-    padding: var(--surface-padding);
-    border-radius: var(--radius-lg);
-    background: var(--workspace-field-bg);
-    -webkit-backdrop-filter: blur(1px);
-    backdrop-filter: blur(1px);
-  }
-  .input {
-    --shadow-field-focus: none;
-    --shadow-field-keyboard: none;
-    width: 100%;
-    background: transparent;
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-xs);
-    font: inherit;
-    font-family: var(--font-reading);
-    resize: none;
-    /* border-box lets autosize() write ``scrollHeight`` straight into
-     * ``style.height`` without a padding/border double-count — without
-     * this the one-line draft height was off by ~6px and the textarea's
-     * vertical scrollbar leaked through as a tiny up/down nub. */
-    box-sizing: border-box;
-    overflow-y: hidden;
-    min-height: 64px;
-    max-height: 480px;
-    line-height: 1.45;
-    transition: box-shadow var(--dur-fast) var(--ease-out);
-  }
-  .input:focus {
-    outline: none;
-  }
-  .input-actions-reveal {
-    display: grid;
-    grid-template-rows: 1fr;
-    margin-top: var(--composer-space, var(--space-6));
-    opacity: 1;
-    visibility: visible;
-    transition:
-      grid-template-rows var(--dur-slow) var(--ease-move),
-      margin-top var(--dur-slow) var(--ease-move),
-      opacity var(--dur-slow) var(--ease-move),
-      visibility 0s;
-  }
-  .input-actions {
-    display: flex;
-    min-height: 0;
-    overflow: hidden;
-    gap: var(--composer-space, var(--space-6));
-    align-items: stretch;
-    justify-content: flex-end;
-    flex-wrap: nowrap;
-  }
-  .input-actions :global(button) { white-space: nowrap; }
-  .input-actions :global(button:focus-visible) { outline-offset: -2px; }
-  .input-row:not(:focus-within):not(.pointer-held):not(.has-draft):not(.generating) .input-actions-reveal {
-    grid-template-rows: 0fr;
-    margin-top: 0;
-    opacity: 0;
-    visibility: hidden;
-    transition-delay: 0s, 0s, 0s, var(--dur-slow);
-  }
-  .input-row.generating:not(:focus-within):not(.has-draft) .input-actions > :global(:not(.danger)) {
-    visibility: hidden;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    .input-actions-reveal { transition: none; }
-  }
-  .clear-icon { display: none; }
-  .clear-conversation {
-    min-height: var(--control-target);
-    padding: var(--space-2) var(--space-4);
-    border: 0;
-    border-radius: var(--radius);
-    background: var(--danger-bg);
-    color: var(--accent-red);
-    font: inherit;
-    font-family: var(--font-structure);
-    font-size: var(--text-sm);
-    font-weight: var(--weight-structure);
-    white-space: nowrap;
-    cursor: pointer;
-    transition:
-      background var(--dur-fast) var(--ease-out),
-      color var(--dur-fast) var(--ease-out),
-      transform var(--dur-fast) var(--ease-out);
-  }
-  .clear-conversation:hover:not(:disabled),
-  .clear-conversation.confirm-clear {
-    background: var(--danger-hover);
-  }
-  .clear-conversation:active:not(:disabled) {
-    transform: scale(var(--press-scale));
-  }
-  .clear-conversation:focus-visible {
-    outline: 2px solid var(--focus-ring);
-    outline-offset: 2px;
-  }
-  .clear-conversation:disabled {
-    cursor: not-allowed;
-    opacity: var(--disabled-opacity);
-  }
-
-  @media (prefers-contrast: more), (forced-colors: active), (prefers-reduced-transparency: reduce) {
-    .input-row { -webkit-backdrop-filter: none; backdrop-filter: none; }
-  }
-
-  @media (max-width: 860px) {
-    .chat-header {
-      grid-template-columns: minmax(0, 1fr);
-      gap: var(--space-6);
-    }
-    .header-actions {
-      justify-content: flex-start;
-      flex-wrap: wrap;
-    }
-  }
-
-  @media (max-width: 620px) {
-    .reading-tools {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      align-items: stretch;
-      gap: var(--space-3);
-    }
-    .color-control {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) auto;
-      width: 100%;
-    }
-    .color-control .ctl {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
-      width: 100%;
-    }
-    .ctl-select {
-      flex: 1 1 auto;
-      min-width: 0;
-      width: 100%;
-    }
-    .header-actions {
-      display: grid;
-      grid-template-columns: auto minmax(0, 1fr);
-      align-items: center;
-      gap: var(--space-3);
-    }
-    .header-actions > .ctl-select,
-    .header-actions > .ctl-input {
-      grid-column: 1 / -1;
-    }
-    .msg {
-      padding: var(--surface-padding);
-    }
-    .response-body {
-      font-size: var(--text);
-    }
-  }
-
-  @media (max-width: 420px) {
-    .input-row {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-    }
-    .input {
-      width: 100%;
-      min-height: 92px;
-    }
-  }
-
-  /* Wrap compact controls so scrolling does not clip their focus halos. */
-  @media (max-width: 620px), (max-height: 600px) {
-    .chat-header {
-      display: flex;
-      flex: 0 0 auto;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: var(--space-2);
-      min-height: var(--control-target);
-      padding-bottom: 0;
-      overflow: visible;
-    }
-
-    .reading-tools,
-    .header-actions {
-      display: flex;
-      flex: 0 1 auto;
-      align-items: center;
-      flex-wrap: wrap;
-      gap: var(--space-2);
-    }
-
-    .color-control,
-    .comparison-control,
-    .color-control .ctl {
-      display: flex;
-      flex: 0 0 auto;
-      align-items: center;
-      width: auto;
-    }
-
-    .ctl-label {
-      display: none;
-    }
-
-    .ctl-select {
-      flex: 0 0 auto;
-      width: 8.75rem;
-      min-width: 8.75rem;
-    }
-
-    .header-actions > .ctl-select,
-    .header-actions > .ctl-input {
-      grid-column: auto;
-    }
-
-    .input {
-      min-height: 64px;
-    }
-  }
-
-  @media (max-width: 620px) {
-    .chat {
-      --chat-base-inset: var(--space-2);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      scroll-padding-block-end: var(--surface-padding);
-      scrollbar-gutter: auto;
-    }
-
-    .input-row { padding: var(--space-2); }
-
-    .chat > :global(*) {
-      flex-shrink: 0;
-    }
-
-    .chat > .log {
-      flex: 1 1 0;
-      min-height: var(--control-target);
-    }
-
-    .chat-header {
-      display: grid;
-      grid-template-columns: minmax(0, 1fr);
-      width: 100%;
-      overflow: visible;
-    }
-
-    .reading-tools,
-    .header-actions {
-      width: 100%;
-      min-width: 0;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      overflow: visible;
-    }
-
-    .comparison-control {
-      flex: 1 1 auto;
-      min-width: 0;
-      justify-content: space-between;
-    }
-  }
-
-  @media (max-height: 600px) {
-    .chat {
-      gap: var(--space-1);
-      overflow-y: auto;
-      overscroll-behavior: contain;
-      scroll-padding-block-end: var(--control-target);
-    }
-
-  }
-
-  @media (min-width: 621px) and (max-height: 600px) {
-    .chat:not(:has(.chat-header)) {
-      --chat-base-inset: var(--space-2);
-      display: grid;
-      grid-template-columns: minmax(0, 1fr) 5.5rem;
-      grid-template-rows: minmax(24px, 1fr);
-      grid-auto-rows: max-content;
-      scrollbar-gutter: auto;
-    }
-    .chat:not(:has(.chat-header)) > :global(*) { grid-column: 1 / -1; }
-    .chat:not(:has(.chat-header)) > .log { grid-row: 1; min-height: 24px; }
-    .chat:not(:has(.chat-header)) > .composer-resizer-shell { grid-column: 2; grid-row: 2; }
-    .chat:not(:has(.chat-header)) > :global(.status-footer) { grid-column: 1; grid-row: 2; }
-    .chat:not(:has(.chat-header)):has(.turn-plan-summary) {
-      grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) 5.5rem;
-    }
-    .chat:not(:has(.chat-header)):has(.turn-plan-summary) > .composer-resizer-shell { grid-column: 3; }
-    .chat:not(:has(.chat-header)):has(.turn-plan-summary) > .turn-plan-shell { grid-column: 2; grid-row: 2; }
-    .input-row {
-      grid-template-columns: minmax(0, 1fr) max-content;
-      align-items: end;
-      padding: var(--space-1);
-    }
-    .input-row > .steering-status { grid-column: 1 / -1; }
-    .input-actions-reveal { margin-top: 0; }
-  }
-
-  @media (max-width: 760px), (max-height: 600px) {
-    .input-actions { gap: var(--space-2); }
-    .input-actions :global(button) {
-      flex: 0 0 auto;
-      min-height: var(--control-target);
-      padding-inline: var(--space-2);
-    }
-    .input-actions :global(button:first-child) { flex: 1 1 auto; }
-    .input-actions :global(button:first-child .state-icon) { display: none; }
-    .clear-conversation {
-      padding-inline: var(--space-2);
-      min-width: var(--control-target);
-    }
-    .clear-icon { display: inline-flex; }
-    .clear-label { display: none; }
-
-    .input,
-    .ctl-input,
-    .thinking-input {
-      font-size: var(--text-input-touch);
-    }
-
-    .composer-resizer-shell {
-      min-height: var(--control-target);
-      margin-block: 0;
-    }
-
-    .composer-resizer {
-      inset-block: 0;
-      height: 100%;
-    }
+  @media (max-width: 720px) and (hover: none) {
+    .tok:not(.tinted):hover { background: transparent; box-shadow: none; }
   }
 </style>

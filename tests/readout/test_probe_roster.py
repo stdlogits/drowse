@@ -59,13 +59,14 @@ class _Family:
 def _roster(**owns: tuple[str, ...]) -> tuple[ProbeRoster, dict[str, _Family], list[int]]:
     families = {
         family: _Family(family, owns=owns.get(family, ()))
-        for family in ("geometry", "lens", "sae")
+        for family in ("geometry", "lens", "sae", "units")
     }
     changes: list[int] = []
     roster = ProbeRoster(
         geometry=families["geometry"],
         lens=families["lens"],
         sae=families["sae"],
+        units=families["units"],
         on_change=lambda: changes.append(1),
     )
     return roster, families, changes
@@ -74,6 +75,8 @@ def _roster(**owns: tuple[str, ...]) -> tuple[ProbeRoster, dict[str, _Family], l
 @pytest.mark.parametrize(("selector", "family", "kwargs"), [
     ("jlens/word", "lens", {"as_name": None}),
     ("sae/12", "sae", {"as_name": None}),
+    ("neuron/L1n2", "units", {"as_name": None}),
+    ("head/L0h1", "units", {"as_name": None}),
     ("mood", "geometry", {"as_name": None, "top_n": 5}),
     ("local/mood:raw", "geometry", {"as_name": None, "top_n": 5}),
 ])

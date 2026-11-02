@@ -10,9 +10,11 @@ grammar on top of it:
 - the seating checks a legacy (non-scene) chat template imposes
   (:func:`check_user_send_target`) and the committed-thinking check
   (:func:`check_thinking_commit`);
-- the loom token anchor (:func:`resolve_token_anchor`): one validation of a
-  ``(node_id, raw_index)`` address, shared by a token fork and the token
-  replays;
+- the loom token anchors: one validation of a ``(node_id, raw_index)``
+  address into a generated turn's raw decode record
+  (:func:`resolve_token_anchor`, shared by a token fork and the token
+  replays) and into an authored turn's captured prompt tokens
+  (:func:`resolve_prompt_anchor`, the token replays');
 - the forced-prefix plans behind a token fork and an answer prefill
   (:func:`plan_fork`, :func:`plan_prefill`), which the session executes;
 - opening the turn a stateful generation streams into
@@ -31,7 +33,7 @@ from drowse.generation.sampling import (
 )
 from drowse.loom.errors import InvalidNodeOperationError
 from drowse.loom.recipe import Recipe
-from drowse.loom.tree import LoomNode, LoomTree
+from drowse.loom.tree import LoomNode, LoomTree, PromptCapture
 
 if TYPE_CHECKING:
     from drowse.model.scene import TurnGrammar
@@ -224,6 +226,114 @@ def resolve_token_anchor(
         raw_index=int(raw_index),
         raw_ids=tuple(int(token) for token in raw_ids),
     )
+
+
+@dataclass(frozen=True)
+class PromptAnchor:
+    """One captured prompt token of an authored turn.
+
+    ``index`` addresses the node's captured rows in render order (thinking
+    rows, then visible rows); ``token_ids`` is every captured row's token in
+    that order, snapshotted at resolution like a :class:`TokenAnchor`'s raw
+    record.  The token sits at render position :attr:`position` of the
+    capture's prompt, produced at the position before it.
+    """
+
+    node: LoomNode
+    index: int
+    capture: PromptCapture
+    token_ids: tuple[int, ...]
+    #: The render position of the token's channel's first token.
+    channel_start: int
+    #: The index of the channel's first row.
+    channel_offset: int
+    #: How many of the captured rows are thinking rows (they come first).
+    thinking_rows: int
+
+    @property
+    def token_id(self) -> int:
+        return self.token_ids[self.index]
+
+    @property
+    def position(self) -> int:
+        """The token's position in the capture's render."""
+        return self.channel_start + self.index - self.channel_offset
+
+    @property
+    def channel_prefix(self) -> list[int]:
+        """The token's channel before it (what follows the channel's head)."""
+        return list(self.token_ids[self.channel_offset:self.index])
+
+    @property
+    def runs(self) -> tuple[tuple[int, int], ...]:
+        """Each captured channel as ``(first_row, render_position)``: the
+        thinking rows, then the visible rows, each channel's rows at
+        consecutive render positions from its start."""
+        out: list[tuple[int, int]] = []
+        if self.thinking_rows > 0 and self.capture.thinking_start is not None:
+            out.append((0, int(self.capture.thinking_start)))
+        if len(self.token_ids) > self.thinking_rows and self.capture.start is not None:
+            out.append((self.thinking_rows, int(self.capture.start)))
+        return tuple(out)
+
+
+def resolve_prompt_anchor(
+    tree: LoomTree, node_id: str, index: int, *, label: str, produced: bool = True,
+) -> PromptAnchor:
+    """Validate a ``(node_id, raw_index)`` address into an authored turn's
+    captured prompt tokens (``raw_index`` indexes its thinking rows, then
+    its visible rows).  Raises
+    :class:`~drowse.loom.errors.UnknownNodeError` for an unknown node and
+    :class:`InvalidNodeOperationError` for a generated node, an authored
+    turn no generation has measured, an out-of-range index or, with
+    ``produced`` (the default: the caller reads that token's own forward),
+    the render's first token (nothing produces it)."""
+    node = tree.get(node_id)
+    if node.role not in _SEATS:
+        raise InvalidNodeOperationError(
+            f"{label}: {node_id!r} is a {node.role} node — only a turn "
+            f"has tokens to address"
+        )
+    if node.recipe is not None:
+        raise InvalidNodeOperationError(
+            f"{label}: {node_id!r} is a generated turn; its tokens are addressed "
+            f"by their raw decode index"
+        )
+    capture = node.prompt_capture
+    if capture is None:
+        raise InvalidNodeOperationError(
+            f"{label}: {node_id!r} is an authored turn no generation has measured "
+            f"yet, so it has no prompt tokens to replay"
+        )
+    thinking = list(node.thinking_tokens or ())
+    visible = list(node.tokens or ())
+    token_ids = tuple(int(row["token_id"]) for row in thinking + visible)
+    if not 0 <= index < len(token_ids):
+        raise InvalidNodeOperationError(
+            f"{label}: raw_index {index} out of range [0, {len(token_ids)}) for "
+            f"the captured prompt tokens of {node_id!r}"
+        )
+    in_thinking = index < len(thinking)
+    start = capture.thinking_start if in_thinking else capture.start
+    if start is None:  # _check_prompt_capture keeps rows and starts together
+        raise InvalidNodeOperationError(
+            f"{label}: {node_id!r} has rows its prompt capture does not place"
+        )
+    anchor = PromptAnchor(
+        node=node,
+        index=int(index),
+        capture=capture,
+        token_ids=token_ids,
+        channel_start=int(start),
+        channel_offset=0 if in_thinking else len(thinking),
+        thinking_rows=len(thinking),
+    )
+    if produced and anchor.position < 1:
+        raise InvalidNodeOperationError(
+            f"{label}: the token at raw_index {index} of {node_id!r} opens the "
+            f"prompt, so no position produced it"
+        )
+    return anchor
 
 
 @dataclass(frozen=True)
@@ -448,6 +558,7 @@ def begin_generation_turn(
 
 __all__ = [
     "ForcedTurn",
+    "PromptAnchor",
     "TokenAnchor",
     "append_turn",
     "begin_generation_turn",
@@ -455,5 +566,6 @@ __all__ = [
     "check_user_send_target",
     "plan_fork",
     "plan_prefill",
+    "resolve_prompt_anchor",
     "resolve_token_anchor",
 ]

@@ -4,9 +4,9 @@
   import { mergeDraftSchema } from "../lib/interfaceSchemas";
   import { ToolError } from "../lib/webmcp/types";
 
-  import FluentIcon from "../lib/ui/FluentIcon.svelte";
   import Select from "../lib/Select.svelte";
-  import DrawerCloseButton from "../lib/ui/DrawerCloseButton.svelte";
+  import { fadeIn, Icon, IconButton, MorphText } from "@stdlogits/ledger";
+  import "./manifold/form.css";
   // ManifoldMergeDrawer — discover-mode node-union merge.
   //
   // Unions the *node corpora* of two or more discover-mode manifolds and
@@ -22,12 +22,16 @@
   import { apiManifolds, describeError } from "../lib/runtime/services";
   import {
     closeDrawer,
+    openDrawer,
     steerRack,
     refreshManifoldList,
   } from "../lib/stores.svelte";
   import { dismissToast, pushToast } from "../lib/stores/toasts.svelte";
   import type { ManifoldInfo } from "../lib/types";
   import { isDiscoverFit } from "../lib/manifolds/fitKind";
+
+  let { params }: { params?: unknown } = $props();
+  const embedded = $derived((params as { embedded?: unknown } | null)?.embedded === true);
 
   function rowKey(m: ManifoldInfo): string {
     return `${m.namespace}/${m.name}`;
@@ -128,264 +132,103 @@
   }));
 </script>
 
-<section class="drawer-shell" aria-label="Combine response controls">
-  <header class="header">
-    <h2 class="title">Combine response controls</h2>
-    <DrawerCloseButton onclick={closeDrawer} />
-  </header>
+<section class="mf-tool" class:dialog={!embedded} aria-label="Combine response controls">
+  {#if !embedded}
+    <header class="mf-head">
+      <h2 class="dw-title">Combine</h2>
+      <IconButton icon="close" label="Close" onclick={closeDrawer} />
+    </header>
+  {/if}
 
-  <div class="body">
-    {#if discoverManifolds.length < 2}
-      <p class="muted">
-        Create or download at least two learned response controls first.
-      </p>
-    {:else}
-      <form class="form" onsubmit={onSubmit}>
-        <fieldset class="sources">
-          <legend>Response controls <span class="optional">(choose at least two)</span></legend>
-          <ul class="source-list" role="list">
-            {#each discoverManifolds as m (rowKey(m))}
-              {@const key = rowKey(m)}
-              <li class="source">
-                <label class="source-label">
-                  <input
-                    type="checkbox"
-                    checked={selected.has(key)}
-                    onchange={() => toggleSource(key)}
-                    disabled={merging}
-                  />
-                  <span class="row-name">{key}</span>
-                  <span class="row-sub">
-                    {m.domain_label} · {m.node_count} nodes ·
-                    {m.fit_mode}
-                  </span>
-                </label>
-              </li>
-            {/each}
-          </ul>
-        </fieldset>
+  {#if discoverManifolds.length < 2}
+    <div class="dw-empty">
+      <p>Combining needs two or more learned manifolds.</p>
+      <button type="button" class="dw-quiet" onclick={() => openDrawer("manifold_builder")}>Build one</button>
+    </div>
+  {:else}
+    <form class="mb-form" onsubmit={onSubmit}>
+      <section class="step" aria-labelledby="merge-sources-title">
+        <div class="mf-sec-head">
+          <h3 id="merge-sources-title" class="step-title"><span class="n">1</span>Sources</h3>
+          <span class="meta"><MorphText text={`${selected.size} of ${discoverManifolds.length}`} /></span>
+        </div>
+        <ul class="mf-rows" role="list">
+          {#each discoverManifolds as m, i (rowKey(m))}
+            {@const key = rowKey(m)}
+            <li class="rise" style:--i={i}>
+              <label class="mf-row">
+                <input
+                  class="sr-only"
+                  type="checkbox"
+                  checked={selected.has(key)}
+                  onchange={() => toggleSource(key)}
+                  disabled={merging}
+                />
+                <span class="mf-id">
+                  <span class="mf-name">{key}</span>
+                  <span class="meta">{m.domain_label} · {m.node_count} {m.node_count === 1 ? "node" : "nodes"} · {m.fit_mode}</span>
+                </span>
+                <span class="tick" aria-hidden="true">{#if selected.has(key)}<span class="glyph" in:fadeIn><Icon name="check" /></span>{/if}</span>
+              </label>
+            </li>
+          {/each}
+        </ul>
+      </section>
 
-        <label class="field">
-          <span class="label">New control name</span>
-          <input
-            type="text"
-            placeholder="combined"
-            aria-label="New combined response control name"
-            bind:value={targetName}
-            disabled={merging}
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </label>
-
-        <label class="field">
-          <span class="label">Layout method</span>
-          <Select
-            ariaLabel="Combined response control layout method"
-            bind:value={fitMode}
-            disabled={merging || selected.size === 0}
-            options={[
-              ...(sourceModes.length <= 1 ? [{ value: "", label: `Match the source (${sourceModes[0] ?? "automatic"})` }] : []),
-              { value: "pca", label: "pca" }, { value: "spectral", label: "spectral" },
-            ]}
-          />
-        </label>
+      <section class="step" aria-label="Result">
+        <h3 class="step-title"><span class="n">2</span>Result</h3>
+        <div class="grid2">
+          <label class="field">
+            <span class="label">Name</span>
+            <input
+              type="text"
+              class="input"
+              placeholder="combined"
+              aria-label="New combined response control name"
+              bind:value={targetName}
+              disabled={merging}
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+          <label class="field">
+            <span class="label">Layout</span>
+            <Select
+              ariaLabel="Combined response control layout method"
+              bind:value={fitMode}
+              disabled={merging || selected.size === 0}
+              options={[
+                ...(sourceModes.length <= 1 ? [{ value: "", label: `Match the sources (${sourceModes[0] ?? "automatic"})` }] : []),
+                { value: "pca", label: "PCA" }, { value: "spectral", label: "Spectral" },
+              ]}
+            />
+          </label>
+        </div>
         {#if sourceModes.length > 1}
-          <p class="warn">
-            The selected controls use different layout methods: {sourceModes.join(", ")}.
-          </p>
+          <p class="dim-note">The sources use different layouts ({sourceModes.join(", ")}): choose one.</p>
         {/if}
+      </section>
 
-        <footer class="foot">
-          <button type="button" class="secondary" onclick={closeDrawer}
-            >Cancel</button>
-          <button
-            type="submit"
-            class="primary"
-            disabled={!canSubmit}
-            {...{ "aria-description": (selected.size < 2
-                ? "Choose at least two response controls"
-              : !targetName.trim()
-                ? "Enter a name for the combined control"
-                : "Combine controls") }}
-          >
-            {#if merging}
-              <FluentIcon name="refresh" spin /> Combining…
-            {:else}
-              Combine {selected.size} controls
-            {/if}
-          </button>
-        </footer>
-      </form>
-    {/if}
-  </div>
+      <div class="submit">
+        <button
+          type="submit"
+          class="dw-button"
+          disabled={!canSubmit}
+          {...{ "aria-description": (selected.size < 2
+              ? "Choose at least two response controls"
+            : !targetName.trim()
+              ? "Enter a name for the combined control"
+              : "Combine controls") }}
+        >
+          <MorphText text={merging ? "Combining…" : `Combine ${selected.size}`} />
+        </button>
+        {#if !embedded}<button type="button" class="dw-text" onclick={closeDrawer}>Cancel</button>{/if}
+      </div>
+    </form>
+  {/if}
 </section>
 
 <style>
-  .drawer-shell {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    min-height: 0;
-    color: var(--fg);
-    font-family: var(--font-ui);
-    font-size: var(--text);
-  }
-  .header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-  }
-  .title {
-    color: var(--accent);
-    letter-spacing: 0;
-    font-size: var(--text-md);
-    font-weight: var(--weight-medium);
-  }
-  .body {
-    flex: 1 1 auto;
-    overflow-y: auto;
-    padding: var(--drawer-gutter-block) var(--drawer-gutter-inline);
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    min-height: 0;
-  }
-  .muted {
-    margin: 0;
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    line-height: 1.4;
-  }
-  .form {
-    flex: 1 1 auto;
-    min-height: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-  }
-  .sources {
-    border-radius: var(--radius);
-    background: var(--surface-sheen), var(--bg-deep);
-    padding: var(--surface-padding);
-    margin: 0;
-  }
-  .sources legend {
-    color: var(--fg-muted);
-    font-size: var(--text-sm);
-    padding: 0 var(--space-2);
-  }
-  .optional {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  .source-list {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-1);
-    max-height: 18em;
-    overflow-y: auto;
-  }
-  .source-label {
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    cursor: pointer;
-    padding: var(--space-2) var(--space-2);
-    border-radius: var(--radius);
-    font-size: var(--text-sm);
-  }
-  .source-label:hover { background: var(--bg-elev); }
-  .row-name {
-    color: var(--fg-strong);
-    font-family: var(--font-mono);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .row-sub {
-    color: var(--fg-muted);
-    font-size: var(--text-xs);
-  }
-  /* Stacked form fields — label above control. */
-  .field {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-  }
-  .label {
-    color: var(--fg-dim);
-    font-size: var(--text-sm);
-    text-transform: lowercase;
-    letter-spacing: 0;
-    padding: 0;
-  }
-  input[type="text"] {
-    background: var(--input-well);
-    color: var(--fg);
-    border: 1px solid transparent;
-    border-radius: var(--radius);
-    padding: var(--space-3) var(--space-4);
-    font-family: var(--font-mono);
-    font-size: var(--text);
-    box-sizing: border-box;
-    width: 100%;
-  }
-  input[type="text"]:focus {
-    outline: 1px solid var(--pillar-manifold);
-    border-color: var(--pillar-manifold);
-  }
-  .warn {
-    margin: 0;
-    color: var(--accent-yellow);
-    font-size: var(--text-xs);
-  }
-
-  /* Footer: cancel (secondary) + primary submit pinned to the bottom.
-   * Only the primary accent goes purple. */
-  .foot {
-    padding-top: var(--space-3);
-    margin-top: auto;
-    display: flex;
-    justify-content: flex-end;
-    gap: var(--space-3);
-  }
-  .primary {
-    background: var(--pillar-manifold);
-    color: var(--text-on-accent);
-    border: 1px solid transparent;
-    padding: var(--space-2) var(--space-5);
-    border-radius: var(--radius);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: var(--space-3);
-  }
-  .primary:hover:not(:disabled) {
-    filter: brightness(1.1);
-  }
-  .primary:disabled {
-    opacity: var(--disabled-opacity);
-    cursor: not-allowed;
-  }
-  .secondary {
-    background: var(--glass);
-    border: 1px solid transparent;
-    color: var(--fg-dim);
-    padding: var(--space-2) var(--space-5);
-    border-radius: var(--radius);
-    font-family: var(--font-mono);
-    font-size: var(--text-sm);
-    cursor: pointer;
-  }
-  .secondary:hover {
-    background: var(--glass-strong);
-    color: var(--fg);
-  }
+  .tick { display: grid; place-items: center; width: 24px; height: 24px; color: var(--ink); }
+  .glyph { display: grid; }
 </style>

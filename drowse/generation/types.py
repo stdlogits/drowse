@@ -107,14 +107,18 @@ class GenerationTransaction:
     ``steering_cm`` is whatever internal steering scope the body entered and
     has not popped itself; the transaction pops the remainder on the way out.
     ``failed`` records that the body is unwinding, which decides whether a
-    teardown ``Exception`` may mask the original failure.
+    teardown ``Exception`` may mask the original failure.  ``provisional_node``
+    is the loom node the body opened for this reply until finalize records it:
+    a failure that leaves it without a token removes it, so an engine error
+    never leaves an empty turn the next message would thread under.
     """
 
-    __slots__ = ("failed", "steering_cm")
+    __slots__ = ("failed", "provisional_node", "steering_cm")
 
     def __init__(self) -> None:
         self.steering_cm: Any = None
         self.failed: bool = False
+        self.provisional_node: str | None = None
 
 
 __all__ = [

@@ -15,6 +15,7 @@ dispatches over it instead of hand-writing a branch per family.
 
 from __future__ import annotations
 
+import hashlib
 import threading
 from collections.abc import Callable, Mapping
 from typing import Any, TYPE_CHECKING
@@ -155,6 +156,11 @@ class GeometryInstrument:
         # ``detach``'s reject-during-generation contract (the exclusive
         # section), not by this lock.
         self.state_lock = threading.RLock()
+        # Each attached probe's transcript digest, computed where the probe
+        # is attached (inside the exclusive section: the digest reads the
+        # device-resident manifold), so the lock-free transcript export
+        # only looks it up.
+        self._digests: dict[str, str] = {}
         # The current per-generation run (idle passthrough until bind()).
         self.current_run = GeometryRun(
             self, InstrumentBinding(family=self.family),
@@ -258,7 +264,15 @@ class GeometryInstrument:
             # those walks' callers hold).
             with self.state_lock:
                 self._monitor.add_probe(name, manifold, top_n=top_n)
+                self._record_digest(name, manifold)
         return name
+
+    def attach_loaded(self, name: str, manifold: Any) -> None:
+        """Attach an already-loaded manifold (the session's bootstrap roster,
+        built before any other thread can reach the model)."""
+        with self.state_lock:
+            self._monitor.add_probe(name, manifold)
+            self._record_digest(name, manifold)
 
     def detach(self, name: str) -> None:
         """Detach under the exclusive section, like ``attach``.
@@ -279,6 +293,7 @@ class GeometryInstrument:
         ):
             with self.state_lock:
                 self._monitor.remove_probe(name)
+                self._digests.pop(name, None)
 
     def refresh_swapped(self, swaps: Mapping[int, Any]) -> list[str]:
         """Move attached probes off replaced manifold objects.
@@ -299,8 +314,10 @@ class GeometryInstrument:
                 replacement = swaps[id(attached.manifold)]
                 top_n = attached.top_n
                 monitor.remove_probe(name)
+                self._digests.pop(name, None)
                 if replacement is not None:
                     monitor.add_probe(name, replacement, top_n=top_n)
+                    self._record_digest(name, replacement)
                 touched.append(name)
         return touched
 
@@ -316,6 +333,7 @@ class GeometryInstrument:
         with self.state_lock:
             for name in list(self._monitor.probe_names):
                 self._monitor.remove_probe(name)
+            self._digests.clear()
             self._monitor.set_whitener(None)
 
     def try_detach(self, name: str) -> bool:
@@ -501,7 +519,10 @@ class GeometryInstrument:
         full roster at the producing position through
         :meth:`Monitor.score_single_token`, so a reading has the shape of the
         live per-token read there (coords / fraction / nearest / residual /
-        assignment / membership and the per-layer traces).  It reads
+        assignment / membership and the per-layer traces), each reading
+        with its per-layer whitened coordinates (``subspace_coords_per_layer``:
+        where the token sits in the probe's plotted geometry, the live trail's
+        frame) whether or not a generation streamed them.  It reads
         generations that ran aggregate-only and probes attached after the
         fact; ``apply_steering=False`` reads the unsteered counterfactual.
         Curved probes score with a cold foot solve: warm-start is the
@@ -547,7 +568,8 @@ class GeometryInstrument:
 
         def read(hidden: dict[int, torch.Tensor]) -> dict[str, Any]:
             monitor.enable_curved_warm(False)
-            return monitor.score_single_token(hidden)
+            with monitor.subspace_coords_emitted():
+                return monitor.score_single_token(hidden)
 
         token, readings = self._replay(
             node_id, raw_index, layers=roster_layers, read=read,
@@ -568,16 +590,40 @@ class GeometryInstrument:
         return {"measurements": measurements}
 
     def probe_hash(self, name: str) -> str | None:
-        """The probe's digest (:func:`~drowse.readout.monitor_attach.probe_digest`),
-        taken from the host copy at attach.  Transcript exports ask for it
-        without the GPU lock, and walking the resident tensors there would
-        copy off the MPS device beside another thread's model op, which
-        aborts the process.  The manifold is immutable after attach
-        (promotion swaps in a new object and re-attaches), so the attach-time
-        digest stays current."""
+        """The transcript digest of probe ``name`` (``None`` when it is not
+        attached), as recorded when it was attached: a lookup, never device
+        work, so the lock-free transcript export cannot race a model op."""
         with self.state_lock:
-            probe = self._monitor.attached_probes().get(name)
-        return probe.digest if probe is not None else None
+            return self._digests.get(name)
+
+    def _record_digest(self, name: str, manifold: Any) -> None:
+        """Record the digest of probe ``name`` reading ``manifold``: sha256 of the probe's baked tensor bytes
+        (deterministic across machines/devices; fp32-normalized).  A 2-node
+        concept hashes its folded baked-direction view for continuity with
+        the pre-coords scalar monitor's drift check; a multi-node / curved
+        probe hashes the per-layer subspace geometry directly.  Called under
+        the state lock, by the roster writes (which run in the exclusive
+        section, or before the session is shared)."""
+        from drowse.geometry.fold import folded_directions
+
+        h = hashlib.sha256()
+        try:
+            profile = folded_directions(manifold)
+            per_layer: dict[int, list[torch.Tensor]] = {
+                L: [profile[L]] for L in profile
+            }
+        except ValueError:
+            per_layer = {}
+            for layer_idx, sub in manifold.layers.items():
+                tensors = [sub.mean, sub.basis]
+                if sub.node_coords is not None:
+                    tensors.append(sub.node_coords)
+                per_layer[layer_idx] = tensors
+        for layer_idx in sorted(per_layer.keys()):
+            for tensor in per_layer[layer_idx]:
+                arr = tensor.detach().to("cpu").to(torch.float32).contiguous()
+                h.update(arr.numpy().tobytes())
+        self._digests[name] = h.hexdigest()
 
 
 __all__ = ["GeometryInstrument"]

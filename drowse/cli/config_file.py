@@ -165,7 +165,7 @@ def _vectors(value: Any) -> Optional[str]:
         raise ConfigFileError(
             f"must be a steering expression string (got "
             f"{type(value).__name__}). Example: "
-            f'`vectors: "0.5 honest + 0.3 warm"`.'
+            f'`vectors: "-0.5 deceptive + 0.3 warm"`.'
         )
     text = value.strip()
     if not text:

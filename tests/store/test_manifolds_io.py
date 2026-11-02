@@ -3746,6 +3746,109 @@ def test_bundled_manifold_names_skips_incomplete_package_data(
     assert bundled.bundled_manifold_names() == ["complete"]
 
 
+def _planted_default(home: Path, name: str, source: str) -> Path:
+    """A materialized-looking ``default/<name>`` with a fake fitted pair."""
+    target = home / "manifolds" / "default" / name
+    (target / "nodes").mkdir(parents=True)
+    (target / "manifold.json").write_text(json.dumps({
+        "format_version": MANIFOLD_FORMAT_VERSION,
+        "name": name, "description": "old", "fit_mode": "pca",
+        "hyperparams": {},
+        "nodes": [
+            {"label": "honest", "role": None, "kind": "abstract"},
+            {"label": "deceptive", "role": None, "kind": "abstract"},
+        ],
+        "files": {}, "tags": ["epistemic"], "source": source,
+        "template_ref": None,
+    }))
+    (target / "nodes" / "00_honest.json").write_text('["a"]')
+    (target / "nodes" / "01_deceptive.json").write_text('["b"]')
+    _fake_fit(target)
+    return target
+
+
+def test_bootstrap_removes_bundled_manifold_that_no_longer_ships(
+    isolated_home: Path,
+) -> None:
+    """6.0 recast honest.deceptive as the one-node ``deceptive``: a home that
+    materialized the old axis must lose it, or it still resolves as a bare
+    atom and still joins the epistemic probe roster."""
+    from drowse.store.bundled import (
+        bundled_manifold_names,
+        materialize_bundled_artifacts,
+    )
+    from drowse.store.bundled_probes import load_default_manifolds
+
+    assert "honest.deceptive" not in bundled_manifold_names()
+    assert "deceptive" in bundled_manifold_names()
+    retired = _planted_default(isolated_home, "honest.deceptive", "bundled")
+
+    with pytest.warns(UserWarning, match="default/honest.deceptive: it no longer ships"):
+        materialize_bundled_artifacts()
+
+    assert not retired.exists()
+    roster = load_default_manifolds()
+    assert "honest.deceptive" not in roster["epistemic"]
+    assert "deceptive" in roster["epistemic"]
+    assert {"refusing", "manipulative"} <= set(roster["alignment"])
+
+
+def test_bootstrap_keeps_non_bundled_folders_under_default(
+    isolated_home: Path,
+) -> None:
+    """Only a ``source: "bundled"`` copy is retired; anything else stays."""
+    from drowse.store.bundled import materialize_bundled_artifacts
+
+    kept = _planted_default(isolated_home, "mine.theirs", "local")
+    materialize_bundled_artifacts()
+    assert (kept / "manifold.json").is_file()
+
+
+def test_retire_survives_another_process_retiring_the_same_folder(
+    isolated_home: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: two drowse processes materializing one home both scan the
+    retired folder; the one that loses the race to the lock found the
+    manifest gone and raised ManifoldNotFoundError out of startup."""
+    import warnings as warnings_mod
+
+    from drowse.store import bundled, manifold_lifecycle
+
+    retired = _planted_default(isolated_home, "honest.deceptive", "bundled")
+    real = manifold_lifecycle.remove_manifold_folder
+    calls: list[str] = []
+
+    def racing(namespace: str, name: str) -> dict[str, Any]:
+        if not calls:
+            calls.append(name)
+            real(namespace, name)  # the other process wins the race
+        return real(namespace, name)
+
+    monkeypatch.setattr(manifold_lifecycle, "remove_manifold_folder", racing)
+    with warnings_mod.catch_warnings(record=True) as caught:
+        warnings_mod.simplefilter("always")
+        bundled._retire_unshipped_manifolds()
+    assert calls == ["honest.deceptive"]
+    assert not retired.exists()
+    assert not [w for w in caught if "no longer ships" in str(w.message)], (
+        "the process that retired it says so; this one has nothing to report"
+    )
+
+
+def test_retire_keeps_copy_of_incomplete_package_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A package folder mid-regen still counts as shipped."""
+    from drowse.store import bundled
+
+    root = tmp_path / "bundled"
+    _bundled_axis_package(root, monkeypatch)
+    (root / "partial").mkdir()
+    target = _planted_default(tmp_path, "partial", "bundled")
+    bundled._retire_unshipped_manifolds()
+    assert (target / "manifold.json").is_file()
+
+
 # =================================================== baked (corpus-less) ===
 #
 # A baked manifold is a pre-fitted, corpus-less artifact (merge output /
@@ -4099,3 +4202,19 @@ def test_discovery_ignores_staging_and_misnamed_folders(
     shutil.copytree(folder, folder.with_name("foo.copy"))
 
     assert [(ns, mf.name) for ns, mf in iter_manifold_folders()] == [("local", "foo")]
+
+
+@pytest.mark.parametrize("spec, label", [
+    ({"type": "box", "axes": [{"name": "month", "periodic": True, "period": 12.0, "lo": 0.0, "hi": 12.0}]}, "ring(12)"),
+    ({"type": "box", "axes": [{"name": "phase", "periodic": True, "period": 6.5, "lo": 0.0, "hi": 6.5}]}, "ring(6.5)"),
+    ({"type": "box", "axes": [{"name": "x", "lo": -1.0, "hi": 1.0}]}, "box(1d)"),
+    ({"type": "box", "axes": [{"name": "a", "periodic": True, "period": 1.0}, {"name": "b", "periodic": True, "period": 1.0}]}, "torus(2d)"),
+    ({"type": "box", "axes": [{"name": "a", "periodic": True, "period": 1.0}, {"name": "b", "lo": 0.0, "hi": 1.0}]}, "box(2d, 1 periodic)"),
+    ({"type": "sphere", "dim": 2}, "sphere(2d)"),
+])
+def test_domain_label_names_periodic_axes(spec: dict[str, Any], label: str) -> None:
+    """Wave 3 finding 26: the picker labelled the months ring ``box(1d)``,
+    which hid that it wraps around."""
+    from drowse.store.manifold_schema import domain_label
+
+    assert domain_label(spec) == label

@@ -8,8 +8,9 @@ label.
 
 :func:`compose_call` is the single place a generation's effective recipe is
 assembled from its tiers — the cast member (weakest), the call's own kwargs,
-the regen anchor's recipe, and a regen modifier (strongest).  Sampling merges
-field by field at every tier; see the function for the two exceptions
+the regen anchor's recipe, and a regen modifier (strongest) — except that the
+sampling a call sets outranks the anchor's.  Sampling merges field by field at
+every tier; see the function for the rule and its two exceptions
 (observation knobs and the seed).
 """
 
@@ -27,7 +28,7 @@ from drowse.generation.sampling import (
 )
 from drowse.loom.errors import LoomTreeError, RecipeOverrideError, require_fields
 
-# The persisted recipe shape (tree_format 2 / transcript v2).  ``seed`` is a
+# The persisted recipe shape (tree_format 2 / transcript v3).  ``seed`` is a
 # top-level key on disk and on the wire; in memory it is ``sampling.seed``.
 _RECIPE_FIELDS = frozenset({
     "steering", "sampling", "thinking", "seed", "probes", "probe_hashes",
@@ -133,7 +134,7 @@ class Recipe:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        """The persisted shape (tree_format 2, transcript v2, the wire).
+        """The persisted shape (tree_format 2, transcript v3, the wire).
 
         Any sampling block serializes in full, and the top-level ``seed``
         mirrors ``sampling.seed``.  Only a :attr:`seed_only` recipe writes
@@ -239,7 +240,8 @@ class Recipe:
         empty (unsteered) expression, which composes as the no-op.
         """
         from drowse.steering.grammar import (
-            AblationTerm, ManifoldTerm, ProjectedTerm, parse_expr, format_expr,
+            AblationTerm, ManifoldTerm, ProjectedTerm, UnitAblationTerm,
+            format_expr, parse_expr,
         )
         from drowse.steering.terms import Steering
 
@@ -248,13 +250,14 @@ class Recipe:
         parsed = parse_expr(self.steering)
         flipped: dict[str, Any] = {}
         for name, val in parsed.alphas.items():
-            if isinstance(val, (ProjectedTerm, AblationTerm)):
+            if isinstance(val, (ProjectedTerm, AblationTerm, UnitAblationTerm)):
                 flipped[name] = replace(val, coeff=-val.coeff)
             elif isinstance(val, ManifoldTerm):
                 # Flip the directional ``along`` (the representative coeff);
                 # ``onto`` is a collapse fraction in [0, 1], not a signed
-                # push, so it carries through unchanged.
-                flipped[name] = replace(val, along=-val.along)
+                # push, so it carries through unchanged.  A zero ``along``
+                # stays +0.0 rather than becoming a negative zero.
+                flipped[name] = replace(val, along=-val.along or 0.0)
             elif isinstance(val, tuple):
                 flipped[name] = (-float(val[0]), val[1])
             else:
@@ -342,6 +345,17 @@ def compose_call(
     a field at its default is unset, so a tier cannot reset a field to its
     default).
 
+    **Sampling** ranks the call above the anchor: cast < anchor < call <
+    modifier.  A sampling field the call sets (a value, not its unset
+    default) is what this generation asked for, and wins over the turn it
+    anchors on; a field the call leaves unset comes from the anchor.  So a
+    regenerate that sends no sampling of its own reproduces the anchor
+    exactly ("again, as it was", with only what the modifier changes), and a
+    variation anchored on an earlier reply runs at the call's ``max_tokens``.
+    The anchor's steering, thinking and system prompt still outrank the
+    call's: they are what a modifier (``inverted``, ``unsteered``, ``cool`` …)
+    is defined against.
+
     Two sampling fields break the tier order:
 
     - **Observation knobs** (:data:`CALL_ONLY_SAMPLING_FIELDS` —
@@ -357,7 +371,6 @@ def compose_call(
     out_steering = steering
     out_thinking = thinking
     out_prompt = system_prompt
-    out_sampling = sampling
     if cast is not None:
         if out_steering is None:
             out_steering = cast.steering
@@ -365,7 +378,6 @@ def compose_call(
             out_thinking = cast.thinking
         if isinstance(out_prompt, InheritSystemPrompt):
             out_prompt = cast.system_prompt
-        out_sampling = _merge_sampling(cast.sampling, out_sampling)
     for layer in (anchor, modifier):
         if layer is None:
             continue
@@ -375,7 +387,10 @@ def compose_call(
             out_thinking = layer.thinking
         if not isinstance(layer.system_prompt, InheritSystemPrompt):
             out_prompt = layer.system_prompt
-        out_sampling = _merge_sampling(out_sampling, layer.sampling)
+    out_sampling: SamplingConfig | None = None
+    for tier in (cast, anchor, sampling, modifier):
+        tier_sampling = tier.sampling if isinstance(tier, Recipe) else tier
+        out_sampling = _merge_sampling(out_sampling, tier_sampling)
 
     if out_sampling is not None:
         call_sampling = sampling if sampling is not None else _DEFAULT_SAMPLING

@@ -6,8 +6,10 @@ import type {
   RecipeJSON,
   RecipeSamplingJSON,
 } from "./types";
+import { FINISH_REASONS } from "./types";
 import { migrateLegacyDatabase } from "./brandMigration";
 import { isRoleSlug } from "./roleSlug";
+import { aggregateMeasurementsProblem, promptCaptureProblem, tokenRowProblem, type CapturedNodeFields } from "./tokenRows";
 
 const DATABASE_NAME = "drowse-hosted-sessions";
 const DATABASE_VERSION = 2;
@@ -608,6 +610,7 @@ function validateTree(value: unknown): asserts value is LoomTreeJSON {
 function validateNode(value: unknown): asserts value is LoomNodeJSON {
   assertPlainObject(value, "Loom node");
   assertExactKeys(value, [
+    "aggregate_measurements",
     "aggregate_readings",
     "applied_steering",
     "created_at",
@@ -619,6 +622,7 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
     "mean_surprise",
     "notes",
     "parent_id",
+    "prompt_capture",
     "raw_token_ids",
     "recipe",
     "role",
@@ -638,8 +642,21 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
   validateNullableRoleSlug(value.role_label, "node role label");
   validateNullableString(value.thinking_text, "node thinking text", 4 * 1024 * 1024);
   validateFiniteMap(value.aggregate_readings, "node aggregate readings", 4_096);
+  const aggregateProblem = aggregateMeasurementsProblem(value.aggregate_measurements);
+  if (aggregateProblem !== null) throw invalid(`Node aggregate measurements: ${aggregateProblem}`);
+  if (value.aggregate_measurements !== null) {
+    assertJsonValue(value.aggregate_measurements, {
+      maxDepth: 24,
+      maxValues: 131_072,
+      maxStringLength: 64 * 1024,
+      maxArrayLength: 4_096,
+    });
+  }
   validateNullableString(value.applied_steering, "node steering expression", 64 * 1024);
-  validateNullableString(value.finish_reason, "node finish reason", 1_024);
+  // A closed set, like the loom reader's: ``cancelled`` marks a cut reply.
+  if (value.finish_reason !== null && !(FINISH_REASONS as readonly unknown[]).includes(value.finish_reason)) {
+    throw invalid("Node finish reason is invalid");
+  }
   if (typeof value.starred !== "boolean") throw invalid("Node starred flag is invalid");
   validateString(value.notes, "node notes", 256 * 1024, true);
   validateTimestamp(value.created_at, "node creation timestamp");
@@ -657,6 +674,14 @@ function validateNode(value: unknown): asserts value is LoomNodeJSON {
     for (const tokenId of value.raw_token_ids) {
       validateNonNegativeInteger(tokenId, "raw token id");
     }
+  }
+  // An authored node's prompt rows and their replay anchor agree (the loom reader's rule).
+  const captureProblem = promptCaptureProblem(value as unknown as CapturedNodeFields);
+  if (captureProblem !== null) throw invalid(`Node prompt capture: ${captureProblem}`);
+  const capture = value.prompt_capture as Record<string, unknown> | null;
+  if (capture !== null) {
+    validateNullableString(capture.steering, "prompt capture steering", 64 * 1024);
+    validateNullableString(capture.system_prompt, "prompt capture system prompt", 4 * 1024 * 1024);
   }
 }
 
@@ -786,16 +811,8 @@ function validateTokenRows(value: unknown, label: string): void {
     if (row.raw_index !== undefined && row.raw_index !== null) {
       validateNonNegativeInteger(row.raw_index, "raw token index");
     }
-    if (row.probes !== undefined) validateFiniteMap(row.probes, "token probes", 4_096);
-    if (row.per_layer_scores !== undefined) {
-      assertPlainObject(row.per_layer_scores, "token per-layer scores");
-      if (Object.keys(row.per_layer_scores).length > 1_024) {
-        throw invalid("Token per-layer score map is too large");
-      }
-      for (const scores of Object.values(row.per_layer_scores)) {
-        validateFiniteMap(scores, "token layer scores", 4_096);
-      }
-    }
+    const problem = tokenRowProblem(row);
+    if (problem !== null) throw invalid(`Loom token row: ${problem}`);
     if (row.top_alts !== undefined) {
       if (!Array.isArray(row.top_alts) || row.top_alts.length > MAX_TOKEN_ROWS) {
         throw invalid("Token alternatives are invalid");
