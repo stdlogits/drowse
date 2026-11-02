@@ -75,9 +75,14 @@ class _Engine:
                         if sampling is not None and not kwargs.get("raw") else None
                     ),
                 )
+            elif isinstance(input, list):
+                # A messages list is recorded from the root, as
+                # ``begin_generation_turn`` does (user turns are enough here).
+                anchor_id = self.tree.root_id
+                for message in input:
+                    anchor_id = self.tree.add_user_turn(message["content"], parent_id=anchor_id)
             else:
-                # ``None`` (continue the leaf) or a messages list anchors
-                # directly on the parent, as ``_start_loom_assistant`` does.
+                # ``None`` (continue the leaf) anchors directly on the parent.
                 anchor_id = parent_id or self.tree.active_node_id
             node_id = self.tree.begin_assistant(
                 anchor_id, recipe=Recipe(steering=str(steering) if steering else None),
@@ -322,6 +327,19 @@ class TestRunnerSweep:
         seeds = [c["sampling"].seed for c in engine.calls]
         assert seeds == derive_seed_schedule(42, 3)
 
+    def test_stateful_message_list_rows_take_no_parent(self) -> None:
+        # A message list is recorded from the root, so its rows carry no
+        # parent (the engine refuses one) and land under its recorded turns
+        # (tests/session/test_engine.py).
+        runner, engine = _runner()
+        tree = engine.tree
+        tree.add_user_turn("start")
+        runset = runner.sweep([{"role": "user", "content": "hi"}], {"a": [0.0, 0.3]}, stateless=False)
+        assert [c["parent_node_id"] for c in engine.calls] == [None, None]
+        hi = [n for n in tree.nodes.values() if n.text == "hi"]
+        assert len(hi) == 1 and hi[0].parent_id == tree.root_id
+        assert tree.children_of[hi[0].id] == list(runset.node_ids)
+
     @pytest.mark.parametrize("sweep", [{}, {"a": []}])
     def test_rejects_empty_sweeps(self, sweep: dict[str, list[float]]) -> None:
         runner, _engine = _runner()
@@ -352,14 +370,13 @@ class TestRunnerSweep:
         assert engine.tree.nodes[anchor_id].role_label == "captain"
         assert engine.tree.children_of[anchor_id] == list(runset.node_ids)
 
-    @pytest.mark.parametrize("prompt", [None, [{"role": "user", "content": "hi"}]])
-    def test_stateful_non_string_sweep_lands_siblings(self, prompt: Any) -> None:
-        # Regression: only a string prompt got a shared anchor; ``None`` or a
-        # messages list anchored each row on the previous row's reply.
+    def test_stateful_continuing_sweep_lands_siblings(self) -> None:
+        # Regression: only a string prompt got a shared anchor; ``None``
+        # anchored each row on the previous row's reply.
         runner, engine = _runner()
         tree = engine.tree
         start = tree.add_user_turn("start")
-        runset = runner.sweep(prompt, {"x": [0.0, 0.2, 0.4]}, stateless=False)
+        runset = runner.sweep(None, {"x": [0.0, 0.2, 0.4]}, stateless=False)
         assert [c["parent_node_id"] for c in engine.calls] == [start] * 3
         assert tree.children_of[start] == list(runset.node_ids)
 

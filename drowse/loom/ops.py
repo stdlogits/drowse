@@ -18,7 +18,9 @@ grammar on top of it:
 - the forced-prefix plans behind a token fork and an answer prefill
   (:func:`plan_fork`, :func:`plan_prefill`), which the session executes;
 - opening the turn a stateful generation streams into
-  (:func:`begin_generation_turn`), which also reserves its subtree.
+  (:func:`begin_generation_turn`), which also reserves its subtree, and
+  recording the conversation a stateful message list answers
+  (:func:`split_message_list`).
 """
 
 from __future__ import annotations
@@ -504,6 +506,60 @@ def plan_prefill(
     )
 
 
+def split_message_list(
+    messages: list[Any],
+    *,
+    system_prompt: str | None | InheritSystemPrompt,
+    parent_node_id: str | None,
+    raw: bool,
+) -> tuple[list[dict[str, Any]], str | None | InheritSystemPrompt]:
+    """A stateful message list's turns and the call's system prompt.
+
+    A message list is a whole conversation, and a stateful generation records
+    the one it answers, so the reply's node replays the prompt it was
+    generated from: :func:`begin_generation_turn` commits the turns from the
+    root and the reply renders from them.  A leading ``system`` message is the
+    call's system prompt (the reply's recipe keeps it); passing a different
+    one as well is ambiguous.  Every other message is a ``user`` or
+    ``assistant`` turn with string ``content`` and optional ``label`` and
+    ``thinking``.  The list renders from the root, so ``parent_node_id`` does
+    not apply, and raw completion takes text, not messages.
+
+    Raises :class:`InvalidNodeOperationError` (HTTP 400).
+    """
+    if raw:
+        raise InvalidNodeOperationError(
+            "raw completion takes text, not a message list"
+        )
+    if parent_node_id is not None:
+        raise InvalidNodeOperationError(
+            "a message list is the whole conversation and is recorded from "
+            "the root; parent_node_id does not apply (send None or a string "
+            "to continue a node)"
+        )
+    turns = list(messages)
+    for message in turns:
+        if not isinstance(message, dict) or not isinstance(message.get("content"), str):
+            raise InvalidNodeOperationError(
+                "each message needs a role and string content"
+            )
+    if turns and turns[0].get("role") == "system":
+        system = turns.pop(0)["content"]
+        if system_prompt is not INHERIT_SYSTEM_PROMPT and system_prompt != system:
+            raise InvalidNodeOperationError(
+                "the system prompt is given twice: as the list's system "
+                "message and as system_prompt"
+            )
+        system_prompt = system
+    for message in turns:
+        if message.get("role") not in _SEATS:
+            raise InvalidNodeOperationError(
+                "a recorded message list holds one leading system message, "
+                f"then user and assistant turns; got role {message.get('role')!r}"
+            )
+    return turns, system_prompt
+
+
 def begin_generation_turn(
     tree: LoomTree,
     input: Any,
@@ -512,6 +568,8 @@ def begin_generation_turn(
     parent_node_id: str | None,
     sampling: SamplingConfig | None,
     recipe: Recipe,
+    tokenizer: Any = None,
+    grammar: "TurnGrammar | None" = None,
     gen_seat: str = "assistant",
     continuation_node_id: str | None = None,
 ) -> str:
@@ -520,10 +578,13 @@ def begin_generation_turn(
     A ``str`` input commits the new user turn first (under ``sampling``'s
     ``user_role`` label); in flat (``raw``) mode a non-empty span lands as
     its own node and an empty one just extends the parent, with no seating
-    check.  ``None`` or a message list anchors on the parent directly.  The
-    generated node takes ``gen_seat`` and that seat's label from
-    ``sampling``; ``continuation_node_id`` reuses an existing same-seat
-    message whose text the caller replays as the forced decode prefix.
+    check.  ``None`` anchors on the parent directly.  A message list (the
+    turns :func:`split_message_list` returns) is committed from the root
+    turn by turn through :func:`append_turn` (``tokenizer`` and ``grammar``
+    are its), and the reply hangs under its last turn.  The generated node
+    takes ``gen_seat`` and that seat's label from ``sampling``;
+    ``continuation_node_id`` reuses an existing same-seat message whose text
+    the caller replays as the forced decode prefix.
     """
     # Per-message labels ride this send's sampling box and are stamped at
     # creation, so a turn keeps its label regardless of later box changes.
@@ -543,6 +604,14 @@ def begin_generation_turn(
         anchor_id = tree.add_user_turn(
             input, parent_id=parent_node_id, role_label=user_role,
         )
+    elif isinstance(input, list):
+        anchor_id = tree.root_id
+        for message in input:
+            anchor_id = append_turn(
+                tree, tokenizer, grammar, anchor_id, message["content"],
+                seat=message["role"], role_label=message.get("label"),
+                thinking=message.get("thinking"),
+            )
     else:
         anchor_id = parent_node_id or tree.active_node_id
     tree.reserve(anchor_id)
@@ -568,4 +637,5 @@ __all__ = [
     "plan_prefill",
     "resolve_prompt_anchor",
     "resolve_token_anchor",
+    "split_message_list",
 ]

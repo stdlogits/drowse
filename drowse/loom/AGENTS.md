@@ -257,7 +257,12 @@ label unsteered.
   turn first (label from `sampling.user_role`); an assistant-seat send refuses
   a user parent even in scene mode (commit with `append_turn`, then generate
   from `None`). Flat mode lands a non-empty span as its own node and lets an
-  empty one extend the parent. `continuation_node_id` reuses a message.
+  empty one extend the parent. `continuation_node_id` reuses a message. A
+  message list is a whole conversation: `split_message_list` takes a leading
+  system message as the call's system prompt and refuses a `parent_node_id`,
+  raw mode and other roles, and the turns land from the root through
+  `append_turn`, the reply under the last; the engine then renders from those
+  turns, so the reply replays the prompt it answered.
 - `resolve_token_anchor` is the one `(node_id, raw_index)` validation, shared
   by forks and replay; `TokenAnchor` snapshots `raw_ids`.
 - `plan_fork` replays `raw_ids[:raw_index]`, forces `alt_token_id` or

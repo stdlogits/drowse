@@ -24,6 +24,7 @@ from drowse.generation.results import GenerationResult, TokenAlt, TokenEvent
 from drowse.generation.sampling import InheritSystemPrompt, SamplingConfig
 from drowse.generation.token_callback import TokenConsumer, TokenConsumerOptions
 from drowse.generation.types import GenState
+from drowse.loom.errors import InvalidNodeOperationError
 from drowse.readout.types import ScalarReading
 from drowse.readout.measurements import MEASUREMENTS_VERSION, token_row_measurements
 from drowse.session.engine import (
@@ -778,6 +779,48 @@ def test_prefix_cache_hits_then_rewinds_a_real_dynamic_cache(tiny_session: Any) 
 
     assert cache.build(model, torch.zeros((1, 0), dtype=torch.long)) == 0
     assert not cache
+
+
+def test_a_stateful_message_list_records_the_conversation_it_answers(tiny_session: Any) -> None:
+    # A message list is a whole conversation. Stateful, its turns land from the
+    # root and its system message becomes the reply's system prompt, so the
+    # node replays the prompt the generation saw. It used to hang the reply off
+    # the active node with nothing recorded, and token_anatomy then replayed
+    # the bare template (11 positions on qwen3 where generation saw 46).
+    session = tiny_session
+    greedy = SamplingConfig(max_tokens=3, temperature=0.0)
+    session.generate("an earlier conversation", sampling=greedy)
+    messages = [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "Hi there"},
+    ]
+    alone = session.generate(messages, sampling=greedy, stateless=True).first
+    result = session.generate(messages, sampling=greedy).first
+    assert (result.text, result.prompt_tokens) == (alone.text, alone.prompt_tokens)
+
+    node = session.tree.get(session.tree.active_node_id)
+    path = session.tree.path_to(node.id)
+    assert path[0].id == session.tree.root_id
+    assert [(n.role, n.text) for n in path[1:-1]] == [("user", "Hi there")]
+    assert node.recipe is not None and node.recipe.system_prompt == "Be brief."
+    token = session.token_anatomy(node.id, 0, k=2, units=1, patterns=0)["measurements"]["anatomy"]["token"]
+    assert token["prompt_length"] == result.prompt_tokens
+    assert token["token_id"] == node.raw_token_ids[0]
+
+    # A follow-up continues that conversation, system prompt and all.
+    follow = session.generate("And again", sampling=greedy, system_prompt="Be brief.").first
+    turns = [(n.role, n.text) for n in session.tree.active_path()[1:]]
+    assert turns[:3] == [("user", "Hi there"), ("assistant", result.text), ("user", "And again")]
+    assert follow.prompt_tokens > result.prompt_tokens
+
+    # A fan of the same list lands its replies beside the first one.
+    fan = session.generate(messages, sampling=greedy, n=2)
+    user = path[1].id
+    assert all(session.tree.get(node_id).parent_id == user for node_id in fan.node_ids)
+    assert session.tree.children_of[session.tree.root_id].count(user) == 1
+
+    with pytest.raises(InvalidNodeOperationError, match="whole conversation"):
+        session.generate(messages, sampling=greedy, parent_node_id=node.id)
 
 
 def test_cached_prefix_generation_matches_full_prefill(tiny_session: Any) -> None:

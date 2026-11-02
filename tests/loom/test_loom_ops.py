@@ -13,6 +13,7 @@ from drowse.loom.ops import (
     plan_fork,
     plan_prefill,
     resolve_token_anchor,
+    split_message_list,
 )
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomTree
@@ -223,6 +224,79 @@ def test_generation_turn_user_seat_and_flat_paths() -> None:
     assert flat.nodes[node].parent_id == span
     assert flat.nodes[node].role_label is None
     assert flat.reservation == span
+
+
+def test_message_list_splits_its_system_message_into_the_system_prompt() -> None:
+    messages = [
+        {"role": "system", "content": "Be brief."},
+        {"role": "user", "content": "Hi there", "label": "captain"},
+    ]
+    turns, system = split_message_list(
+        messages, system_prompt=INHERIT_SYSTEM_PROMPT, parent_node_id=None, raw=False,
+    )
+    assert turns == [{"role": "user", "content": "Hi there", "label": "captain"}]
+    assert system == "Be brief."
+    assert messages[0]["role"] == "system", "the caller's list is left as it was"
+    # The same system prompt passed twice is one prompt; a different one is ambiguous.
+    assert split_message_list(
+        messages, system_prompt="Be brief.", parent_node_id=None, raw=False,
+    )[1] == "Be brief."
+    with pytest.raises(InvalidNodeOperationError, match="given twice"):
+        split_message_list(messages, system_prompt="Be long.", parent_node_id=None, raw=False)
+    # Without a system message the call's own system prompt stands.
+    assert split_message_list(
+        messages[1:], system_prompt=None, parent_node_id=None, raw=False,
+    ) == (messages[1:], None)
+
+
+@pytest.mark.parametrize(
+    ("messages", "kwargs", "match"),
+    [
+        ([{"role": "user", "content": "hi"}], {"parent_node_id": "n1"}, "whole conversation"),
+        ([{"role": "user", "content": "hi"}], {"raw": True}, "raw completion"),
+        ([{"role": "user", "content": 3}], {}, "string content"),
+        (["hi"], {}, "string content"),
+        ([{"role": "user", "content": "hi"}, {"role": "system", "content": "late"}], {}, "role 'system'"),
+        ([{"role": "tool", "content": "{}"}], {}, "role 'tool'"),
+    ],
+)
+def test_message_list_refuses_what_it_cannot_record(
+    messages: list[Any], kwargs: dict[str, Any], match: str,
+) -> None:
+    call: dict[str, Any] = {"system_prompt": INHERIT_SYSTEM_PROMPT, "parent_node_id": None, "raw": False}
+    with pytest.raises(InvalidNodeOperationError, match=match):
+        split_message_list(messages, **{**call, **kwargs})
+
+
+def test_generation_turn_records_a_message_list_from_the_root() -> None:
+    tree = LoomTree()
+    earlier = tree.add_user_turn("an earlier conversation")
+    turns = [
+        {"role": "user", "content": "Hi there", "label": "captain"},
+        {"role": "assistant", "content": "Hello."},
+        {"role": "user", "content": "And again"},
+    ]
+    node = begin_generation_turn(
+        tree, turns, raw=False, parent_node_id=None, sampling=None,
+        recipe=Recipe(system_prompt="Be brief."), tokenizer=_Tok(),
+    )
+    path = tree.path_to(node)
+    assert path[0].id == tree.root_id and earlier not in {n.id for n in path}
+    assert [(n.role, n.text, n.role_label, n.thinking_text) for n in path[1:-1]] == [
+        ("user", "Hi there", "captain", None),
+        ("assistant", "Hello.", None, None),
+        ("user", "And again", None, None),
+    ]
+    assert tree.messages_for(path[-2].id) == [{"role": t["role"], "content": t["content"]} for t in turns]
+    assert tree.reservation == path[-2].id
+    # The same list again reuses its first user turn (the regen workflow).
+    tree.reserve(None)
+    tree.finalize_assistant(node, text="x", raw_token_ids=[1])
+    again = begin_generation_turn(
+        tree, turns[:1], raw=False, parent_node_id=None, sampling=None,
+        recipe=Recipe(), tokenizer=_Tok(),
+    )
+    assert tree.nodes[again].parent_id == path[1].id
 
 
 def test_generation_turn_continues_an_existing_message() -> None:

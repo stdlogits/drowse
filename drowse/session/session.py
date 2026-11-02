@@ -1654,8 +1654,9 @@ class DrowseSession:
         ).with_probe_hashes(self._roster.probe_hash)
         return begin_generation_turn(
             self.tree, input, raw=raw, parent_node_id=parent_node_id,
-            sampling=sampling, recipe=recipe, gen_seat=gen_seat,
-            continuation_node_id=continuation_node_id,
+            sampling=sampling, recipe=recipe,
+            tokenizer=self._tokenizer, grammar=self.scene_grammar,
+            gen_seat=gen_seat, continuation_node_id=continuation_node_id,
         )
 
     # -- Generation: blocking --
@@ -1680,7 +1681,12 @@ class DrowseSession:
         """Blocking generation.
 
         Args:
-            input: prompt string or list of message dicts.
+            input: prompt string (a new user turn), ``None`` (no new turn) or
+                a list of message dicts (a whole conversation).  Stateful, the
+                list is recorded from the root (a leading ``system`` message
+                as the call's system prompt) and the reply generates from
+                those turns, so the node replays the prompt it answered;
+                ``parent_node_id`` does not apply to it.
             steering: expression string (e.g. ``"-0.5 deceptive + 0.3 warm"``)
                 or a pre-built :class:`Steering`.  Pole aliases resolve at
                 parse time via ``store.selectors.resolve_bare_atom``.  ``None`` =
