@@ -10,11 +10,11 @@
   "rounded": {"atol": 2e-06},
   "ids": "exact"
  },
- "k": 5,
  "reads": [
   {
    "unit": "neuron/L1n5",
    "hide_hubs": false,
+   "k": 5,
    "read": {
     "unit": "neuron/L1n5",
     "kind": "neuron",
@@ -170,6 +170,7 @@
   {
    "unit": "neuron/L1n5",
    "hide_hubs": true,
+   "k": 5,
    "read": {
     "unit": "neuron/L1n5",
     "kind": "neuron",
@@ -325,6 +326,7 @@
   {
    "unit": "neuron/L2n40",
    "hide_hubs": false,
+   "k": 5,
    "read": {
     "unit": "neuron/L2n40",
     "kind": "neuron",
@@ -428,6 +430,7 @@
   {
    "unit": "neuron/L2n40",
    "hide_hubs": true,
+   "k": 5,
    "read": {
     "unit": "neuron/L2n40",
     "kind": "neuron",
@@ -531,6 +534,7 @@
   {
    "unit": "head/L1h3",
    "hide_hubs": false,
+   "k": 4,
    "read": {
     "unit": "head/L1h3",
     "kind": "head",
@@ -553,8 +557,7 @@
        {"token_id": 78, "token": "k", "value": 2.450409},
        {"token_id": 72, "token": "e", "value": 2.148498},
        {"token_id": 89, "token": "v", "value": 1.829971},
-       {"token_id": 193, "token": "\u0001", "value": 1.624561},
-       {"token_id": 223, "token": "\u001f", "value": 1.620157}
+       {"token_id": 193, "token": "\u0001", "value": 1.624561}
       ],
       "absent": null
      }
@@ -574,8 +577,7 @@
        {"token_id": 207, "token": "\u000f", "value": -3.5847},
        {"token_id": 211, "token": "\u0013", "value": -3.280673},
        {"token_id": 206, "token": "\u000e", "value": -2.249616},
-       {"token_id": 24, "token": "5", "value": -2.198342},
-       {"token_id": 13, "token": "*", "value": -1.997123}
+       {"token_id": 24, "token": "5", "value": -2.198342}
       ],
       "absent": null
      }
@@ -595,8 +597,7 @@
         {"token_id": 87, "token": "t", "value": 2.307895},
         {"token_id": 196, "token": "\u0004", "value": 2.009969},
         {"token_id": 217, "token": "\u0019", "value": 1.907007},
-        {"token_id": 215, "token": "\u0017", "value": 1.897517},
-        {"token_id": 54, "token": "S", "value": 1.73603}
+        {"token_id": 215, "token": "\u0017", "value": 1.897517}
        ],
        "absent": null
       },
@@ -609,8 +610,7 @@
         {"token_id": 35, "token": "@", "value": 2.768394},
         {"token_id": 77, "token": "j", "value": 2.505559},
         {"token_id": 210, "token": "\u0012", "value": 2.42898},
-        {"token_id": 53, "token": "R", "value": 2.180939},
-        {"token_id": 220, "token": "\u001c", "value": 1.89366}
+        {"token_id": 53, "token": "R", "value": 2.180939}
        ],
        "absent": null
       }
@@ -629,8 +629,7 @@
         {"token_id": 72, "token": "e", "value": 2.672825},
         {"token_id": 196, "token": "\u0004", "value": 2.542529},
         {"token_id": 44, "token": "I", "value": 2.436595},
-        {"token_id": 76, "token": "i", "value": 2.047007},
-        {"token_id": 51, "token": "P", "value": 2.020925}
+        {"token_id": 76, "token": "i", "value": 2.047007}
        ],
        "absent": null
       },
@@ -643,8 +642,7 @@
         {"token_id": 44, "token": "I", "value": 2.991286},
         {"token_id": 34, "token": "?", "value": 2.402035},
         {"token_id": 35, "token": "@", "value": 2.294527},
-        {"token_id": 14, "token": "+", "value": 2.095729},
-        {"token_id": 76, "token": "i", "value": 1.975202}
+        {"token_id": 14, "token": "+", "value": 2.095729}
        ],
        "absent": null
       }
@@ -663,8 +661,7 @@
         {"token_id": 55, "token": "T", "value": 2.494054},
         {"token_id": 221, "token": "\u001d", "value": 2.416261},
         {"token_id": 47, "token": "L", "value": 2.316358},
-        {"token_id": 44, "token": "I", "value": 2.068086},
-        {"token_id": 58, "token": "W", "value": 1.728286}
+        {"token_id": 44, "token": "I", "value": 2.068086}
        ],
        "absent": null
       },
@@ -677,8 +674,7 @@
         {"token_id": 80, "token": "m", "value": 2.740203},
         {"token_id": 198, "token": "\u0006", "value": 2.571856},
         {"token_id": 47, "token": "L", "value": 2.21163},
-        {"token_id": 66, "token": "_", "value": 2.191574},
-        {"token_id": 77, "token": "j", "value": 2.106851}
+        {"token_id": 66, "token": "_", "value": 2.191574}
        ],
        "absent": null
       }
@@ -701,6 +697,7 @@
   {
    "unit": "head/L1h3",
    "hide_hubs": true,
+   "k": 4,
    "read": {
     "unit": "head/L1h3",
     "kind": "head",
@@ -723,8 +720,7 @@
        {"token_id": 224, "token": " ", "value": 1.487239},
        {"token_id": 217, "token": "\u0019", "value": 1.480723},
        {"token_id": 47, "token": "L", "value": 1.473891},
-       {"token_id": 203, "token": "\u000b", "value": 1.46287},
-       {"token_id": 89, "token": "v", "value": 1.457268}
+       {"token_id": 203, "token": "\u000b", "value": 1.46287}
       ],
       "absent": null
      }
@@ -744,8 +740,7 @@
        {"token_id": 32, "token": "=", "value": -1.499755},
        {"token_id": 211, "token": "\u0013", "value": -1.494689},
        {"token_id": 88, "token": "u", "value": -1.49428},
-       {"token_id": 195, "token": "\u0003", "value": -1.485704},
-       {"token_id": 11, "token": "(", "value": -1.468124}
+       {"token_id": 195, "token": "\u0003", "value": -1.485704}
       ],
       "absent": null
      }
@@ -765,8 +760,7 @@
         {"token_id": 87, "token": "t", "value": 2.307895},
         {"token_id": 196, "token": "\u0004", "value": 2.009969},
         {"token_id": 217, "token": "\u0019", "value": 1.907007},
-        {"token_id": 215, "token": "\u0017", "value": 1.897517},
-        {"token_id": 54, "token": "S", "value": 1.73603}
+        {"token_id": 215, "token": "\u0017", "value": 1.897517}
        ],
        "absent": null
       },
@@ -779,8 +773,7 @@
         {"token_id": 35, "token": "@", "value": 2.768394},
         {"token_id": 77, "token": "j", "value": 2.505559},
         {"token_id": 210, "token": "\u0012", "value": 2.42898},
-        {"token_id": 53, "token": "R", "value": 2.180939},
-        {"token_id": 220, "token": "\u001c", "value": 1.89366}
+        {"token_id": 53, "token": "R", "value": 2.180939}
        ],
        "absent": null
       }
@@ -799,8 +792,7 @@
         {"token_id": 72, "token": "e", "value": 2.672825},
         {"token_id": 196, "token": "\u0004", "value": 2.542529},
         {"token_id": 44, "token": "I", "value": 2.436595},
-        {"token_id": 76, "token": "i", "value": 2.047007},
-        {"token_id": 51, "token": "P", "value": 2.020925}
+        {"token_id": 76, "token": "i", "value": 2.047007}
        ],
        "absent": null
       },
@@ -813,8 +805,7 @@
         {"token_id": 44, "token": "I", "value": 2.991286},
         {"token_id": 34, "token": "?", "value": 2.402035},
         {"token_id": 35, "token": "@", "value": 2.294527},
-        {"token_id": 14, "token": "+", "value": 2.095729},
-        {"token_id": 76, "token": "i", "value": 1.975202}
+        {"token_id": 14, "token": "+", "value": 2.095729}
        ],
        "absent": null
       }
@@ -833,8 +824,7 @@
         {"token_id": 55, "token": "T", "value": 2.494054},
         {"token_id": 221, "token": "\u001d", "value": 2.416261},
         {"token_id": 47, "token": "L", "value": 2.316358},
-        {"token_id": 44, "token": "I", "value": 2.068086},
-        {"token_id": 58, "token": "W", "value": 1.728286}
+        {"token_id": 44, "token": "I", "value": 2.068086}
        ],
        "absent": null
       },
@@ -847,8 +837,7 @@
         {"token_id": 80, "token": "m", "value": 2.740203},
         {"token_id": 198, "token": "\u0006", "value": 2.571856},
         {"token_id": 47, "token": "L", "value": 2.21163},
-        {"token_id": 66, "token": "_", "value": 2.191574},
-        {"token_id": 77, "token": "j", "value": 2.106851}
+        {"token_id": 66, "token": "_", "value": 2.191574}
        ],
        "absent": null
       }
@@ -871,6 +860,7 @@
   {
    "unit": "head/L2h0",
    "hide_hubs": false,
+   "k": 5,
    "read": {
     "unit": "head/L2h0",
     "kind": "head",
@@ -1041,6 +1031,7 @@
   {
    "unit": "head/L2h0",
    "hide_hubs": true,
+   "k": 4,
    "read": {
     "unit": "head/L2h0",
     "kind": "head",
@@ -1062,8 +1053,7 @@
        {"token_id": 220, "token": "\u001c", "value": 1.496902},
        {"token_id": 77, "token": "j", "value": 1.480673},
        {"token_id": 87, "token": "t", "value": 1.447468},
-       {"token_id": 219, "token": "\u001b", "value": 1.35344},
-       {"token_id": 17, "token": ".", "value": 1.339945}
+       {"token_id": 219, "token": "\u001b", "value": 1.35344}
       ],
       "absent": null
      },
@@ -1083,8 +1073,7 @@
        {"token_id": 31, "token": "<", "value": -1.489361},
        {"token_id": 20, "token": "1", "value": -1.458485},
        {"token_id": 96, "token": "}", "value": -1.375554},
-       {"token_id": 27, "token": "8", "value": -1.33439},
-       {"token_id": 208, "token": "\u0010", "value": -1.320812}
+       {"token_id": 27, "token": "8", "value": -1.33439}
       ],
       "absent": null
      },
@@ -1105,8 +1094,7 @@
         {"token_id": 75, "token": "h", "value": 3.626774},
         {"token_id": 19, "token": "0", "value": 2.365341},
         {"token_id": 79, "token": "l", "value": 2.268031},
-        {"token_id": 73, "token": "f", "value": 2.252724},
-        {"token_id": 94, "token": "{", "value": 2.09919}
+        {"token_id": 73, "token": "f", "value": 2.252724}
        ],
        "absent": null
       },
@@ -1119,8 +1107,7 @@
         {"token_id": 73, "token": "f", "value": 2.640654},
         {"token_id": 44, "token": "I", "value": 2.540854},
         {"token_id": 71, "token": "d", "value": 2.103562},
-        {"token_id": 201, "token": "\t", "value": 1.919905},
-        {"token_id": 196, "token": "\u0004", "value": 1.809142}
+        {"token_id": 201, "token": "\t", "value": 1.919905}
        ],
        "absent": null
       }
@@ -1139,8 +1126,7 @@
         {"token_id": 11, "token": "(", "value": 2.717241},
         {"token_id": 32, "token": "=", "value": 2.558748},
         {"token_id": 70, "token": "c", "value": 1.778479},
-        {"token_id": 76, "token": "i", "value": 1.698675},
-        {"token_id": 68, "token": "a", "value": 1.674704}
+        {"token_id": 76, "token": "i", "value": 1.698675}
        ],
        "absent": null
       },
@@ -1153,8 +1139,7 @@
         {"token_id": 23, "token": "4", "value": 2.543865},
         {"token_id": 43, "token": "H", "value": 2.326416},
         {"token_id": 82, "token": "o", "value": 2.166364},
-        {"token_id": 64, "token": "]", "value": 2.07977},
-        {"token_id": 199, "token": "\u0007", "value": 2.048881}
+        {"token_id": 64, "token": "]", "value": 2.07977}
        ],
        "absent": null
       }
@@ -1173,8 +1158,7 @@
         {"token_id": 14, "token": "+", "value": 2.283119},
         {"token_id": 204, "token": "\f", "value": 2.050311},
         {"token_id": 70, "token": "c", "value": 1.972981},
-        {"token_id": 209, "token": "\u0011", "value": 1.730811},
-        {"token_id": 201, "token": "\t", "value": 1.708969}
+        {"token_id": 209, "token": "\u0011", "value": 1.730811}
        ],
        "absent": null
       },
@@ -1187,8 +1171,7 @@
         {"token_id": 47, "token": "L", "value": 2.461494},
         {"token_id": 73, "token": "f", "value": 2.391462},
         {"token_id": 204, "token": "\f", "value": 2.14146},
-        {"token_id": 83, "token": "p", "value": 1.866082},
-        {"token_id": 79, "token": "l", "value": 1.862422}
+        {"token_id": 83, "token": "p", "value": 1.866082}
        ],
        "absent": null
       }
@@ -1211,6 +1194,7 @@
   {
    "unit": "head/L0h1",
    "hide_hubs": false,
+   "k": 5,
    "read": {
     "unit": "head/L0h1",
     "kind": "head",
@@ -1342,6 +1326,7 @@
   {
    "unit": "head/L0h1",
    "hide_hubs": true,
+   "k": 5,
    "read": {
     "unit": "head/L0h1",
     "kind": "head",
@@ -1475,6 +1460,7 @@
   {
    "token": "e",
    "by": "writes",
+   "k": 5,
    "result": {
     "token_id": 72,
     "token": "e",
@@ -1558,6 +1544,7 @@
   {
    "token": "e",
    "by": "fires",
+   "k": 5,
    "result": {
     "token_id": 72,
     "token": "e",
@@ -1641,6 +1628,7 @@
   {
    "token": "a",
    "by": "writes",
+   "k": 5,
    "result": {
     "token_id": 68,
     "token": "a",
@@ -1724,6 +1712,7 @@
   {
    "token": "a",
    "by": "fires",
+   "k": 5,
    "result": {
     "token_id": 68,
     "token": "a",
@@ -1810,6 +1799,7 @@
    "target": "vector",
    "layer": 2,
    "vector": [0.875, 0.125, -0.125, 0.875, -0.5, 0.125, -0.875, -0.5, -0.25, 0.875, -0.75, 0.625, -0.375, -0.875, -0.125, -0.375, 0.125, 0.5, 0.0, -0.125, 0.25, -0.5, -0.625, -0.75, -0.125, -0.25, -0.25, -0.75, -0.875, 0.25, -0.375, 0.5, 0.4375, 0.0625, 0.375, 0.0625, 0.0, 0.125, 0.4375, 0.1875, -0.125, 0.4375, 0.375, -0.1875, -0.3125, -0.3125, 0.125, -0.0625, 0.4375, -0.0625, -0.125, 0.0, -0.4375, -0.25, 0.375, 0.125, -0.4375, -0.125, -0.125, -0.1875, -0.25, -0.25, 0.3125, 0.25],
+   "k": 5,
    "result": {
     "target": "vector",
     "k": 5,
@@ -1827,10 +1817,20 @@
      }
     },
     "catalog": {"bound": false, "slug": null, "credit": null, "reason": "no neuron-lens catalog for this model (catalogued: Qwen/Qwen3-8B, google/gemma-4-12B)"}
+   },
+   "iterations": {
+    "2": [
+     {"unit": "neuron/L2n1", "score": 0.8254109, "runner_up": 0.6968674},
+     {"unit": "neuron/L2n32", "score": 0.6369863, "runner_up": 0.6064911},
+     {"unit": "neuron/L2n12", "score": 0.5760052, "runner_up": 0.5690922},
+     {"unit": "neuron/L2n30", "score": 0.5601975, "runner_up": 0.51959676},
+     {"unit": "neuron/L2n11", "score": 0.5603288, "runner_up": 0.528478}
+    ]
    }
   },
   {
    "target": "jlens/#72",
+   "k": 5,
    "result": {
     "target": "jlens/#72",
     "k": 5,
@@ -1858,8 +1858,39 @@
      }
     },
     "catalog": {"bound": false, "slug": null, "credit": null, "reason": "no neuron-lens catalog for this model (catalogued: Qwen/Qwen3-8B, google/gemma-4-12B)"}
+   },
+   "iterations": {
+    "0": [
+     {"unit": "neuron/L0n80", "score": 0.92663187, "runner_up": 0.8302831},
+     {"unit": "neuron/L0n46", "score": 0.8592969, "runner_up": 0.71170914},
+     {"unit": "neuron/L0n63", "score": 0.53609407, "runner_up": 0.46302876},
+     {"unit": "neuron/L0n0", "score": 0.52969867, "runner_up": 0.45507252},
+     {"unit": "neuron/L0n20", "score": 0.48427027, "runner_up": 0.4647324}
+    ],
+    "1": [
+     {"unit": "neuron/L1n2", "score": 0.50448036, "runner_up": 0.48851058},
+     {"unit": "neuron/L1n11", "score": 0.47874326, "runner_up": 0.41458184},
+     {"unit": "neuron/L1n27", "score": 0.44136274, "runner_up": 0.40649465},
+     {"unit": "neuron/L1n65", "score": 0.4770847, "runner_up": 0.40210307},
+     {"unit": "neuron/L1n71", "score": 0.3486435, "runner_up": 0.3219085}
+    ]
    }
   }
  ],
- "declared_ties": ["reads[5].read.suppresses.r", "top[3].result.hits"]
+ "declared_ties": [
+  {
+   "path": "reads[5].read.suppresses.r.tokens",
+   "key": ["token_id"],
+   "groups": [
+    [1, 2]
+   ]
+  },
+  {
+   "path": "top[3].result.hits",
+   "key": ["unit", "pole"],
+   "groups": [
+    [0, 1]
+   ]
+  }
+ ]
 }

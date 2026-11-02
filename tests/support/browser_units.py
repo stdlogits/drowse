@@ -22,7 +22,7 @@ import hashlib
 import json
 import math
 import tempfile
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -307,7 +307,7 @@ def _encoded(value: Any) -> bool:
 def decode(value: Any) -> np.ndarray:
     """The inverse of :func:`encode`."""
     if isinstance(value, dict) and "encoding" in value and "data" in value:
-        dtype = "<i4" if value["dtype"] == "int32" else "<f4"
+        dtype = {"int32": "<i4", "float16": "<f2"}.get(value["dtype"], "<f4")
         raw = np.frombuffer(base64.b64decode(value["data"]), dtype=dtype)
         return raw.reshape(value["shape"])
     if isinstance(value, dict) and "values" in value:
@@ -319,29 +319,106 @@ class FixtureError(AssertionError):
     """The validator refused a golden (it would not discriminate)."""
 
 
-#: Probabilities compare at 1e-5 absolute (B1-goldens §3), so their lists
-#: keep ten times that between neighbours.
-PROBABILITY_MARGIN = 1e-4
-
-
-def _margin(a: float, b: float, *, absolute: float | None = None) -> bool:
-    if absolute is not None:
-        return abs(a - b) >= absolute
+def _margin(a: float, b: float) -> bool:
+    """B1-goldens §0: ``|a − b| ≥ 1e-3·max(1, |a|, |b|)``."""
     return abs(a - b) >= MARGIN * max(1.0, abs(a), abs(b))
 
 
-def require_top_margin(
-    values: Sequence[float], k: int, what: str, *, absolute: float | None = None,
-) -> None:
-    """``values`` sorted descending: consecutive returned values and the
-    k-th against the best excluded keep the margin."""
-    take = min(int(k), len(values))
-    for i in range(take - 1 + (1 if take < len(values) else 0)):
-        if not _margin(float(values[i]), float(values[i + 1]), absolute=absolute):
-            raise FixtureError(
-                f"{what}: entries {i} and {i + 1} tie within the margin "
-                f"({values[i]!r} vs {values[i + 1]!r})"
-            )
+#: A ranked list's entries: ``(identity fields, value field, ranked by
+#: magnitude)``, matched on the first entry's keys.  Probability lists
+#: (their parent's ``unit`` is ``probability``) rank by ``ln p``: their order
+#: is the logits' (a tail of probabilities ~1e-4 can never keep a 1e-3 gap in
+#: ``p`` itself, while its logit gaps are what a browser's ranking rests on).
+_RANKED: tuple[tuple[tuple[str, ...], str, bool], ...] = (
+    (("token_id",), "value", False),
+    (("token_id",), "z", False),
+    (("unit", "pole"), "score", False),
+    (("unit",), "contribution", True),
+    (("unit",), "coeff", True),
+)
+
+
+def _ranking(items: Any) -> tuple[tuple[str, ...], str, bool] | None:
+    if not (isinstance(items, list) and items and all(isinstance(x, dict) for x in items)):
+        return None
+    first = items[0]
+    for keys, value, magnitude in _RANKED:
+        if keys[0] in first and value in first:
+            return tuple(k for k in keys if k in first), value, magnitude
+    return None
+
+
+def _rank_value(entry: dict[str, Any], field: str, magnitude: bool, log: bool) -> float:
+    value = float(entry[field])
+    if magnitude:
+        value = abs(value)
+    return math.log(max(value, 1e-45)) if log else value
+
+
+def _identity(entry: Any, keys: Sequence[str]) -> tuple[str, ...]:
+    return tuple(json.dumps(entry.get(k)) for k in keys)
+
+
+def tie_groups(values: Sequence[float]) -> list[list[int]]:
+    """Runs of consecutive entries chained by gaps under the margin (two or
+    more entries each)."""
+    groups: list[list[int]] = []
+    run = [0]
+    for i in range(1, len(values)):
+        if _margin(values[i - 1], values[i]):
+            if len(run) > 1:
+                groups.append(run)
+            run = [i]
+        else:
+            run.append(i)
+    if len(run) > 1:
+        groups.append(run)
+    return groups
+
+
+def require_boundary(values: Sequence[float], k: int, what: str) -> None:
+    """The ``k``-th returned value against the best excluded (the
+    ``k+1``-th of ``values``, a list ranked past ``k``)."""
+    if 0 < k < len(values) and not _margin(float(values[k - 1]), float(values[k])):
+        raise FixtureError(
+            f"{what}: entry {k - 1} ties the best excluded ({values[k - 1]!r} vs {values[k]!r})"
+        )
+
+
+def rank_lists(short: Any, long: Any, ties: list[dict[str, Any]], path: str = "", *,
+               log: bool = False) -> None:
+    """Every ranked list in ``short`` (a result at ``k``) against the same
+    list in ``long`` (the same call one deeper, or ``None``): refuses a list
+    whose returned set differs from ``long``'s first entries or whose last
+    entry ties the best excluded; declares runs of near-ties inside a list
+    (``ties``: the comparison matches a run's entries by identity, every
+    field exactly or within tolerance, and keeps the order between runs)."""
+    if isinstance(short, dict):
+        log = short.get("unit") == "probability"
+        for key, child in short.items():
+            other = long.get(key) if isinstance(long, dict) else None
+            rank_lists(child, other, ties, f"{path}.{key}", log=log)
+        return
+    if not isinstance(short, list):
+        return
+    ranking = _ranking(short)
+    if ranking is None:
+        for i, child in enumerate(short):
+            other = long[i] if isinstance(long, list) and i < len(long) else None
+            rank_lists(child, other, ties, f"{path}[{i}]")
+        return
+    keys, field, magnitude = ranking
+    where = path.lstrip(".")
+    values = [_rank_value(entry, field, magnitude, log) for entry in short]
+    if isinstance(long, list) and len(long) > len(short):
+        head = long[: len(short)]
+        if sorted(_identity(e, keys) for e in head) != sorted(_identity(e, keys) for e in short):
+            raise FixtureError(f"{where}: the list one deeper returns another set")
+        require_boundary(values + [_rank_value(long[len(short)], field, magnitude, log)],
+                         len(short), where)
+    groups = tie_groups(values)
+    if groups:
+        ties.append({"path": where, "key": list(keys), "groups": groups})
 
 
 def require_finite(tree: Any, what: str, *, limit: float | None = None) -> None:
@@ -384,51 +461,70 @@ def _close(a: np.ndarray, b: np.ndarray, atol: float, rtol: float) -> bool:
     return a.shape == b.shape and bool(np.all(np.abs(a - b) <= atol + rtol * np.abs(a)))
 
 
-def _floats(tree: Any) -> list[float]:
-    if isinstance(tree, dict):
-        return [x for v in tree.values() for x in _floats(v)]
-    if isinstance(tree, list):
-        return [x for v in tree for x in _floats(v)]
-    return [float(tree)] if isinstance(tree, float) else []
+def _f16_ulps(a: np.ndarray, b: np.ndarray) -> float:
+    """The largest difference between two float16 arrays in units of the
+    larger value's float16 spacing."""
+    spacing = np.spacing(np.maximum(np.abs(a), np.abs(b)).astype(np.float16)).astype(np.float64)
+    return float(np.max(np.abs(a.astype(np.float64) - b.astype(np.float64)) / spacing, initial=0.0))
 
 
 def compare(
     expected: Any, actual: Any, *, path: str = "", atol: float = 1e-6, rtol: float = 1e-5,
-    soft: frozenset[str] = frozenset(),
+    ties: Mapping[str, Mapping[str, Any]] | None = None,
 ) -> list[str]:
-    """Every difference between two goldens, values within the tolerance,
-    ints, strings, booleans and structure exactly.  A path in ``soft`` (a
-    declared tie) compares its float values as a sorted multiset only."""
-    problems: list[str] = []
-    if path.lstrip(".") in soft:
-        a, b = sorted(_floats(expected)), sorted(_floats(actual))
-        if len(a) != len(b) or not _close(np.array(a), np.array(b), atol, rtol):
-            return [f"{path}: declared-tie values differ"]
-        return []
+    """Every difference between two goldens: values within the tolerance,
+    float16 records within one ulp, ints, strings, booleans and structure
+    exactly.  ``ties`` (the expected golden's declared ties, by path) lets a
+    ranked list permute the entries inside each declared run, matched by
+    identity; an int array's ``ignore`` indices are skipped."""
+    ties = ties or {}
+    spec = ties.get(path.lstrip("."))
+
+    def sub(x: Any, y: Any, at: str) -> list[str]:
+        return compare(x, y, path=at, atol=atol, rtol=rtol, ties=ties)
+
     if _encoded(expected):
         if not isinstance(actual, dict):
             return [f"{path}: expected an array"]
         a, b = decode(expected), decode(actual)
+        if a.shape != b.shape:
+            return [f"{path}: shapes {a.shape} != {b.shape}"]
+        if expected.get("dtype") == "float16":
+            if b.dtype != np.float16 or _f16_ulps(a, b) > 1.0:
+                return [f"{path}: float16 arrays differ by more than one ulp"]
+            return []
         if expected.get("dtype") == "int32" or (a.dtype.kind in "iu" and b.dtype.kind in "iu"):
-            if a.shape != b.shape or not np.array_equal(a, b):
-                problems.append(f"{path}: integer arrays differ")
-        elif not _close(a.astype(np.float64), b.astype(np.float64), atol, rtol):
-            worst = float(np.max(np.abs(a - b))) if a.shape == b.shape else math.inf
-            problems.append(f"{path}: arrays differ (max |Δ| {worst:.3g})")
-        return problems
+            if spec is not None and "ignore" in spec:
+                keep = np.ones(a.shape[0], dtype=bool)
+                keep[list(spec["ignore"])] = False
+                a, b = a[keep], b[keep]
+            if not np.array_equal(a, b):
+                return [f"{path}: integer arrays differ"]
+            return []
+        if not _close(a.astype(np.float64), b.astype(np.float64), atol, rtol):
+            return [f"{path}: arrays differ (max |Δ| {float(np.max(np.abs(a - b))):.3g})"]
+        return []
     if isinstance(expected, dict):
         if not isinstance(actual, dict) or set(expected) != set(actual):
             return [f"{path}: keys {sorted(expected)} != {sorted(actual) if isinstance(actual, dict) else actual!r}"]
-        for key in expected:
-            problems += compare(
-                expected[key], actual[key], path=f"{path}.{key}", atol=atol, rtol=rtol, soft=soft,
-            )
-        return problems
+        return [p for key in expected for p in sub(expected[key], actual[key], f"{path}.{key}")]
     if isinstance(expected, list):
         if not isinstance(actual, list) or len(expected) != len(actual):
             return [f"{path}: list lengths differ"]
-        for i, (x, y) in enumerate(zip(expected, actual, strict=True)):
-            problems += compare(x, y, path=f"{path}[{i}]", atol=atol, rtol=rtol, soft=soft)
+        skip = set(spec.get("ignore", ())) if spec is not None else set()
+        pairs = {i: i for i in range(len(expected)) if i not in skip}
+        problems: list[str] = []
+        if spec is not None and "groups" in spec:
+            keys = spec["key"]
+            for group in spec["groups"]:
+                want = {_identity(expected[i], keys): i for i in group}
+                got = {_identity(actual[i], keys): i for i in group}
+                if set(want) != set(got):
+                    problems.append(f"{path}{group}: tied entries {sorted(want)} != {sorted(got)}")
+                    continue
+                pairs.update({i: got[key] for key, i in want.items()})
+        for i, j in pairs.items():
+            problems += sub(expected[i], actual[j], f"{path}[{i}]")
         return problems
     if isinstance(expected, float) or isinstance(actual, float):
         if not isinstance(actual, (int, float)) or isinstance(actual, bool) or not isinstance(expected, (int, float)):
@@ -561,7 +657,9 @@ def _trigger(trigger: Any) -> dict[str, Any]:
         "prompt": trigger.prompt, "generated": trigger.generated,
         "thinking": trigger.thinking, "response": trigger.response,
         "first_n": trigger.first_n, "after_n": trigger.after_n,
-        "gate": None if gate is None else str(gate),
+        "gate": None if gate is None else {
+            "probe": gate.probe, "op": gate.op, "threshold": _f32(float(gate.threshold)),
+        },
     }
 
 
@@ -591,10 +689,10 @@ def _unit_tables(fx: Fixture) -> list[dict[str, Any]]:
 
 
 @contextmanager
-def _capture_blocks(fx: Fixture, *, positions: Sequence[int] | None) -> Iterator[dict[str, list[torch.Tensor]]]:
-    """Every forward's block outputs (after the steering hooks) and its
-    last-position logits: ``{"out": [[L, n, d] per forward], "logits": [[V]]}``.
-    ``positions`` picks absolute rows (``None``: every row of the forward)."""
+def _capture_blocks(fx: Fixture) -> Iterator[dict[str, list[torch.Tensor]]]:
+    """Every forward's block outputs at every row (after the steering hooks)
+    and its last-position logits: ``{"out": [[L, n, d] per forward],
+    "logits": [[V]]}``."""
     store: dict[str, list[torch.Tensor]] = {"out": [], "logits": []}
     blocks = fx.spec.blocks
     pending: list[torch.Tensor] = []
@@ -713,6 +811,9 @@ def model_file_sha256() -> str:
 # ---------------------------------------------------------------------------
 
 SITES = ("block_in", "z", "attn_o", "mid", "act", "mlp_o", "out")
+#: The block formula's residuals (``mid − block_in − attn``, ``out − mid −
+#: mlp``) stay within this times ``max(1, max|out|)`` per layer.
+RESIDUAL_RTOL = 1e-5
 
 
 def build_block_sites(fx: Fixture) -> dict[str, Any]:
@@ -738,7 +839,8 @@ def build_block_sites(fx: Fixture) -> dict[str, Any]:
         site: torch.stack([torch.stack(per_pos) for per_pos in values]).transpose(0, 1)  # [L, T, ·]
         for site, values in sites.items()
     }
-    checks = []
+    # The block formula holds to rounding: asserted here, not recorded (a
+    # rounding residual is no value to compare); the browser asserts its own.
     for block in spec.blocks:
         L = block.layer
         attn = stacked["attn_o"][L]
@@ -746,17 +848,19 @@ def build_block_sites(fx: Fixture) -> dict[str, Any]:
         if block.attn_out_norm is not None:
             attn = block.attn_out_norm.apply(attn)
             mlp = block.mlp_out_norm.apply(mlp)
-        checks.append({
-            "layer": L,
-            "mid_residual": _f32(float((stacked["mid"][L] - stacked["block_in"][L] - attn).abs().max())),
-            "out_residual": _f32(float((stacked["out"][L] - stacked["mid"][L] - mlp).abs().max())),
-        })
+        bound = RESIDUAL_RTOL * max(1.0, float(stacked["out"][L].abs().max()))
+        for name, residual in (
+            ("mid", stacked["mid"][L] - stacked["block_in"][L] - attn),
+            ("out", stacked["out"][L] - stacked["mid"][L] - mlp),
+        ):
+            if float(residual.abs().max()) > bound:
+                raise FixtureError(f"block-sites L{L}: the {name} formula leaves {float(residual.abs().max())}")
     return {
         **header("block-sites", fx.arch, model_file_sha256()),
         "ids": ids,
         "sites": {site: encode(value) for site, value in stacked.items()},
         "logits_last": encode(logits),
-        "checks": checks,
+        "checks": {"residual_rtol": RESIDUAL_RTOL},
     }
 
 
@@ -868,25 +972,79 @@ FIXTURE_DIRECTION = "deceptive_fixture"
 PUSH_GATE = "neuron/L1n5 > 0"
 
 
+@contextmanager
+def unit_forwards() -> Iterator[list[dict[str, Any]]]:
+    """Per generation through the read plane, what its unit run saw, read
+    back from the tap's ring before the run closes: per forward each tapped
+    unit's value (activation over scale) and raw firing, the attached
+    probes' readings (``aggregate_at``), and the gate scalars the decode
+    loop asked for (``gate_scalars``, in call order)."""
+    from drowse.units.instrument import UnitsInstrument, UnitsRun
+
+    runs: list[dict[str, Any]] = []
+    gates: list[dict[str, float]] = []
+    close_run, gate_scalars = UnitsInstrument.close_run, UnitsRun.gate_scalars
+
+    def seen_gates(self: Any, step_id: int, hidden: Any, gate_keys: Any) -> dict[str, float]:
+        out = gate_scalars(self, step_id, hidden, gate_keys)
+        if gate_keys:
+            gates.append({key: _f32(value) for key, value in sorted(out.items())})
+        return out
+
+    def closing(self: Any) -> None:
+        run, tap = self.current_run, self.current_run.tap
+        if tap is not None and run.bound:
+            forwards = []
+            latest = tap.latest()
+            for fwd in range(0 if latest is None else latest + 1):
+                out = tap.values_at(fwd)
+                if out is None:
+                    raise FixtureError(f"forward {fwd} left the unit tap's ring")
+                values, raw = (t.cpu().tolist() for t in out)
+                forwards.append({
+                    "units": {name: {"value": _f32(v), "raw": _f32(r)}
+                              for name, v, r in zip(tap.names, values, raw, strict=True)},
+                    "readings": {name: reading.to_dict() for name, reading in run.aggregate_at(fwd).items()},
+                })
+            runs.append({"scale": tap.scale_source, "forwards": forwards, "gates": list(gates)})
+        gates.clear()
+        close_run(self)
+
+    UnitsInstrument.close_run = closing  # type: ignore[method-assign]
+    UnitsRun.gate_scalars = seen_gates  # type: ignore[method-assign]
+    try:
+        yield runs
+    finally:
+        UnitsInstrument.close_run = close_run  # type: ignore[method-assign]
+        UnitsRun.gate_scalars = gate_scalars  # type: ignore[method-assign]
+
+
+def _midpoint_gate(values: Sequence[float], unit: str, what: str) -> str:
+    """``unit > t`` with ``t`` between its two largest readings (unsteered,
+    the gate opens on exactly one step; what the gated term does downstream
+    may hold it open after)."""
+    top, second = sorted(values, reverse=True)[:2]
+    if not _margin(top, second):
+        raise FixtureError(f"{what}: the gate unit's readings tie")
+    return f"{unit} > {round((top + second) / 2, 4)}"
+
+
 def _gate_for(fx: Fixture, ids: Sequence[int], steps: int) -> str:
     """The gated case's condition: ``neuron/L1n5`` above the midpoint of its
-    two largest readings over the forwards that gate a decode step, so the
-    gate opens on exactly one step and stays shut on the others."""
+    two largest readings over the forwards that gate a decode step (the
+    prefill and the first ``steps − 1`` decode forwards), so the gate opens
+    on exactly one step and stays shut on the others."""
     session = fx.session
     session.add_probe("neuron/L1n5")
     try:
-        readings = [
-            float(chunk.measurements["scores"]["neuron/L1n5"])
-            for chunk in session.generate_stream(
+        with unit_forwards() as runs:
+            session.generate(
                 fx.tokenizer.decode(list(ids)), raw=True, stateless=True, sampling=_greedy(steps + 1),
             )
-        ][:steps]
     finally:
         session.remove_probe("neuron/L1n5")
-    top, second = sorted(readings, reverse=True)[:2]
-    if not _margin(top, second):
-        raise FixtureError("unit-ablation gated: the gate unit's readings tie")
-    return f"neuron/L1n5 > {round((top + second) / 2, 4)}"
+    readings = [f["units"]["neuron/L1n5"]["value"] for f in runs[-1]["forwards"]][:steps]
+    return _midpoint_gate(readings, "neuron/L1n5", "unit-ablation gated")
 
 ABLATION_CASES: tuple[tuple[str, str, int], ...] = (
     ("neurons-full", "!neuron/L1n5 + !neuron/L1n40", 0),
@@ -931,10 +1089,18 @@ def _capture_inputs(fx: Fixture) -> Iterator[list[list[int]]]:
             handle.remove()
 
 
-def _greedy(steps: int) -> Any:
+#: The presence penalty the generated nodes decode with: greedy among the
+#: tokens not yet generated, so a node's rows are distinct contexts (plain
+#: greedy repeats one token on the fixture weights, and repeated rows tie).
+DISTINCT = 1e4
+
+
+def _greedy(steps: int, *, distinct: bool = False) -> Any:
     from drowse.generation.sampling import SamplingConfig
 
-    return SamplingConfig(temperature=0.0, max_tokens=steps, seed=0)
+    return SamplingConfig(
+        temperature=0.0, max_tokens=steps, seed=0, presence_penalty=DISTINCT if distinct else 0.0,
+    )
 
 
 def _run_case(fx: Fixture, ids: Sequence[int], steering: str | None, steps: int) -> dict[str, Any]:
@@ -945,7 +1111,7 @@ def _run_case(fx: Fixture, ids: Sequence[int], steering: str | None, steps: int)
     prefill position."""
     text = fx.tokenizer.decode(list(ids))  # raw mode reads the BOS piece as its special
     tables: list[dict[str, Any]] | None = None
-    with _capture_blocks(fx, positions=None) as store, _capture_inputs(fx) as inputs:
+    with _capture_blocks(fx) as store, _capture_inputs(fx) as inputs:
         if steps == 0:
             if steering is None:
                 _forward(fx, ids)
@@ -960,6 +1126,7 @@ def _run_case(fx: Fixture, ids: Sequence[int], steering: str | None, steps: int)
             ).first
             if len(run.tokens) != steps + 1:
                 raise FixtureError(f"decode stopped after {len(run.tokens)} of {steps + 1} tokens")
+            _require_decisive_picks(store["logits"], run.tokens, f"unit-ablation {steering}")
     if steps and steering is not None:
         with fx.session.steering(steering):
             tables = _unit_tables(fx)
@@ -1055,20 +1222,37 @@ def _naive_post_block(fx: Fixture, ids: Sequence[int], cases: list[dict[str, Any
 
 
 def generated_node(fx: Fixture, steering: str | None = None) -> str:
-    """The chat prompt plus :data:`DECODE_STEPS` greedy tokens, in the tree
-    (a fresh conversation from the root)."""
+    """The chat prompt plus :data:`DECODE_STEPS` distinct greedy tokens, in
+    the tree (a fresh conversation from the root)."""
     fx.session.tree.navigate(fx.session.tree.root_id)
-    with _capture_inputs(fx) as inputs:
+    with _capture_blocks(fx) as store, _capture_inputs(fx) as inputs:
         runs = fx.session.generate(
             CHAT[1]["content"], system_prompt=CHAT[0]["content"], steering=steering,
-            sampling=_greedy(DECODE_STEPS),
+            sampling=_greedy(DECODE_STEPS, distinct=True),
         )
     fx.prompts[str(runs.node_ids[0])] = inputs[0]
     if len(runs.first.tokens) != DECODE_STEPS:
         raise FixtureError(f"the generated node stopped after {len(runs.first.tokens)} tokens")
     node = runs.node_ids[0]
     assert node is not None
+    _require_decisive_picks(store["logits"], runs.first.tokens, "the generated node", distinct=True)
     return node
+
+
+def _require_decisive_picks(logits: Sequence[torch.Tensor], tokens: Sequence[int], what: str, *,
+                            distinct: bool = False) -> None:
+    """Every greedy pick keeps the margin over its runner-up (among the
+    tokens not yet generated when ``distinct``), read off the head's
+    last-position logits per forward as the decode loop saw them, so no
+    platform picks another token."""
+    tokens = [int(t) for t in tokens]
+    for step, token in enumerate(tokens):
+        row = logits[step].clone()
+        if distinct and step:
+            row[torch.tensor(tokens[:step])] = -torch.inf
+        (best, runner), (pick, _other) = (t.tolist() for t in row.topk(2))
+        if pick != token or not _margin(best, runner):
+            raise FixtureError(f"{what}: step {step} has no decisive pick ({best} vs {runner})")
 
 
 #: The raw first turn's one-byte prompt per arch (greedy from it repeats
@@ -1081,9 +1265,11 @@ def raw_first_turn(fx: Fixture, tokens: int) -> str:
     a one-token prompt (BOS, or one byte without one)."""
     text = RAW_FIRST[fx.arch]
     fx.session.tree.navigate(fx.session.tree.root_id)
-    runs = fx.session.generate(text, raw=True, sampling=_greedy(tokens))
+    with _capture_blocks(fx) as store:
+        runs = fx.session.generate(text, raw=True, sampling=_greedy(tokens))
     if len(runs.first.tokens) != tokens:
         raise FixtureError(f"the raw first turn stopped after {len(runs.first.tokens)} tokens")
+    _require_decisive_picks(store["logits"], runs.first.tokens, "the raw first turn")
     node = runs.node_ids[0]
     assert node is not None
     return node
@@ -1127,9 +1313,7 @@ def _hand_activity(fx: Fixture, forward: Any, *, top: int, units: Sequence[str])
     return dict(result)
 
 
-def _activity_diagnostics(
-    fx: Fixture, full: dict[str, Any], excluded: set[int], case: str, *, ties: bool = False,
-) -> dict[str, Any]:
+def _activity_diagnostics(full: dict[str, Any], excluded: set[int]) -> dict[str, Any]:
     """Every unit's peak value, peak row and peak-row margin (from a call
     tracing every unit), the arrays the browser checks its device peaks by."""
     traces = full["traces"]
@@ -1155,38 +1339,49 @@ def _activity_diagnostics(
 
 
 def _check_activity(
-    result: dict[str, Any], diag: dict[str, Any], top: int, case: str, *, ties: bool,
+    result: dict[str, Any], diag: dict[str, Any], case: str, where: str,
+    ties: list[dict[str, Any]], *, forced: Sequence[str] = (),
 ) -> list[str]:
-    """Refuses a top-``top`` boundary without the margin; returns the listed
-    or traced units whose peak row has none (declared: the browser's row
-    must then hold a value within tolerance of the peak)."""
+    """Refuses a top-``top`` boundary without the margin (against every
+    unit's peak), declares near-tie runs inside each kind's list, and
+    returns the listed or traced units whose peak row has no margin (the
+    browser's row must then hold a value within tolerance of the peak).
+    ``forced`` units are exactly 0 on every row: their row is the first
+    produced non-sink one by rule, not by margin."""
     units = diag["units"]
     peak = decode(diag["peak"])
     margin = decode(diag["row_margin"])
+    rows = decode(diag["row"])
     index = {unit: i for i, unit in enumerate(units)}
+    groups: list[list[int]] = []
     for kind in ("neuron", "head"):
         mags = sorted((abs(float(peak[i])) for u, i in index.items() if u.startswith(kind)), reverse=True)
-        listed = [p for p in result["top"] if p["kind"] == kind]
-        take = len(listed)
-        # The boundary decides membership and must hold; a near tie inside
-        # the list only orders it (declared: compared as a map by unit).
-        if not ties and 0 < take < len(mags) and not _margin(mags[take - 1], mags[take]):
-            raise FixtureError(f"unit-activity {case} {kind}: entry {take - 1} ties the best excluded")
-    if ties:
-        return []
-    rows = decode(diag["row"])
+        positions = [n for n, p in enumerate(result["top"]) if p["kind"] == kind]
+        require_boundary(mags, len(positions), f"unit-activity {case} {kind}")
+        values = [abs(float(result["top"][n]["peak"])) for n in positions]
+        groups += [[positions[i] for i in group] for group in tie_groups(values)]
+    if groups:
+        ties.append({"path": f"{where}.result.top", "key": ["unit"], "groups": groups})
     tied: list[str] = []
-    for kind in ("neuron", "head"):
-        values = [abs(float(p["peak"])) for p in result["top"] if p["kind"] == kind]
-        if any(not _margin(a, b) for a, b in zip(values, values[1:], strict=False)):
-            tied.append(f"{kind} order")
     for unit in dict.fromkeys([p["unit"] for p in result["top"]] + list(result["traces"])):
         i = index[unit]
-        if int(rows[i]) < 0:  # every row excluded: the unit never ranks
+        if int(rows[i]) < 0 or unit in forced:  # every row excluded, or 0 by rule
             continue
         if float(margin[i]) < MARGIN * max(1.0, abs(float(peak[i]))):
             tied.append(unit)
     return tied
+
+
+def _require_both_signs(result: dict[str, Any], excluded: set[int], case: str,
+                        forced: Sequence[str] = ()) -> None:
+    """B1-goldens §0: a traced neuron takes both signs over its counted rows
+    (else a browser reading |act| would pass)."""
+    for unit, trace in result["traces"].items():
+        if not unit.startswith("neuron/") or unit in forced:
+            continue
+        values = [v for r, v in enumerate(trace) if r not in excluded]
+        if values and not (min(values) < 0.0 < max(values)):
+            raise FixtureError(f"unit-activity {case}: traced {unit} keeps one sign ({values})")
 
 
 # ---------------------------------------------------------------------------
@@ -1207,28 +1402,34 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
     session = fx.session
     every = _all_units(fx)
     cases: list[dict[str, Any]] = []
+    ties: list[dict[str, Any]] = []
 
     def record(name: str, result: dict[str, Any], full: dict[str, Any], excluded: set[int],
-               top: int, *, args: dict[str, Any], ties: bool = False) -> None:
+               *, args: dict[str, Any], forced: Sequence[str] = (), tie_case: bool = False) -> None:
+        """One case; only a declared tie case (``tie_case``) may list or
+        trace a unit whose peak row has no margin."""
         result = {k: v for k, v in result.items() if k != "node_id"}
-        diag = _activity_diagnostics(fx, full, excluded, name)
-        tied_rows = _check_activity(result, diag, top, name, ties=ties)
-        cases.append({"name": name, "arguments": args, "declared_ties": ties,
-                      "tied_peak_rows": tied_rows, "result": result,
+        diag = _activity_diagnostics(full, excluded)
+        where = f"cases[{len(cases)}]"
+        tied_rows = _check_activity(result, diag, name, where, ties, forced=forced)
+        if tied_rows and not tie_case:
+            raise FixtureError(f"unit-activity {name}: {tied_rows} peak without a row margin")
+        _require_both_signs(result, excluded, name, forced)
+        cases.append({"name": name, "arguments": args, "tied_peak_rows": tied_rows, "result": result,
                       "diagnostics": {k: v for k, v in diag.items() if k != "units"}})
 
     def tuned(name: str, node: str, args: dict[str, Any], *, raw: bool = False) -> None:
         """The largest ``top`` ≤ the asked one whose boundaries keep the margin."""
         full = dict(session.unit_activity(node, top=1024, units=every, raw=raw))
         excluded = {full["sink_raw_index"]} - {None}
-        diag = _activity_diagnostics(fx, full, excluded, name)
+        diag = _activity_diagnostics(full, excluded)
         for top in range(int(args["top"]), 2, -1):
             result = dict(session.unit_activity(node, **{**args, "top": top}, raw=raw))
             try:
-                _check_activity(result, diag, top, name, ties=False)
+                _check_activity(result, diag, name, "", [])
             except FixtureError:
                 continue
-            record(name, result, full, excluded, top, args={**args, "top": top, "raw": raw})
+            record(name, result, full, excluded, args={**args, "top": top, "raw": raw})
             return
         raise FixtureError(f"unit-activity {name}: no top keeps its boundary margin")
 
@@ -1251,20 +1452,37 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
         cases.append({"name": "sink-population", "arguments": {"raw_index": 0, "raw": True},
                       "refusal": {"status": status, "text": text, "code": type(exc).__name__}})
     else:
-        record("sink-population", at_sink, full, {0}, sink_top,
+        record("sink-population", at_sink, full, {0},
                args={"top": sink_top, "raw_index": 0, "raw": True})
+
+    # An authored turn: generating with a geometry probe attached (a
+    # measuring channel) records the user turn's prompt capture, which its
+    # replay reads.
+    _register_fixture_direction(fx)
+    session.add_probe(FIXTURE_DIRECTION)
+    try:
+        reply = generated_node(fx)
+    finally:
+        session.remove_probe(FIXTURE_DIRECTION)
+    authored = session.tree.get(reply).parent_id
+    assert authored is not None
+    capture = session.tree.get(authored).prompt_capture
+    if capture is None:
+        raise FixtureError("unit-activity authored: the user turn recorded no prompt capture")
+    tuned("authored", authored, {"top": 4})
 
     ids = short_prompt_ids(fx.tokenizer, fx.arch)
 
     def hand(name: str, runs: tuple[tuple[int, int], ...], rows: list[int], stop: int,
-             excluded: set[int], *, top: int, units: Sequence[str], ties: bool = False) -> None:
+             excluded: set[int], *, top: int, units: Sequence[str], forced: Sequence[str] = (),
+             tie_case: bool = False) -> None:
         forward = ReplayForward(
             ids=torch.tensor([ids[:stop]]), prompt_length=stop,
             raw_ids=tuple(ids[r] for r in rows), raw_index=len(rows) - 1, runs=runs,
         )
         result = _hand_activity(fx, forward, top=top, units=units)
         full = _hand_activity(fx, forward, top=1024, units=every)
-        record(name, result, full, excluded, top, ties=ties, args={
+        record(name, result, full, excluded, forced=forced, tie_case=tie_case, args={
             "top": top, "units": list(units), "ids": ids[:stop],
             "runs": [list(run) for run in runs], "raw_ids": [ids[r] for r in rows],
         })
@@ -1289,7 +1507,7 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
     hook.attach()
     try:
         hand("excluded-and-zero", ((0, 0),), [0, 1, 2, 3, 4, 5], 5, {0, 1}, top=1024,
-             units=("neuron/L1n5",), ties=True)
+             units=("neuron/L1n5",), forced=("neuron/L1n5",), tie_case=True)
     finally:
         hook.detach()
     zero = next(c for c in cases if c["name"] == "excluded-and-zero")["result"]
@@ -1299,7 +1517,8 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
 
     segmented = generated_node(fx, steering="!neuron/L1n5@prompt")
     tuned("segmented", segmented, {"top": 8})
-    return {**header("unit-activity", fx.arch, model_file_sha256()), "cases": cases}
+    return {**header("unit-activity", fx.arch, model_file_sha256()), "cases": cases,
+            "declared_ties": ties}
 
 
 # ---------------------------------------------------------------------------
@@ -1315,25 +1534,28 @@ def _token_id(fx: Fixture, symbol: str) -> int:
     return int(fx.tokenizer.convert_tokens_to_ids(symbol))
 
 
-def _check_token_lists(tree: Any, what: str, ties: list[str]) -> None:
-    """Every returned token list's neighbours keep the margin; a list that
-    does not is declared (``declared_ties``: the browser compares its ids
-    as a set and its values in order, softly) rather than refused, since a
-    hundred lists over a 116-token mask meet a few near-ties by chance."""
-    if isinstance(tree, dict):
-        tokens = tree.get("tokens")
-        if isinstance(tokens, list) and tokens and isinstance(tokens[0], dict) and "value" in tokens[0]:
-            values = sorted((float(t["value"]) for t in tokens), reverse=True)
-            absolute = PROBABILITY_MARGIN if tree.get("unit") == "probability" else None
-            try:
-                require_top_margin(values, len(values), what, absolute=absolute)
-            except FixtureError:
-                ties.append(what)
-        for key, child in tree.items():
-            _check_token_lists(child, f"{what}.{key}", ties)
-    elif isinstance(tree, list):
-        for i, child in enumerate(tree):
-            _check_token_lists(child, f"{what}[{i}]", ties)
+#: The ``k`` a read tries, in order, until every ranked list it returns
+#: keeps its boundary margin (B1-goldens §0); the file records the one kept.
+K_CHOICES = (READ_K, 4, 6, 3, 7)
+
+
+def deepened(call: Callable[[int], Any], where: str, ties: list[dict[str, Any]],
+             choices: Sequence[int] = K_CHOICES) -> tuple[int, Any]:
+    """``(k, call(k))`` for the first ``k`` of ``choices`` whose every ranked
+    list keeps the margin to its best excluded entry (read off ``call(k +
+    1)``), its near-tie runs declared into ``ties``."""
+    refusals = []
+    for k in choices:
+        short, long = call(k), call(k + 1)
+        found: list[dict[str, Any]] = []
+        try:
+            rank_lists(short, long, found, where)
+        except FixtureError as exc:
+            refusals.append(f"k={k}: {exc}")
+            continue
+        ties.extend(found)
+        return k, short
+    raise FixtureError(f"{where}: no k keeps every boundary: " + "; ".join(refusals))
 
 
 def find_vector() -> torch.Tensor:
@@ -1344,39 +1566,93 @@ def find_vector() -> torch.Tensor:
 def build_unit_reads(fx: Fixture) -> dict[str, Any]:
     """``unitRead`` (hubs shown and hidden), ``unitTop`` by writes and fires
     over every layer, and ``unitFind`` of a vector and a lens selector,
-    catalog unbound."""
+    catalog unbound; each at the ``k`` (5 where it can) whose boundaries
+    keep the margin, ``unitFind`` with its pursuit's per-iteration margins."""
     units = fx.session.units
     assert fx.session.whitener is not None
+    ties: list[dict[str, Any]] = []
     reads = []
-    ties: list[str] = []
-    for i, unit in enumerate(READ_UNITS):
+    for unit in READ_UNITS:
         for hide in (False, True):
-            read = units.read(unit, k=READ_K, hide_hubs=hide).to_dict()
-            _check_token_lists(read, f"reads[{len(reads)}].read", ties)
-            reads.append({"unit": unit, "hide_hubs": hide, "read": read})
-    if len(ties) > len(reads):
-        raise FixtureError(f"unit-reads: {len(ties)} token lists tie; retune the fixture")
+            k, read = deepened(
+                lambda k, unit=unit, hide=hide: units.read(unit, k=k, hide_hubs=hide).to_dict(),
+                f"reads[{len(reads)}].read", ties,
+            )
+            reads.append({"unit": unit, "hide_hubs": hide, "k": k, "read": read})
     tops = []
     for symbol in TOP_TOKENS:
         for by in ("writes", "fires"):
-            result = units.top(symbol, by=by, layers="all", k=READ_K).to_dict()
-            scores = [float(hit["score"]) for hit in result["hits"]]
-            try:
-                require_top_margin(scores, len(scores), "top")
-            except FixtureError:
-                ties.append(f"top[{len(tops)}].result.hits")
-            tops.append({"token": symbol, "by": by, "result": result})
+            k, result = deepened(
+                lambda k, symbol=symbol, by=by: units.top(symbol, by=by, layers="all", k=k).to_dict(),
+                f"top[{len(tops)}].result", ties,
+            )
+            tops.append({"token": symbol, "by": by, "k": k, "result": result})
     vector = find_vector()
     selector = f"jlens/#{_token_id(fx, 'e')}"
     finds = [
         {"target": "vector", "layer": 2, "vector": encode(vector),
-         "result": units.find(vector, layer=2, k=READ_K).to_dict()},
-        {"target": selector, "result": units.find(selector, k=READ_K).to_dict()},
+         **_find(fx, lambda k: units.find(vector, layer=2, k=k).to_dict(), "find[0]", ties)},
+        {"target": selector,
+         **_find(fx, lambda k: units.find(selector, k=k).to_dict(), "find[1]", ties)},
     ]
     return {
         **header("unit-reads", fx.arch, model_file_sha256()),
-        "k": READ_K, "reads": reads, "top": tops, "find": finds, "declared_ties": ties,
+        "reads": reads, "top": tops, "find": finds, "declared_ties": ties,
     }
+
+
+@contextmanager
+def _pursuit_scores() -> Iterator[list[tuple[int, torch.Tensor]]]:
+    """Every neuron-dictionary score vector the pursuit computes, with its
+    layer, in call order (one per iteration)."""
+    from drowse.lens.decompose import NeuronWrites
+
+    seen: list[tuple[int, torch.Tensor]] = []
+    original = NeuronWrites.scores
+
+    def scores(self: Any, residual: torch.Tensor) -> torch.Tensor:
+        out = original(self, residual)
+        seen.append((int(self.layer), (out / self.norms().clamp(min=1e-12)).abs().cpu()))
+        return out
+
+    NeuronWrites.scores = scores  # type: ignore[method-assign]
+    try:
+        yield seen
+    finally:
+        NeuronWrites.scores = original  # type: ignore[method-assign]
+
+
+def _find(fx: Fixture, call: Callable[[int], Any], where: str,
+          ties: list[dict[str, Any]]) -> dict[str, Any]:
+    """``unitFind`` at the largest ``k`` ≤ :data:`READ_K` whose every greedy
+    pick keeps the margin over its runner-up (both by normalized score, the
+    pursuit's own selection), with those per-iteration scores."""
+    for k in range(READ_K, 1, -1):
+        with _pursuit_scores() as seen:
+            result = call(k)
+        iterations: dict[str, list[dict[str, Any]]] = {}
+        picked: dict[int, list[int]] = {}
+        ok = True
+        for layer, scores in seen:
+            chosen = picked.setdefault(layer, [])
+            masked = scores.clone()
+            if chosen:
+                masked[torch.tensor(chosen)] = -torch.inf
+            best, runner = masked.topk(2).values.tolist()
+            index = int(masked.argmax())
+            if best <= 0.0:
+                break
+            chosen.append(index)
+            iterations.setdefault(str(layer), []).append({
+                "unit": f"neuron/L{layer}n{index}", "score": _f32(best), "runner_up": _f32(runner),
+            })
+            ok = ok and _margin(best, runner)
+        if ok:
+            found: list[dict[str, Any]] = []
+            rank_lists(result, None, found, f"{where}.result")
+            ties.extend(found)
+            return {"k": k, "result": result, "iterations": iterations}
+    raise FixtureError(f"unit-reads {where}: no k keeps the pursuit's margins")
 
 
 def build_unit_artifacts(fx: Fixture) -> dict[str, Any]:
@@ -1438,40 +1714,63 @@ def _site_rows(fx: Fixture) -> dict[str, torch.Tensor]:
 def build_lens_reads(fx: Fixture) -> dict[str, Any]:
     """The lens instrument's reads of residual rows at both sites of every
     layer (R through ``J``, the logit lens at the last ``out``, S centred;
-    present and absent halves) and of two directions (a neuron write at
-    ``out``, an attention write at ``mid``), ``k = 5``."""
+    present and absent halves), of directions (a neuron write at ``out``
+    with both lenses absent, then present: S reads a direction uncentred;
+    attention writes at ``mid``, R absent or present), and a session
+    without an S lens; each request at the ``k`` (5 where it can) whose
+    boundaries keep the margin."""
+    from drowse.lens.sources import LENS_SOURCES, remove_lens_source
     from drowse.model.units import neuron_write
 
     lens = fx.session.lens
     rows = _site_rows(fx)
-    ties: list[str] = []
-    requests = []
+    ties: list[dict[str, Any]] = []
+    requests: list[dict[str, Any]] = []
+
+    def residual(layer: int, site: str, **extra: Any) -> None:
+        def call(k: int) -> Any:
+            got = lens.read(rows[site][layer], layer, site, of="residual", k=k)
+            assert isinstance(got, list)
+            return [read.to_dict() for read in got]
+
+        k, reads = deepened(call, f"requests[{len(requests)}].reads", ties)
+        requests.append({
+            "of": "residual", **extra, "layer": layer, "site": site, "k": k,
+            "rows": encode(rows[site][layer]), "reads": reads,
+        })
+
     for layer in range(len(fx.spec.blocks)):
         for site in ("out", "mid"):
-            got = lens.read(rows[site][layer], layer, site, of="residual", k=READ_K)
-            assert isinstance(got, list)
-            reads = [read.to_dict() for read in got]
-            _check_token_lists(reads, f"requests[{len(requests)}].reads", ties)
-            requests.append({
-                "of": "residual", "layer": layer, "site": site,
-                "rows": encode(rows[site][layer]), "reads": reads,
-            })
+            residual(layer, site)
+    attention = {L: rows["mid"][L, 1] - rows["block_in"][L, 1] for L in range(len(fx.spec.blocks))}
     directions = (
         ("neuron/L2n7 write", 2, "out", neuron_write(fx.spec.blocks[2], 7).float()),
-        ("attention write L1 p5", 1, "mid", (rows["mid"][1, 1] - rows["block_in"][1, 1])),
+        ("neuron/L1n7 write", 1, "out", neuron_write(fx.spec.blocks[1], 7).float()),
+        ("attention write L1 p5", 1, "mid", attention[1]),
+        ("attention write L2 p5", 2, "mid", attention[2]),
     )
     for label, layer, site, vector in directions:
-        read = lens.read(vector, layer, site, of="direction", k=READ_K)
-        assert not isinstance(read, list)
-        reads = [read.to_dict()]
-        _check_token_lists(reads, f"requests[{len(requests)}].reads", ties)
+        def call(k: int, layer: int = layer, site: str = site, vector: torch.Tensor = vector) -> Any:
+            read = lens.read(vector, layer, site, of="direction", k=k)
+            assert not isinstance(read, list)
+            return [read.to_dict()]
+
+        k, reads = deepened(call, f"requests[{len(requests)}].reads", ties)
         requests.append({
-            "of": "direction", "label": label, "layer": layer, "site": site,
+            "of": "direction", "label": label, "layer": layer, "site": site, "k": k,
             "rows": encode(vector[None]), "reads": reads,
         })
+    # Last (the fixture is this builder's own): no S lens prepared at all,
+    # so every S half is absent.
+    model_id = fx.session.model_id
+    remove_lens_source(model_id, LENS_SOURCES.parse("local:s"))
+    lens.evict_input()
+    residual(1, "out", lens="none prepared")
+    # Its absence names the model (here a scratch path): the file says <model>.
+    requests[-1]["reads"] = json.loads(json.dumps(requests[-1]["reads"]).replace(model_id, "<model>"))
     return {
         **header("lens-reads", fx.arch, model_file_sha256()),
-        "positions": list(READ_POSITIONS), "k": READ_K, "band": list(BAND),
+        "positions": list(READ_POSITIONS), "band": list(BAND),
         "requests": requests, "declared_ties": ties,
     }
 
@@ -1495,23 +1794,20 @@ def build_slens(fx: Fixture) -> dict[str, Any]:
     rows = _site_rows(fx)
     layers = sorted(int(L) for L in s_lens.layers("out"))
     footprints = []
-    ties: list[str] = []
+    ties: list[dict[str, Any]] = []
     for layer in layers:
         x = rows["out"][layer] - lens.neutral_mean("out", layer)
         u = x @ s_lens.matrix(layer, "out").float()
         z = emb.z(u).masked_fill(~emb.keep[: emb.vocab], -torch.inf)
-        top = z.topk(READ_K, dim=-1)
-        for r in range(int(z.shape[0])):
-            values = [float(v) for v in top.values[r]]
-            try:
-                require_top_margin(values, READ_K, "footprint")
-            except FixtureError:
-                ties.append(f"footprints[{len(footprints)}].top[{r}]")
-        footprints.append({
-            "layer": layer, "u": encode(u),
-            "top": [{"ids": [int(i) for i in top.indices[r]], "z": [_f32(v) for v in top.values[r]]}
-                    for r in range(int(z.shape[0]))],
-        })
+
+        def top(k: int, z: torch.Tensor = z) -> list[list[dict[str, Any]]]:
+            best = z.topk(k, dim=-1)
+            ids, values = best.indices.tolist(), best.values.tolist()
+            return [[{"token_id": int(i), "z": _f32(v)} for i, v in zip(ids[r], values[r], strict=True)]
+                    for r in range(len(ids))]
+
+        k, lists = deepened(top, f"footprints[{len(footprints)}].top", ties)
+        footprints.append({"layer": layer, "u": encode(u), "k": k, "top": lists})
     word_ids = [int(lens.resolve_token(word, family="S")) for word in SLENS_WORDS]
     n = len(fx.spec.blocks)
     per_layer = []
@@ -1530,7 +1826,8 @@ def build_slens(fx: Fixture) -> dict[str, Any]:
     for word in (f"#{word_ids[0]}", SLENS_WORDS[1]):
         name = lens.register_input_direction(word)
         profile = session.registry.profiles[name]
-        atoms.append({"atom": name, "layers": {str(L): encode(profile[L].float().cpu()) for L in sorted(profile)}})
+        atoms.append({"atom": name, "layers": {str(L): encode(profile[L].float().cpu()) for L in sorted(profile)},
+                      "pushes": lowered_pushes(fx, name, (f"0.3 {name}",))})
     masked = int(fx.tokenizer.convert_tokens_to_ids(DROPPED_SYMBOLS[0]))
     try:
         lens.register_input_direction(f"#{masked}")
@@ -1559,7 +1856,8 @@ ANATOMY_STEERING = "0.3 neuron/L2n7 + !head/L1h3"
 
 
 def _anatomy_intermediates(fx: Fixture, node: str) -> dict[str, Any]:
-    """The unsteered anatomy's pieces at its producing position: the taps,
+    """An anatomy's pieces at its producing position (under whatever
+    steering and R lens are installed): the taps,
     the unembedding cotangent ``u``, ``g_L`` at both sites where the R lens
     (or the logit lens) holds a layer, every unit's contribution and every
     head's write norm."""
@@ -1618,19 +1916,26 @@ def _anatomy_intermediates(fx: Fixture, node: str) -> dict[str, Any]:
     }
 
 
+#: The anatomy's knobs, tried in order until every ranked list keeps its
+#: boundary margin (against the knobs one deeper each).
+ANATOMY_KNOBS = (
+    {"k": 4, "units": 4, "patterns": 2}, {"k": 5, "units": 5, "patterns": 2},
+    {"k": 3, "units": 3, "patterns": 2}, {"k": 4, "units": 4, "patterns": 3},
+    {"k": 5, "units": 5, "patterns": 3}, {"k": 6, "units": 6, "patterns": 2},
+)
+
+
 def build_token_anatomy(fx: Fixture) -> dict[str, Any]:
     """``token_anatomy`` of the generated node's raw index 3: unsteered,
     under a neuron push and a head ablation, and with an R lens that holds
-    no ``mid`` layer (no patterns, heads absent)."""
+    no ``mid`` layer (no patterns, heads absent); each case with its
+    intermediates at the producing position."""
     from drowse.lens.store import LensProvenance, save_lens
     from drowse.model.fingerprint import loaded_model_fingerprint
 
     session = fx.session
-    knobs = {"k": 4, "units": 4, "patterns": 2}
     node = generated_node(fx)
-    plain = session.token_anatomy(node, ANATOMY_INDEX, **knobs)
     steered_node = generated_node(fx, steering=ANATOMY_STEERING)
-    steered = session.token_anatomy(steered_node, ANATOMY_INDEX, **knobs)
     out_only = fixture_lens("R")
     out_only = type(out_only)(
         {L: out_only.matrix(L, "out") for L in out_only.layers("out")},
@@ -1640,22 +1945,41 @@ def build_token_anatomy(fx: Fixture) -> dict[str, Any]:
         corpus_spec="units-tiny-fixture", corpus_sha256="0" * 64, seq_len=8, dim_batch=1,
         model_fingerprint=loaded_model_fingerprint(session.model, session.model_id),
     ), name="r-out")
-    session.lens.select_source("local:r-out")
-    try:
-        no_mid = session.token_anatomy(node, ANATOMY_INDEX, **knobs)
-    finally:
-        session.lens.select_source("local:r")
-    ties: list[str] = []
-    cases = []
-    for name, steering, envelope in (
-        ("unsteered", None, plain), ("steered", ANATOMY_STEERING, steered), ("no-r-mid", None, no_mid),
+    ties: list[dict[str, Any]] = []
+    cases: list[dict[str, Any]] = []
+    for name, steering, at, source in (
+        ("unsteered", None, node, "local:r"),
+        ("steered", ANATOMY_STEERING, steered_node, "local:r"),
+        ("no-r-mid", None, node, "local:r-out"),
     ):
-        _check_token_lists(envelope, f"cases[{len(cases)}].envelope", ties)
-        cases.append({"name": name, "steering": steering, "envelope": envelope})
+        session.lens.select_source(source)
+        where = f"cases[{len(cases)}].envelope"
+        refusals = []
+        for knobs in ANATOMY_KNOBS:
+            deeper = {key: value + 1 for key, value in knobs.items()}
+            short = session.token_anatomy(at, ANATOMY_INDEX, **knobs)
+            long = session.token_anatomy(at, ANATOMY_INDEX, **deeper)
+            found: list[dict[str, Any]] = []
+            try:
+                rank_lists(short, long, found, where)
+            except FixtureError as exc:
+                refusals.append(f"{knobs}: {exc}")
+                continue
+            ties.extend(found)
+            break
+        else:
+            raise FixtureError(f"token-anatomy {name}: no knobs keep every boundary: {refusals}")
+        if steering is None:
+            intermediates = _anatomy_intermediates(fx, at)
+        else:
+            with session.steering(steering):
+                intermediates = _anatomy_intermediates(fx, at)
+        cases.append({"name": name, "steering": steering, "lens": source, "knobs": knobs,
+                      "envelope": short, "intermediates": intermediates})
+    session.lens.select_source("local:r")
     return {
         **header("token-anatomy", fx.arch, model_file_sha256()),
-        "raw_index": ANATOMY_INDEX, "knobs": knobs, "cases": cases,
-        "intermediates": _anatomy_intermediates(fx, node), "declared_ties": ties,
+        "raw_index": ANATOMY_INDEX, "cases": cases, "declared_ties": ties,
     }
 
 
@@ -1664,25 +1988,20 @@ def build_token_anatomy(fx: Fixture) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def build_neuron_push(fx: Fixture) -> dict[str, Any]:
-    """``neuron/`` atoms: the registered profile (the ``+``-pole write at the
-    neuron's layer) and its lowered affine group through the fixture's
-    whitener, as ``affine-composed-lowering-v1.json`` records one."""
+def lowered_pushes(fx: Fixture, name: str, expressions: Sequence[str]) -> list[dict[str, Any]]:
+    """Each expression's push of the registered profile ``name``, lowered to
+    its affine groups through the fixture's whitener (as
+    ``affine-composed-lowering-v1.json`` records one)."""
     from drowse.geometry.inject import synthesize_subspace
     from drowse.steering.grammar import format_expr, parse_expr
     from drowse.steering.hooks import _lower_affine_subspaces
 
-    session = fx.session
-    whitener = session.whitener
+    whitener = fx.session.whitener
     assert whitener is not None
-    name = session.units.register_direction("L2n7")
-    profile = session.registry.profiles[name]
+    profile = fx.session.registry.profiles[name]
     means = {L: whitener.layer_means[L].float() for L in profile}
     cases = []
-    for expression in (
-        "0.3 neuron/L2n7", "-0.3 neuron/L2n7", "0.3 neuron/L2n7@response",
-        f"0.3 neuron/L2n7@when:{PUSH_GATE}",
-    ):
+    for expression in expressions:
         steering = parse_expr(expression)
         entry = steering.alphas[name]
         if isinstance(entry, float):
@@ -1711,6 +2030,19 @@ def build_neuron_push(fx: Fixture) -> dict[str, Any]:
             "expression": expression, "canonical": format_expr(steering),
             "coefficient": coefficient, "trigger": _trigger(trigger), "layers": layers,
         })
+    return cases
+
+
+def build_neuron_push(fx: Fixture) -> dict[str, Any]:
+    """``neuron/`` atoms: the registered profile (the ``+``-pole write at the
+    neuron's layer) and its lowered affine groups."""
+    session = fx.session
+    name = session.units.register_direction("L2n7")
+    profile = session.registry.profiles[name]
+    cases = lowered_pushes(fx, name, (
+        "0.3 neuron/L2n7", "-0.3 neuron/L2n7", "0.3 neuron/L2n7@response",
+        f"0.3 neuron/L2n7@when:{PUSH_GATE}",
+    ))
     return {
         **header("neuron-push", fx.arch, model_file_sha256()),
         "profile": {str(L): encode(v.float().cpu()) for L, v in sorted(profile.items())},
@@ -1723,38 +2055,58 @@ def build_neuron_push(fx: Fixture) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 PROBE_UNITS = ("neuron/L1n5", "head/L2h1")
-PROBE_CASES = (("unsteered", None), ("ablated-neuron", "!neuron/L1n5"), ("ablated-head", "!head/L2h1"))
+#: The gate-only unit (tapped for a gate, not attached as a probe).
+GATE_UNIT = "neuron/L3n9"
+PROBE_CASES = (
+    ("unsteered", None), ("ablated-neuron", "!neuron/L1n5"), ("ablated-head", "!head/L2h1"),
+    ("gated", "!head/L2h0@when:{gate}"),
+)
+PROBE_TOKENS = 5
 
 
 def build_unit_probes(fx: Fixture) -> dict[str, Any]:
     """Attached unit probes through the live tap and the read plane: per
-    forward (a prefill and 4 decode steps, raw mode, greedy) the token
-    envelope's ``units`` readings, and the generation's final aggregate,
-    unsteered and with each probed unit ablated (a probe reads the value
-    the module used: an ablated neuron reads its mean)."""
+    forward (a prefill and 4 decode steps, raw mode, greedy) each tapped
+    unit's value and raw firing and the probes' readings, the gate scalars
+    the decode loop saw, and the generation's final aggregate; unsteered,
+    with each probed unit ablated (a probe reads the value the module used:
+    an ablated neuron reads its mean) and under a gate on a unit no probe
+    attaches."""
     session = fx.session
     for unit in PROBE_UNITS:
         session.add_probe(unit)
     text = fx.tokenizer.decode(short_prompt_ids(fx.tokenizer, fx.arch))
+
+    def run(steering: str | None) -> tuple[Any, dict[str, Any]]:
+        with unit_forwards() as runs, _capture_blocks(fx) as store:
+            final = session.generate(
+                text, raw=True, stateless=True, steering=steering, sampling=_greedy(PROBE_TOKENS),
+            ).first
+        _require_decisive_picks(store["logits"], final.tokens, f"unit-probes {steering}")
+        if len(final.tokens) != PROBE_TOKENS or len(runs) != 1:
+            raise FixtureError(f"unit-probes {steering}: {len(final.tokens)} tokens, {len(runs)} runs")
+        if len(runs[0]["forwards"]) != PROBE_TOKENS:
+            raise FixtureError(f"unit-probes {steering}: {len(runs[0]['forwards'])} forwards")
+        return final, runs[0]
+
     cases = []
     try:
+        # The gate's threshold: between the gate unit's two largest readings
+        # over the forwards that gate a decode step (a shut gate first).
+        _final, shut = run(PROBE_CASES[3][1].format(gate=f"{GATE_UNIT} > 1000"))
+        readings = [f["units"][GATE_UNIT]["value"] for f in shut["forwards"]][: PROBE_TOKENS - 1]
+        gate = _midpoint_gate(readings, GATE_UNIT, "unit-probes gated")
         for name, steering in PROBE_CASES:
-            # One event per emitted text piece: a partial UTF-8 byte waits for
-            # its sequence, so an event can carry several raw tokens.
-            steps = [
-                {"raw_index": chunk.raw_index, "token_id": chunk.token_id,
-                 "measurements": chunk.measurements}
-                for chunk in session.generate_stream(
-                    text, raw=True, stateless=True, steering=steering, sampling=_greedy(5),
-                )
-            ]
-            final = session.generate(
-                text, raw=True, stateless=True, steering=steering, sampling=_greedy(5),
-            ).first
-            if len(final.tokens) != 5:
-                raise FixtureError(f"unit-probes {name}: {len(final.tokens)} tokens")
+            steering = None if steering is None else steering.format(gate=gate)
+            final, seen = run(steering)
+            if name == "gated":
+                threshold = float(gate.rsplit(" ", 1)[1])
+                values = [f["units"][GATE_UNIT]["value"] for f in seen["forwards"]][: PROBE_TOKENS - 1]
+                if not (min(values) < threshold < max(values)):
+                    raise FixtureError(f"unit-probes gated: the gate never flips ({values} vs {threshold})")
             cases.append({
-                "name": name, "steering": steering, "steps": steps,
+                "name": name, "steering": steering, "tokens": list(final.tokens),
+                "scale": seen["scale"], "forwards": seen["forwards"], "gate_scalars": seen["gates"],
                 "aggregate": final.measurements,
             })
     finally:
@@ -1762,7 +2114,8 @@ def build_unit_probes(fx: Fixture) -> dict[str, Any]:
             session.remove_probe(unit)
     return {
         **header("unit-probes", fx.arch, model_file_sha256()),
-        "ids": short_prompt_ids(fx.tokenizer, fx.arch), "probes": list(PROBE_UNITS), "cases": cases,
+        "ids": short_prompt_ids(fx.tokenizer, fx.arch), "probes": list(PROBE_UNITS),
+        "gate_unit": GATE_UNIT, "cases": cases,
     }
 
 
@@ -1830,28 +2183,72 @@ def load_golden(path: str, directory: Path = GOLDENS) -> dict[str, Any]:
     return json.loads((directory / path).read_text())
 
 
-def comparable(golden: dict[str, Any]) -> dict[str, Any]:
-    """A golden as the parity test compares it: unit activity's top lists
-    as maps keyed by unit (their order follows the compared values), a
-    tied peak row's ``raw_index`` left to the value comparison."""
-    golden = json.loads(json.dumps(golden))
+def _population_records(result: dict[str, Any]) -> None:
+    """A unit-activity population's float16 strings as array records (the
+    comparison allows them one float16 ulp)."""
+    population = result.get("population")
+    if not isinstance(population, dict) or population.get("encoding") != "float16-le-base64":
+        return
+    for layer in population["layers"]:
+        for kind in ("neurons", "heads"):
+            text = layer[kind]
+            size = len(base64.b64decode(text)) // 2
+            layer[kind] = {"dtype": "float16", "encoding": "float16-le-base64",
+                           "shape": [size], "data": text}
+
+
+def _row_ties(diagnostics: dict[str, Any]) -> list[int]:
+    """The units whose recorded peak row has no margin (their row is not
+    compared; B1-goldens §2.5).  A unit with every row excluded (row −1)
+    compares exactly."""
+    peak = decode(diagnostics["peak"]).astype(np.float64)
+    margin = decode(diagnostics["row_margin"]).astype(np.float64)
+    rows = decode(diagnostics["row"])
+    bound = MARGIN * np.maximum(1.0, np.abs(peak))
+    return [int(i) for i in np.nonzero((margin < bound) & (rows >= 0))[0]]
+
+
+def tie_spec(golden: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """What a golden declares the comparison may permute or skip, by path:
+    its ranked lists' near-tie runs and, for unit activity, the peak rows
+    without a margin."""
+    spec = {entry["path"]: entry for entry in golden.get("declared_ties") or ()}
     if golden.get("golden") == "unit-activity":
-        for case in golden["cases"]:
+        for i, case in enumerate(golden["cases"]):
+            if "diagnostics" in case:
+                spec[f"cases[{i}].diagnostics.row"] = {"ignore": _row_ties(case["diagnostics"])}
+    return spec
+
+
+def comparable(golden: dict[str, Any], reference: dict[str, Any]) -> dict[str, Any]:
+    """``golden`` as the parity test compares it against ``reference`` (the
+    file): the declarations dropped (they are the comparison's, read from
+    the file), float16 populations as records, and a peak's ``raw_index``
+    left out where the file records no margin at its row."""
+    golden = json.loads(json.dumps(golden))
+    golden.pop("declared_ties", None)
+    if golden.get("golden") == "unit-activity":
+        for case, ref in zip(golden["cases"], reference["cases"], strict=False):
+            tied = set(ref.get("tied_peak_rows") or ())
+            case.pop("tied_peak_rows", None)
             result = case.get("result")
             if result is None:
                 continue
-            tied = set(case.get("tied_peak_rows", ()))
-            peaks = {}
+            _population_records(result)
             for peak in result["top"]:
-                if peak["unit"] in tied or case.get("declared_ties"):
-                    peak = {k: v for k, v in peak.items() if k != "raw_index"}
-                peaks[peak["unit"]] = peak
-            result["top"] = peaks
+                if peak["unit"] in tied:
+                    peak.pop("raw_index", None)
     return golden
 
 
-def soft_paths(golden: dict[str, Any]) -> frozenset[str]:
-    return frozenset(golden.get("declared_ties") or ())
+def golden_problems(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """Every difference between the file and a rebuild, within the file's
+    Python tolerance and its declarations."""
+    tolerance = expected["tolerance"]["python"]
+    return compare(
+        comparable(expected, expected), comparable(actual, expected),
+        atol=tolerance["atol"], rtol=tolerance["rtol"], ties=tie_spec(expected),
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:

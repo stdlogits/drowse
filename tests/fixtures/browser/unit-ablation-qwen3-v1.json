@@ -305,7 +305,15 @@
      "layer": 2,
      "site": "z",
      "width": 64,
-     "trigger": {"prompt": false, "generated": true, "thinking": true, "response": true, "first_n": null, "after_n": null, "gate": "ProbeGate(probe='neuron/L1n5', op='>', threshold=-0.0427)"},
+     "trigger": {
+      "prompt": false,
+      "generated": true,
+      "thinking": true,
+      "response": true,
+      "first_n": null,
+      "after_n": null,
+      "gate": {"probe": "neuron/L1n5", "op": ">", "threshold": -0.0427}
+     },
      "entries": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
      "keep": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
      "bias": [0.9228833, 0.28532135, 0.18466431, 0.12882103, 0.10057788, 0.24734415, -0.20159012, 0.06496227, -0.44168246, -0.49988493, 0.07678456, -0.11353147, -0.23164552, -0.08310149, 0.26469433, -0.06533119]

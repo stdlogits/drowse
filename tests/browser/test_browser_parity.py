@@ -8,6 +8,7 @@ golden files and their paths are part of that seam: never rename or move them.
 """
 from __future__ import annotations
 
+import base64
 import csv
 import json
 import math
@@ -15,6 +16,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
+import numpy as np
 import pytest
 import torch
 
@@ -1305,6 +1307,63 @@ def test_budget_exhaustion_and_invalid_thresholds_are_explicit():
 # ``PYTHONPATH=. python -m tests.support.browser_units --write``.
 
 
+def test_units_validator_refuses_boundary_ties_and_declares_runs() -> None:
+    """A ranked list's last entry must clear the best excluded one (read off
+    the list one deeper); near-ties inside it are declared as runs."""
+    from tests.support import browser_units
+
+    def tokens(*values: float) -> dict[str, Any]:
+        return {"unit": "z", "tokens": [{"token_id": i, "token": str(i), "value": v} for i, v in enumerate(values)]}
+
+    ties: list[dict[str, Any]] = []
+    browser_units.rank_lists(tokens(3.0, 2.0, 1.9995, 1.0), tokens(3.0, 2.0, 1.9995, 1.0, 0.5), ties, "read")
+    assert ties == [{"path": "read.tokens", "key": ["token_id"], "groups": [[1, 2]]}]
+    with pytest.raises(browser_units.FixtureError, match="ties the best excluded"):
+        browser_units.rank_lists(tokens(3.0, 1.0), tokens(3.0, 1.0, 0.9999), [], "read")
+    # Probabilities rank by ln p: a tail 3e-6 apart in p is 0.036 apart in ln p.
+    probability = {**tokens(0.5, 8.5e-5), "unit": "probability"}
+    deeper = {**tokens(0.5, 8.5e-5, 8.2e-5), "unit": "probability"}
+    browser_units.rank_lists(probability, deeper, [], "read")
+
+
+def test_units_compare_matches_declared_runs_by_identity() -> None:
+    """Inside a declared run entries may permute, matched by identity with
+    every field compared; outside, order, ids and labels compare exactly."""
+    from tests.support import browser_units
+
+    entries = [{"token_id": i, "token": t, "value": v}
+               for i, t, v in ((7, "a", 3.0), (8, "b", 2.0), (9, "c", 1.9995), (4, "d", 1.0))]
+    expected = {"read": {"tokens": entries}}
+    ties = {"read.tokens": {"key": ["token_id"], "groups": [[1, 2]]}}
+
+    def problems(rows: list[dict[str, Any]]) -> list[str]:
+        return browser_units.compare(expected, {"read": {"tokens": rows}}, ties=ties)
+
+    assert problems([entries[0], entries[2], entries[1], entries[3]]) == []
+    assert problems([entries[1], entries[0], entries[2], entries[3]])  # across runs
+    assert problems([entries[0], {**entries[1], "token_id": -999}, entries[2], entries[3]])
+    assert problems([entries[0], entries[2], {**entries[1], "token": "WRONG"}, entries[3]])
+    assert problems([entries[0], entries[1], entries[2], {**entries[3], "token": "WRONG"}])
+    # An int array's ignored indices (peak rows without a margin) are skipped.
+    rows = {"row": browser_units.encode(np.array([3, 4, 5], dtype=np.int32))}
+    moved = {"row": browser_units.encode(np.array([3, 9, 5], dtype=np.int32))}
+    assert browser_units.compare(rows, moved, ties={"row": {"ignore": [1]}}) == []
+    assert browser_units.compare(rows, moved)
+    # float16 records allow one ulp.
+    half = np.array([1.0, 2.0, 1000.0], dtype=np.float16)
+
+    def record(values: np.ndarray) -> dict[str, Any]:
+        data = base64.b64encode(values.astype("<f2").tobytes()).decode("ascii")
+        return {"dtype": "float16", "encoding": "float16-le-base64", "shape": [3], "data": data}
+
+    one_ulp = half.copy()
+    one_ulp[2] = np.nextafter(half[2], np.float16(np.inf))
+    two_ulp = one_ulp.copy()
+    two_ulp[2] = np.nextafter(one_ulp[2], np.float16(np.inf))
+    assert browser_units.compare(record(half), record(one_ulp)) == []
+    assert browser_units.compare(record(half), record(two_ulp))
+
+
 def test_units_tiny_models_regenerate_to_their_digests() -> None:
     """The fixture weights are integers and hashes only, so their file is
     byte-exact on every platform, and every tensor round-trips q4f32_1."""
@@ -1345,10 +1404,5 @@ def test_units_golden_matches_python(name: str, arch: str) -> None:
 
     expected = browser_units.load_golden(browser_units.golden_file(name, arch))
     actual = json.loads(browser_units._serialize(browser_units.build_golden(name, arch)))
-    tolerance = expected["tolerance"]["python"]
-    problems = browser_units.compare(
-        browser_units.comparable(expected), browser_units.comparable(actual),
-        atol=tolerance["atol"], rtol=tolerance["rtol"],
-        soft=browser_units.soft_paths(expected) | browser_units.soft_paths(actual),
-    )
+    problems = browser_units.golden_problems(expected, actual)
     assert not problems, "\n".join(problems[:20])

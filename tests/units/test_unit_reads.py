@@ -592,6 +592,62 @@ def test_population_artifacts_reproduce_top_without_the_vocabulary(lensed: Any) 
     torch.testing.assert_close(null.T @ null, torch.eye(null.shape[1]), atol=1e-5, rtol=0)
 
 
+def test_population_artifacts_carry_top_in_all_four_cases(lensed: Any) -> None:
+    """Spec §4.2's ``top`` shortcut over every lens layer, in each (family,
+    ``by``) case: R rows' logits of one token from ``ρ_n`` and ``(γ_f ⊙
+    W_U[v]) J`` alone (writes, and fires+ / fires− as their own
+    populations); S rows' unit-covector scores (writes, the − pole read
+    with sign −1 against the same statistics; fires one pooled population
+    of both poles).  Each case's across-unit mean and floored std are the
+    shipped statistics at the token, and ``top``'s z for its hits follows."""
+    session, r, s = lensed
+    spec = model_spec(session.model)
+    reads = session.units.reads
+    readout = _readout(session)
+    emb = session.lens.token_embeddings()
+    v = int(session.units.top("e", by="writes", k=1).token_id)
+    ids = torch.tensor([v])
+    unembed = session.model.get_output_embeddings().weight.detach().float()
+    g = spec.final_norm.gain().float() * unembed[v]  # γ_f ⊙ W_U[v]
+    e_v = emb.centred(ids)[0]
+    for L, block in enumerate(spec.blocks):
+        artifacts = reads.population_artifacts(L)
+        writes = neuron_writes(block).T
+        a, b = neuron_read_rows(block)
+        places = {"writes": ("out", {"writes": writes}), "fires": ("mid", {"fires+": a + b, "fires-": a - b})}
+        for by, (site, populations) in places.items():
+            J = r.matrix(L, site) if L in r.layers(site) else None  # the last out: the logit lens
+            r_z: dict[str, torch.Tensor] = {}
+            for name, rows in populations.items():
+                x = rows if J is None else rows @ J.T
+                lg = token_logits(readout, x, ids)[:, 0]
+                shortcut = artifacts[f"R.{name}.rho"] * (rows @ (g if J is None else J.T @ g))
+                torch.testing.assert_close(shortcut, lg, rtol=1e-4, atol=1e-5)
+                std = lg.var(correction=0).clamp_min(1e-8).sqrt()
+                torch.testing.assert_close(artifacts[f"R.{name}.mean"][v], lg.mean(), rtol=1e-4, atol=1e-5)
+                torch.testing.assert_close(artifacts[f"R.{name}.std"][v], std, rtol=1e-4, atol=1e-5)
+                r_z[name] = (lg - lg.mean()) / std
+            pooled_rows = writes if by == "writes" else torch.cat([a + b, a - b])
+            u = pooled_rows @ s.matrix(L, site)
+            score = (u @ e_v) / u.norm(dim=-1)
+            mean, std = score.mean(), score.var(correction=0).clamp_min(1e-12).sqrt()
+            torch.testing.assert_close(artifacts[f"S.{by}.mean"][v], mean, rtol=1e-4, atol=1e-5)
+            torch.testing.assert_close(artifacts[f"S.{by}.std"][v], std, rtol=1e-4, atol=1e-5)
+            f = int(writes.shape[0])
+            if by == "writes":  # the − pole: −score against the same statistics, sign −1
+                s_z = torch.stack([(score - mean) / std, (-score + mean) / std])
+                r_poles = torch.stack([r_z["writes"], -r_z["writes"]])
+            else:  # both poles sign +1 against the pooled statistics
+                s_z = ((score - mean) / std).reshape(2, f)
+                r_poles = torch.stack([r_z["fires+"], r_z["fires-"]])
+            hits = session.units.top("e", by=by, layers=[L], k=6).hits
+            assert len(hits) == 6
+            for hit in hits:
+                pole = 0 if hit.pole == "+" else 1
+                assert hit.r["z"] == pytest.approx(float(r_poles[pole, hit.ref.index]), abs=1e-4)
+                assert hit.s["z"] == pytest.approx(float(s_z[pole, hit.ref.index]), abs=1e-4)
+
+
 def test_population_artifacts_leave_out_absent_halves(make_tiny_session: Any) -> None:
     session = make_tiny_session()
     _install_lens(session, "R", seed=1, last_out=False)

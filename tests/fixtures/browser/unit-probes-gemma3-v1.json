@@ -12,167 +12,126 @@
  },
  "ids": [1, 46, 83, 32, 84, 30, 58, 91, 26, 9, 93, 53],
  "probes": ["neuron/L1n5", "head/L2h1"],
+ "gate_unit": "neuron/L3n9",
  "cases": [
   {
    "name": "unsteered",
    "steering": null,
-   "steps": [
+   "tokens": [53, 53, 53, 53, 53],
+   "scale": "neutral",
+   "forwards": [
     {
-     "raw_index": 0,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.292859,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.292859},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.970136, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.555347,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.555347},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 4.067853, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.29285887, "raw": -0.97013634},
+      "head/L2h1": {"value": 0.5553473, "raw": 4.0678535}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.292859,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.292859},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.970136, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.292859, "head/L2h1": 0.555347}
+      "head/L2h1": {
+       "value": 0.555347,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.555347},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 4.067853, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 1,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.210293,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.210293},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.696624, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.507564,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.507564},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 3.717847, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.21029262, "raw": -0.696624},
+      "head/L2h1": {"value": 0.50756407, "raw": 3.717847}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.210293,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.210293},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.696624, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.210293, "head/L2h1": 0.507564}
+      "head/L2h1": {
+       "value": 0.507564,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.507564},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.717847, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 2,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.131278,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.131278},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.434877, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.378128,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.378128},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.769744, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.13127798, "raw": -0.43487683},
+      "head/L2h1": {"value": 0.3781282, "raw": 2.7697444}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.131278,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.131278},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.434877, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.131278, "head/L2h1": 0.378128}
+      "head/L2h1": {
+       "value": 0.378128,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.378128},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.769744, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 3,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.0149989,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.0149989},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.049686, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.404187,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.404187},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.960619, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.014998891, "raw": -0.049685944},
+      "head/L2h1": {"value": 0.40418664, "raw": 2.9606194}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.0149989,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.0149989},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.049686, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.0149989, "head/L2h1": 0.404187}
+      "head/L2h1": {
+       "value": 0.404187,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.404187},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.960619, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 4,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.0155669,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.0155669},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.051567, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.419351,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.419351},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 3.071699, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.015566869, "raw": -0.05156745},
+      "head/L2h1": {"value": 0.4193513, "raw": 3.071699}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.0155669,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.0155669},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.051567, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.0155669, "head/L2h1": 0.419351}
+      "head/L2h1": {
+       "value": 0.419351,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.419351},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.071699, "scale": "neutral"}
+      }
      }
     }
    ],
+   "gate_scalars": [],
    "aggregate": {
     "version": 2,
     "scope": "aggregate",
@@ -204,163 +163,121 @@
   {
    "name": "ablated-neuron",
    "steering": "!neuron/L1n5",
-   "steps": [
+   "tokens": [53, 53, 53, 53, 53],
+   "scale": "neutral",
+   "forwards": [
     {
-     "raw_index": 0,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": 0.0421896,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": 0.0421896},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.557895,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.557895},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 4.086513, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": 0.04218963, "raw": 0.21354148},
+      "head/L2h1": {"value": 0.5578947, "raw": 4.086513}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": 0.0421896,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": 0.0421896},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": 0.0421896, "head/L2h1": 0.557895}
+      "head/L2h1": {
+       "value": 0.557895,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.557895},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 4.086513, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 1,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": 0.0421896,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": 0.0421896},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.501495,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.501495},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 3.673389, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": 0.04218963, "raw": 0.21354148},
+      "head/L2h1": {"value": 0.5014947, "raw": 3.6733894}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": 0.0421896,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": 0.0421896},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": 0.0421896, "head/L2h1": 0.501495}
+      "head/L2h1": {
+       "value": 0.501495,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.501495},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.673389, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 2,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": 0.0421896,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": 0.0421896},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.3643,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.3643},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.668452, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": 0.04218963, "raw": 0.21354148},
+      "head/L2h1": {"value": 0.36429963, "raw": 2.6684518}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": 0.0421896,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": 0.0421896},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": 0.0421896, "head/L2h1": 0.3643}
+      "head/L2h1": {
+       "value": 0.3643,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.3643},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.668452, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 3,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": 0.0421896,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": 0.0421896},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.397283,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.397283},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.910053, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": 0.04218963, "raw": 0.21354148},
+      "head/L2h1": {"value": 0.39728323, "raw": 2.9100528}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": 0.0421896,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": 0.0421896},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": 0.0421896, "head/L2h1": 0.397283}
+      "head/L2h1": {
+       "value": 0.397283,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.397283},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.910053, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 4,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": 0.0421896,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": 0.0421896},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.414669,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.414669},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 3.037398, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": 0.04218963, "raw": 0.21354148},
+      "head/L2h1": {"value": 0.4146685, "raw": 3.0373979}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": 0.0421896,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": 0.0421896},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": 0.213541, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": 0.0421896, "head/L2h1": 0.414669}
+      "head/L2h1": {
+       "value": 0.414669,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.414669},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.037398, "scale": "neutral"}
+      }
      }
     }
    ],
+   "gate_scalars": [],
    "aggregate": {
     "version": 2,
     "scope": "aggregate",
@@ -392,163 +309,121 @@
   {
    "name": "ablated-head",
    "steering": "!head/L2h1",
-   "steps": [
+   "tokens": [53, 53, 53, 53, 53],
+   "scale": "neutral",
+   "forwards": [
     {
-     "raw_index": 0,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.292859,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.292859},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.970136, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.329718,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.329718},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.415143, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.29285887, "raw": -0.97013634},
+      "head/L2h1": {"value": 0.32971773, "raw": 2.4151435}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.292859,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.292859},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.970136, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.292859, "head/L2h1": 0.329718}
+      "head/L2h1": {
+       "value": 0.329718,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.329718},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.415143, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 1,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.210293,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.210293},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.696624, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.367503,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.367503},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.691915, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.21029262, "raw": -0.696624},
+      "head/L2h1": {"value": 0.36750284, "raw": 2.691915}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.210293,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.210293},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.696624, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.210293, "head/L2h1": 0.367503}
+      "head/L2h1": {
+       "value": 0.367503,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.367503},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.691915, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 2,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.131278,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.131278},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.434877, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.353694,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.353694},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.590765, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.13127798, "raw": -0.43487683},
+      "head/L2h1": {"value": 0.35369378, "raw": 2.5907652}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.131278,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.131278},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.434877, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.131278, "head/L2h1": 0.353694}
+      "head/L2h1": {
+       "value": 0.353694,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.353694},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.590765, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 3,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.0149989,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.0149989},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.049686, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.29233,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.29233},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.141285, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.014998891, "raw": -0.049685944},
+      "head/L2h1": {"value": 0.2923303, "raw": 2.141285}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.0149989,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.0149989},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.049686, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.0149989, "head/L2h1": 0.29233}
+      "head/L2h1": {
+       "value": 0.29233,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.29233},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.141285, "scale": "neutral"}
+      }
      }
     },
     {
-     "raw_index": 4,
-     "token_id": 53,
-     "measurements": {
-      "version": 2,
-      "scope": "token",
-      "provenance": "captured",
-      "instruments": {
-       "units": {
-        "binding": {"source": null, "steering": null},
-        "readings": {
-         "neuron/L1n5": {
-          "value": -0.0155669,
-          "unit": "activation_over_scale",
-          "per_layer": {"1": -0.0155669},
-          "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "neuron/L1n5", "activation": -0.051567, "scale": "neutral"}
-         },
-         "head/L2h1": {
-          "value": 0.289054,
-          "unit": "activation_over_scale",
-          "per_layer": {"2": 0.289054},
-          "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
-          "meta": {"unit": "head/L2h1", "write_norm": 2.117289, "scale": "neutral"}
-         }
-        }
-       }
+     "units": {
+      "neuron/L1n5": {"value": -0.015566869, "raw": -0.05156745},
+      "head/L2h1": {"value": 0.28905433, "raw": 2.1172888}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.0155669,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.0155669},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.051567, "scale": "neutral"}
       },
-      "scores": {"neuron/L1n5": -0.0155669, "head/L2h1": 0.289054}
+      "head/L2h1": {
+       "value": 0.289054,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.289054},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.117289, "scale": "neutral"}
+      }
      }
     }
    ],
+   "gate_scalars": [],
    "aggregate": {
     "version": 2,
     "scope": "aggregate",
@@ -575,6 +450,163 @@
      }
     },
     "scores": {"neuron/L1n5": -0.0155669, "head/L2h1": 0.289054}
+   }
+  },
+  {
+   "name": "gated",
+   "steering": "!head/L2h0@when:neuron/L3n9 > -0.0528",
+   "tokens": [53, 53, 53, 53, 53],
+   "scale": "neutral",
+   "forwards": [
+    {
+     "units": {
+      "neuron/L1n5": {"value": -0.29285887, "raw": -0.97013634},
+      "head/L2h1": {"value": 0.5553473, "raw": 4.0678535},
+      "neuron/L3n9": {"value": -0.043175433, "raw": -0.05696029}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.292859,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.292859},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.970136, "scale": "neutral"}
+      },
+      "head/L2h1": {
+       "value": 0.555347,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.555347},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 4.067853, "scale": "neutral"}
+      }
+     }
+    },
+    {
+     "units": {
+      "neuron/L1n5": {"value": -0.21029262, "raw": -0.696624},
+      "head/L2h1": {"value": 0.5366569, "raw": 3.9309485},
+      "neuron/L3n9": {"value": -0.04586054, "raw": -0.060502686}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.210293,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.210293},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.696624, "scale": "neutral"}
+      },
+      "head/L2h1": {
+       "value": 0.536657,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.536657},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.930948, "scale": "neutral"}
+      }
+     }
+    },
+    {
+     "units": {
+      "neuron/L1n5": {"value": -0.13127798, "raw": -0.43487683},
+      "head/L2h1": {"value": 0.4216391, "raw": 3.0884569},
+      "neuron/L3n9": {"value": -0.0850757, "raw": -0.11223828}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.131278,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.131278},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.434877, "scale": "neutral"}
+      },
+      "head/L2h1": {
+       "value": 0.421639,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.421639},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.088457, "scale": "neutral"}
+      }
+     }
+    },
+    {
+     "units": {
+      "neuron/L1n5": {"value": -0.014998891, "raw": -0.049685944},
+      "head/L2h1": {"value": 0.40418664, "raw": 2.9606194},
+      "neuron/L3n9": {"value": -0.13671465, "raw": -0.1803643}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.0149989,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.0149989},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.049686, "scale": "neutral"}
+      },
+      "head/L2h1": {
+       "value": 0.404187,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.404187},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 2.960619, "scale": "neutral"}
+      }
+     }
+    },
+    {
+     "units": {
+      "neuron/L1n5": {"value": -0.015566869, "raw": -0.05156745},
+      "head/L2h1": {"value": 0.4193513, "raw": 3.071699},
+      "neuron/L3n9": {"value": -0.11310886, "raw": -0.14922175}
+     },
+     "readings": {
+      "neuron/L1n5": {
+       "value": -0.0155669,
+       "unit": "activation_over_scale",
+       "per_layer": {"1": -0.0155669},
+       "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "neuron/L1n5", "activation": -0.051567, "scale": "neutral"}
+      },
+      "head/L2h1": {
+       "value": 0.419351,
+       "unit": "activation_over_scale",
+       "per_layer": {"2": 0.419351},
+       "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+       "meta": {"unit": "head/L2h1", "write_norm": 3.071699, "scale": "neutral"}
+      }
+     }
+    }
+   ],
+   "gate_scalars": [
+    {"neuron/L3n9": -0.043175433, "neuron/L3n9[0]": -0.043175433},
+    {"neuron/L3n9": -0.04586054, "neuron/L3n9[0]": -0.04586054},
+    {"neuron/L3n9": -0.0850757, "neuron/L3n9[0]": -0.0850757},
+    {"neuron/L3n9": -0.13671465, "neuron/L3n9[0]": -0.13671465},
+    {"neuron/L3n9": -0.11310886, "neuron/L3n9[0]": -0.11310886}
+   ],
+   "aggregate": {
+    "version": 2,
+    "scope": "aggregate",
+    "provenance": "captured",
+    "instruments": {
+     "units": {
+      "binding": {"source": null, "steering": "!head/L2h0@when:neuron/L3n9>-0.0528"},
+      "readings": {
+       "neuron/L1n5": {
+        "value": -0.0155669,
+        "unit": "activation_over_scale",
+        "per_layer": {"1": -0.0155669},
+        "depth": {"center": [0.333333], "spread": [0.0], "basis": "single_layer"},
+        "meta": {"unit": "neuron/L1n5", "activation": -0.051567, "scale": "neutral"}
+       },
+       "head/L2h1": {
+        "value": 0.419351,
+        "unit": "activation_over_scale",
+        "per_layer": {"2": 0.419351},
+        "depth": {"center": [0.666667], "spread": [0.0], "basis": "single_layer"},
+        "meta": {"unit": "head/L2h1", "write_norm": 3.071699, "scale": "neutral"}
+       }
+      }
+     }
+    },
+    "scores": {"neuron/L1n5": -0.0155669, "head/L2h1": 0.419351}
    }
   }
  ]
