@@ -183,12 +183,9 @@ export interface RuntimeCapabilities {
 
 export type ModelTier = "fastest" | "balanced" | "quality";
 export type ModelPreference = "speed" | "balanced" | "quality";
-export type StructuredHookProfileId =
-  | "standard-v1"
-  | "standard-v2"
-  | "standard-v3"
-  | "standard-v4"
-  | "standard-v4-residual";
+/** Hook ABI v5's two capacity profiles: units sites on the dense gated architectures, residual
+ *  elsewhere. */
+export type StructuredHookProfileId = "standard-v4" | "standard-v4-residual";
 
 export interface RuntimeIdentity {
   sourceModel: string;

@@ -167,12 +167,8 @@ export class BrowserSessionPersistence {
   async claim(
     binding: HostedSessionBinding,
     mode: "restore" | "reset" = "restore",
-    compatibleRuntimeIdentitySha256s: readonly string[] = [],
   ): Promise<HostedSessionClaimResult> {
     validateSessionBinding(binding);
-    compatibleRuntimeIdentitySha256s.forEach((identity) => {
-      if (!SHA256.test(identity)) throw invalid("Compatible session runtime identity is invalid");
-    });
     await this.initialize();
     return this.runExclusive(async () => {
       const value = await this.store.read(binding.modelVariantId);
@@ -199,22 +195,6 @@ export class BrowserSessionPersistence {
         return { status: "missing" };
       }
       if (record.metadata.runtimeIdentitySha256 !== binding.runtimeIdentitySha256) {
-        if (compatibleRuntimeIdentitySha256s.includes(record.metadata.runtimeIdentitySha256)) {
-          if (record.metadata.contextTokens !== binding.contextTokens) {
-            return { status: "incompatible", reason: "context_tokens", record: structuredClone(record) };
-          }
-          const claimed = structuredClone({
-            ...record,
-            metadata: {
-              ...record.metadata,
-              runtimeIdentitySha256: binding.runtimeIdentitySha256,
-            },
-            ownerEpoch: binding.ownerEpoch,
-          });
-          validatePersistedHostedSession(claimed);
-          await this.store.write(claimed);
-          return { status: "compatible", record: claimed };
-        }
         return {
           status: "incompatible",
           reason: "runtime_identity",
