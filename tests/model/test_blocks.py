@@ -390,8 +390,8 @@ def test_large_bf16_norm_gains_keep_their_convention(model_type: str, offset: fl
     gen = torch.Generator().manual_seed(0)
     gain = 200.0 + 1450.0 * torch.rand(32, generator=gen)
     gain[:4] = 0.5 + 4.0 * torch.rand(4, generator=gen)  # a few small gains, as in the 270m
-    norm = get_layers(model)[1].post_feedforward_layernorm
-    norm.weight.copy_(gain - offset)
+    norm = cast(nn.Module, get_layers(model)[1].post_feedforward_layernorm)
+    cast(torch.Tensor, norm.weight).copy_(gain - offset)
     spec = model_spec(model)
     assert spec.blocks[1].mlp_out_norm is not None
     assert spec.blocks[1].mlp_out_norm.offset == offset
