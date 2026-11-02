@@ -21,6 +21,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 import tempfile
 from collections.abc import Callable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -52,8 +53,12 @@ INLINE_MAX = 256
 MARGIN = 1e-3
 
 #: Every golden carries its comparison policy (B1-goldens §3).
+#: ``python`` is a rebuild on another platform (another BLAS and summation
+#: order: Linux CI against the M5 differs by up to ~1e-5 on sites and
+#: logits), the same band as the browser's library; every ranked list and
+#: peak row keeps a 1e-3 relative margin, ten times past it.
 TOLERANCE: dict[str, Any] = {
-    "python": {"atol": 1e-6, "rtol": 1e-5},
+    "python": {"atol": 1e-5, "rtol": 1e-4},
     "library": {"atol": 1e-5, "rtol": 1e-4, "probability_atol": 1e-5, "z_atol": 1e-4},
     "rounded": {"atol": 2e-6},
     "ids": "exact",
@@ -319,9 +324,51 @@ class FixtureError(AssertionError):
     """The validator refused a golden (it would not discriminate)."""
 
 
+#: How a build decides.  Writing (``strict``), every margin also clears the
+#: cross-platform tolerance of a difference, so a decision the file records
+#: (a read's ``k``, a case's ``top``, the anatomy's knobs, a gate threshold)
+#: or a refusal it passed holds on any platform.  A rebuild for comparison
+#: (``replay``: the file) takes the file's recorded choices and checks plain
+#: margins, so it never re-decides near a threshold.
+_BUILD: dict[str, Any] = {"strict": False, "replay": None}
+
+
+def _slack(*values: float) -> float:
+    if not _BUILD["strict"]:
+        return 0.0
+    tolerance = TOLERANCE["python"]
+    return 2.0 * (tolerance["atol"] + tolerance["rtol"] * max(abs(v) for v in values))
+
+
+def _clears(gap: float, *values: float) -> bool:
+    """``gap ≥ 1e-3·max(1, |values|)`` (plus the slack when writing)."""
+    return gap >= MARGIN * max(1.0, *(abs(v) for v in values)) + _slack(*values)
+
+
 def _margin(a: float, b: float) -> bool:
     """B1-goldens §0: ``|a − b| ≥ 1e-3·max(1, |a|, |b|)``."""
-    return abs(a - b) >= MARGIN * max(1.0, abs(a), abs(b))
+    return _clears(abs(a - b), a, b)
+
+
+def _recorded(path: str) -> Any:
+    """The value at ``path`` in the golden being replayed (``None`` when
+    writing)."""
+    node = _BUILD["replay"]
+    if node is None:
+        return None
+    for part in re.findall(r"[^.\[\]]+|\[\d+\]", path):
+        node = node[int(part[1:-1])] if part.startswith("[") else node[part]
+    return node
+
+
+@contextmanager
+def building(*, strict: bool = False, replay: dict[str, Any] | None = None) -> Iterator[None]:
+    saved = dict(_BUILD)
+    _BUILD.update(strict=strict, replay=replay)
+    try:
+        yield
+    finally:
+        _BUILD.update(saved)
 
 
 #: A ranked list's entries: ``(identity fields, value field, ranked by
@@ -483,6 +530,11 @@ def compare(
     def sub(x: Any, y: Any, at: str) -> list[str]:
         return compare(x, y, path=at, atol=atol, rtol=rtol, ties=ties)
 
+    if spec is not None and "scale" in spec and isinstance(expected, list):
+        expected, actual = encode(np.asarray(expected, dtype=np.float32)), encode(np.asarray(actual, dtype=np.float32))
+        if not _encoded(expected):  # a short list: as a record for the scaled comparison
+            expected = {"shape": [len(spec["scale"])], "values": expected}
+            actual = {"shape": [len(spec["scale"])], "values": actual}
     if _encoded(expected):
         if not isinstance(actual, dict):
             return [f"{path}: expected an array"]
@@ -500,6 +552,11 @@ def compare(
                 a, b = a[keep], b[keep]
             if not np.array_equal(a, b):
                 return [f"{path}: integer arrays differ"]
+            return []
+        if spec is not None and "scale" in spec:  # a difference of two values: their error twice
+            bound = 2.0 * (atol + rtol * np.abs(np.asarray(spec["scale"], dtype=np.float64)))
+            if not bool(np.all(np.abs(a.astype(np.float64) - b.astype(np.float64)) <= bound)):
+                return [f"{path}: arrays differ beyond twice their scale's tolerance"]
             return []
         if not _close(a.astype(np.float64), b.astype(np.float64), atol, rtol):
             return [f"{path}: arrays differ (max |Δ| {float(np.max(np.abs(a - b))):.3g})"]
@@ -1019,6 +1076,15 @@ def unit_forwards() -> Iterator[list[dict[str, Any]]]:
         UnitsRun.gate_scalars = gate_scalars  # type: ignore[method-assign]
 
 
+def _recorded_gate() -> str | None:
+    """A replay's gate condition: the one its ``gated`` case records."""
+    replay = _BUILD["replay"]
+    if replay is None:
+        return None
+    steering = next(case["steering"] for case in replay["cases"] if case["name"] == "gated")
+    return steering.split("@when:", 1)[1]
+
+
 def _midpoint_gate(values: Sequence[float], unit: str, what: str) -> str:
     """``unit > t`` with ``t`` between its two largest readings (unsteered,
     the gate opens on exactly one step; what the gated term does downstream
@@ -1156,7 +1222,7 @@ def build_unit_ablation(fx: Fixture) -> dict[str, Any]:
     ids = short_prompt_ids(fx.tokenizer, fx.arch)
     base = {steps: _run_case(fx, ids, None, steps) for steps in sorted({s for *_x, s in ABLATION_CASES})}
     cases = []
-    gate = _gate_for(fx, ids, 4)
+    gate = _recorded_gate() or _gate_for(fx, ids, 4)
     for name, steering, steps in ABLATION_CASES:
         steering = steering.format(gate=gate)
         case = _run_case(fx, ids, steering, steps)
@@ -1367,7 +1433,7 @@ def _check_activity(
         i = index[unit]
         if int(rows[i]) < 0 or unit in forced:  # every row excluded, or 0 by rule
             continue
-        if float(margin[i]) < MARGIN * max(1.0, abs(float(peak[i]))):
+        if not _clears(float(margin[i]), float(peak[i])):
             tied.append(unit)
     return tied
 
@@ -1419,14 +1485,17 @@ def build_unit_activity(fx: Fixture) -> dict[str, Any]:
                       "diagnostics": {k: v for k, v in diag.items() if k != "units"}})
 
     def tuned(name: str, node: str, args: dict[str, Any], *, raw: bool = False) -> None:
-        """The largest ``top`` ≤ the asked one whose boundaries keep the margin."""
+        """The largest ``top`` ≤ the asked one whose boundaries and listed
+        peak rows keep the margin."""
         full = dict(session.unit_activity(node, top=1024, units=every, raw=raw))
         excluded = {full["sink_raw_index"]} - {None}
         diag = _activity_diagnostics(full, excluded)
-        for top in range(int(args["top"]), 2, -1):
+        replayed = _recorded(f"cases[{len(cases)}].arguments.top")
+        for top in range(int(args["top"]), 2, -1) if replayed is None else (int(replayed),):
             result = dict(session.unit_activity(node, **{**args, "top": top}, raw=raw))
             try:
-                _check_activity(result, diag, name, "", [])
+                if _check_activity(result, diag, name, "", []):
+                    continue  # it lists a unit whose peak row has no margin
             except FixtureError:
                 continue
             record(name, result, full, excluded, args={**args, "top": top, "raw": raw})
@@ -1539,13 +1608,15 @@ def _token_id(fx: Fixture, symbol: str) -> int:
 K_CHOICES = (READ_K, 4, 6, 3, 7)
 
 
-def deepened(call: Callable[[int], Any], where: str, ties: list[dict[str, Any]],
+def deepened(call: Callable[[int], Any], where: str, ties: list[dict[str, Any]], recorded: str,
              choices: Sequence[int] = K_CHOICES) -> tuple[int, Any]:
     """``(k, call(k))`` for the first ``k`` of ``choices`` whose every ranked
     list keeps the margin to its best excluded entry (read off ``call(k +
-    1)``), its near-tie runs declared into ``ties``."""
+    1)``), its near-tie runs declared into ``ties``; a replay takes the ``k``
+    the file records at ``recorded``."""
     refusals = []
-    for k in choices:
+    replayed = _recorded(recorded)
+    for k in choices if replayed is None else (int(replayed),):
         short, long = call(k), call(k + 1)
         found: list[dict[str, Any]] = []
         try:
@@ -1576,7 +1647,7 @@ def build_unit_reads(fx: Fixture) -> dict[str, Any]:
         for hide in (False, True):
             k, read = deepened(
                 lambda k, unit=unit, hide=hide: units.read(unit, k=k, hide_hubs=hide).to_dict(),
-                f"reads[{len(reads)}].read", ties,
+                f"reads[{len(reads)}].read", ties, f"reads[{len(reads)}].k",
             )
             reads.append({"unit": unit, "hide_hubs": hide, "k": k, "read": read})
     tops = []
@@ -1584,7 +1655,7 @@ def build_unit_reads(fx: Fixture) -> dict[str, Any]:
         for by in ("writes", "fires"):
             k, result = deepened(
                 lambda k, symbol=symbol, by=by: units.top(symbol, by=by, layers="all", k=k).to_dict(),
-                f"top[{len(tops)}].result", ties,
+                f"top[{len(tops)}].result", ties, f"top[{len(tops)}].k",
             )
             tops.append({"token": symbol, "by": by, "k": k, "result": result})
     vector = find_vector()
@@ -1627,7 +1698,8 @@ def _find(fx: Fixture, call: Callable[[int], Any], where: str,
     """``unitFind`` at the largest ``k`` ≤ :data:`READ_K` whose every greedy
     pick keeps the margin over its runner-up (both by normalized score, the
     pursuit's own selection), with those per-iteration scores."""
-    for k in range(READ_K, 1, -1):
+    replayed = _recorded(f"{where}.k")
+    for k in range(READ_K, 1, -1) if replayed is None else (int(replayed),):
         with _pursuit_scores() as seen:
             result = call(k)
         iterations: dict[str, list[dict[str, Any]]] = {}
@@ -1733,7 +1805,7 @@ def build_lens_reads(fx: Fixture) -> dict[str, Any]:
             assert isinstance(got, list)
             return [read.to_dict() for read in got]
 
-        k, reads = deepened(call, f"requests[{len(requests)}].reads", ties)
+        k, reads = deepened(call, f"requests[{len(requests)}].reads", ties, f"requests[{len(requests)}].k")
         requests.append({
             "of": "residual", **extra, "layer": layer, "site": site, "k": k,
             "rows": encode(rows[site][layer]), "reads": reads,
@@ -1755,7 +1827,7 @@ def build_lens_reads(fx: Fixture) -> dict[str, Any]:
             assert not isinstance(read, list)
             return [read.to_dict()]
 
-        k, reads = deepened(call, f"requests[{len(requests)}].reads", ties)
+        k, reads = deepened(call, f"requests[{len(requests)}].reads", ties, f"requests[{len(requests)}].k")
         requests.append({
             "of": "direction", "label": label, "layer": layer, "site": site, "k": k,
             "rows": encode(vector[None]), "reads": reads,
@@ -1806,7 +1878,7 @@ def build_slens(fx: Fixture) -> dict[str, Any]:
             return [[{"token_id": int(i), "z": _f32(v)} for i, v in zip(ids[r], values[r], strict=True)]
                     for r in range(len(ids))]
 
-        k, lists = deepened(top, f"footprints[{len(footprints)}].top", ties)
+        k, lists = deepened(top, f"footprints[{len(footprints)}].top", ties, f"footprints[{len(footprints)}].k")
         footprints.append({"layer": layer, "u": encode(u), "k": k, "top": lists})
     word_ids = [int(lens.resolve_token(word, family="S")) for word in SLENS_WORDS]
     n = len(fx.spec.blocks)
@@ -1955,7 +2027,8 @@ def build_token_anatomy(fx: Fixture) -> dict[str, Any]:
         session.lens.select_source(source)
         where = f"cases[{len(cases)}].envelope"
         refusals = []
-        for knobs in ANATOMY_KNOBS:
+        replayed = _recorded(f"cases[{len(cases)}].knobs")
+        for knobs in ANATOMY_KNOBS if replayed is None else (replayed,):
             deeper = {key: value + 1 for key, value in knobs.items()}
             short = session.token_anatomy(at, ANATOMY_INDEX, **knobs)
             long = session.token_anatomy(at, ANATOMY_INDEX, **deeper)
@@ -2095,7 +2168,7 @@ def build_unit_probes(fx: Fixture) -> dict[str, Any]:
         # over the forwards that gate a decode step (a shut gate first).
         _final, shut = run(PROBE_CASES[3][1].format(gate=f"{GATE_UNIT} > 1000"))
         readings = [f["units"][GATE_UNIT]["value"] for f in shut["forwards"]][: PROBE_TOKENS - 1]
-        gate = _midpoint_gate(readings, GATE_UNIT, "unit-probes gated")
+        gate = _recorded_gate() or _midpoint_gate(readings, GATE_UNIT, "unit-probes gated")
         for name, steering in PROBE_CASES:
             steering = None if steering is None else steering.format(gate=gate)
             final, seen = run(steering)
@@ -2144,9 +2217,11 @@ def golden_file(name: str, arch: str) -> str:
     return f"{name}-{arch}-v1.json"
 
 
-def build_golden(name: str, arch: str) -> dict[str, Any]:
-    """One golden, from a fresh fixture (no builder sees another's state)."""
-    with fixture(arch) as fx:
+def build_golden(name: str, arch: str, *, replay: dict[str, Any] | None = None) -> dict[str, Any]:
+    """One golden, from a fresh fixture (no builder sees another's state);
+    with ``replay`` (the file) on its recorded choices, else strictly (the
+    margins clear the cross-platform slack)."""
+    with fixture(arch) as fx, building(strict=replay is None, replay=replay):
         golden = BUILDERS[name](fx)
     require_finite(golden, golden_file(name, arch))
     if name == "block-sites":
@@ -2216,7 +2291,10 @@ def tie_spec(golden: dict[str, Any]) -> dict[str, dict[str, Any]]:
     if golden.get("golden") == "unit-activity":
         for i, case in enumerate(golden["cases"]):
             if "diagnostics" in case:
-                spec[f"cases[{i}].diagnostics.row"] = {"ignore": _row_ties(case["diagnostics"])}
+                diagnostics = case["diagnostics"]
+                spec[f"cases[{i}].diagnostics.row"] = {"ignore": _row_ties(diagnostics)}
+                # A margin is a difference of two peaks: compared at their scale.
+                spec[f"cases[{i}].diagnostics.row_margin"] = {"scale": decode(diagnostics["peak"]).tolist()}
     return spec
 
 

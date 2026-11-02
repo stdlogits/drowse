@@ -5,7 +5,7 @@
  "arch": null,
  "fixtureModels": {"name": "units-tiny-models-v1", "sha256": null},
  "tolerance": {
-  "python": {"atol": 1e-06, "rtol": 1e-05},
+  "python": {"atol": 1e-05, "rtol": 0.0001},
   "library": {"atol": 1e-05, "rtol": 0.0001, "probability_atol": 1e-05, "z_atol": 0.0001},
   "rounded": {"atol": 2e-06},
   "ids": "exact"

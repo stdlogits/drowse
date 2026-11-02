@@ -3,9 +3,9 @@
  "golden": "unit-activity",
  "hookAbi": "block-sites-v5",
  "arch": "qwen3",
- "fixtureModels": {"name": "units-tiny-models-v1", "sha256": "aa4ad593300b622d6ee27ffcee83eab691a8c64d008f1b47fa0756060948d3a2"},
+ "fixtureModels": {"name": "units-tiny-models-v1", "sha256": "2140e50d3430d336deda0aee630c52e40e8134aec55d2b58c8dc4ef7c15f1006"},
  "tolerance": {
-  "python": {"atol": 1e-06, "rtol": 1e-05},
+  "python": {"atol": 1e-05, "rtol": 0.0001},
   "library": {"atol": 1e-05, "rtol": 0.0001, "probability_atol": 1e-05, "z_atol": 0.0001},
   "rounded": {"atol": 2e-06},
   "ids": "exact"
@@ -13,7 +13,7 @@
  "cases": [
   {
    "name": "generated",
-   "arguments": {"top": 8, "units": ["neuron/L1n5", "head/L2h1", "neuron/L3n9"], "raw_index": 2, "layers": "0,2", "raw": false},
+   "arguments": {"top": 5, "units": ["neuron/L1n5", "head/L2h1", "neuron/L3n9"], "raw_index": 2, "layers": "0,2", "raw": false},
    "tied_peak_rows": [],
    "result": {
     "steering": null,
@@ -34,17 +34,11 @@
      {"unit": "neuron/L1n11", "kind": "neuron", "layer": 1, "index": 11, "peak": -3.295209, "raw_index": 4, "label": null},
      {"unit": "neuron/L0n28", "kind": "neuron", "layer": 0, "index": 28, "peak": 2.54887, "raw_index": 3, "label": null},
      {"unit": "neuron/L1n52", "kind": "neuron", "layer": 1, "index": 52, "peak": 1.929092, "raw_index": 4, "label": null},
-     {"unit": "neuron/L1n43", "kind": "neuron", "layer": 1, "index": 43, "peak": -1.643656, "raw_index": 3, "label": null},
-     {"unit": "neuron/L1n44", "kind": "neuron", "layer": 1, "index": 44, "peak": -1.599134, "raw_index": 1, "label": null},
-     {"unit": "neuron/L3n20", "kind": "neuron", "layer": 3, "index": 20, "peak": -1.58496, "raw_index": 4, "label": null},
      {"unit": "head/L1h2", "kind": "head", "layer": 1, "index": 2, "peak": 1.254832, "raw_index": 0, "label": null},
      {"unit": "head/L2h2", "kind": "head", "layer": 2, "index": 2, "peak": 1.038553, "raw_index": 0, "label": null},
      {"unit": "head/L0h0", "kind": "head", "layer": 0, "index": 0, "peak": 1.001927, "raw_index": 3, "label": null},
      {"unit": "head/L3h3", "kind": "head", "layer": 3, "index": 3, "peak": 0.995304, "raw_index": 2, "label": null},
-     {"unit": "head/L2h3", "kind": "head", "layer": 2, "index": 3, "peak": 0.976281, "raw_index": 0, "label": null},
-     {"unit": "head/L1h3", "kind": "head", "layer": 1, "index": 3, "peak": 0.942338, "raw_index": 1, "label": null},
-     {"unit": "head/L0h2", "kind": "head", "layer": 0, "index": 2, "peak": 0.922234, "raw_index": 1, "label": null},
-     {"unit": "head/L1h1", "kind": "head", "layer": 1, "index": 1, "peak": 0.87037, "raw_index": 5, "label": null}
+     {"unit": "head/L2h3", "kind": "head", "layer": 2, "index": 3, "peak": 0.976281, "raw_index": 0, "label": null}
     ],
     "traces": {"neuron/L1n5": [0.008622, 0.317013, 0.500449, -0.318483, 0.127593, -0.103529], "head/L2h1": [0.813244, 0.765667, 0.684037, 0.736458, 0.782123, 0.787705], "neuron/L3n9": [0.084199, -0.097383, 0.090905, -0.051428, 0.011429, 0.123234]},
     "population": {
@@ -714,7 +708,7 @@
   },
   {
    "name": "segmented",
-   "arguments": {"top": 8, "raw": false},
+   "arguments": {"top": 5, "raw": false},
    "tied_peak_rows": [],
    "result": {
     "steering": "!neuron/L1n5@before",
@@ -735,17 +729,11 @@
      {"unit": "neuron/L1n11", "kind": "neuron", "layer": 1, "index": 11, "peak": -3.29521, "raw_index": 4, "label": null},
      {"unit": "neuron/L0n28", "kind": "neuron", "layer": 0, "index": 28, "peak": 2.54887, "raw_index": 3, "label": null},
      {"unit": "neuron/L1n52", "kind": "neuron", "layer": 1, "index": 52, "peak": 1.929092, "raw_index": 4, "label": null},
-     {"unit": "neuron/L1n43", "kind": "neuron", "layer": 1, "index": 43, "peak": -1.643656, "raw_index": 3, "label": null},
-     {"unit": "neuron/L1n44", "kind": "neuron", "layer": 1, "index": 44, "peak": -1.599134, "raw_index": 1, "label": null},
-     {"unit": "neuron/L3n20", "kind": "neuron", "layer": 3, "index": 20, "peak": -1.588938, "raw_index": 4, "label": null},
      {"unit": "head/L1h2", "kind": "head", "layer": 1, "index": 2, "peak": 1.254832, "raw_index": 0, "label": null},
      {"unit": "head/L2h2", "kind": "head", "layer": 2, "index": 2, "peak": 1.03759, "raw_index": 0, "label": null},
      {"unit": "head/L0h0", "kind": "head", "layer": 0, "index": 0, "peak": 1.001927, "raw_index": 3, "label": null},
      {"unit": "head/L3h3", "kind": "head", "layer": 3, "index": 3, "peak": 0.996047, "raw_index": 2, "label": null},
-     {"unit": "head/L2h3", "kind": "head", "layer": 2, "index": 3, "peak": 0.977761, "raw_index": 0, "label": null},
-     {"unit": "head/L1h3", "kind": "head", "layer": 1, "index": 3, "peak": 0.942338, "raw_index": 1, "label": null},
-     {"unit": "head/L0h2", "kind": "head", "layer": 0, "index": 2, "peak": 0.922234, "raw_index": 1, "label": null},
-     {"unit": "head/L1h1", "kind": "head", "layer": 1, "index": 1, "peak": 0.870371, "raw_index": 5, "label": null}
+     {"unit": "head/L2h3", "kind": "head", "layer": 2, "index": 3, "peak": 0.977761, "raw_index": 0, "label": null}
     ],
     "traces": {},
     "population": null
@@ -771,7 +759,7 @@
    "groups": [
     [17, 18],
     [47, 48],
-    [63, 64],
+    [62, 63, 64],
     [69, 70],
     [86, 87],
     [88, 89, 90, 91],
@@ -780,10 +768,12 @@
     [99, 100],
     [103, 104],
     [109, 110],
+    [115, 116],
     [117, 118],
     [123, 124],
     [131, 132, 133, 134, 135],
     [139, 140],
+    [141, 142],
     [145, 146],
     [147, 148],
     [149, 150],
@@ -826,7 +816,9 @@
     [300, 301],
     [303, 304, 305, 306],
     [307, 308, 309, 310],
+    [317, 318],
     [319, 320, 321],
+    [322, 323],
     [325, 326, 327, 328],
     [329, 330],
     [332, 333, 334, 335],

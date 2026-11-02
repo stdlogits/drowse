@@ -3,9 +3,9 @@
  "golden": "token-anatomy",
  "hookAbi": "block-sites-v5",
  "arch": "qwen3",
- "fixtureModels": {"name": "units-tiny-models-v1", "sha256": "aa4ad593300b622d6ee27ffcee83eab691a8c64d008f1b47fa0756060948d3a2"},
+ "fixtureModels": {"name": "units-tiny-models-v1", "sha256": "2140e50d3430d336deda0aee630c52e40e8134aec55d2b58c8dc4ef7c15f1006"},
  "tolerance": {
-  "python": {"atol": 1e-06, "rtol": 1e-05},
+  "python": {"atol": 1e-05, "rtol": 0.0001},
   "library": {"atol": 1e-05, "rtol": 0.0001, "probability_atol": 1e-05, "z_atol": 0.0001},
   "rounded": {"atol": 2e-06},
   "ids": "exact"
@@ -1176,6 +1176,13 @@
    ]
   },
   {
+   "path": "cases[0].envelope.measurements.anatomy.layers[1].mlp.s.tokens",
+   "key": ["token_id"],
+   "groups": [
+    [1, 2]
+   ]
+  },
+  {
    "path": "cases[1].envelope.measurements.anatomy.layers[1].mlp.s.tokens",
    "key": ["token_id"],
    "groups": [
@@ -1194,6 +1201,13 @@
    "key": ["token_id"],
    "groups": [
     [3, 4]
+   ]
+  },
+  {
+   "path": "cases[2].envelope.measurements.anatomy.layers[1].mlp.s.tokens",
+   "key": ["token_id"],
+   "groups": [
+    [1, 2]
    ]
   }
  ]

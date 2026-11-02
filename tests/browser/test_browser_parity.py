@@ -1403,6 +1403,6 @@ def test_units_golden_matches_python(name: str, arch: str) -> None:
     from tests.support import browser_units
 
     expected = browser_units.load_golden(browser_units.golden_file(name, arch))
-    actual = json.loads(browser_units._serialize(browser_units.build_golden(name, arch)))
+    actual = json.loads(browser_units._serialize(browser_units.build_golden(name, arch, replay=expected)))
     problems = browser_units.golden_problems(expected, actual)
     assert not problems, "\n".join(problems[:20])

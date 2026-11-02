@@ -206,7 +206,11 @@ files from it, so their paths are part of its interface:
   list against the same call one deeper; probability lists by `ln p`), a
   greedy pick without one, an unmargined peak row a list or trace shows and
   a one-signed traced neuron; a read moves to another `k` (recorded) to
-  clear its boundaries. Near-ties inside a list are runs in the file's
+  clear its boundaries. Writing, every margin also clears the
+  cross-platform slack (twice the `python` tolerance); the parity test
+  rebuilds on the file's recorded choices (`build_golden(..., replay=)`:
+  its `k`s, `top`s, knobs and gate thresholds), so no platform re-decides
+  near a threshold. Near-ties inside a list are runs in the file's
   `declared_ties` (`{path, key, groups}`): the comparison matches a run's
   entries by identity and compares every field, order kept between runs.
 - Add a case to `browser_steering_expression.json` only once drowse.ai's
