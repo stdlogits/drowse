@@ -36,6 +36,7 @@ from drowse.generation.sampling import (
 from drowse.loom.errors import InvalidNodeOperationError
 from drowse.loom.recipe import Recipe
 from drowse.loom.tree import LoomNode, LoomTree, PromptCapture
+from drowse.model.role_templates import InvalidRoleError, validate_role
 
 if TYPE_CHECKING:
     from drowse.model.scene import TurnGrammar
@@ -595,6 +596,11 @@ def split_message_list(
         thinking = message.get("thinking")
         if label is not None and not isinstance(label, str):
             raise InvalidNodeOperationError(f"message {index}: label must be a string")
+        if label is not None:
+            try:
+                validate_role(label)
+            except InvalidRoleError as error:
+                raise InvalidNodeOperationError(f"message {index}: {error}") from error
         if thinking is not None and not isinstance(thinking, str):
             raise InvalidNodeOperationError(f"message {index}: thinking must be a string")
         if grammar is None and (seat == previous or (seat == "assistant" and previous != "user")):
@@ -668,22 +674,25 @@ def begin_generation_turn(
     assistant_role = (
         sampling.assistant_role if sampling is not None and not raw else None
     )
-    if isinstance(input, str) and raw:
-        anchor_id = (
-            tree.add_user_turn(input, parent_id=parent_node_id) if input != ""
-            else parent_node_id or tree.active_node_id
-        )
-    elif isinstance(input, str):
-        if gen_seat == "assistant":
-            check_user_send_target(tree, parent_node_id)
-        anchor_id = tree.add_user_turn(
-            input, parent_id=parent_node_id, role_label=user_role,
-        )
-    elif isinstance(input, list):
-        anchor_id = _record_message_turns(tree, input)
-    else:
-        anchor_id = parent_node_id or tree.active_node_id
-    tree.reserve(anchor_id)
+    # The anchor lands and is reserved under one hold of the tree's lock, so
+    # no edit or delete reaches the path the reply answers in between.
+    with tree.lock:
+        if isinstance(input, str) and raw:
+            anchor_id = (
+                tree.add_user_turn(input, parent_id=parent_node_id) if input != ""
+                else parent_node_id or tree.active_node_id
+            )
+        elif isinstance(input, str):
+            if gen_seat == "assistant":
+                check_user_send_target(tree, parent_node_id)
+            anchor_id = tree.add_user_turn(
+                input, parent_id=parent_node_id, role_label=user_role,
+            )
+        elif isinstance(input, list):
+            anchor_id = _record_message_turns(tree, input)
+        else:
+            anchor_id = parent_node_id or tree.active_node_id
+        tree.reserve(anchor_id)
     if continuation_node_id is not None:
         return tree.begin_continuation(continuation_node_id, recipe=recipe)
     return tree.begin_assistant(

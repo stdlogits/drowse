@@ -282,6 +282,7 @@ def test_message_list_splits_its_system_message_into_the_system_prompt() -> None
         ([{"role": "user", "content": "kept"}, {"role": "assistant", "content": ""}], {}, "empty content"),
         ([{"role": "user", "content": "x"}], {"tokenizer": _Tok({"x": []})}, "tokenized to an empty"),
         ([{"role": "user", "content": "hi", "label": 3}], {}, "label must be a string"),
+        ([{"role": "user", "content": "hi"}, {"role": "assistant", "content": "A", "label": "Not a slug"}], {}, "message 1"),
         ([{"role": "user", "content": "hi", "thinking": ["no"]}], {}, "thinking must be a string"),
         # A legacy chat template renders only alternating turns from a user one.
         ([{"role": "assistant", "content": "first"}], {"grammar": None}, "alternating"),
@@ -316,6 +317,46 @@ def test_a_refused_message_list_records_nothing() -> None:
     with pytest.raises(InvalidNodeOperationError):
         _record(tree, [{"role": "user", "content": "kept"}, {"role": "assistant", "content": ""}])
     assert (tree.rev, tree.active_node_id, len(tree.nodes)) == (rev, active, 1)
+
+
+def test_a_message_list_is_recorded_and_reserved_as_one() -> None:
+    # An edit racing the recording waits for the tree's lock, then meets the
+    # reservation, so the reply answers the turns the list sent.
+    import threading
+
+    tree = LoomTree()
+    first = _record(tree, [{"role": "user", "content": "Q"}])
+    _reply(tree, first, "A")
+    answer = first
+    record = tree.add_assistant_turn
+    outcome: list[BaseException | None] = []
+
+    def edit_answer() -> None:
+        try:
+            tree.edit(answer, "CHANGED")
+            outcome.append(None)
+        except BaseException as error:  # noqa: BLE001 - the test reads it
+            outcome.append(error)
+
+    def racing_record(*args: Any, **kwargs: Any) -> str:
+        node = record(*args, **kwargs)
+        racer = threading.Thread(target=edit_answer)
+        racer.start()
+        racer.join(timeout=0.2)
+        assert racer.is_alive(), "the edit waits for the recording's hold of the lock"
+        threads.append(racer)
+        return node
+
+    threads: list[threading.Thread] = []
+    tree.add_assistant_turn = racing_record  # type: ignore[method-assign]
+    reply = _record(tree, [
+        {"role": "user", "content": "Q"}, {"role": "assistant", "content": "A"},
+        {"role": "user", "content": "Q2"},
+    ])
+    threads[0].join(timeout=5)
+    assert isinstance(outcome[0], MutationDuringGenerationError)
+    path = [tree.nodes[n].text for n in tree.ancestors_of(reply) if n != tree.root_id]
+    assert "CHANGED" not in path and tree.nodes[answer].text == "A"
 
 
 def test_generation_turn_records_a_message_list_from_the_root() -> None:

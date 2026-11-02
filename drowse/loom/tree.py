@@ -719,6 +719,12 @@ class LoomTree:
     # ------------------------------------------------------------------
 
     @property
+    def lock(self) -> threading.RLock:
+        """The tree's reentrant lock, for a caller that needs several
+        operations to land as one (a recorded turn and its reservation)."""
+        return self._lock
+
+    @property
     def reservation(self) -> str | None:
         """Root of the subtree an in-flight generation streams into, or None."""
         return self._reservation
