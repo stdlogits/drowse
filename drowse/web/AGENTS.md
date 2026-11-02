@@ -302,6 +302,8 @@ lib/unitTerms.ts      a unit's recipe terms and their one validity rule (import-
 lib/lensRoom.ts       the Lens room's arithmetic (band spans, site series, family sources, fit ladder)
 lib/Slider.svelte     the one range slider; sliderDrag.ts runs its pointer drag, which fires the
                       input's change once when it ends on a new value, as a keyboard step does
+lib/popoverPlacement.ts  where the token probabilities open (inside the visual viewport, never
+                      over the token)
 lib/webmcp/           WebMCP tools, loaded only when document.modelContext exists
 lib/style/            drowse.css (the shell's Ledger classes), global.css, cursors.css
 lib/theme.ts          createTheme({ key: "drowse.theme" }); lib/ui/ holds shared primitives
@@ -453,7 +455,11 @@ a tool opens depends on what it is. `token_drilldown` and `probe_inspector` are 
 shown in the workbench's Inspector. The tools a room hosts (`ROOM_SECTIONS` in
 `lib/stores/rooms.svelte.ts`: the manifold builder, packs, merge, template lab and roles in
 Artifacts; health, the local runtime and API access in Model) go to their room and section,
-where their close returns to the workbench. Everything else opens as a dialog over the page.
+where their close returns to the workbench. Everything else opens as a dialog over the page:
+the header, the notices and the rooms host are inert while it is open, Tab stays inside it, and
+it and its scrim leave through an `out:` transition, which Svelte runs with the element inert, so
+a click during the fade reaches the page (`scripts/modal-surfaces.test.mjs`, with the dialog's and
+the token popover's fit at phone, landscape and desktop sizes).
 
 To add a drawer, add its name to `DrawerName` in `lib/types.ts` and add three rows: one in
 `DRAWERS`, one in `DRAWER_REQUIREMENTS`, and its WebMCP coverage entry in

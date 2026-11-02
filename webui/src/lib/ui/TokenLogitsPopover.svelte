@@ -6,6 +6,7 @@
   import { samplingState } from "../stores/sampling.svelte";
   import { getRuntimeClient } from "../runtime/registry";
   import { tokenAlternativeDefault } from "../runtime/samplingCapabilities";
+  import { currentViewport, placePopover, popoverBounds } from "../popoverPlacement";
 
   let { token, anchor, isCurrent, source = "Model token", contextChanged = false, onclose, ondetails }: {
     token: TokenScore;
@@ -37,25 +38,14 @@
 
   function place() {
     if (closing) return;
-    const viewport = window.visualViewport;
-    const left = viewport?.offsetLeft ?? 0;
-    const top = viewport?.offsetTop ?? 0;
-    const width = viewport?.width ?? innerWidth;
-    const height = viewport?.height ?? innerHeight;
-    panel.style.maxWidth = `${width - 16}px`;
-    panel.style.maxHeight = `${height - 16}px`;
-    const rect = trigger.getBoundingClientRect();
-    const box = panel.getBoundingClientRect();
-    const x = Math.max(left + 8, Math.min(rect.left, left + width - box.width - 8));
-    const below = Math.max(0, top + height - rect.bottom - 14);
-    const above = Math.max(0, rect.top - top - 14);
-    const opensBelow = box.height <= below || below >= above;
-    const maxHeight = Math.min(height - 16, opensBelow ? below : above);
-    const panelHeight = Math.min(box.height, maxHeight);
-    const y = Math.max(top + 8, Math.min(opensBelow ? rect.bottom + 6 : rect.top - panelHeight - 6, top + height - panelHeight - 8));
-    panel.style.left = `${x}px`;
-    panel.style.top = `${y}px`;
-    panel.style.maxHeight = `${maxHeight}px`;
+    const view = currentViewport();
+    const bounds = popoverBounds(view);
+    panel.style.maxWidth = `${bounds.maxWidth}px`;
+    panel.style.maxHeight = `${bounds.maxHeight}px`;
+    const at = placePopover(trigger.getBoundingClientRect(), panel.getBoundingClientRect(), view);
+    panel.style.left = `${at.left}px`;
+    panel.style.top = `${at.top}px`;
+    panel.style.maxHeight = `${at.maxHeight}px`;
   }
 
   onMount(() => {
