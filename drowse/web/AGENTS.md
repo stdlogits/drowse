@@ -62,7 +62,11 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
   `favicon.ico` (16, 32, 48), `icons/drowse-{192,512}.png` (the rounded tile) and, where a
   platform masks icons, full bleed (the tile's corners square, the eye well inside the
   maskable safe zone): `icons/drowse-maskable-512.png` and `icons/apple-touch-icon.png`
-  (180). Redraw them when the mark changes. `social/` is the link card. drowse.ai copies the
+  (180). Redraw them when the mark changes. `social/drowse.png` is the link card, 1200 x 630, the
+  dashboard in miniature (the mark and name, a steering term, a reply tinted by its probe, one
+  word's reading across the layers), drawn in Ledger by `node scripts/social-card.mjs` from
+  `scripts/social-card.html` with Playwright's Chromium; its alt text is recorded in the HTML.
+  Redraw it when the card or the mark changes. drowse.ai copies the
   set into its `public-hosted/`. `scripts/dashboard-assets.mjs::shipsInDashboard` keeps
   `social/`, `icons/` and `favicon.svg` out of the dashboard, which ships the two marks its
   `index.html` links and `favicon.ico`, which browsers request whatever the page links.
@@ -369,8 +373,13 @@ passes. The token drilldown replays nothing while another room shows.
 The workbench has three layouts. From 1240 px the three regions sit side by side and each
 scrolls on its own. From the phone up to 1240 px it is Page | Inspector, with the thread
 folded into a row over the page, so a selection always shows beside the conversation. On a
-phone (720 px and under) it is one column: the Inspector is a sheet between the log and the
-composer, and the loom page takes the column (no sheet while it shows).
+phone (720 px wide or less, or 520 px tall or less: one on its side; App's `phone` and the
+phone blocks of App, `drowse.css`, Chat, RawBuffer and LoomSidebar share the query) it is one
+column: the Inspector is a sheet between the log and the composer, and the loom page takes the
+column (no sheet while it shows; opening it folds the thread, and its column scrolls rather than
+clip the map under the tools). A short phone puts the composer, or the Inspector while it shows,
+in a column beside the log, and lets the loom's page scroll to a map most of a screen tall
+(`scripts/workbench-layout.test.mjs`).
 
 The thread lists the active path and then, dimmed, the turns below the active node the way you
 last came down (`lib/threadPath.ts`: each node's child on the last active path through it, else its
@@ -378,7 +387,9 @@ newest), so choosing an earlier turn keeps the rest one click away. The conversa
 (`ConversationFormat`, `genUiMode`: how the Page draws the conversation and how a turn is sent,
 kept per model, not a sampling field) sits by the thread's header, rendered once: under it in the
 thread column, in the row the thread folds into at the other two layouts. A base model has no
-template, so it shows none.
+template, so it shows none. Either format colours its words by one reading chosen under Colors (Chat's reading
+tools: in the composer's row in a chat, in the completion's head in raw, one open state;
+`scripts/raw-colors.test.mjs`).
 
 The three readout rooms read the conversation at the token cursor, prompt tokens included, or the
 whole reply, and set nothing up: a missing catalog, lens or probe is one link to its Artifacts
@@ -459,7 +470,9 @@ where their close returns to the workbench. Everything else opens as a dialog ov
 the header, the notices and the rooms host are inert while it is open, Tab stays inside it, and
 it and its scrim leave through an `out:` transition, which Svelte runs with the element inert, so
 a click during the fade reaches the page (`scripts/modal-surfaces.test.mjs`, with the dialog's and
-the token popover's fit at phone, landscape and desktop sizes).
+the token popover's fit at phone, landscape and desktop sizes). Closing it (Escape, Close or the
+scrim) gives focus back to what opened it while that is still a tab stop, else to the header's
+Menu, whose item went with the menu (`lib/focusTrap.ts::returnFocus`, `scripts/focus-trap.test.mjs`).
 
 To add a drawer, add its name to `DrawerName` in `lib/types.ts` and add three rows: one in
 `DRAWERS`, one in `DRAWER_REQUIREMENTS`, and its WebMCP coverage entry in

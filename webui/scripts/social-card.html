@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>drowse social card</title>
+  <!-- The link card (public/social/drowse.png, 1200 x 630), drawn by scripts/social-card.mjs in
+       Ledger's type and tokens: the dashboard in miniature, with no sentences. The mark and name; a
+       steering term as the recipe bar draws it; a reply with its words tinted by the probe the
+       term steers, as the Page colours them; and one word's reading layer by layer on the depth
+       ramp, the term's layers on a wash. The readings are illustrative.
+       Alt text: "The drowse mark and name, the steering term 0.4 calm, a reply whose words are
+       tinted by how calm the model reads them, and one word's calm reading across the model's
+       layers." -->
+  <link rel="stylesheet" href="../node_modules/@stdlogits/ledger/src/styles/fonts.css">
+  <link rel="stylesheet" href="../node_modules/@stdlogits/ledger/src/styles/tokens.css">
+  <style>
+    * { box-sizing: border-box; margin: 0; }
+    html, body { width: 1200px; height: 630px; overflow: hidden; }
+    body {
+      /* The reading's depth: where the term's probe peaks, a little past the middle. */
+      --tint: color-mix(in oklch, var(--deep) 45%, var(--late));
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 40px;
+      padding: 56px 64px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--text);
+      font-synthesis: none;
+      -webkit-font-smoothing: antialiased;
+    }
+    .lockup { display: flex; align-items: center; gap: 14px; font: 600 32px/1 var(--display); letter-spacing: -0.02em; }
+    .lockup img { width: 40px; height: 40px; }
+
+    .page { display: grid; align-content: center; justify-items: start; gap: 28px; }
+    /* The recipe bar's term: a wash pill, its coefficient in a paper pill. */
+    .term { display: inline-flex; align-items: center; gap: 12px; height: 56px; padding: 0 22px 0 8px; border-radius: 999px; background: var(--wash); font: 500 26px/1 var(--text); }
+    .alpha { display: grid; place-items: center; min-width: 72px; height: 42px; padding: 0 14px; border-radius: 999px; background: var(--paper); font-variant-numeric: tabular-nums; }
+    /* The reply, its words tinted by the reading as the Page colours them: the accent mixed with
+       transparent up to 22%, a marked token's 2 px spread up and down in the same mix. */
+    .said { font: 400 44px/68px var(--text); letter-spacing: -0.01em; }
+    .said span { border-radius: 6px; background: color-mix(in oklch, var(--tint) var(--v), transparent); box-shadow: 0 -2px 0 0 color-mix(in oklch, var(--tint) var(--v), transparent), 0 2px 0 0 color-mix(in oklch, var(--tint) var(--v), transparent); }
+
+    /* One word's reading layer by layer: a bar per layer on the ramp, the term's layers on a wash. */
+    .depth { display: grid; grid-template-columns: repeat(26, minmax(0, 1fr)); align-items: end; height: 132px; }
+    .layer { display: grid; align-items: end; justify-items: center; height: 100%; padding: 10px 0 0; }
+    .layer.steered { background: var(--wash); }
+    .layer.first { border-radius: var(--r-col) 0 0 var(--r-col); }
+    .layer.last { border-radius: 0 var(--r-col) var(--r-col) 0; }
+    .layer i { display: block; width: 14px; height: var(--h); border-radius: 7px 7px 0 0; background: var(--c); }
+  </style>
+</head>
+<body>
+  <div class="lockup"><img src="../public/drowse-mark-light.svg" alt="">drowse</div>
+  <div class="page">
+    <span class="term"><span class="alpha">0.4</span>calm</span>
+    <p class="said" id="said"></p>
+  </div>
+  <div class="depth" id="depth"></div>
+  <script>
+    // The reply and each word's calm reading (0 to 1, as the Page scales it to its strongest word);
+    // the reading of "quiet" at each of 26 layers;
+    // the term's layers.
+    const WORDS = [["the", 0.08], ["harbour", 0.3], ["goes", 0.18], ["quiet", 1], ["as", 0.24],
+      ["the", 0.12], ["last", 0.38], ["boats", 0.34], ["come", 0.26], ["in", 0.55]];
+    const LAYERS = Array.from({ length: 26 }, (_, L) => 0.06 + 0.88 * Math.exp(-(((L - 15) / 5.5) ** 2)));
+    const STEERED = [8, 19];
+
+    const said = document.getElementById("said");
+    WORDS.forEach(([word, v], i) => {
+      if (i) said.append(" ");
+      const span = document.createElement("span");
+      span.textContent = word;
+      span.style.setProperty("--v", `${Math.round(v * 22)}%`);
+      said.append(span);
+    });
+    const depth = document.getElementById("depth");
+    LAYERS.forEach((v, L) => {
+      const layer = document.createElement("div");
+      const steered = L >= STEERED[0] && L <= STEERED[1];
+      layer.className = ["layer", steered && "steered", L === STEERED[0] && "first", L === STEERED[1] && "last"].filter(Boolean).join(" ");
+      const bar = document.createElement("i");
+      bar.style.setProperty("--h", `${Math.round(v * 112)}px`);
+      bar.style.setProperty("--c", `color-mix(in oklch, var(--deep) ${Math.round(100 - (L / 25) * 100)}%, var(--late))`);
+      layer.append(bar);
+      depth.append(layer);
+    });
+  </script>
+</body>
+</html>
