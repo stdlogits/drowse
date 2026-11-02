@@ -89,7 +89,7 @@ try {
   assert.equal(setUnitTerm("head/L2h0", { ablate: true, alpha: UNIT_ABLATE_ALPHA }), "head/L2h0");
   assert.deepEqual(steerRack.entries.get("head/L2h0"), { mode: "unit", ablate: true, alpha: 1, trigger: "BOTH", enabled: true }, "exact mean-ablation");
   setUnitTerm("neuron/L1n3", { ablate: false, alpha: UNIT_PUSH_ALPHA });
-  assert.deepEqual(steerRack.entries.get("neuron/L1n3"), { mode: "unit", ablate: false, alpha: 0.2, trigger: "BOTH", enabled: true });
+  assert.deepEqual(steerRack.entries.get("neuron/L1n3"), { mode: "unit", ablate: false, alpha: UNIT_PUSH_ALPHA, trigger: "BOTH", enabled: true });
   // Every edit keeps to the rule: the editor's switch and dial go through patchSteerEntry.
   patchSteerEntry("head/L2h0", { ablate: false, alpha: UNIT_PUSH_ALPHA }, ["unit"]);
   assert.equal(steerRack.entries.get("head/L2h0").ablate, true, "a head cannot be switched to a push");
@@ -102,9 +102,9 @@ try {
   setSteerLayers("jlens/storm", [4, 5]);
   setSteerLayers("neuron/L1n3", [1]);
   assert.equal(steerRack.entries.get("neuron/L1n3").layers, undefined, "a unit takes no clause");
-  assert.equal(currentSteeringExpression(), "0.3 jlens/storm{4-5} + !head/L2h0 + 0.2 neuron/L1n3");
+  assert.equal(currentSteeringExpression(), "0.3 jlens/storm{4-5} + !head/L2h0 + 3 neuron/L1n3");
   setSteerLayers("jlens/storm", null);
-  assert.equal(currentSteeringExpression(), "0.3 jlens/storm + !head/L2h0 + 0.2 neuron/L1n3");
+  assert.equal(currentSteeringExpression(), "0.3 jlens/storm + !head/L2h0 + 3 neuron/L1n3");
   for (const name of ["jlens/storm", "neuron/L1n3", "head/L2h0"]) removeSteerEntry(name);
 
   // ---- where a term acts, as the server says
@@ -253,7 +253,12 @@ try {
   assert.deepEqual(terms.strengthDial("head/L1h3", { mode: "unit", ablate: true, alpha: 1 }, 0.5), { value: 1, min: 0, max: 1, step: 0.05, shared: false },
     "an ablation's dial runs from none of it to exact mean-ablation, never below zero");
   assert.deepEqual([terms.strengthDial("neuron/L1n3", { mode: "unit", ablate: false, alpha: -0.2 }, 0.5).min, terms.strengthSays("neuron/L1n3", { mode: "unit", ablate: false }, -0.2)],
-    [-1, "Away from L1 n3"], "a push runs either pole");
+    [-8, "Away from L1 n3"], "a push runs either pole");
+  // W6 review (F13): a neuron pushes at one layer, where an atom pushes at each of its layers with
+  // the same budget, so at the old ±1 dial (default 0.2) no push changed a SmolLM2 reply's words; a
+  // top writer's word first shows near 3. A neuron's dial reaches 8 and starts at 3; an atom's stays.
+  assert.deepEqual(terms.strengthDial("neuron/L1n3", { mode: "unit", ablate: false, alpha: 3 }, 0.5), { value: 3, min: -8, max: 8, step: 0.1, shared: false });
+  assert.deepEqual([terms.strengthDial("jlens/storm", { mode: "jlens", ablate: false, alpha: 0.2 }, 0.5).max], [1]);
   assert.ok(!terms.canRemove("default/emotions", entry, { node_count: 20 }), "a curved position cannot be removed");
   assert.ok(terms.canRemove("default/honest", { mode: "subspace" }, { node_count: 2 }));
 

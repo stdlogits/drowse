@@ -114,8 +114,24 @@ class TokenCursorStore {
   /** The position, clamped onto the walk (token lists grow while streaming and change with a
    *  branch); null reads the whole reply. */
   readonly at = $derived(this.requested ? clampCursor(this.segments, this.requested) : null);
-  readonly token = $derived.by((): CursorToken | null => {
-    const at = this.at;
+  readonly token = $derived(this.tokenAt(this.at));
+  /** The reply the whole view reads: the cursor's turn's (or, whole, the cleared token's turn's). */
+  readonly reply = $derived.by((): WholeReply | null => {
+    const from = this.at ? this.at.turnIdx
+      : tokenRest.turnIdx !== null && tokenTurnHolds(tokenRest.turnIdx) ? tokenRest.turnIdx : null;
+    const turnIdx = replyTurnFor(from);
+    if (turnIdx === null) return null;
+    return { turnIdx, turn: chatLog.turns[turnIdx], nodeId: turnNodeId(turnIdx) };
+  });
+  /** The whole reply's last token, where a room with nothing reply-wide to show reads instead
+   *  (the cursor stays whole). */
+  readonly replyLast = $derived.by((): CursorToken | null => {
+    const reply = this.reply;
+    const edge = reply ? this.segments.filter((s) => s.turnIdx === reply.turnIdx).at(-1) : undefined;
+    return edge && edge.length > 0 ? this.tokenAt({ turnIdx: edge.turnIdx, seg: edge.seg, tokenIdx: edge.length - 1 }) : null;
+  });
+
+  private tokenAt(at: TokenCursor | null): CursorToken | null {
     if (!at) return null;
     const turn = chatLog.turns[at.turnIdx];
     const token = segmentTokens(turn, at.seg)[at.tokenIdx];
@@ -128,15 +144,7 @@ class TokenCursorStore {
       index: replayIndex(token),
       ordinal: ordinalOf(this.segments, at),
     };
-  });
-  /** The reply the whole view reads: the cursor's turn's (or, whole, the cleared token's turn's). */
-  readonly reply = $derived.by((): WholeReply | null => {
-    const from = this.at ? this.at.turnIdx
-      : tokenRest.turnIdx !== null && tokenTurnHolds(tokenRest.turnIdx) ? tokenRest.turnIdx : null;
-    const turnIdx = replyTurnFor(from);
-    if (turnIdx === null) return null;
-    return { turnIdx, turn: chatLog.turns[turnIdx], nodeId: turnNodeId(turnIdx) };
-  });
+  }
 }
 
 export const tokenCursor = new TokenCursorStore();

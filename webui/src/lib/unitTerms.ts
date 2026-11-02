@@ -6,8 +6,15 @@
 
 export type UnitTerm = "plus" | "minus" | "silence";
 
-/** The default push strength: a neuron's write runs as hot as a lens atom's direction. */
-export const UNIT_PUSH_ALPHA = 0.2;
+/** The default push strength. A neuron pushes at its one layer, where a lens atom or a concept
+ *  pushes at each of its layers with the same per-layer budget (the composer's mean-1 shares), so a
+ *  neuron needs a larger α to show. On SmolLM2-360M (temperature 0) a top writer's word first
+ *  appears near 3 from layers 26–27, while the last layer's writers already loop by 2 and early
+ *  layers' only shift the theme even at 8. */
+export const UNIT_PUSH_ALPHA = 3;
+
+/** The push dial's reach either way. */
+export const UNIT_PUSH_MAX = 8;
 
 /** An ablation's strength: exact mean-ablation, the unit held at its neutral mean. */
 export const UNIT_ABLATE_ALPHA = 1;

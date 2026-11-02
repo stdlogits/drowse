@@ -6,7 +6,8 @@
   // it, steered as the token was or, asked, without the steering; a runtime without the anatomy
   // replays the lens readout, the R lens alone). Whole, the lens probes over the reply (its node's
   // aggregate envelope; the live readout's words are per token and the node keeps no reply-level
-  // words), or, with none, the way to watch a word. A reading shows as the token's only while it
+  // words), or, with none, the reply's last token read as above, beside the way to watch a word
+  // (the cursor stays whole). A reading shows as the token's only while it
   // answers that token's request: a new one dims it, a failed one takes it away. Fitting and
   // fetching lenses live in the Artifacts room; without a lens the room links there.
   import { onMount } from "svelte";
@@ -49,9 +50,18 @@
   }));
   const lensReady = $derived(gate.ready);
 
-  const here = settled(() => tokenCursor.token);
   const cursorToken = $derived(tokenCursor.token);
   const whole = $derived(cursorToken === null);
+  // ---------- the whole reply: its lens probes, else its last token
+  const reply = $derived(tokenCursor.reply);
+  const aggregate = $derived(reply?.nodeId ? (loomTree.nodes.get(reply.nodeId)?.aggregate_measurements?.instruments.lens ?? null) : null);
+  const replyPins = $derived(Object.entries(aggregate?.readings ?? {}) as [string, ScalarReadingJSON][]);
+  /** Whole with no lens probes over the reply: the room reads the reply's last token instead. */
+  const lastStands = $derived(whole && replyPins.length === 0);
+  const wholeView = $derived(whole && !lastStands);
+  /** The token the room reads: the cursor's, or, standing in for the whole reply, its last. */
+  const target = $derived(cursorToken ?? (lastStands ? tokenCursor.replyLast : null));
+  const here = settled(() => target);
   const token = $derived(here.current);
   const node = $derived(token?.nodeId ? (loomTree.nodes.get(token.nodeId) ?? null) : null);
   const steering = $derived(token ? replayAnchor(node, token.token, token.turn.appliedSteering).steering : null);
@@ -103,15 +113,11 @@
   /** What the token view draws: the fresh reading, or the last one dimmed while the next loads;
    *  never the last one beside a failed read. */
   const shownRead = $derived(held === null || (!fresh && read.status === "error") ? null : held.value);
-  const stale = $derived(!fresh || cursorToken?.ordinal !== token?.ordinal);
+  const stale = $derived(!fresh || target?.ordinal !== token?.ordinal);
   const tokenPins = $derived(shownRead?.pins ?? {});
 
-  // ---------- the whole reply: its lens probes
-  const reply = $derived(tokenCursor.reply);
-  const aggregate = $derived(reply?.nodeId ? (loomTree.nodes.get(reply.nodeId)?.aggregate_measurements?.instruments.lens ?? null) : null);
-
   /** The lens probes a view lists: what it read, by the rack's names. */
-  const pins = $derived(Object.entries(whole ? (aggregate?.readings ?? {}) : tokenPins) as [string, ScalarReadingJSON][]);
+  const pins = $derived(wholeView ? replyPins : Object.entries(tokenPins) as [string, ScalarReadingJSON][]);
   const pinMax = $derived(Math.max(1e-9, ...pins.map(([, r]) => Math.abs(r.value))));
   function pinTitle(name: string): { lead: boolean; text: string } {
     return probeTitle(probeRack.entries.get(name)?.info ?? null, name);
@@ -127,18 +133,15 @@
       <span class="head">No lens</span>
       <button type="button" class="dw-quiet" onclick={() => goto("artifacts", "lenses")}>Lenses<Icon name="right" /></button>
     </div>
-  {:else if whole}
+  {:else if whole && !token}
     {#if !reply}
       <div class="dw-empty">
         <span class="head">No reply yet</span>
         <button type="button" class="dw-quiet" onclick={() => goto("workbench")}>Workbench<Icon name="right" /></button>
       </div>
-    {:else if pins.length === 0}
-      <div class="dw-empty">
-        <span class="head">No lens probes</span>
-        <button type="button" class="dw-quiet" onclick={() => showInstrument("lens")}>Watch a word<Icon name="right" /></button>
-      </div>
     {/if}
+  {:else if wholeView}
+    <!-- the lens probes over the reply, below -->
   {:else if !anatomyAvailable && !readoutAvailable}
     <div class="dw-empty"><span class="head">Lens</span><p>This runtime does not replay tokens.</p></div>
   {:else if token && (token.nodeId === null || token.index === null)}
@@ -146,7 +149,10 @@
   {:else}
     <section class="dw-sec" aria-labelledby="lens-token-head">
       <div class="dw-sec-head">
-        <span class="head" id="lens-token-head">{#if token}At <Token token={token.token.text} />{/if}</span>
+        <span class="head" id="lens-token-head">{#if token}{lastStands ? "Last token" : "At"} <Token token={token.token.text} />{/if}</span>
+        {#if lastStands}
+          <button type="button" class="dw-quiet" onclick={() => showInstrument("lens")}>Watch a word<Icon name="right" /></button>
+        {/if}
         {#if steering !== null}
           <Segmented label="Readings" value={steered ? "steered" : "unsteered"} onchange={(v) => (steered = v === "steered")}
             options={[{ value: "steered", label: "Steered", hint: steering }, { value: "unsteered", label: "Unsteered", hint: "Replayed without the steering" }]} />
@@ -166,8 +172,8 @@
   {/if}
 
   {#if lensReady && pins.length > 0}
-    <section class="dw-sec probes" class:stale={!whole && stale} aria-labelledby="lens-probes-head">
-      <div class="dw-sec-head"><span class="head" id="lens-probes-head">Lens probes</span><span class="meta"><MorphText text={whole ? "over this reply" : "at this token"} /></span></div>
+    <section class="dw-sec probes" class:stale={!wholeView && stale} aria-labelledby="lens-probes-head">
+      <div class="dw-sec-head"><span class="head" id="lens-probes-head">Lens probes</span><span class="meta"><MorphText text={wholeView ? "over this reply" : "at this token"} /></span></div>
       <div class="rows">
         {#each pins as [name, reading] (name)}
           {@const title = pinTitle(name)}

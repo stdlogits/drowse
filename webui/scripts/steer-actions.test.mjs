@@ -68,7 +68,7 @@ try {
   assert.equal(actions.pushUnit("neuron/L3n7", "-"), "neuron/L3n7");
   assert.equal(actions.silenceUnit("L2 h1"), "head/L2h1");
   assert.equal(currentSteeringExpression(),
-    "0.5 default/formal.casual%casual + 0.3 jlens/stars + 0.3 slens/#282 + 0.3 sae/17 - 0.2 neuron/L3n7 + !head/L2h1 + 0.5 default/emotions%angry",
+    "0.5 default/formal.casual%casual + 0.3 jlens/stars + 0.3 slens/#282 + 0.3 sae/17 - 3 neuron/L3n7 + !head/L2h1 + 0.5 default/emotions%angry",
     "the expression keeps its canonical order (the chips sort by priority)");
 
   // ---- a Push or Silence from the Inspector's token or unit view opens the chip and keeps the view
@@ -179,7 +179,7 @@ try {
   actions.pushUnit("neuron/L4n2", "+");
   assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.7], "nothing lands while the reply runs");
   await drain();
-  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.2], "Silence then Push +: pushed, at the default (it was silenced when the push landed)");
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 3], "Silence then Push +: pushed, at the default (it was silenced when the push landed)");
   genStatus.active = true;
   actions.pushUnit("neuron/L4n2", "-");
   actions.silenceUnit("neuron/L4n2");
@@ -189,11 +189,11 @@ try {
   actions.pushUnit("neuron/L4n2", "-");
   actions.pushUnit("neuron/L4n2", "+");
   await drain();
-  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.2], "Push − then Push +: the + pole, keeping the strength the first push set");
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 3], "Push − then Push +: the + pole, keeping the strength the first push set");
   genStatus.active = true;
   actions.pushUnit("neuron/L4n2", "+");
   await drain();
-  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 0.2], "a push the unit already holds changes nothing");
+  assert.deepEqual(unitTerm("neuron/L4n2"), [false, 3], "a push the unit already holds changes nothing");
 
   for (const name of [...steerRack.entries.keys()]) removeSteerEntry(name);
   sessionState.info = null;

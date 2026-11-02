@@ -142,14 +142,18 @@ try {
   const lensRoom = read("panels/rooms/LensRoom.svelte");
   assert.doesNotMatch(lensRoom, /readout\?\.aggregate/, "no reply-level words: the node keeps none");
   assert.doesNotMatch(lensRoom, /No lens read this reply/);
-  assert.match(lensRoom, /\{:else if pins\.length === 0\}[^]*?>No lens probes<[^]*?showInstrument\("lens"\)\}>Watch a word</);
+  // a9 (after W6): with no lens probes the whole view was a card and a link. It reads the reply's
+  // last token instead (the cursor stays whole), beside the way to watch a word.
+  assert.doesNotMatch(lensRoom, />No lens probes</);
+  assert.match(lensRoom, /const lastStands = \$derived\(whole && replyPins\.length === 0\);/);
+  assert.match(lensRoom, /\{#if lastStands\}\s*<button type="button" class="dw-quiet" onclick=\{\(\) => showInstrument\("lens"\)\}>Watch a word</);
   // W6 review: a reading shows as the token's only while it answers the token's request (its key):
   // a failed replay had left the previous token's anatomy at full opacity under the new heading,
   // and the lens probes "at this token" read it unconditionally.
   assert.match(lensRoom, /const fresh = \$derived\(held !== null && want !== null && held\.key === want\.key\);/);
   assert.match(lensRoom, /const shownRead = \$derived\(held === null \|\| \(!fresh && read\.status === "error"\) \? null : held\.value\);/);
   assert.match(lensRoom, /const tokenPins = \$derived\(shownRead\?\.pins \?\? \{\}\);/);
-  assert.match(lensRoom, /class="dw-sec probes" class:stale=\{!whole && stale\}/);
+  assert.match(lensRoom, /class="dw-sec probes" class:stale=\{!wholeView && stale\}/);
   assert.doesNotMatch(lensRoom, /value: read\.value/, "no request keeps the old value as its own");
   // W6 review: a runtime with the lens token readout but no anatomy (drowse.ai's browser runtime)
   // reads each token through the readout, R lens alone, instead of "does not replay tokens".
@@ -170,6 +174,15 @@ try {
     const body = render(LensRoom, {}).body;
     assert.doesNotMatch(body, /does not replay tokens/);
     assert.match(body, /id="lens-token-head"/, "the token's read section, loading");
+    // Whole, with no lens probes over the reply: its last token reads, and the cursor stays whole.
+    selectionStore.clearSelection();
+    const { tokenCursor } = await server.ssrLoadModule("/src/lib/stores/tokenCursor.svelte.ts");
+    assert.deepEqual([tokenCursor.at, tokenCursor.replyLast.token.text, tokenCursor.replyLast.index], [null, ".", 1]);
+    const lastBody = render(LensRoom, {}).body;
+    assert.match(lastBody, /id="lens-token-head">(?:<!--[^>]*-->)*Last token /);
+    assert.match(lastBody, />Watch a word</);
+    selectionStore.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 0 } });
+    assert.doesNotMatch(render(LensRoom, {}).body, /Last token|Watch a word/, "at a token, the token");
     sessionState.info = { model_id: "m", jlens_fitted: true, instruments: [{ family: "lens", capabilities: { token_readout: false } }] };
     assert.match(render(LensRoom, {}).body, /does not replay tokens/, "neither the anatomy nor the readout");
     const lensLib = await server.ssrLoadModule("/src/lib/lensRoom.ts");

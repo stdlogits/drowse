@@ -267,7 +267,7 @@ try {
   assert.equal(actions.pushUnit("neuron/L31n4410"), "neuron/L31n4410");
   assert.equal(store.unitTerm("neuron/L31n4410"), "plus");
   assert.equal(termOpen.name, "neuron/L31n4410", "the chip opens");
-  assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L31n4410");
+  assert.equal(steering.currentSteeringExpression(), "3 neuron/L31n4410");
   steering.patchSteerEntry("neuron/L31n4410", { alpha: 0.35 }, ["unit"]);
   actions.pushUnit("L31 n4410", "-");
   assert.equal(steering.currentSteeringExpression(), "-0.35 neuron/L31n4410", "the − pole keeps the strength");
@@ -285,7 +285,7 @@ try {
   assert.equal(steering.currentSteeringExpression(), "-0.35 neuron/L31n4410 + 0.5 !head/L28h12", "silencing a silenced unit keeps its blend");
   actions.silenceUnit("neuron/L31n4410");
   actions.pushUnit("neuron/L31n4410");
-  assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L31n4410 + 0.5 !head/L28h12", "a push after a silence starts at the default");
+  assert.equal(steering.currentSteeringExpression(), "3 neuron/L31n4410 + 0.5 !head/L28h12", "a push after a silence starts at the default");
   assert.equal(serializeExpression(new Map([["neuron/L8n3", { mode: "unit", ablate: true, alpha: 0.5, trigger: "RESPONSE", enabled: true }]])), "0.5 !neuron/L8n3@response");
   steering.removeSteerEntry("neuron/L31n4410");
   steering.removeSteerEntry("head/L28h12");
@@ -305,9 +305,9 @@ try {
   clearSelection();
 
   // The term card's push/ablate switch: an ablation runs at α 1 (the neutral mean), never at the
-  // push's signed α (−0.2 would amplify the unit's deviation); a push comes back at the default.
+  // push's signed α (−3 would amplify the unit's deviation); a push comes back at the default.
   actions.pushUnit("neuron/L30n637", "-");
-  assert.equal(steering.currentSteeringExpression(), "-0.2 neuron/L30n637");
+  assert.equal(steering.currentSteeringExpression(), "-3 neuron/L30n637");
   store.setUnitOperation("neuron/L30n637", true);
   assert.deepEqual([steering.steerRack.entries.get("neuron/L30n637").ablate, steering.steerRack.entries.get("neuron/L30n637").alpha], [true, 1]);
   assert.equal(steering.currentSteeringExpression(), "!neuron/L30n637");
@@ -316,7 +316,7 @@ try {
   store.setUnitOperation("neuron/L30n637", true);
   assert.equal(steering.currentSteeringExpression(), "0.5 !neuron/L30n637", "ablating an ablation keeps its blend");
   store.setUnitOperation("neuron/L30n637", false);
-  assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L30n637");
+  assert.equal(steering.currentSteeringExpression(), "3 neuron/L30n637");
   actions.silenceUnit("head/L28h12");
   store.setUnitOperation("head/L28h12", false);
   assert.equal(store.unitTerm("head/L28h12"), "silence", "a head has no push");
@@ -535,7 +535,7 @@ try {
     const heldSummary = bare(held.slice(held.indexOf('aria-label="Selected unit"')));
     assert.match(heldSummary, button(true, "Push −"), "the held pole is pressed");
     assert.match(heldSummary, button(false, "Push +"));
-    assert.match(heldSummary, /-0\.2 neuron\/L3n3/, "the summary shows the term");
+    assert.match(heldSummary, /-3 neuron\/L3n3/, "the summary shows the term");
     steering.removeSteerEntry("neuron/L3n3");
     selectionStore.select({ kind: "token", params: { turnIdx: 1, tokenIdx: 4 } });
   }
@@ -598,7 +598,7 @@ try {
   await assert.rejects(edit({ selector: "neuron/L30n637", ablate: true, alpha: -0.5 }), /must not be negative/);
   await assert.rejects(edit({ selector: "head/L28h12", ablate: false }), /no push/);
   await edit({ selector: "neuron/L30n637", ablate: false });
-  assert.equal(steering.currentSteeringExpression(), "0.2 neuron/L30n637", "a push comes back at the default");
+  assert.equal(steering.currentSteeringExpression(), "3 neuron/L30n637", "a push comes back at the default");
   await edit({ selector: "neuron/L30n637", ablate: true, alpha: 0.5 });
   assert.equal(steering.currentSteeringExpression(), "0.5 !neuron/L30n637", "an explicit alpha wins");
 

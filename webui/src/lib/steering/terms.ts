@@ -5,7 +5,7 @@
 import type { GateOp, ManifoldInfo, ProbeInfo, SteerEntry, SteerGate, SteerTiming, Trigger } from "../types";
 import { formatCoeff } from "../expression";
 import { parseUnit, unitTitle } from "../units";
-import { UNIT_PUSH_ALPHA, unitTermProblem } from "../unitTerms";
+import { UNIT_PUSH_ALPHA, UNIT_PUSH_MAX, unitTermProblem } from "../unitTerms";
 
 /** The When choices: the preset windows and ``TOKENS``, a counted window (``FIRST_N`` or
  *  ``AFTER_N``, its count on the term). */
@@ -195,13 +195,17 @@ export interface Dial {
  *  projection is a plain push of its own, over the same range; a curved term slides toward its
  *  position, from 0 to 1 (a curved position has no opposite, so composition refuses a negative
  *  along); an atom pushes either way, from −1 to 1, and its removal runs from −1 (twice the
- *  component) to 1 (none of it); a unit's removal runs from none of it to all of it (the one unit
- *  rule refuses a negative one). */
+ *  component) to 1 (none of it); a neuron pushes from −8 to 8, since it acts at one layer where an
+ *  atom acts at each of its layers with the same budget (``UNIT_PUSH_ALPHA``); a unit's removal
+ *  runs from none of it to all of it (the one unit rule refuses a negative one). */
 export function strengthDial(name: string, entry: SteerEntry, subspaceAlong: number): Dial {
   if (entry.mode === "subspace") return { value: subspaceAlong, min: -2, max: 2, step: 0.05, shared: true };
   if (entry.mode === "projection") return { value: entry.alpha, min: -2, max: 2, step: 0.05, shared: false };
   if (entry.mode === "manifold") return { value: entry.blend, min: 0, max: 1, step: 0.05, shared: false };
-  if (entry.mode === "unit" && entry.ablate) return { value: entry.alpha, min: 0, max: 1, step: 0.05, shared: false };
+  if (entry.mode === "unit") {
+    return entry.ablate ? { value: entry.alpha, min: 0, max: 1, step: 0.05, shared: false }
+      : { value: entry.alpha, min: -UNIT_PUSH_MAX, max: UNIT_PUSH_MAX, step: 0.1, shared: false };
+  }
   return { value: entry.alpha, min: -1, max: 1, step: 0.05, shared: false };
 }
 

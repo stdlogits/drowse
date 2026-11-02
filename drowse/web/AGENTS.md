@@ -387,7 +387,8 @@ the token view's cache entry), drawn layer by layer by `LensLayers` (the S lens'
 lens's say, each faded by its depth-rule weight, the crossover band on a wash), with the lens
 probes' values there and a Steered | Unsteered switch; whole, the lens probes over the reply from
 its node's `aggregate_measurements` (the node keeps no reply-level lens words), or, with none,
-"Watch a word" to the Inspector's Lens. A reading shows only for the request that produced it.
+the reply's last token read as at a token (`tokenCursor.replyLast`; the cursor stays whole)
+beside "Watch a word" to the Inspector's Lens. A reading shows only for the request that produced it.
 **Probes** (`ProbesRoom`) lists the linear probes and vectors (one-axis flat fits: the value at
 the token, from its row, and the trace over the conversation), then the manifolds (fits of more
 axes, flat or curved: share, nearest node, a meter per coordinate, and `ProbeGeometryPlot` with
@@ -512,7 +513,9 @@ drowse.ai too.
   (`ATOM_DEFAULT_ALPHA = 0.3`): a single token or feature direction runs hotter than a
   concept vector, and α ≥ 0.5 over-steers into repetition. A unit term (`mode: "unit"`,
   keyed by the full `neuron/…` or `head/…` reference) is one per unit: a neuron pushed
-  (signed α, `UNIT_PUSH_ALPHA` 0.2; below zero its − pole) or a neuron or head ablated
+  (signed α, `UNIT_PUSH_ALPHA` 3 on a dial to ±`UNIT_PUSH_MAX` 8: it acts at one layer where an
+  atom acts at each of its layers with the same per-layer budget, so it needs the larger α;
+  below zero its − pole) or a neuron or head ablated
   (`!…`, `UNIT_ABLATE_ALPHA` 1, the unit held at its neutral mean, written bare like every
   full ablation; `0.5 !…` blends halfway). A head has no push. Switching a term between push and
   ablation takes that operation's own α (`setUnitOperation`), since a push's α kept as an
