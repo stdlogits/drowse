@@ -8,8 +8,8 @@ routing, the transaction) is `session/engine.py`; the multi-row runner is
 `session/batch.py` (see `drowse/session/AGENTS.md`).
 
 Layer: above `readout`, `lens`, `sae`, `steering.composer`/`hooks`; below `fit`,
-`loom`, `session`. `tests/invariants/test_layering.py` counts `TYPE_CHECKING`
-imports too, so collaborators here type against a narrow `Protocol`
+`loom`, `session`. `TYPE_CHECKING`
+imports count too, so collaborators here type against a narrow `Protocol`
 (`render.ConversationHistory`) or a lower-layer class.
 
 | Module | Owns |

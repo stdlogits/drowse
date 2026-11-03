@@ -35,7 +35,7 @@ other three families (`drowse/units/AGENTS.md`);
 ## Layering
 
 `readout` sits above `steering.{grammar,terms,triggers}` and below
-`lens`/`sae`/`units` (`tests/invariants/test_layering.py`; `TYPE_CHECKING`
+`lens`/`sae`/`units` (`TYPE_CHECKING`
 imports count). It must not import `lens`, `sae`, `units`,
 `steering.composer`/`hooks`, `generation` or
 anything above; collaborators from those layers are typed against the

@@ -4,7 +4,7 @@ The `drowse` console script (`drowse.cli.main:main`; `python -m drowse` is the
 same entry point): nine verb groups — `serve`, `manifold`, `pack`, `config`,
 `experiment`, `template`, `lens`, `sae`, `unit` — as thin frontends over
 `DrowseSession` and the `store`/`fit`/`lens`/`sae`/`units` packages. The CLI is in the top layer beside
-`server`, `web` and `notebook` (`tests/invariants/test_layering.py`): it may
+`server`, `web` and `notebook`: it may
 import any lower layer and never reaches a session private (`session._x`).
 
 ## Module map

@@ -72,7 +72,7 @@ next steered forward.
 | Conversation tree, recipes, replay, transcripts | `loom/` |
 | Protocols, dashboard mount, CLI | `server/`, `web/`, `cli/` |
 
-Dependencies point downward only (`tests/invariants/test_layering.py`). A
+Dependencies point downward only. A
 collaborator gets its dependencies through its constructor; nothing outside
 `drowse/session/` reads a session private. That rule is what lets each
 collaborator be tested without a session and lets the browser runtime replace

@@ -13,7 +13,7 @@ atom `K_l ẽ_v` and the `tokens-in` decomposition. `read.py` reads any vector
 at a place through both, by the four-lens rule. Inside a session the face is
 `session.lens` (`LensInstrument`). The package sits beside `sae`, above `readout` and below
 `steering.composer`, and imports only `errors`, `base`, `model` and `readout`
-(`tests/invariants/test_layering.py`, which counts `TYPE_CHECKING` imports).
+(`TYPE_CHECKING` imports included).
 
 | Module | Owns |
 |---|---|

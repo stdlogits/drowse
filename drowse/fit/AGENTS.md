@@ -4,7 +4,7 @@ Corpora in, fitted manifold tensors out: the one extraction pipeline, corpus
 generation, the neutral-activation capture behind the whitener, the offline
 bake, cross-model alignment orchestration, and the naturalness eval. `fit`
 sits above `generation` and below `loom`/`session`
-(`tests/invariants/test_layering.py`), so it never imports the session; hosts
+so it never imports the session; hosts
 are Protocols (`ModelHandle`, `NaturalnessHost`) that `DrowseSession`
 satisfies. The math it calls is in `geometry/AGENTS.md` (Fisher basis, frame,
 share, discover coords, topology, RBF, σ-field, fold). The folder format,

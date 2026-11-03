@@ -124,5 +124,4 @@ The dashboard is drawn in Ledger, the Standard Logits design language, from the
 washes, three inks, one accent, no lines. The theme is auto (the system's look),
 light or dark, behind one theme button. The accent is depth, the ramp from
 `--deep` to `--late`, and it only fills. Wix Madefor is the only face, with
-tabular numbers. `src/lib/style/drowse.css` holds the shell's classes, and
-`scripts/check-ledger.mjs` holds every departure from Ledger at zero.
+tabular numbers. `src/lib/style/drowse.css` holds the shell's classes.
