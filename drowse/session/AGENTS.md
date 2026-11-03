@@ -9,7 +9,7 @@ collaborator with explicit constructor dependencies, not into session state.
 Outside this package nothing reads a session private (`session._x`, `sess._x`,
 `<x>.session._x`, `self._session._x`); modules inside it may (the engine calls
 `_start_loom_assistant`, `_plan_authored_prompt_capture`, `_steering_composer`).
-`tests/invariants/test_layering.py` enforces this and pins `session` directly
+`session` sits directly
 below `cli`/`server`/`web`/`notebook`. Two collaborators take the session as a
 Protocol-typed handle, so keep those properties stable: `Extraction`
 (`fit.pipeline.ModelHandle`: `model`, `tokenizer`, `model_id`, `device`,

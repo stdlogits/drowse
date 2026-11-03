@@ -30,9 +30,8 @@ an API path.
 ## Rules for editing
 
 - `server/` is in the top layer with `cli`, `web`, `notebook`. It never reads
-  a session-private attribute (`tests/invariants/test_layering.py`), and no
-  server module imports a sibling's `_private` helper
-  (`tests/invariants/test_boundary_guard.py`); shared helpers go in
+  a session-private attribute, and no server module imports a sibling's
+  `_private` helper; shared helpers go in
   `runtime.py`, `errors.py`, `operations.py`, or `request_helpers.py`.
 - Native request bodies subclass `NativeRequest` (`extra="forbid"`), nested
   objects included. Ollama bodies are `extra="allow"` (clients send fields

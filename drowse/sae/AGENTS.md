@@ -9,7 +9,7 @@ local training, and the `sae` read instrument (`session.sae`,
 
 `sae` shares a layer with `lens` (above `readout`, below `steering.composer`):
 it never imports `generation`, `fit`, `loom` or `session`, type-only imports
-included (`tests/invariants/test_layering.py`). `DrowseSession.__init__` wires
+included. `DrowseSession.__init__` wires
 every dependency explicitly.
 
 | Module | Owns |

@@ -10,7 +10,7 @@ goldens the drowse.ai browser runtime replays.
 
 | Command | Runs |
 |---|---|
-| `pytest -q -m "not gpu"` | The CPU suite. CI runs exactly this (plus informational `--cov`) on Python 3.11, 3.12 and 3.13. |
+| `pytest -q -m "not gpu" -n auto` | The CPU suite, about 50 s on Apple Silicon. CI runs exactly this on Python 3.13. |
 | `pytest -q -n auto -m "not perf"` | Everything this machine can run, GPU included (about 80 s on Apple Silicon with MPS). |
 | `pytest -m perf -p no:xdist` | The four throughput gates, serially, on an otherwise idle machine. |
 | `pytest tests/gpu/test_smoke.py` | Real-model smoke tests only. |
@@ -241,8 +241,6 @@ files from it, so their paths are part of its interface:
 
 | Test | Enforces |
 |---|---|
-| `invariants/test_layering.py` | The package layer order (`LAYERS`; the order and its rationale are in the root `AGENTS.md`): no module under `drowse/` imports a higher layer. Module-level, function-level and `if TYPE_CHECKING:` imports all count; a lower layer types against a narrow `Protocol` of its own instead. Every module must fall in a layer, so a new subpackage needs a `LAYERS` entry. `ALLOWED` is empty, and `test_allowlist_is_current` fails on an entry whose import is gone. A second walk forbids `session._x`, `sess._x`, `<x>.session._x` and `self._session._x` outside `drowse/session/`. |
-| `invariants/test_boundary_guard.py` | No `drowse/server` module imports a sibling module's `_private` name (comments and strings are ignored). Promote a shared helper into `server/runtime.py` or the shared plumbing (`errors`, `operations`, `request_helpers`). |
 | `invariants/test_user_message.py` | The error family, over every non-underscore module under `drowse/`: each public exception class subclasses `DrowseError`, and the reparented ones keep their stdlib base; each `RequestError` subclass is a `ValueError` answering 400 with its own text. `_OVERRIDES` pins every overriding class's status; changing one is a user-visible contract change. |
 | `invariants/test_webui_types_parity.py` | `webui/src/lib/types.gen.ts` equals a fresh render (regenerate with `python scripts/generate_webui_types.py`); every native JSON route declares a response schema; native paths are kebab-case. |
 

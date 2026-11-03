@@ -77,29 +77,9 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
 - The SAE description indexes in `lib/data/sae-descriptions/` ship on purpose (as
   `assets/gemma-3-{270m,1b,4b}-it.json`): they label local SAELens gemma-scope-2 releases
   offline. Regenerate them with `node scripts/build-sae-descriptions.mjs`.
-- CI's `build` job seeds a stale `build/lib` cache, then runs
-  `scripts/check_package_isolation.py check`. The wheel's dashboard files must equal the
-  sdist's and the source tree's.
 - `npm run check` runs `svelte-check`, `check-theme.mjs` (every referenced CSS custom
   property must be declared, here or in `@stdlogits/ledger`, so an old token name fails
-  here), `check-ledger.mjs` (the Ledger ratchet, below), `check-runtime-boundary.mjs`, the
-  `test:*` node suites and `check-test-coverage.mjs`. The last requires every
-  `scripts/*.test.mjs` to be reachable from `check`, so a new test file needs a line in
-  `package.json`.
-- `check-ledger.mjs` counts, per file, the departures from Ledger: borders; outlines outside
-  a `:focus`/`:focus-visible` rule; shadows other than a marked token's 2px same-colour spread
-  (the tip's `--float` is Ledger's own, so any use here counts); monospace; capitals;
-  letter-spaced text; easing off the one curve; animations that loop; colours outside the
-  tokens; colour mixes outside oklch (the accent's) and oklab (a grey's: Chrome renders a
-  near-grey mixed in oklch with a red cast); and text coloured by the depth accent (`--tint`,
-  `--deep`, `--late`, or a component's own accent property). It reads `style:prop={…}`
-  directives as `prop: …` declarations. It fails if any count differs from
-  `webui/ledger-ratchet.json`, which holds every count at zero: the bridge that once mapped
-  the old token names onto Ledger is gone, and with it the ratchet's bridge category. A count
-  that rises fails; one that falls asks for `node scripts/check-ledger.mjs --write`, which
-  lowers the ratchet and never raises it. A category the ratchet does not record yet fails
-  the check until `--write` takes today's count as its first ceiling. `--cut` (the 6.0 cut)
-  requires every count at zero.
+  here), `check-runtime-boundary.mjs` and the `test:*` node suites.
 
 ## Generated REST types (`lib/types.gen.ts`)
 
@@ -674,7 +654,7 @@ token).
 the theme preflight), the 404 for a missing asset or any file the bundle lacks, the SPA
 fallback, traversal, a public shell under an
 API key, `web=False`, and an empty dist. `tests/invariants/test_webui_types_parity.py`
-gates the generated types, and `test_layering` places `web` in the top layer.
+gates the generated types.
 
 ## Deliberately absent
 

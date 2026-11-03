@@ -28,8 +28,8 @@ recipes; the verbs, `restore_tree`, the joint-logprob cache),
 
 ## Layering
 
-`loom` sits above `fit` and below `session`. `tests/invariants/test_layering.py`
-enforces this, `TYPE_CHECKING` imports included. Lower layers never import
+`loom` sits above `fit` and below `session`. `TYPE_CHECKING`
+imports count too. Lower layers never import
 loom: `generation/render.py` types the tree as `ConversationHistory`, and
 `generation/finalize.py` takes `tree: Any`.
 

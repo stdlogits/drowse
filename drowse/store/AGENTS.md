@@ -7,8 +7,8 @@ alignment caches.
 
 Layer: above `model`, below `steering.grammar` (`parse_expr` resolves bare atoms
 through `store.selectors`). Store imports only `errors`/`naming`/`events`, `base`,
-`geometry`, `model` and itself; `tests/invariants/test_layering.py` counts
-function-level and `TYPE_CHECKING` imports too. No barrel module: import from the
+`geometry`, `model` and itself; function-level
+and `TYPE_CHECKING` imports count too. No barrel module: import from the
 submodule. This package owns formats and folder primitives; the fit's folder
 transactions (authoring snapshot, compare-and-swap publish) are `fit/publish.py`,
 the weight-free fit no-op proof `fit/preflight.py`, the capture cache

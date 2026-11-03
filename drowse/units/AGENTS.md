@@ -17,7 +17,7 @@ with the other steering hooks in `steering/hooks.py`.
 | `reads.py` | `UnitReader` (static reads, `top`, `find`, `stats`), the results (`NeuronRead`/`NeuronPoleRead`, `HeadRead`, `PlaceRead`/`UnitHalf`, `Firing`, `TopResult`/`TopHit`, `FindResult`), `ContrastCache`/`ContrastStats`, `own_token_z`, `copy_score`, `logit_moments`, `token_logits` |
 | `catalog.py` | the neuron-lens catalog: `CATALOG_REPO`/`CATALOG_REVISION`/`CATALOG_MODELS`, `fetch_catalog`, `catalog_status`, `list_catalogs`, `remove_catalog`, `UnitCatalog` (rows, labels, `url`), `CatalogBinding` (the session's view), `unit_url`, `LABEL_CREDIT`, the errors |
 
-Layer 7, beside `lens` and `sae` (`tests/invariants/test_layering.py`): it
+Layer 7, beside `lens` and `sae`: it
 imports `model`, `store`, `readout`, `lens` and below, never
 `steering.composer`, `generation` or the session. The composer (layer 8)
 reaches it through its `UnitSource` protocol; the session wires everything

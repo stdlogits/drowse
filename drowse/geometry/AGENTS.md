@@ -7,7 +7,7 @@ whitener, the direction view (fold, `Profile`, GGUF) and cross-model transfer.
 
 Pure tensor math. Geometry sits directly above `errors`/`naming`/`events` and
 `base` in the layer order and imports nothing else from drowse
-(`tests/invariants/test_layering.py`; `drowse.__version__` is exempt). The
+(`drowse.__version__` is exempt). The
 manifold tensor codec is `store/manifold_tensors.py`; capture and fit
 orchestration are `fit/` (`pipeline.py`, `node_stats.py`,
 `capture.py::compute_dls_axes`); the gains that scale the kernel are in

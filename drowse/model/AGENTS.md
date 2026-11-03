@@ -5,7 +5,7 @@ loading and identity, where the residual blocks are and what they compute
 (`BlockSpec`), unit directions, the logits path, layer selectors, token spans, chat-template facts, role substitution, the scene
 stitcher, and compile/StaticCache plumbing. The package imports only
 `errors`/`naming`/`events`, `base` and `geometry`
-(`tests/invariants/test_layering.py`) and holds no session state: every
+and holds no session state: every
 function takes a model, tokenizer or config.
 Render *policy* (which path a conversation takes) lives in
 `generation/decode.py::build_chat_input` and `generation/render.py`; this

@@ -28,7 +28,7 @@ pytest -q tests/gpu/test_smoke.py   # real-model smoke tests
 ```
 
 Tests marked `gpu` need CUDA or Apple Silicon MPS and may download model weights.
-CI runs the non-GPU suite on Python 3.11, 3.12, and 3.13.
+CI runs the non-GPU suite on Python 3.13.
 
 ## Static checks
 

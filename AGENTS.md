@@ -117,7 +117,7 @@ deprecation shims or second spellings.
 
 ## Package map and layer order
 
-`tests/invariants/test_layering.py` enforces this order, lowest first. A
+The order runs lowest first. A
 module may import its own layer or any lower one. Every import counts:
 module-level, function-level and `if TYPE_CHECKING:`. A lower layer that needs
 a higher object types it against a narrow `Protocol` of its own
@@ -306,9 +306,8 @@ use the autospec `tests.support.server.mock_session`. GPU tests (`gpu` marker)
 load `HuggingFaceTB/SmolLM2-360M-Instruct` unless `DROWSE_TEST_MODEL` names
 another; `gpu_gemma` needs gated Gemma access. Every bug fix lands with a
 regression test. A test never touches the real home (an autouse fixture sets a
-scratch `DROWSE_HOME`). CI runs ruff, pyright, the types `--check`, the CPU
-suite on Python 3.11–3.13, the package-isolation build and the webui build
-with a dist-drift check. Details: `tests/AGENTS.md`.
+scratch `DROWSE_HOME`). CI runs ruff, pyright, the CPU suite on Python 3.13
+(`-n auto`) and the webui build with a dist-drift check. Details: `tests/AGENTS.md`.
 
 ## State and environment
 

@@ -15,7 +15,7 @@ injected, where, when, and how strongly.
 | `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries, `term_layers`), `SteeringScope`, `TermLayers`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
 | `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `UnitTerm` / `UnitOp` / `UnitHook` (unit ablation), `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
 
-Layering (`tests/invariants/test_layering.py`): `grammar`/`terms`/`triggers`
+Layering: `grammar`/`terms`/`triggers`
 sit above `store` (parsing resolves bare atoms against installed manifolds via
 `store.selectors`) and below `readout`; `composer`/`hooks` sit above
 `lens`/`sae` and below `generation`. Lower layers that must refuse work under
