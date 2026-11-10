@@ -313,7 +313,8 @@ load `HuggingFaceTB/SmolLM2-360M-Instruct` unless `DROWSE_TEST_MODEL` names
 another; the GPU suite is one end-to-end smoke plus the throughput gates. Add a
 regression test when a bug could quietly come back, not as a ritual. A test
 never touches the real home (an autouse fixture sets a scratch `DROWSE_HOME`). CI runs ruff, pyright, the CPU suite on Python 3.13
-(`-n auto`) and the webui build with a dist-drift check. Details: `tests/AGENTS.md`.
+(four parallel shards, `-n auto`, CPU torch via uv) and the webui build with a
+dist-drift check. Details: `tests/AGENTS.md`.
 
 ## State and environment
 
