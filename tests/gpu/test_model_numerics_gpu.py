@@ -90,7 +90,7 @@ def test_native_decode_matches_direct_cached_reference(loaded: tuple[Any, Any]):
 
 @pytest.mark.parametrize("ablate", [False, True])
 def test_native_steering_matches_manual_intervention(loaded: tuple[Any, Any], ablate: bool):
-    from drowse.steering.hooks import SteeringManager, SteeringPlan
+    from drowse.steering.hooks import _SUBSPACE_GAIN, SteeringManager, SteeringPlan
     from drowse.geometry.subspace import LayerSubspace
     from drowse.geometry.inject import SynthesizedSubspace
 
@@ -119,8 +119,10 @@ def test_native_steering_matches_manual_intervention(loaded: tuple[Any, Any], ab
     def intervene(_module: Any, _args: Any, output: Any):
         h = output[0] if isinstance(output, tuple) else output
         replacement = h.float().clone()
-        replacement[..., 3] += 4.
-        replacement[..., 7] = replacement[..., 7] * .5 if ablate else replacement[..., 7] - 2.
+        replacement[..., 3] += .25 * _SUBSPACE_GAIN
+        replacement[..., 7] = (
+            replacement[..., 7] * .5 if ablate else replacement[..., 7] - .125 * _SUBSPACE_GAIN
+        )
         replacement = replacement.to(h.dtype)
         return (replacement, *output[1:]) if isinstance(output, tuple) else replacement
 
