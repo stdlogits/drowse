@@ -41,7 +41,7 @@ jobs:
   # The CPU suite in four parallel shards (a runner has 4 vCPUs; the suite is
   # ~330 CPU-seconds locally, a third of it the route tests).  The last shard
   # takes every directory the others don't name, so a new one is never skipped.
-  test-shard:
+  test:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -49,8 +49,8 @@ jobs:
         shard:
           - "tests/server"
           - "tests/lens tests/units tests/sae tests/cli"
-          - "tests/fit tests/session tests/model tests/browser tests/loom"
-          - "tests --ignore=tests/server --ignore=tests/lens --ignore=tests/units --ignore=tests/sae --ignore=tests/cli --ignore=tests/fit --ignore=tests/session --ignore=tests/model --ignore=tests/browser --ignore=tests/loom"
+          - "tests/fit tests/session tests/model tests/loom"
+          - "tests --ignore=tests/server --ignore=tests/lens --ignore=tests/units --ignore=tests/sae --ignore=tests/cli --ignore=tests/fit --ignore=tests/session --ignore=tests/model --ignore=tests/loom"
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-python@v7
@@ -64,13 +64,6 @@ jobs:
       - run: uv pip install --system -e ".[dev]"
       - run: pytest -q -m "not gpu" -n auto ${{ matrix.shard }}
 
-  # The one check branch protection names.
-  test:
-    if: always()
-    needs: test-shard
-    runs-on: ubuntu-latest
-    steps:
-      - run: test "${{ needs.test-shard.result }}" = success
 
   webui:
     runs-on: ubuntu-latest
