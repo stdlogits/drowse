@@ -10,9 +10,15 @@ coefficients over the selected atoms, repeat.
 
 Every inner product is Mahalanobis: a dictionary is built over one layer's
 :class:`~drowse.geometry.whitener.LayerWhitener` and lives in its whitened
-coordinates (``W = Σ^{-1/2}`` folded into the dictionary's matrix once), and
-:func:`sparse_decompose` maps the target there too, so atom selection, the
-NNLS fit and the share are all whitened.  A whitener that does not cover the
+coordinates, and :func:`sparse_decompose` maps the target there too
+(``Σ^{-1/2}``: the target is a vector), so atom selection, the NNLS fit and
+the share are all whitened.  Atoms enter by their type.  Neuron writes are
+vectors and whiten by ``Σ^{-1/2}``.  Token atoms (``W_U J_l`` rows,
+footprints) are *reads* and whiten by ``Σ^{+1/2}``
+(:meth:`~drowse.geometry.whitener.LayerWhitener.whiten_dual`), so a token's
+score against a target is the plain pairing ``u · t`` (its lens reading of
+the target), and decomposing a ``jlens/``/``slens/`` atom (the raised vector
+``Σu``) recovers its own token exactly.  A whitener that does not cover the
 layer raises :class:`~drowse.errors.WhitenerError`; there is no Euclidean
 path.
 
@@ -103,8 +109,9 @@ def token_atom_norms(
 class TokensOut:
     """``W_U J_l``: the tokens a layer-``l`` residual is disposed to say.
 
-    Held whitened: ``jacobian`` becomes ``J_l W`` (``W = Σ_l^{-1/2}`` of
-    ``whitener``), so atom ``v`` is ``W Jᵀ W_U[v]``.  ``atom_norms`` may
+    Held whitened as reads: ``jacobian`` becomes ``J_l Σ_l^{1/2}`` (the
+    dual-whitened rows of ``whitener``), so atom ``v`` is ``Σ^{1/2} Jᵀ W_U[v]``.
+    ``atom_norms`` may
     carry cached whitened norms (the runtime caches them per lens, layer and
     whitener); otherwise they are computed in chunks on first use.
     """
@@ -119,7 +126,7 @@ class TokensOut:
 
     def __post_init__(self) -> None:
         _require_cover(self.whitener, self.layer)
-        self.jacobian = self.whitener.whiten(
+        self.jacobian = self.whitener.whiten_dual(
             self.layer, self.jacobian.to(dtype=torch.float32),
         ).to(device=self.unembed.device)
 
@@ -166,8 +173,8 @@ def footprint_atom_norms(
 class TokensIn:
     """``K_l ẽ_v``: the footprint a token leaves at layer ``l`` (S family, ``out``).
 
-    Held whitened: ``matrix`` becomes ``W K_l`` (``W = Σ_l^{-1/2}`` of
-    ``whitener``), so atom ``v`` is ``W K_l ẽ_v``.  Atoms run over the token
+    Held whitened as reads: ``matrix`` becomes ``Σ_l^{1/2} K_l`` (the
+    footprint is a covector), so atom ``v`` is ``Σ^{1/2} K_l ẽ_v``.  Atoms run over the token
     mask of ``embeddings``; masked tokens score ``-inf`` and are never
     selected.  ``atom_norms`` may carry cached whitened norms; otherwise they
     are computed in chunks on first use.
@@ -183,8 +190,8 @@ class TokensIn:
 
     def __post_init__(self) -> None:
         _require_cover(self.whitener, self.layer)
-        # W K = (Kᵀ W)ᵀ: whiten the columns of K as rows of Kᵀ.
-        self.matrix = self.whitener.whiten(
+        # Σ^{1/2} K = (Kᵀ Σ^{1/2})ᵀ: dual-whiten the columns of K as rows of Kᵀ.
+        self.matrix = self.whitener.whiten_dual(
             self.layer, self.matrix.to(dtype=torch.float32).transpose(0, 1),
         ).transpose(0, 1).to(device=self.embeddings.device).contiguous()
 
@@ -287,8 +294,12 @@ def sparse_decompose(
     are formed.  After each selection the coefficients re-solve over the
     selected atoms — nonnegative least squares for a nonnegative dictionary
     (projected gradient with the exact Lipschitz step; the problem is tiny),
-    ordinary least squares for a signed one.  Selection stops early when no
-    atom correlates with the residual in an admissible direction.
+    ordinary least squares for a signed one.  The tiny ``k × k`` system is
+    solved in fp64: read atoms (token rows) share their high-variance
+    components, so in the dual metric they are nearly collinear and an fp32
+    normal-equation solve mis-fits.  Selection stops early when no atom
+    correlates with the residual in an admissible direction, or when the
+    residual is already negligible (an exact atom target).
     """
     device = dictionary.device
     t = dictionary.coords(target).to(device=device, dtype=torch.float32)
@@ -301,7 +312,10 @@ def sparse_decompose(
     rows: list[torch.Tensor] = []
     coeffs = torch.zeros(0, device=device)
     residual = t.clone()
+    t64 = t.double()
     for _ in range(k):
+        if float(residual.pow(2).sum()) <= 1e-12 * t_norm_sq:
+            break
         scores = dictionary.scores(residual) / norms
         if not dictionary.nonneg:
             scores = scores.abs()
@@ -313,23 +327,22 @@ def sparse_decompose(
         selected.append(best)
         rows.append(dictionary.atom(best))
         A = torch.stack(rows)  # [s, d]
-        gram = A @ A.T
-        b = A @ t
+        # fp64 on the host (MPS has no float64): the system is ≤ k×k.
+        A64 = A.detach().to("cpu", torch.float64)
+        gram = A64 @ A64.T
+        b = A64 @ t64.cpu()
         if dictionary.nonneg:
-            c = torch.cat([coeffs, coeffs.new_zeros(1)])
-            solved = _try_unconstrained_nonnegative(gram, b, device=device)
+            c = torch.cat([coeffs.cpu().double(), gram.new_zeros(1)])
+            solved = _try_unconstrained_nonnegative(gram, b)
             if solved is None:
-                # CPU hop: eigvalsh is unimplemented on MPS, and the gram is ≤ k×k.
-                lipschitz = float(
-                    torch.linalg.eigvalsh(gram.cpu())[-1].clamp(min=1e-12)
-                )
+                lipschitz = float(torch.linalg.eigvalsh(gram)[-1].clamp(min=1e-12))
                 for _ in range(nnls_iters):
                     c = torch.clamp(c - (gram @ c - b) / lipschitz, min=0.0)
             else:
                 c = solved
         else:
-            c = _solve_tiny(gram, b).to(device=device)
-        coeffs = c
+            c = _solve_tiny(gram, b)
+        coeffs = c.to(device=device, dtype=torch.float32)
         residual = t - A.T @ coeffs
 
     share = max(0.0, 1.0 - float(residual.pow(2).sum()) / t_norm_sq)
@@ -344,17 +357,18 @@ def sparse_decompose(
 
 
 def _solve_tiny(gram: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
-    """Ridge-stabilized normal-equation solve on CPU (the system is ≤ k×k)."""
-    g_cpu = gram.detach().to("cpu", torch.float32)
-    eye = torch.eye(g_cpu.shape[0], dtype=torch.float32)
-    return torch.linalg.solve(g_cpu + 1e-7 * eye, b.detach().to("cpu", torch.float32))
+    """Ridge-stabilized normal-equation solve on the CPU in fp64 (the system
+    is ≤ k×k); the ridge is relative to the Gram's scale."""
+    g_cpu = gram.detach().to("cpu", torch.float64)
+    eye = torch.eye(g_cpu.shape[0], dtype=torch.float64)
+    ridge = 1e-12 * float(g_cpu.diagonal().abs().max().clamp(min=1e-30))
+    return torch.linalg.solve(g_cpu + ridge * eye, b.detach().to("cpu", torch.float64))
 
 
 def _try_unconstrained_nonnegative(
     gram: torch.Tensor,
     b: torch.Tensor,
     *,
-    device: torch.device,
     tol: float = 1e-7,
 ) -> torch.Tensor | None:
     """Exact tiny least-squares solve when its coefficients are already >= 0.
@@ -371,6 +385,6 @@ def _try_unconstrained_nonnegative(
         return None
     if not bool(torch.isfinite(sol).all()):
         return None
-    if bool((sol < -tol).any()):
+    if bool((sol < -tol * float(sol.abs().max().clamp(min=1e-30))).any()):
         return None
-    return sol.clamp(min=0.0).to(device=device, dtype=torch.float32)
+    return sol.clamp(min=0.0)

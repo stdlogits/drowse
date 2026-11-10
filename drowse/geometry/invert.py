@@ -261,7 +261,7 @@ def neutral_origin(
             f"neutral mean has shape {tuple(mean.shape)}, expected "
             f"{tuple(sub.mean.shape)}"
         )
-    query = (mean - sub.mean) @ sub.basis.T
+    query = (mean - sub.mean) @ sub.read.T
     origin, _distance = invert_parameterization(
         sub, domain, query, node_coords.to(device="cpu", dtype=torch.float32),
     )

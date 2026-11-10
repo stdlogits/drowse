@@ -2285,7 +2285,7 @@ def test_rectangular_affine_transfer_preserves_points_frame_and_steering(
         name="rect-flat", domain=CustomDomain(2), node_labels=["a", "b", "c"],
         node_coords=node_coords,
         layers={0: LayerSubspace.affine(
-            torch.tensor([0.5, -1.0, 2.0, 0.25]), basis,
+            torch.tensor([0.5, -1.0, 2.0, 0.25]), basis, basis.clone(),
             node_coords=node_coords,
         )}, mahalanobis_share={0: 1.0},
     )
@@ -2297,8 +2297,9 @@ def test_rectangular_affine_transfer_preserves_points_frame_and_steering(
     alignment = LayerAlignment(
         dense, torch.eye(4), torch.linspace(-0.5, 0.5, 6),
     )
+    target_whitener = _target_whitener(dim=6, layers=(0,))
     target = transfer_manifold_subspaces(
-        source, {0: alignment}, whitener=_target_whitener(dim=6, layers=(0,)),
+        source, {0: alignment}, whitener=target_whitener,
         target_layer_means={0: torch.zeros(6)},
         from_model="src", to_model="tgt",
     )
@@ -2309,9 +2310,14 @@ def test_rectangular_affine_transfer_preserves_points_frame_and_steering(
             atol=1e-5,
         )
     target_sub = target.layers[0]
+    # Orthonormal in the target's Mahalanobis metric, with exactly dual reads.
     assert torch.allclose(
-        target_sub.basis @ target_sub.basis.T, torch.eye(2), atol=1e-5,
+        target_whitener.subspace_gram(0, target_sub.basis), torch.eye(2), atol=1e-4,
     )
+    assert torch.allclose(
+        target_sub.read, target_whitener.apply_inv(0, target_sub.basis), atol=1e-4,
+    )
+    assert torch.allclose(target_sub.read @ target_sub.basis.T, torch.eye(2), atol=1e-5)
     assert target_sub.node_coords is not None
     assert torch.allclose(
         target_sub.node_coords[1] @ target_sub.basis,
@@ -2346,7 +2352,7 @@ def test_monopolar_affine_transfer_rebakes_positive_world_direction_share() -> N
         name="ray", domain=CustomDomain(1), node_labels=["positive"],
         node_coords=torch.tensor([[1.0]]),
         layers={0: LayerSubspace.affine(
-            torch.zeros(3), basis, node_coords=real_coord,
+            torch.zeros(3), basis, basis.clone(), node_coords=real_coord,
         )},
         mahalanobis_share={0: 1.0},
     )
@@ -2366,7 +2372,10 @@ def test_monopolar_affine_transfer_rebakes_positive_world_direction_share() -> N
     assert transferred.mahalanobis_share[0] > 0.0
 
 
-def test_rectangular_curved_transfer_rejects_anisotropic_tube() -> None:
+def test_rectangular_curved_transfer_keeps_the_surface_and_isotropizes_the_tube() -> None:
+    """A non-isometric companion map moves every surface point exactly and
+    rescales the scalar tube by the volume-preserving factor ``(Π sᵢ)^(1/R)``
+    of its singular values (a uniform shift of the log-σ field)."""
     import torch
     from dataclasses import replace
     from drowse.geometry.domains import BoxAxis, BoxDomain
@@ -2401,13 +2410,30 @@ def test_rectangular_curved_transfer_rejects_anisotropic_tube() -> None:
         [0.3, 0.0, 0.0, 0.0], [0.0, -0.2, 0.0, 0.0],
     ])
     alignment = LayerAlignment(dense, torch.eye(4), torch.arange(6).float() / 10)
-    with pytest.raises(ValueError, match="anisotropic tube transfer"):
-        transfer_manifold_subspaces(
-            source, {0: alignment},
-            whitener=_target_whitener(dim=6, layers=(0,)),
-            target_layer_means={0: torch.zeros(6)},
-            from_model="src", to_model="tgt",
+    target = transfer_manifold_subspaces(
+        source, {0: alignment},
+        whitener=_target_whitener(dim=6, layers=(0,)),
+        target_layer_means={0: torch.zeros(6)},
+        from_model="src", to_model="tgt",
+    )
+    moved = target.layers[0]
+    for point in (coords[1], torch.tensor([0.3])):
+        emb = domain.embed(point.reshape(1, -1))
+        assert torch.allclose(
+            moved.eval_at(emb), alignment.apply_points(sub.eval_at(emb)), atol=1e-4,
         )
+    # Recover the companion L from new = old @ L on the surface coefficients.
+    assert moved.rbf_weights is not None and moved.poly_coeffs is not None
+    assert sub.rbf_weights is not None and sub.poly_coeffs is not None
+    old = torch.cat([sub.rbf_weights, sub.poly_coeffs])
+    new = torch.cat([moved.rbf_weights, moved.poly_coeffs])
+    companion = torch.linalg.lstsq(old, new).solution
+    expected = float(torch.linalg.svdvals(companion).log().mean().exp())
+    assert expected != pytest.approx(1.0, abs=1e-3)  # genuinely non-isometric
+    for point in (coords[0], coords[2], torch.tensor([0.7])):
+        emb = domain.embed(point.reshape(1, -1))
+        ratio = float(moved.sigma_at(emb)) / float(sub.sigma_at(emb))
+        assert ratio == pytest.approx(expected, rel=1e-3)
 
 
 def test_rectangular_transfer_rejects_collapsed_subspace_rank() -> None:
@@ -2423,6 +2449,7 @@ def test_rectangular_transfer_rejects_collapsed_subspace_rank() -> None:
         node_coords=torch.tensor([[0.0, 0.0], [1.0, 1.0]]),
         layers={0: LayerSubspace.affine(
             torch.zeros(3), torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
+            torch.tensor([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]),
             node_coords=torch.tensor([[0.0, 0.0], [1.0, 1.0]]),
         )}, mahalanobis_share={0: 1.0},
     )
@@ -2450,7 +2477,7 @@ def test_rectangular_transfer_rejects_oblique_rank_collapse() -> None:
         name="oblique-collapse", domain=CustomDomain(3),
         node_labels=["a", "b", "c"], node_coords=torch.eye(3),
         layers={0: LayerSubspace.affine(
-            torch.zeros(3), torch.eye(3), node_coords=torch.eye(3),
+            torch.zeros(3), torch.eye(3), torch.eye(3), node_coords=torch.eye(3),
         )}, mahalanobis_share={0: 1.0},
     )
     generator = torch.Generator().manual_seed(30061)
@@ -2715,8 +2742,9 @@ def test_strict_fitted_load_rejects_invalid_digest_before_hashing(
 def test_transfer_manifold_identity_alignment_preserves_geometry(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
-    """An identity alignment leaves the per-layer subspace unchanged and
-    writes the transferred tensor at the ``_from-<safe_src>`` filename."""
+    """An identity alignment leaves the per-layer surface unchanged (the frame
+    is only re-normalized in the target metric) and writes the transferred
+    tensor at the ``_from-<safe_src>`` filename."""
     import torch
     from drowse.store.manifold_tensors import load_manifold
 
@@ -2751,7 +2779,16 @@ def test_transfer_manifold_identity_alignment_preserves_geometry(
     assert sorted(tgt_man.layers) == sorted(src_man.layers)
     for L in src_man.layers:
         assert torch.allclose(tgt_man.layers[L].mean, src_man.layers[L].mean, atol=1e-5)
-        assert torch.allclose(tgt_man.layers[L].basis, src_man.layers[L].basis, atol=1e-5)
+        src_basis, tgt_basis = src_man.layers[L].basis, tgt_man.layers[L].basis
+        # Same span: the target rows are combinations of the source rows ...
+        mixing = torch.linalg.lstsq(src_basis.T, tgt_basis.T).solution
+        assert torch.allclose(mixing.T @ src_basis, tgt_basis, atol=1e-4)
+        # ... and every surface point stays where it was.
+        for position in src_man.node_coords:
+            assert torch.allclose(
+                tgt_man.manifold_point(L, position),
+                src_man.manifold_point(L, position), atol=1e-4,
+            )
     # The source's per-model Mahalanobis share is invalid in target space, so
     # it is RE-BAKED in the target metric (mandatory now — never dropped).
     assert src_man.mahalanobis_share  # source had one

@@ -1707,8 +1707,8 @@ def test_discover_subspace_inject_translates_by_target(tmp_path: Path) -> None:
     )
 
     for pos in range(hidden.shape[1]):
-        h_in = (hidden[0, pos] - sub.mean) @ sub.basis.T
-        h_out = (out[0, pos] - sub.mean) @ sub.basis.T
+        h_in = (hidden[0, pos] - sub.mean) @ sub.read.T
+        h_out = (out[0, pos] - sub.mean) @ sub.read.T
         # along=1, κ=0 ⇒ the in-subspace coord is translated by the full target
         # offset: h_out == h_in + target (the per-token spread h_in is kept).
         assert torch.allclose(h_out, h_in + position, atol=1e-3), (

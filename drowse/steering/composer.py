@@ -568,8 +568,14 @@ class SteeringComposer:
                 "or Steering instance"
             )
         # The role pass reads a resident manifold on its device (a coordinate
-        # ``%`` position's nearest node), so it runs in the section too.
+        # ``%`` position's nearest node), so it runs in the section too.  The
+        # neutral baseline goes resident first, through the unguarded
+        # ``ensure`` (this section is the lock): a ``jlens/``/``slens/`` atom
+        # raises its read with the whitener while resolving, and a scope
+        # opened inside ``generate`` may not build it through the public
+        # getter.  Composition needs it anyway.
         with self._lock:
+            self._neutral.ensure()
             entries = self.resolve(steering)
             role, notes = resolve_scope_role(
                 entries, self._artifacts.manifolds,

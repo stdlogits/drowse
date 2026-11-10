@@ -78,7 +78,7 @@ def test_is_foldable_vector_manifold_rejects_multinode_affine():
     basis = basis.T.contiguous()  # (R, D), orthonormal rows
     mean = torch.zeros(dim)
     node_coords = torch.randn(K, R)
-    sub = LayerSubspace.affine(mean, basis, node_coords=node_coords)
+    sub = LayerSubspace.affine(mean, basis, basis.clone(), node_coords=node_coords)
     assert sub.is_affine and sub.rank == R
     mfld = Manifold(
         name="fan",

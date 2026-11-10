@@ -142,7 +142,7 @@ def trajectory_naturalness(
     ``node_coords`` ``(K, n)`` seed the inverse map.  Returns ``(T,)``.
     """
     h = to_hellinger(traj_dists)  # (T, V)
-    coords = (h - behavior.mean) @ behavior.basis.T  # (T, R)
+    coords = (h - behavior.mean) @ behavior.read.T  # (T, R)
     pos, _ = invert_parameterization(behavior, domain, coords, node_coords)
     curve_h = behavior.eval_at(domain.embed(pos))  # (T, V)
     # In Hellinger space ||h_a - h_b||^2 = 2 - 2*BC, so the Bhattacharyya

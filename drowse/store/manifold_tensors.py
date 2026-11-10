@@ -237,7 +237,8 @@ def save_manifold(
     """Save a fitted manifold as ``.safetensors`` + a ``.json`` sidecar.
 
     The safetensors payload carries, per layer ``L``: ``layer_<L>.mean``,
-    ``layer_<L>.basis``, ``layer_<L>.node_params``,
+    ``layer_<L>.basis`` (write rows), ``layer_<L>.read`` (their dual read
+    rows), ``layer_<L>.node_params``,
     ``layer_<L>.rbf_weights``, ``layer_<L>.poly_coeffs``,
     ``layer_<L>.coord_offset``, ``layer_<L>.coord_scale``; plus a shared
     bare ``node_coords`` tensor.  The sidecar carries the manifold identity
@@ -246,7 +247,8 @@ def save_manifold(
     keyed by layer), plus the provenance fields in ``metadata``.
 
     **Affine (flat / folded-vector) layers** write ``layer_<L>.mean`` +
-    ``layer_<L>.basis`` and optional ``layer_<L>.affine_map`` — there is no RBF
+    ``layer_<L>.basis`` + ``layer_<L>.read`` and optional
+    ``layer_<L>.affine_map`` — there is no RBF
     triple and ordinary-fit coord normalization is identity (reconstructed by
     :meth:`LayerSubspace.affine` on load).  The *absence* of ``node_params``
     on disk is the read-side affine marker ``load_manifold`` keys on, so a
@@ -274,10 +276,11 @@ def save_manifold(
     for idx, sub in manifold.layers.items():
         tensors[f"layer_{idx}.mean"] = sub.mean.contiguous().to(torch.float32).cpu()
         tensors[f"layer_{idx}.basis"] = sub.basis.contiguous().to(torch.float32).cpu()
+        tensors[f"layer_{idx}.read"] = sub.read.contiguous().to(torch.float32).cpu()
         if sub.is_affine:
             # Flat (folded-vector / subspace) layer: no RBF surface, and the
             # coord normalization is identity — rebuilt from the basis shape
-            # by ``LayerSubspace.affine`` on load.  Persist mean + basis (the
+            # by ``LayerSubspace.affine`` on load.  Persist mean + frame (the
             # *absence* of ``node_params`` on disk is the affine marker), plus
             # the per-layer **real, neutral-anchored** node coords ``(K, R)``
             # when present — the steer-target source (§5).
@@ -431,7 +434,7 @@ def _load_manifold_locked(
 
     by_layer: dict[int, dict[str, torch.Tensor]] = {}
     allowed_fields = {
-        "mean", "basis", "node_coords", "affine_map", "node_params",
+        "mean", "basis", "read", "node_coords", "affine_map", "node_params",
         "rbf_weights", "poly_coeffs", "coord_offset", "coord_scale",
         "sigma_rbf_weights", "sigma_poly_coeffs",
     }
@@ -459,24 +462,24 @@ def _load_manifold_locked(
     layers: dict[int, LayerSubspace] = {}
     for idx, parts in by_layer.items():
         if "node_params" not in parts:
-            if not {"mean", "basis"}.issubset(parts) or set(parts) - {
-                "mean", "basis", "node_coords", "affine_map",
+            if not {"mean", "basis", "read"}.issubset(parts) or set(parts) - {
+                "mean", "basis", "read", "node_coords", "affine_map",
             }:
                 raise ManifoldFormatError(
                     f"affine manifold layer {idx} has invalid tensor fields"
                 )
-            # Affine (flat / folded-vector) layer — only mean + basis on disk
+            # Affine (flat / folded-vector) layer — only mean + frame on disk
             # (the coord normalization is identity, rebuilt from the basis
             # shape), plus the per-layer real node coords when the writer
             # stamped them.  Read side of ``save_manifold``'s affine branch.
             layers[idx] = LayerSubspace.affine(
-                mean=parts["mean"], basis=parts["basis"],
+                mean=parts["mean"], basis=parts["basis"], read=parts["read"],
                 node_coords=parts.get("node_coords"),
                 affine_map=parts.get("affine_map"),
             )
             continue
         required_curved = {
-            "mean", "basis", "node_params", "rbf_weights", "poly_coeffs",
+            "mean", "basis", "read", "node_params", "rbf_weights", "poly_coeffs",
             "coord_offset", "coord_scale",
         }
         sigma_fields = {"sigma_rbf_weights", "sigma_poly_coeffs"}
@@ -491,6 +494,7 @@ def _load_manifold_locked(
         layers[idx] = LayerSubspace(
             mean=parts["mean"],
             basis=parts["basis"],
+            read=parts["read"],
             node_params=parts["node_params"],
             rbf_weights=parts["rbf_weights"],
             poly_coeffs=parts["poly_coeffs"],

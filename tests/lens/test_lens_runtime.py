@@ -36,6 +36,7 @@ from drowse.loom.recipe import Recipe
 from drowse.model.fingerprint import loaded_model_fingerprint
 from drowse.readout.planner import ReadDemand
 from tests.support.lens import LENS_PROMPTS as _PROMPTS
+from tests.support.whitener import synthetic_whitener
 from tests.support.lens import TOY_MODEL_ID as _MODEL_ID
 from tests.support.lens import FakeCapture, LensHarness
 from tests.support.replay import ReplayRig
@@ -102,6 +103,7 @@ def test_register_direction_and_eviction_report_changes() -> None:
     and tells the session (``on_change``) whenever they or the resident lens
     change; eviction drops the directions."""
     s = LensHarness()
+    s.whitener = synthetic_whitener(range(len(s.layers)), int(s.model.config.hidden_size))
     s.lens.fit(_PROMPTS)
     s.lens.probes["jlens/b"] = {"word": "b", "token_id": 2, "layers": [0]}
     s.changes.clear()
@@ -892,6 +894,7 @@ def test_jlens_readout_rejects_unfitted_layer() -> None:
 
 def test_register_jlens_direction_registers_profile() -> None:
     s = LensHarness()
+    s.whitener = synthetic_whitener(range(len(s.layers)), int(s.model.config.hidden_size))
     lens = s.lens.fit(_PROMPTS)
     seen_layers: list[list[int] | None] = []
     real_token_direction = lens.token_direction
@@ -915,8 +918,9 @@ def test_register_jlens_direction_registers_profile() -> None:
     expected = lens.token_direction(
         s.tokenizer.encode("g")[0], s.model.lm_head.weight,
     )
+    # The profile is the read raised to its steering vector, Σu.
     for layer, vec in dirs.items():
-        assert torch.allclose(vec, expected[layer])
+        assert torch.allclose(vec, s.whitener.apply(layer, expected[layer]), atol=1e-6)
     # idempotent
     assert s.lens.register_direction("g") == name
 

@@ -74,7 +74,9 @@ recording it. `template_ref` is discover-only. A generated corpus aligns
 with `contexts[i]`.
 
 **Fitted pair.** `save_manifold` writes fp32: shared `node_coords`; per layer
-`layer_<L>.mean`/`.basis` plus either the affine fields (`node_coords`, optional
+`layer_<L>.mean`/`.basis`/`.read` (the write rows and their dual read rows,
+same shape, required on every layer since fit policy 2) plus either the affine
+fields (`node_coords`, optional
 `affine_map`) or the curved RBF set (plus the `sigma_*` pair, required on raw
 curved fits, absent on SAE-space ones). Missing `node_params` is the affine
 marker; one tensor never mixes the two. `ManifoldSidecar` is the one sidecar field

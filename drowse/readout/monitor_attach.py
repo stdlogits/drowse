@@ -207,7 +207,7 @@ class AttachedManifoldProbe:
     ``node_values_reduced`` is the per-layer ``(K, R)`` tensor of node
     activations in subspace coords — ``sub.node_coords`` for a flat fit (the
     M-projected node coords directly, pruned-basis-consistent), else
-    ``(sub.eval_at(domain.embed(node_coords)) - sub.mean) @ sub.basis.T`` for
+    ``(sub.eval_at(domain.embed(node_coords)) - sub.mean) @ sub.read.T`` for
     a curved fit (RBF surface eval) — pre-computed once at attach so per-token
     distance computations are one batched cdist in R-dim per layer.
     ``share_weights`` is the per-layer Mahalanobis share (the steering budget)
@@ -429,7 +429,9 @@ def _build_whitened_factors(
             )
         dev = v_reduced.device
         basis = sub.basis.to(device=torch.device("cpu"), dtype=torch.float32)
-        # M_R = B Σ⁻¹ Bᵀ (R, R), PD for an orthonormal B and ridge-PD Σ.
+        # M_R = B Σ⁻¹ Bᵀ (R, R): ≈ I for a fitted (Mahalanobis-orthonormal)
+        # frame under the fit's own whitener; computed so a regenerated
+        # neutral cache still reads the exact M-projection.
         m_r = whitener.subspace_gram(layer_idx, basis)  # CPU fp32
         R = m_r.shape[0]
         try:
@@ -465,7 +467,7 @@ def _build_whitened_factors(
             v_centered = sub.eval_at(emb) - sub.mean.to(
                 device=dev, dtype=torch.float32,
             )
-            v_red = v_centered @ sub.basis.to(
+            v_red = v_centered @ sub.read.to(
                 device=dev, dtype=torch.float32,
             ).T                                  # (1, R)
             neutral_white = (v_red @ chol_dev).reshape(-1)
@@ -585,7 +587,7 @@ def _sample_overlay(
     cpu = torch.device("cpu")
     sub_c = sub.to(device=cpu, dtype=torch.float32)
     chol = wh.chol.detach().to(torch.float32).cpu()       # (R, R)
-    basis = sub_c.basis                                   # (R, D)
+    read = sub_c.read                                     # (R, D)
     mean = sub_c.mean                                     # (D,)
     axes = domain.axes
 
@@ -600,7 +602,7 @@ def _sample_overlay(
 
     def _whiten(coords: torch.Tensor) -> torch.Tensor:
         world = sub_c.eval_at(domain.embed(domain.clamp_position(coords)))
-        reduced = (world - mean) @ basis.transpose(0, 1)  # (.., R)
+        reduced = (world - mean) @ read.transpose(0, 1)   # (.., R)
         return reduced @ chol                             # (.., R) whitened
 
     if n == 1:
@@ -692,7 +694,7 @@ def _attach_on_host(
             )
             v_world = sub_f32.eval_at(embedded_dev)  # (K, D)
             v_centered = v_world - sub_f32.mean
-            v_reduced = v_centered @ sub_f32.basis.T  # (K, R)
+            v_reduced = v_centered @ sub_f32.read.T  # (K, R)
         node_values_reduced[layer_idx] = v_reduced.contiguous()
         share_weights_raw[layer_idx] = float(manifold.mahalanobis_share[layer_idx])
     if any(

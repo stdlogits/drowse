@@ -86,10 +86,10 @@ A manifold is a set of labeled nodes, a domain or discovered layout, and a
 per-model fit at selected residual-stream layers. A fitted layer is a
 `LayerSubspace` (`geometry/subspace.py`) in one of two geometries:
 
-- **Flat**: a neutral-anchored affine frame (`mean`, orthonormal `basis`, real
-  per-layer node coordinates). A rank-1, 2-node flat fit is the ordinary
-  bipolar steering vector; a 1-node flat fit is a monopolar ray from the
-  neutral mean.
+- **Flat**: a neutral-anchored affine frame (`mean`, a Mahalanobis-orthonormal
+  `basis` of write rows with their dual `read` rows, real per-layer node
+  coordinates). A rank-1, 2-node flat fit is the ordinary bipolar steering
+  vector; a 1-node flat fit is a monopolar ray from the neutral mean.
 - **Curved**: the same enclosing frame plus an `r³` polyharmonic RBF surface
   through the node centroids, a neutral-origin foot, and optionally a learned
   tube thickness σ(z).
@@ -299,9 +299,26 @@ the neutral mean into the span, node coordinates are measured from it, and
 coordinate 0 means neutral. The basis comes from the node-centroid scatter
 around the nodes' own mean, never around neutral: anchor-centering would inject
 the neutral offset as a spurious axis and break PCA@2 ≡ difference-of-means.
-With a whitener the basis maximizes `vᵀS_b v / vᵀΣv` (the Fisher/LDA
-objective), which divides each direction by its background variance so the
-rogue channels cancel the way they cancel in a difference of means.
+
+**Frames are typed: writes are vectors, reads are covectors.** A frame's
+`basis` rows are what steering adds to the residual stream, and its `read`
+rows are what measures a coordinate (`(h − mean)·readᵀ`). The two are
+different objects whenever the metric is not Euclidean: the read that best
+separates two classes is the LDA covector `Σ⁻¹δ`, while the write that moves
+that reading furthest per unit of Mahalanobis displacement is `Σ·Σ⁻¹δ = δ`,
+the difference of means itself. So the whitened fit is PCA in the whitened
+space mapped back with the right types. The eigenvectors `a` of the whitened
+Gram `G = XΣ⁻¹Xᵀ` rank the axes by whitened between-node variance (the
+Fisher/LDA objective `vᵀS_b v / vᵀΣv`, which is what keeps the rogue channels
+from choosing the axes). The write rows are `Xᵀa/√μ`, combinations of the node
+displacements, Mahalanobis-orthonormal by construction, and the read rows are
+their `Σ⁻¹` images, exactly dual (`read·basisᵀ = I`). A 2-node fit therefore
+writes along `δ` (its push is DiM), reads with `Σ⁻¹δ`, and its full ablation
+is LEACE. Every frame obeys the same contract: fitted, folded, synthesized
+and transferred. Reduced coordinates are whitened coordinates, so every
+reduced norm (the foot solve, the σ tube, the share) is a Mahalanobis norm.
+Before fit policy 2 the basis was the QR of the covector rows `Σ⁻¹Xᵀa`, so
+steering wrote along LDA directions and the monitor read with `Σ⁻²δ`.
 
 ### 5.4 Discovering and fitting geometry
 
@@ -323,8 +340,8 @@ curved fits learn the σ tube from the retained rows.
 Each fit bakes a per-layer Mahalanobis `share`, the cross-layer budget the
 hooks normalize at apply time. Discriminative layer selection (Selective
 Steering, Dang & Ngo 2026) keeps a flat axis at a layer only when the node
-projections relative to neutral straddle zero: same-side layers encode
-intensity, not polarity. `--no-dls` opts out. Curved fits have no polarity and
+readings relative to neutral (through the axis's read row) straddle zero:
+same-side layers encode intensity, not polarity. `--no-dls` opts out. Curved fits have no polarity and
 skip DLS.
 
 A monopolar concept (`extract(concept)` with no baseline) is a genuine 1-node
@@ -345,12 +362,12 @@ in `drowse/steering/AGENTS.md`. In brief:
 |---|---|
 | `0.3 warm` | push toward a pole or label |
 | `a~b`, `a\|b` | keep / remove the Mahalanobis component of `a` shared with `b` |
-| `!a` | mean-ablate `a` (`h' = h − α(h·d̂ − μ·d̂)d̂`) |
+| `!a` | LEACE-ablate `a` toward neutral (`h' = h − α((h − μ)·Σ⁻¹d / d·Σ⁻¹d)·d`) |
 | `along[,onto] M%label`, `M%x,y` | move toward a node or coordinates of a manifold |
 | `x{12-20}`, `x{4-8,20}`, `x{workspace}` | act only at these layers (any term kind) |
 | `@response`, `@after`, `@first:N`, … | restrict the token phase or window |
 | `@when:probe>t` | fire only while a read-side scalar holds |
-| `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces |
+| `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces (a lens atom is a read `u`, steered along its raised vector `Σu`) |
 | `neuron/L8n344`, `!head/L20h17` | model units: a neuron push along its write (a one-layer profile through the one kernel), a unit mean-ablation (`UnitAblationTerm` → a `UnitOp` pre-hook replacing the unit's activation by its neutral mean) |
 
 ### 6.2 Resolution and composition
@@ -379,8 +396,10 @@ collapse axes, and affine `%` terms contribute their fitted basis and target.
 All affine terms of one trigger become one `SynthesizedSubspace` per layer
 (`geometry/inject.py::synthesize_subspace`), so terms sharing a layer
 superpose instead of colliding; partial, repeated, negative and non-orthogonal
-ablations get exact per-axis coefficients. Each curved `%` term stays its own
-term. Two curved spans may share a layer only when they are orthogonal
+ablations get exact per-axis coefficients. All of it runs in the Mahalanobis
+metric: one Woodbury `Σ⁻¹` gives each row's read, and Gram-Schmidt works on
+(write, read) pairs. Each curved `%` term stays its own term. Two curved spans
+may share a layer only when they are Mahalanobis-orthogonal
 (`OverlappingManifoldError` otherwise), and the merged affine span is
 orthogonalized against them, the curved term owning the overlap.
 
@@ -407,9 +426,11 @@ in-subspace residual, off-subspace residual) and applies two operations:
   `onto = 1` lands on the surface's typical set rather than its zero-thickness
   wire. It is vacuous for flat terms.
 
-`H_o`, the off-subspace residual, is always kept verbatim. It contains every
-composing neighbor's span, which is why a vector and several orthogonal
-manifolds compose with zero cross-talk.
+The split reads with the frame's `read` rows and writes back along its
+`basis` rows, so `H_o`, the off-subspace residual, is the
+Mahalanobis-orthogonal complement `(I − basisᵀ·read)(h − mean)`. It is always
+kept verbatim. It contains every composing neighbor's span, which is why a
+vector and several orthogonal manifolds compose with zero cross-talk.
 
 On a flat subspace the foot is the projected coordinate and the kernel reduces
 to an analytic slide, with no foot solve, RBF or norm cap (a flat fit cannot
@@ -838,9 +859,9 @@ references are:
 |---|---|---|
 | expression grammar | `steering/grammar.py` | `tests/fixtures/browser_steering_expression.json` |
 | sampler | `generation/decode.py` | `sampling-parity-v1.json` |
-| affine lowering and the kernel | `steering/hooks.py`, `geometry/inject.py` | `affine-*-lowering-v1.json`, `post-block-rank-one-v2.json` |
+| affine lowering and the kernel | `steering/hooks.py`, `geometry/inject.py` | `affine-rank-one-lowering-v1.json`, `affine-composed-lowering-v1.json`, `affine-ablation-lowering-v2.json`, `post-block-rank-one-v2.json` |
 | curved kernel, SAE and lens token directions, gates | `geometry/inject.py`, `sae/backend.py`, `lens/jlens.py`, `steering/triggers.py` | `structured-program-parity-v1.json` |
-| Fisher fit, DLS, topology and RBF | `geometry/subspace.py`, `fit/capture.py::compute_dls_axes`, `geometry/topology.py`, `geometry/rbf.py` | `affine-fisher-fit-v1.json`, `dls-axes-v1.json`, `topology-rbf-parity-v1.json`, `topology-adversarial-v1.csv` |
+| Fisher fit, DLS, topology and RBF | `geometry/subspace.py`, `fit/capture.py::compute_dls_axes`, `geometry/topology.py`, `geometry/rbf.py` | `affine-fisher-fit-v2.json`, `dls-axes-v1.json`, `topology-rbf-parity-v1.json`, `topology-adversarial-v1.csv` |
 | measurement envelope | `readout/measurements.py` | `measurement-envelope-v2.json` |
 | loom ops and events | `loom/tree.py`, `loom/ops.py` | `loom-operation-transcript-v1.json` |
 | generation-settings composition | `loom/recipe.py::compose_call` | `recipe-compose-v1.json` |
@@ -910,15 +931,18 @@ publisher identity.
 
 Cross-model transfer (`geometry/procrustes.py`, `geometry/transfer.py`) fits a
 per-layer affine alignment from shared neutral activations, maps means as
-points and bases as directions, re-bakes the share in the target model's
-Mahalanobis metric, and writes the `from-<source>` variant. Curved transfer
-rejects maps that would make a scalar tube anisotropic. Discover layouts are
+points and write rows as directions, re-orthonormalizes the frame in the
+target model's Mahalanobis metric (recomputing its reads there), re-bakes the
+share in that metric, and writes the `from-<source>` variant. A curved fit's
+scalar tube becomes the volume-preserving isotropic approximation when the map
+is not an isometry between the two metrics. Discover layouts are
 model-specific, so transfer maps fitted activation geometry, not a universal
 coordinate system.
 
 A fitted 2-node flat manifold exports as a llama.cpp control-vector GGUF
-(`folded_directions = δ̂_L · share_L`). llama.cpp's uniform scale reproduces
-that share profile, which approximates but does not equal drowse's live affine
+(`folded_directions`: each layer's difference-of-means write row scaled to
+Mahalanobis norm `share_L`). llama.cpp's uniform scale reproduces that share
+profile, which approximates but does not equal drowse's live affine
 injection. Multi-rank and curved fits are rejected.
 
 ## 13. Concurrency and consistency
@@ -1074,8 +1098,8 @@ executable statement of why a boundary is strict.
 - **Per-target coherence.** Whitened-unit targets unify push *strength* across
   targets, but not *coherence*: a hard persona such as `hacker` shatters at
   roughly half the effective gain a robust concept tolerates (about 2×).
-  `_SUBSPACE_GAIN = 16.0` is the coherence-first compromise and is tagged a
-  prototype; tune α down per target.
+  `_SUBSPACE_GAIN` (8.0 since fit policy 2) is the coherence-first
+  compromise; tune α down per target.
 - **Low-α drift.** A steering trajectory can pass through neighboring attractor
   basins at low displacement (`personas%hacker` surfacing a cyber-security
   cluster before locking into the persona). That is signal about the model's

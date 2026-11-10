@@ -180,7 +180,7 @@ def _ray(direction: torch.Tensor, *, share: float = 1.0) -> Any:
 
     unit = (direction / direction.norm()).reshape(1, -1)
     layer = LayerSubspace.affine(
-        torch.zeros(direction.numel()), unit,
+        torch.zeros(direction.numel()), unit, unit.clone(),
         node_coords=torch.tensor([[1.0]]),
     )
     return Manifold(
@@ -235,7 +235,8 @@ def test_adopt_fitted_drops_probe_folds_when_the_fit_no_longer_folds() -> None:
     fold = registry.fold_probe("local/mood", {0: torch.ones(2)})
     rank2 = _ray(torch.tensor([1.0, 0.0]))
     rank2.layers[0] = type(rank2.layers[0]).affine(
-        torch.zeros(2), torch.eye(2), node_coords=torch.tensor([[1.0, 0.0]]),
+        torch.zeros(2), torch.eye(2), torch.eye(2),
+        node_coords=torch.tensor([[1.0, 0.0]]),
     )
     registry.adopt_fitted("local/mood", rank2)
     assert seen.swaps == [{id(fold): None}]

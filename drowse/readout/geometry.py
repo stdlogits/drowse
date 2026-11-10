@@ -615,7 +615,7 @@ class GeometryInstrument:
         except ValueError:
             per_layer = {}
             for layer_idx, sub in manifold.layers.items():
-                tensors = [sub.mean, sub.basis]
+                tensors = [sub.mean, sub.basis, sub.read]
                 if sub.node_coords is not None:
                     tensors.append(sub.node_coords)
                 per_layer[layer_idx] = tensors

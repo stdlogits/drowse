@@ -1587,11 +1587,11 @@ class TestAnalyticsMultiNodeProbe:
             node_coords=node_coords,
             layers={
                 L: LayerSubspace.affine(
-                    session.layer_means[L].clone(),
-                    torch.linalg.qr(torch.randn(dim, R, generator=g))[0].T.contiguous(),
+                    session.layer_means[L].clone(), q, q.clone(),
                     node_coords=node_coords.clone(),
                 )
                 for L in layers
+                for q in [torch.linalg.qr(torch.randn(dim, R, generator=g))[0].T.contiguous()]
             },
             mahalanobis_share={L: 1.0 for L in layers},
         )

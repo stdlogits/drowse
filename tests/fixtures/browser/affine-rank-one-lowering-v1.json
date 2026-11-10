@@ -11,7 +11,7 @@
       "selectedNode": 1,
       "mahalanobisShare": 1.4142135623730951,
       "expectedTarget": 0.5,
-      "expectedAlong": 10.666666666666666
+      "expectedAlong": 5.333333333333333
     },
     {
       "layer": 1,
@@ -21,7 +21,7 @@
       "selectedNode": 1,
       "mahalanobisShare": 2.8284271247461903,
       "expectedTarget": 0.5,
-      "expectedAlong": 21.333333333333332
+      "expectedAlong": 10.666666666666666
     }
   ]
 }

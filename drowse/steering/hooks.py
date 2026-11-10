@@ -36,7 +36,7 @@ from drowse.errors import (
 from drowse.geometry.domains import BoxDomain, ManifoldDomain
 from drowse.geometry.subspace import LayerSubspace
 from drowse.geometry.manifold import Manifold
-from drowse.geometry.inject import SynthesizedSubspace, _ortho_basis, subspace_inject
+from drowse.geometry.inject import SynthesizedSubspace, _ortho_frame, subspace_inject
 from drowse.steering.triggers import Trigger, TriggerContext
 
 
@@ -63,27 +63,39 @@ def _canonical_trigger(trigger: Trigger) -> Trigger:
 #                      (periodic ``BoxDomain``: unweighted, clamped to [0, 1])
 #   ``onto``           ``eff_onto_L  = clamp(onto · share_L · _MANIFOLD_ONTO_GAIN, 0, 1)``
 
-# Affine ``along`` gain (prototype).  ``synthesize_subspace`` emits a
-# whitened-unit target per push term, so the average per-layer whitened push is
-# ``GAIN·α`` for every target.  Live-calibrated on a gemma-4-12b α-sweep
-# (``formal.casual%formal``, ``personas%caveman``, ``personas%hacker``): the
-# dead→expressive transition sits at ``E = GAIN·α ≈ 7-8`` for every target,
-# but the coherence ceiling varies ~2× (hacker breaks at ``E ≈ 12``, caveman
-# ``≈ 17``, formal past ``22``) — the per-target coherence variance a scalar
-# gain cannot unify.  Coherence-first: recommended ``α ≈ 0.5`` lands at
-# ``E ≈ 8``, so ``GAIN = 16``; ``α ≈ 1.0`` is the strong / over-steered zone.
-_SUBSPACE_GAIN = 16.0
+# Affine ``along`` gain.  ``synthesize_subspace`` emits a whitened-unit target
+# per push term, so the average per-layer whitened push is ``GAIN·α`` for every
+# target.  First live-calibrated at 16 on a gemma-4-12b α-sweep
+# (``formal.casual%formal``, ``personas%caveman``, ``personas%hacker``) when
+# frames wrote along the LDA covector ``Σ⁻¹δ``: dead→expressive at
+# ``16·α ≈ 7-8``, coherence ceilings ~2× apart, so ``α ≈ 0.5`` expressive and
+# ``α ≈ 1.0`` strong / over-steered.  Typed frames write along ``δ``, which moves
+# the concept's reading furthest per unit of Mahalanobis displacement and so
+# disrupts more per unit: re-calibrated to keep those α bands by matching the
+# neutral-text NLL cost of the old code at α ∈ {0.25, 0.5, 1} (six bipolar
+# concepts on SmolLM2-360M, gemma-3-4b, Llama-3.1-8B and gemma-4-12b,
+# teacher-forced).  The new α with equal cost was 0.47–0.48× the old one,
+# stable across α (per model 0.44–0.55, gemma-4-12b the highest), hence 8.  At
+# matched cost the ``δ`` write buys more pole preference for most concepts.
+_SUBSPACE_GAIN = 8.0
 
 # Curved ``along`` gain.  The curved target is raw node coordinates and the
 # kernel translates the foot by ``eff_along·(target − origin)``, so
 # ``eff_along`` is a fraction of the way to the node (``1.0`` lands on it);
 # ``norm_cap = 3·‖h‖`` bounds off-domain RBF extrapolation past it.
-# Live-calibrated on a stateless gemma-4-12b ``months_loop%january`` sweep:
-# ``along = 1.0`` at gain 4 lands the vivid coherent sweet spot.  Periodic
-# ``BoxDomain`` fits drop share-weighting and clamp ``eff_along`` to [0, 1]
-# per layer — share ∈ [0.19, 1.47] × 4 would send layers past the node, each
-# wrapping to a different one.
-_MANIFOLD_ALONG_GAIN = 4.0
+# First live-calibrated at 4 on a stateless gemma-4-12b ``months_loop%january``
+# sweep (``along = 1.0`` the vivid coherent sweet spot) when frames read and
+# wrote along covectors: a curved surface then passed through the centroids'
+# projections onto the covector span, shorter than the centroids themselves.
+# Typed frames pass through the true centroids, so the same fraction moves
+# 2–3× further.  Re-calibrated to 2 by matching the old code's neutral-text
+# NLL cost on spectral ``emotions%{happy,angry,calm}`` (SmolLM2-360M,
+# gemma-4-12b): equal-cost ``along`` was 0.35–0.80× the old one, geo-mean
+# ~0.55, the same halving as the affine gain.  Periodic ``BoxDomain`` fits
+# drop share-weighting and clamp ``eff_along`` to [0, 1] per layer — share ∈
+# [0.19, 1.47] × gain would send layers past the node, each wrapping to a
+# different one.
+_MANIFOLD_ALONG_GAIN = 2.0
 
 # ``onto`` gain (curved off-surface collapse only).  The off-surface residual
 # carries per-token variation, so too much ``onto`` erases it and degenerates
@@ -155,31 +167,44 @@ def _orthogonalize_affine_against(
     sub: LayerSubspace,
     target: torch.Tensor,
     kappa: torch.Tensor,
-    curved_basis: torch.Tensor,
+    curved_frame: "tuple[torch.Tensor, torch.Tensor]",
 ) -> "tuple[LayerSubspace, torch.Tensor, torch.Tensor] | None":
     """Project a merged affine subspace out of the curved manifolds' span.
 
     The curved manifold wins the shared directions (ARCHITECTURE §6); the
     affine slide handles the complement.  Strips the curved-span component
-    from the affine basis rows and the push displacement, and carries the
-    per-axis collapse mask through the re-orthonormalization (each new axis
-    inherits its squared projection onto the old ablate span).  Returns
-    ``None`` when the affine span lies entirely inside the curved span.
+    from the affine write rows and the push displacement, Mahalanobis-
+    orthogonally (the curved frame's read rows give the coefficients, so no
+    ``Σ`` is needed here), and carries the per-axis collapse mask through the
+    re-orthonormalization (each new axis inherits its squared projection onto
+    the old ablate span).  ``curved_frame`` is the ``(basis, read)`` pair of
+    every curved manifold at the layer, stacked.  Returns ``None`` when the
+    affine span lies entirely inside the curved span.
     """
     basis = sub.basis.to(torch.float32)              # (R, D)
-    # The curved basis is the resident manifold's (on the session device); the
+    read = sub.read.to(torch.float32)                # (R, D)
+    # The curved frame is the resident manifold's (on the session device); the
     # affine synthesis is host-side until AffineOp uploads it.
-    cb = curved_basis.to(device=basis.device, dtype=torch.float32)  # (Rc, D)
+    cb, cr = (
+        t.to(device=basis.device, dtype=torch.float32) for t in curved_frame
+    )
+    cb, cr, _ = _ortho_frame(cb, cr)                 # (Rc, D) jointly orthonormal
     delta = basis.T @ target.to(torch.float32)       # (D,) world push displacement
-    residual = basis - (basis @ cb.T) @ cb           # (R, D) rows ⟂ curved span
-    new_basis, _kept = _ortho_basis(residual)
+    coef = basis @ cr.T                              # (R, Rc) ⟨bᵢ, cⱼ⟩_M
+    new_basis, new_read, _kept = _ortho_frame(
+        basis - coef @ cb, read - coef @ cr,         # rows ⟂_M curved span
+    )
     if new_basis.shape[0] == 0:
         return None
-    delta_perp = delta - (delta @ cb.T) @ cb
-    new_target = new_basis @ delta_perp              # (R',)
-    M = new_basis @ basis.T                          # (R', R)
+    delta_perp = delta - (delta @ cr.T) @ cb
+    new_target = new_read @ delta_perp               # (R',)
+    M = new_read @ basis.T                           # (R', R) ⟨newᵢ, oldⱼ⟩_M
     new_kappa = (M * M) @ kappa.to(torch.float32)    # (R',)
-    return LayerSubspace.affine(sub.mean, new_basis), new_target, new_kappa
+    return (
+        LayerSubspace.affine(sub.mean, new_basis, new_read),
+        new_target,
+        new_kappa,
+    )
 
 
 @dataclass(frozen=True)
@@ -213,7 +238,7 @@ class LoweredAffine:
 def _lower_affine_subspaces(
     synth: SynthesizedSubspace,
     *,
-    curved_basis_by_layer: "dict[int, torch.Tensor] | None" = None,
+    curved_frame_by_layer: "dict[int, tuple[torch.Tensor, torch.Tensor]] | None" = None,
 ) -> dict[int, LoweredAffine]:
     """Lower one synthesized affine subspace to its per-layer runtime terms.
 
@@ -238,8 +263,8 @@ def _lower_affine_subspaces(
         # division below then preserves the resulting operator exactly.
         requested_kappa = synth.kappa[L].to(torch.float32)
         curved = (
-            curved_basis_by_layer.get(L)
-            if curved_basis_by_layer is not None
+            curved_frame_by_layer.get(L)
+            if curved_frame_by_layer is not None
             else None
         )
         if curved is not None:
@@ -260,36 +285,41 @@ def _lower_affine_subspaces(
 
 
 class AffineOp:
-    """One layer's affine injection: ``h += c − ((h·Bₐᵀ − μBₐᵀ) ⊙ s) Bₐ``.
+    """One layer's affine injection: ``h += c − ((h·Pₐᵀ − μPₐᵀ) ⊙ s) Bₐ``.
 
     The analytic affine slide of :func:`subspace_inject` split at compose time
     into its fixed push ``c = eff_along·target@B`` and its activation-dependent
-    ablation, restricted to the nonzero-κ rows ``Bₐ`` with ``s = eff_along·κ``
-    (the requested ablation coefficient).  A pure push is therefore one
-    in-place ``add_``; a rank-1 ablation is a dot plus an in-place ``addcmul_``
-    (MPS dispatch dominates a rank-1 GEMM).  Runs in the residual stream's
-    dtype; the constants are computed in fp32 and cast once.
+    ablation, restricted to the nonzero-κ axes (read rows ``Pₐ``, write rows
+    ``Bₐ``) with ``s = eff_along·κ`` (the requested ablation coefficient).  A
+    full ablation reads with the ``Σ⁻¹`` covector and writes along the
+    direction: LEACE.  A pure push is therefore one in-place ``add_``; a
+    rank-1 ablation is a dot plus an in-place ``addcmul_`` (MPS dispatch
+    dominates a rank-1 GEMM).  Runs in the residual stream's dtype; the
+    constants are computed in fp32 and cast once.
 
     No ``norm_cap``: a flat fit has no RBF to extrapolate, so the bounded
     displacement cannot push ``‖h‖`` past the curved path's ``3·‖h‖`` guard.
     """
 
     __slots__ = (
-        "_dtype", "const", "mean_proj", "rows", "rows_t", "scale", "scaled_row",
+        "_dtype", "const", "mean_proj", "reads", "reads_t", "rows", "scale",
+        "scaled_row",
     )
 
     def __init__(
         self,
         const: "torch.Tensor | None",
         rows: "torch.Tensor | None" = None,
+        reads: "torch.Tensor | None" = None,
         scale: "torch.Tensor | None" = None,
         mean_proj: "torch.Tensor | None" = None,
     ) -> None:
         self.const = const
         self.rows = rows
+        self.reads = reads
         self.scale = scale
         self.mean_proj = mean_proj
-        self.rows_t = None if rows is None else rows.T.contiguous()
+        self.reads_t = None if reads is None else reads.T.contiguous()
         self.scaled_row = (
             None if rows is None or scale is None or rows.shape[0] != 1
             else (scale[0] * rows[0]).contiguous()
@@ -313,13 +343,16 @@ class AffineOp:
         if not bool(active.any()):
             return cls(const)
         basis = sub.basis.to(device=device, dtype=torch.float32)
+        read = sub.read.to(device=device, dtype=torch.float32)
         mean = sub.mean.to(device=device, dtype=torch.float32)
-        rows = basis[active]                                      # (Ra, D)
+        rows = basis[active]                                      # (Ra, D) writes
+        reads = read[active]                                      # (Ra, D) reads
         return cls(
             const,
             rows=rows.to(dtype).contiguous(),
+            reads=reads.to(dtype).contiguous(),
             scale=(low.eff_along * kappa[active]).to(dtype),      # (Ra,)
-            mean_proj=(mean @ rows.T).to(dtype),                  # (Ra,)
+            mean_proj=(mean @ reads.T).to(dtype),                 # (Ra,)
         )
 
     def _recast(self, dtype: torch.dtype) -> None:
@@ -330,9 +363,11 @@ class AffineOp:
         if self.const is not None:
             self.const = self.const.to(dtype)
         if self.rows is not None:
+            assert self.reads is not None
             assert self.scale is not None and self.mean_proj is not None
             self.rows = self.rows.to(dtype)
-            self.rows_t = self.rows.T.contiguous()
+            self.reads = self.reads.to(dtype)
+            self.reads_t = self.reads.T.contiguous()
             self.scale = self.scale.to(dtype)
             self.mean_proj = self.mean_proj.to(dtype)
             if self.scaled_row is not None:
@@ -348,16 +383,17 @@ class AffineOp:
                 hidden.add_(self.const)
             return
         mean_proj = self.mean_proj
-        assert mean_proj is not None
+        reads = self.reads
+        assert mean_proj is not None and reads is not None
         scaled_row = self.scaled_row
         if scaled_row is not None:
-            q = (hidden * rows[0]).sum(dim=-1, keepdim=True) - mean_proj
+            q = (hidden * reads[0]).sum(dim=-1, keepdim=True) - mean_proj
             if self.const is not None:
                 hidden.add_(self.const)
             hidden.addcmul_(q, scaled_row, value=-1)
             return
-        assert self.rows_t is not None and self.scale is not None
-        q = hidden @ self.rows_t - mean_proj
+        assert self.reads_t is not None and self.scale is not None
+        q = hidden @ self.reads_t - mean_proj
         if self.const is not None:
             hidden.add_(self.const)
         hidden.sub_((q * self.scale) @ rows)
@@ -729,7 +765,7 @@ class SteeringPlan:
             return memo
         by_layer: dict[int, list[Group]] = {}
         curved_owner: dict[int, str] = {}
-        curved_basis_by_layer: dict[int, torch.Tensor] = {}
+        curved_frame_by_layer: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
         for term in self.curved:
             manifold = term.manifold
             domain = manifold.domain
@@ -744,9 +780,11 @@ class SteeringPlan:
             for layer_idx, share in term.shares.items():
                 sub = manifold.layers[layer_idx]
                 B_new = sub.basis.to(torch.float32)
-                prev = curved_basis_by_layer.get(layer_idx)
+                P_new = sub.read.to(torch.float32)
+                prev = curved_frame_by_layer.get(layer_idx)
                 if prev is not None:
-                    cross = float((B_new @ prev.T).abs().max().item())
+                    # Mahalanobis cosines between the two orthonormal frames.
+                    cross = float((B_new @ prev[1].T).abs().max().item())
                     if cross > _CURVED_ORTHO_TOL:
                         raise OverlappingManifoldError(
                             f"manifolds '{curved_owner[layer_idx]}' and "
@@ -755,9 +793,11 @@ class SteeringPlan:
                             f"{cross:.3f} > {_CURVED_ORTHO_TOL}); curved "
                             f"manifolds sharing a layer must be orthogonal"
                         )
-                    curved_basis_by_layer[layer_idx] = torch.cat([prev, B_new])
+                    curved_frame_by_layer[layer_idx] = (
+                        torch.cat([prev[0], B_new]), torch.cat([prev[1], P_new]),
+                    )
                 else:
-                    curved_basis_by_layer[layer_idx] = B_new
+                    curved_frame_by_layer[layer_idx] = (B_new, P_new)
                     curved_owner[layer_idx] = term.name
                 if layer_idx not in manifold.origin:
                     raise ValueError(
@@ -785,7 +825,7 @@ class SteeringPlan:
                 ))
         for affine in self.affine:
             lowered = _lower_affine_subspaces(
-                affine.synth, curved_basis_by_layer=curved_basis_by_layer,
+                affine.synth, curved_frame_by_layer=curved_frame_by_layer,
             )
             for L, low in lowered.items():
                 by_layer.setdefault(L, []).append(AffineGroup(

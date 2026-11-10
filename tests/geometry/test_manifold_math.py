@@ -566,6 +566,109 @@ def test_fit_affine_subspace_reuses_precomputed_whitened_gram():
     assert fit.explained_variance == pytest.approx(ref.explained_variance, abs=1e-6)
 
 
+def _cosine(a: torch.Tensor, b: torch.Tensor) -> float:
+    return float(a @ b / (a.norm() * b.norm()))
+
+
+def test_two_node_whitened_fit_writes_the_difference_of_means() -> None:
+    """Regression: under an anisotropic whitener the 2-node frame was the QR of
+    the LDA covector ``Σ⁻¹δ`` and steering wrote along it.  The frame now writes
+    along ``δ`` (PCA@2 ≡ DiM), reads with ``Σ⁻¹δ``, is Mahalanobis-unit and
+    dual, puts the + pole at ``‖δ‖_M / 2`` and bakes the share ``‖δ‖_M / √2``."""
+    from drowse.geometry.subspace import fit_affine_subspace, subspace_share
+    from tests.support.whitener import rogue_whitener
+
+    D = 24
+    whitener, clean = rogue_whitener([0], D, n=128)
+    rogue = sorted(set(range(D)) - set(clean))
+    mean = whitener.layer_means[0]
+    gen = torch.Generator().manual_seed(3)
+    delta = torch.randn(D, generator=gen)
+    delta[rogue] += 3.0  # signal leaking into the rogue channels
+    centroids = torch.stack([mean + delta / 2, mean - delta / 2])
+    fit = fit_affine_subspace(centroids, neutral_mean=mean, whitener=whitener, layer=0)
+    sub = fit.subspace
+    lda = whitener.apply_inv(0, delta)
+    assert _cosine(sub.basis[0], delta) == pytest.approx(1.0, abs=1e-5)
+    assert _cosine(sub.read[0], lda) == pytest.approx(1.0, abs=1e-4)
+    assert _cosine(lda, delta) < 0.95  # the two genuinely differ here
+    assert float(sub.read[0] @ sub.basis[0]) == pytest.approx(1.0, abs=1e-5)
+    norm_m = float((delta @ lda).sqrt())
+    assert whitener.mahalanobis_norm(0, sub.basis[0]) == pytest.approx(1.0, rel=1e-4)
+    assert sub.node_coords is not None
+    assert sub.node_coords[0, 0].item() == pytest.approx(norm_m / 2, rel=1e-4)
+    share = subspace_share(fit.mu_coords, sub.basis, whitener=whitener, layer=0)
+    assert share == pytest.approx(norm_m / math.sqrt(2), rel=1e-4)
+    # A full push from neutral lands exactly on the + pole.
+    pushed = sub.eval_at(sub.node_coords[0].reshape(1, 1)).reshape(-1)
+    assert torch.allclose(pushed - sub.eval_at(torch.zeros(1, 1)).reshape(-1), delta / 2, atol=1e-3)
+
+
+def test_k_node_whitened_frame_is_mahalanobis_orthonormal_and_dual() -> None:
+    """A K-node fit's write rows are node-displacement combinations, orthonormal
+    in the whitener's metric, with reads ``Σ⁻¹`` of them; reduced coordinates
+    are whitened coordinates (the node spread's Frobenius norm is the share)."""
+    from drowse.geometry.subspace import fit_affine_subspace, subspace_share
+    from tests.support.whitener import synthetic_whitener
+
+    D, K = 20, 5
+    whitener = synthetic_whitener([0], D)
+    mean = whitener.layer_means[0]
+    centroids = mean + torch.randn(K, D, generator=torch.Generator().manual_seed(8))
+    fit = fit_affine_subspace(centroids, neutral_mean=mean, whitener=whitener, layer=0)
+    sub = fit.subspace
+    R = sub.rank
+    assert torch.allclose(whitener.subspace_gram(0, sub.basis), torch.eye(R), atol=1e-4)
+    assert torch.allclose(sub.read, whitener.apply_inv(0, sub.basis), atol=1e-4)
+    assert torch.allclose(sub.read @ sub.basis.T, torch.eye(R), atol=1e-5)
+    X = centroids - centroids.mean(dim=0)
+    # The write rows live in the span of the node displacements.
+    coeff = torch.linalg.lstsq(X.T, sub.basis.T).solution
+    assert torch.allclose(X.T @ coeff, sub.basis.T, atol=1e-4)
+    share = subspace_share(fit.mu_coords, sub.basis, whitener=whitener, layer=0)
+    assert share == pytest.approx(float(fit.mu_coords.norm()), rel=1e-4)
+
+
+def test_full_ablation_is_leace_against_neutral() -> None:
+    """Regression: ``!d`` projected Euclidean-orthogonally off the LDA covector,
+    leaving the class-mean difference in other directions.  It now reads with
+    ``Σ⁻¹d`` and writes along ``d``: the two classes' means coincide after it,
+    and the edit of every row is parallel to ``d``."""
+    from drowse.geometry.inject import synthesize_subspace
+    from drowse.steering.hooks import AffineOp, _lower_affine_subspaces
+    from tests.support.whitener import rogue_whitener
+
+    D = 24
+    whitener, clean = rogue_whitener([0], D, n=128)
+    rogue = sorted(set(range(D)) - set(clean))
+    mean = whitener.layer_means[0]
+    gen = torch.Generator().manual_seed(5)
+    d = torch.randn(D, generator=gen)
+    d[rogue] += 3.0
+    synth = synthesize_subspace([], [({0: d}, 1.0)], {0: mean}, whitener=whitener)
+    op = AffineOp.from_lowered(
+        _lower_affine_subspaces(synth)[0], device=torch.device("cpu"), dtype=torch.float32,
+    )
+    noise = torch.randn(2, 64, D, generator=gen)
+    pos, neg = mean + d / 2 + noise[0], mean - d / 2 + noise[1]
+    before = torch.cat([pos, neg])
+    after = before.clone()
+    op.apply(after)
+    pos_after, neg_after = after[:64], after[64:]
+    lda = whitener.apply_inv(0, d)
+    # The LDA reading of every row is pinned to neutral's.
+    assert torch.allclose(after @ lda, torch.full((128,), float(mean @ lda)), atol=1e-3)
+    # The edit is along d.
+    edit = after - before
+    along = ((edit @ d) / (d @ d)).unsqueeze(-1) * d
+    assert torch.allclose(edit, along, atol=1e-3)
+    # The class means coincide up to the noise's own component off d.
+    gap = pos_after.mean(0) - neg_after.mean(0)
+    noise_gap = noise[0].mean(0) - noise[1].mean(0)
+    off_d = noise_gap - ((noise_gap @ lda) / (d @ lda)) * d
+    assert torch.allclose(gap, off_d, atol=1e-3)
+
+
 def test_fit_curved_subspace_rejects_too_few_nodes():
     with pytest.raises(ValueError):
         fit_curved_subspace(torch.randn(2, 8), torch.rand(2, 1)).subspace
@@ -1055,6 +1158,7 @@ def test_layer_major_store_covariances_match_node_reference() -> None:
                 if layer == 2 else torch.randn(7)
             ),
             basis,
+            basis.clone(),
         )
 
     before = {
@@ -1345,7 +1449,7 @@ def _folded_vector(dim: int = 16, seed: int = 0):
     raw = torch.randn(dim)
     basis = (raw / raw.norm()).reshape(1, dim)     # (1, D) unit direction
     mean = 20.0 + torch.randn(dim)                 # realistic DC offset
-    return LayerSubspace.affine(mean, basis), CustomDomain(1)
+    return LayerSubspace.affine(mean, basis, basis.clone()), CustomDomain(1)
 
 
 def test_affine_factory_and_is_affine():
@@ -1445,7 +1549,7 @@ def test_affine_manifold_point_round_trip():
     diff = c_pos - c_neg
     s = float(diff.norm()) / 2.0
     basis = (diff / diff.norm()).reshape(1, dim)
-    sub = LayerSubspace.affine(mean, basis)
+    sub = LayerSubspace.affine(mean, basis, basis.clone())
     mfld = Manifold(
         name="folded",
         domain=CustomDomain(1),
@@ -1531,7 +1635,7 @@ def test_affine_runtime_geometry_requires_exact_k_by_r(
     node_coords: torch.Tensor,
 ) -> None:
     sub = LayerSubspace.affine(
-        torch.zeros(4), torch.eye(2, 4), node_coords=node_coords,
+        torch.zeros(4), torch.eye(2, 4), torch.eye(2, 4), node_coords=node_coords,
     )
     manifold = Manifold(
         name="bad-affine", domain=CustomDomain(2),
@@ -1545,7 +1649,7 @@ def test_affine_runtime_geometry_requires_exact_k_by_r(
 def test_runtime_geometry_rejects_explicit_empty_node_roster() -> None:
     coords = torch.tensor([[1.0], [-1.0]])
     sub = LayerSubspace.affine(
-        torch.zeros(4), torch.ones(1, 4) / 2, node_coords=coords,
+        torch.zeros(4), torch.ones(1, 4) / 2, torch.ones(1, 4) / 2, node_coords=coords,
     )
     manifold = Manifold(
         name="bad-roster", domain=CustomDomain(1),
@@ -1560,7 +1664,7 @@ def test_runtime_geometry_rejects_explicit_empty_node_roster() -> None:
 def test_runtime_geometry_rejects_wrong_shared_authoring_arity() -> None:
     per_layer = torch.tensor([[1.0], [-1.0]])
     sub = LayerSubspace.affine(
-        torch.zeros(4), torch.ones(1, 4) / 2, node_coords=per_layer,
+        torch.zeros(4), torch.ones(1, 4) / 2, torch.ones(1, 4) / 2, node_coords=per_layer,
     )
     manifold = Manifold(
         name="bad-domain", domain=CustomDomain(1),
@@ -1575,7 +1679,7 @@ def test_runtime_geometry_rejects_wrong_shared_authoring_arity() -> None:
 def test_runtime_geometry_rejects_invalid_share_scalar(share: object) -> None:
     coords = torch.tensor([[1.0], [-1.0]])
     sub = LayerSubspace.affine(
-        torch.zeros(4), torch.ones(1, 4) / 2, node_coords=coords,
+        torch.zeros(4), torch.ones(1, 4) / 2, torch.ones(1, 4) / 2, node_coords=coords,
     )
     manifold = Manifold(
         name="bad-share", domain=CustomDomain(1),

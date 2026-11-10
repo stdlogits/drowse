@@ -186,6 +186,11 @@ few massive-activation channels, so a fallback would be a wrong answer, not a
 degraded one. The deliberate Euclidean exceptions are listed in
 `drowse/geometry/AGENTS.md`. Neutral activations are cached fp32: fp16
 overflows late layers, and `covers_all` must mean finite factors everywhere.
+Frames are typed: a `LayerSubspace`'s `basis` rows are write vectors
+(Mahalanobis-orthonormal) and its `read` rows the dual covectors (`Σ⁻¹` of
+them), so a 2-node push is DiM, a full `!` is LEACE and the monitor reads the
+LDA score. Never write along a read row or read with a write row
+(ARCHITECTURE §5.3).
 
 **Exclusive GPU.** One reentrant `_gen_lock` serializes all model work, because
 MPS's single global command buffer is not thread-safe. Collaborators that run

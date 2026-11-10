@@ -33,6 +33,7 @@ from tests.support.sessions import baseline_corpus
 def _sub(*coords: float) -> LayerSubspace:
     return LayerSubspace.affine(
         mean=torch.zeros(2), basis=torch.tensor([[1.0, 0.0]]),
+        read=torch.tensor([[1.0, 0.0]]),
         node_coords=torch.tensor([[c] for c in coords]),
     )
 

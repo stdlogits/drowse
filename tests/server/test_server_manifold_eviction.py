@@ -150,7 +150,8 @@ def test_fit_route_refolds_probes_folded_from_the_profile(
     probe_layer = next(iter(after["local/mood"].layers))
     basis = after["local/mood"].layers[probe_layer].basis.reshape(-1)
     direction = refit[probe_layer].to(basis).reshape(-1)
-    assert torch.allclose(basis, direction / direction.norm(), atol=1e-5)
+    # The fold writes along the refit direction (Mahalanobis-normalized).
+    assert torch.allclose(basis / basis.norm(), direction / direction.norm(), atol=1e-5)
 
 
 def _assert_evicted(session: Any) -> None:

@@ -50,7 +50,8 @@ def _manifold() -> Manifold:
     for layer in range(3):
         q, _ = torch.linalg.qr(torch.randn(8, 2))
         layers[layer] = LayerSubspace.affine(
-            torch.randn(8), q.T.contiguous(), node_coords=torch.randn(3, 2),
+            torch.randn(8), q.T.contiguous(), q.T.clone(),
+            node_coords=torch.randn(3, 2),
         )
     return Manifold(
         name="packed", domain=CustomDomain(2), node_labels=["a", "b", "c"],

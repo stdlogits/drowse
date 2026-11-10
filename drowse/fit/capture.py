@@ -655,11 +655,12 @@ def compute_dls_axes(
 
     The N-node generalization of the bipolar opposite-sign test (Dang & Ngo
     2026, Eq. 9) — the form a flat *subspace* of any node count uses.  Each
-    layer carries a basis ``[R, D]`` (its ``LayerSubspace.basis`` rows) and
-    ``node_centroids[L]`` is the ``[K, D]`` stack of that layer's per-node
-    mean activations.  Every row ``d̂_r`` is kept iff the node projections
-    relative to the neutral baseline, ``{(c_i − ν)·d̂_r : i}``, **straddle
-    zero** (both a negative and a positive present) — the axis then
+    layer carries its read rows ``[R, D]`` (``LayerSubspace.read``, the
+    covectors that read an axis's coordinate) and ``node_centroids[L]`` is
+    the ``[K, D]`` stack of that layer's per-node mean activations.  Every
+    axis ``r`` is kept iff the node readings relative to the neutral
+    baseline, ``{(c_i − ν)·p_r : i}``, **straddle zero** (both a negative and
+    a positive present) — the axis then
     discriminates node *position* across the baseline rather than encoding a
     common offset / intensity every node shares.
 
@@ -682,7 +683,7 @@ def compute_dls_axes(
 
     Args:
         node_centroids: per-layer ``[K, D]`` stack of node mean activations.
-        bases: per-layer ``[R, D]`` basis (rows are the candidate axes).
+        bases: per-layer ``[R, D]`` read rows (one per candidate axis).
         layer_means: per-layer neutral baseline; ``None``/empty disables.
     """
     if layer_means is None or not layer_means:

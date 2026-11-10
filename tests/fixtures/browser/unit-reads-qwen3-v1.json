@@ -1824,8 +1824,8 @@
      "2": {
       "share": 0.501509,
       "neurons": [
-       {"unit": "neuron/L2n61", "index": 61, "pole": "-", "coeff": -2.200743, "label": null},
-       {"unit": "neuron/L2n75", "index": 75, "pole": "-", "coeff": -1.298769, "label": null},
+       {"unit": "neuron/L2n61", "index": 61, "pole": "-", "coeff": -2.200744, "label": null},
+       {"unit": "neuron/L2n75", "index": 75, "pole": "-", "coeff": -1.29877, "label": null},
        {"unit": "neuron/L2n59", "index": 59, "pole": "-", "coeff": -1.173116, "label": null},
        {"unit": "neuron/L2n6", "index": 6, "pole": "-", "coeff": -1.142288, "label": null},
        {"unit": "neuron/L2n80", "index": 80, "pole": "+", "coeff": 1.068681, "label": null}
@@ -1837,10 +1837,10 @@
    "iterations": {
     "2": [
      {"unit": "neuron/L2n61", "score": 7.3699718, "runner_up": 5.3687835},
-     {"unit": "neuron/L2n59", "score": 4.649299, "runner_up": 4.4677544},
-     {"unit": "neuron/L2n6", "score": 4.08145, "runner_up": 4.022781},
-     {"unit": "neuron/L2n75", "score": 4.193457, "runner_up": 4.185761},
-     {"unit": "neuron/L2n80", "score": 4.1440487, "runner_up": 3.4512544}
+     {"unit": "neuron/L2n59", "score": 4.6492987, "runner_up": 4.4677544},
+     {"unit": "neuron/L2n6", "score": 4.08145, "runner_up": 4.0227814},
+     {"unit": "neuron/L2n75", "score": 4.193458, "runner_up": 4.1857605},
+     {"unit": "neuron/L2n80", "score": 4.144048, "runner_up": 3.4512548}
     ]
    }
   },
@@ -1850,26 +1850,26 @@
    "result": {
     "target": "jlens/#71",
     "k": 5,
-    "mean_share": 0.417149,
+    "mean_share": 0.304001,
     "layers": {
      "0": {
-      "share": 0.448954,
+      "share": 0.378404,
       "neurons": [
-       {"unit": "neuron/L0n22", "index": 22, "pole": "+", "coeff": 1.946504, "label": null},
-       {"unit": "neuron/L0n77", "index": 77, "pole": "-", "coeff": -1.698037, "label": null},
-       {"unit": "neuron/L0n4", "index": 4, "pole": "-", "coeff": -1.634036, "label": null},
-       {"unit": "neuron/L0n63", "index": 63, "pole": "+", "coeff": 1.616153, "label": null},
-       {"unit": "neuron/L0n5", "index": 5, "pole": "+", "coeff": 1.182781, "label": null}
+       {"unit": "neuron/L0n35", "index": 35, "pole": "-", "coeff": -0.028839, "label": null},
+       {"unit": "neuron/L0n44", "index": 44, "pole": "-", "coeff": -0.023133, "label": null},
+       {"unit": "neuron/L0n43", "index": 43, "pole": "-", "coeff": -0.016879, "label": null},
+       {"unit": "neuron/L0n54", "index": 54, "pole": "+", "coeff": 0.013164, "label": null},
+       {"unit": "neuron/L0n76", "index": 76, "pole": "+", "coeff": 0.011438, "label": null}
       ]
      },
      "1": {
-      "share": 0.385344,
+      "share": 0.229598,
       "neurons": [
-       {"unit": "neuron/L1n9", "index": 9, "pole": "-", "coeff": -1.583305, "label": null},
-       {"unit": "neuron/L1n56", "index": 56, "pole": "+", "coeff": 1.302368, "label": null},
-       {"unit": "neuron/L1n19", "index": 19, "pole": "-", "coeff": -0.921716, "label": null},
-       {"unit": "neuron/L1n30", "index": 30, "pole": "-", "coeff": -0.913862, "label": null},
-       {"unit": "neuron/L1n65", "index": 65, "pole": "+", "coeff": 0.861526, "label": null}
+       {"unit": "neuron/L1n22", "index": 22, "pole": "-", "coeff": -0.037168, "label": null},
+       {"unit": "neuron/L1n6", "index": 6, "pole": "+", "coeff": 0.029029, "label": null},
+       {"unit": "neuron/L1n94", "index": 94, "pole": "+", "coeff": 0.023376, "label": null},
+       {"unit": "neuron/L1n34", "index": 34, "pole": "+", "coeff": 0.022863, "label": null},
+       {"unit": "neuron/L1n32", "index": 32, "pole": "+", "coeff": 0.013715, "label": null}
       ]
      }
     },
@@ -1877,18 +1877,18 @@
    },
    "iterations": {
     "0": [
-     {"unit": "neuron/L0n22", "score": 12.87685, "runner_up": 10.829328},
-     {"unit": "neuron/L0n77", "score": 12.030784, "runner_up": 10.910479},
-     {"unit": "neuron/L0n4", "score": 11.787075, "runner_up": 9.859676},
-     {"unit": "neuron/L0n63", "score": 11.040162, "runner_up": 8.4532385},
-     {"unit": "neuron/L0n5", "score": 9.630395, "runner_up": 8.6707535}
+     {"unit": "neuron/L0n35", "score": 0.14256957, "runner_up": 0.119649895},
+     {"unit": "neuron/L0n44", "score": 0.112581946, "runner_up": 0.09573939},
+     {"unit": "neuron/L0n54", "score": 0.09958621, "runner_up": 0.09031227},
+     {"unit": "neuron/L0n43", "score": 0.09598276, "runner_up": 0.08627312},
+     {"unit": "neuron/L0n76", "score": 0.088355854, "runner_up": 0.076890014}
     ],
     "1": [
-     {"unit": "neuron/L1n65", "score": 6.1886377, "runner_up": 6.0886993},
-     {"unit": "neuron/L1n9", "score": 5.2705913, "runner_up": 5.081437},
-     {"unit": "neuron/L1n56", "score": 5.9833407, "runner_up": 4.9353824},
-     {"unit": "neuron/L1n19", "score": 4.3877373, "runner_up": 4.0273714},
-     {"unit": "neuron/L1n30", "score": 4.4504256, "runner_up": 4.0512834}
+     {"unit": "neuron/L1n6", "score": 0.14499165, "runner_up": 0.14218278},
+     {"unit": "neuron/L1n22", "score": 0.12769541, "runner_up": 0.12092789},
+     {"unit": "neuron/L1n32", "score": 0.13743372, "runner_up": 0.13366508},
+     {"unit": "neuron/L1n94", "score": 0.12779148, "runner_up": 0.10878898},
+     {"unit": "neuron/L1n34", "score": 0.100436985, "runner_up": 0.09716625}
     ]
    }
   }
@@ -1925,6 +1925,13 @@
   {
    "path": "reads[9].read.inputs.key.s.tokens",
    "key": ["token_id"],
+   "groups": [
+    [2, 3]
+   ]
+  },
+  {
+   "path": "find[1].result.layers.1.neurons",
+   "key": ["unit"],
    "groups": [
     [2, 3]
    ]

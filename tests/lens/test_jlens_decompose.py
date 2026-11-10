@@ -196,26 +196,33 @@ def test_the_pursuit_runs_in_the_whitened_metric() -> None:
     """Regression: selection, the NNLS fit and the share used Euclidean
     residual-space products.  Under an anisotropic covariance they are the
     Mahalanobis ones: equal to the Euclidean pursuit of the whitened target
-    against the whitened atoms, and different from the plain one."""
+    (``Σ^{-1/2}t``, a vector) against the dual-whitened atoms (``Σ^{1/2}u``,
+    token atoms are reads), and different from the plain one."""
     jacobian, unembed = _dictionary()
     whitener = synthetic_whitener([0], _D)
     gen = torch.Generator().manual_seed(9)
     target = torch.randn(_D, generator=gen)
 
     dec = sparse_decompose(target, TokensOut(jacobian, unembed, whitener, 0), layer=0, k=4)
-    # By hand: whiten everything, then the identity-metric pursuit.
-    W = whitener.whiten(0, torch.eye(_D))  # rows of I W = W (symmetric)
+    # By hand: whiten the target as a vector and the atoms as reads, then
+    # the identity-metric pursuit.
+    W = whitener.whiten(0, torch.eye(_D))       # Σ^{-1/2} (symmetric)
+    W_dual = whitener.whiten_dual(0, torch.eye(_D))  # Σ^{+1/2}
     hand = sparse_decompose(
-        target @ W, TokensOut(jacobian @ W, unembed, _iso(), 0), layer=0, k=4,
+        target @ W, TokensOut(jacobian @ W_dual, unembed, _iso(), 0), layer=0, k=4,
     )
     assert [v for v, _c in dec.atoms] == [v for v, _c in hand.atoms]
     assert dec.share == pytest.approx(hand.share, rel=1e-4)
     plain = sparse_decompose(target, TokensOut(jacobian, unembed, _iso(), 0), layer=0, k=4)
     assert dec.atoms != plain.atoms or abs(dec.share - plain.share) > 1e-3
-    # The whitened coordinates' dot products are Mahalanobis.
+    # The whitened coordinates' dot products are Mahalanobis, and a read
+    # pairs with a vector exactly as before whitening.
     u, v = torch.randn(2, _D, generator=gen)
     assert float(whitener.whiten(0, u) @ whitener.whiten(0, v)) == pytest.approx(
         float(u @ whitener.apply_inv(0, v)), rel=1e-4,
+    )
+    assert float(whitener.whiten_dual(0, u) @ whitener.whiten(0, v)) == pytest.approx(
+        float(u @ v), rel=1e-4,
     )
 
 
@@ -225,6 +232,12 @@ def test_an_uncovered_layer_is_a_whitener_error() -> None:
         TokensOut(jacobian, unembed, _iso(layers=(0,)), 3)
     session = LensHarness()
     session.lens.fit(_PROMPTS)
-    name = session.lens.register_direction("g")
+    # A lens atom is a read; raising it to a steering direction needs Σ.
+    with pytest.raises(WhitenerError, match="needs a Mahalanobis whitener"):
+        session.lens.register_direction("g")
+    width = int(session.model.config.hidden_size)
+    session.registry.put_profile(
+        "local/v", {L: torch.ones(width) for L in range(len(session.layers))},
+    )
     with pytest.raises(WhitenerError, match="none could be built"):
-        session.lens.decompose(name, k=2)
+        session.lens.decompose("local/v", k=2)
