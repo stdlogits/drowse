@@ -128,7 +128,7 @@ class CaptureCache:
     def _check_header(self, handle: object, layer: int) -> None:
         if (
             handle.metadata() != self._metadata  # type: ignore[attr-defined]
-            or list(handle.keys()) != [f"layer_{int(layer)}"]  # type: ignore[attr-defined]
+            or f"layer_{int(layer)}" not in handle.keys()  # type: ignore[attr-defined]
         ):
             raise ValueError("capture shard identity mismatch")
 

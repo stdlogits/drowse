@@ -154,24 +154,15 @@ def test_requires_current_format_version(version: Any):
         TemplateFolder.from_payload(payload)
 
 
-def test_rejects_unknown_fields_at_every_schema_level():
+def test_ignores_unknown_fields_at_every_schema_level():
     import copy
 
-    base = _make().to_payload()
-    payload = copy.deepcopy(base)
+    base = _make()
+    payload = copy.deepcopy(base.to_payload())
     payload["prompts"] = []
-    with pytest.raises(TemplateFormatError, match="unknown field"):
-        TemplateFolder.from_payload(payload)
-
-    payload = copy.deepcopy(base)
     payload["contexts"][0]["prompt"] = "legacy"
-    with pytest.raises(TemplateFormatError, match="unknown field"):
-        TemplateFolder.from_payload(payload)
-
-    payload = copy.deepcopy(base)
     payload["contexts"][0]["turns"][0]["name"] = "legacy"
-    with pytest.raises(TemplateFormatError, match="unknown field"):
-        TemplateFolder.from_payload(payload)
+    assert TemplateFolder.from_payload(payload).sha256() == base.sha256()
 
 
 @pytest.mark.parametrize(

@@ -349,27 +349,27 @@ def test_invalid_metadata_rejects_before_publication(
     assert not path.with_suffix(".json").exists()
 
 
-def test_profile_digest_binds_tensor_pair(tmp_path: Path) -> None:
+def test_sidecar_ignores_keys_it_does_not_use(tmp_path: Path) -> None:
+    """A 6.1 sidecar's ``tensor_sha256`` (or any other extra key) is ignored."""
     path = tmp_path / "profile.safetensors"
     Profile(_mk(layers=(0,))).save(path, metadata={"method": "profile"})
     sidecar = json.loads(path.with_suffix(".json").read_text())
     sidecar["tensor_sha256"] = "0" * 64
+    sidecar["retired"] = True
     path.with_suffix(".json").write_text(json.dumps(sidecar))
-    with pytest.raises(ProfileError, match="tensor sha256"):
-        Profile.load(path)
+    loaded = Profile.load(path)
+    assert loaded.metadata["method"] == "profile"
+    assert "tensor_sha256" not in loaded.metadata
 
 
-def test_sidecar_schema_is_exactly_five_fields(tmp_path: Path) -> None:
-    """The wire schema is closed: four identity fields + one provenance blob."""
+def test_sidecar_schema_is_four_fields(tmp_path: Path) -> None:
+    """The writer's schema: three identity fields + one provenance blob."""
     path = tmp_path / "schema.safetensors"
     Profile(_mk(layers=(0,))).save(path, metadata={
         "method": "profile", "note": "hello",
     })
     sidecar = json.loads(path.with_suffix(".json").read_text())
-    assert set(sidecar) == {
-        "format_version", "drowse_version", "method",
-        "tensor_sha256", "provenance",
-    }
+    assert set(sidecar) == {"format_version", "drowse_version", "method", "provenance"}
     assert sidecar["provenance"] == {"note": "hello"}
 
 
@@ -453,7 +453,7 @@ def test_load_profile_rejects_non_current_format_version(
     sc_path.write_text(json.dumps(data))
 
     # A stale artifact says so by version, not by whichever field the current
-    # exact-set schema happens to miss first, and names the remedy.
+    # schema happens to miss first, and names the remedy.
     with pytest.raises(ProfileError, match="need exactly"):
         load_profile(str(path))
 
@@ -529,14 +529,11 @@ class TestProvenanceRoundTrip:
             "diagnostics": diagnostics,
         })
 
-        # The blob lands nested under ``provenance`` on the wire; the exact
-        # sidecar schema stays five keys wide.
+        # The blob lands nested under ``provenance`` on the wire; the
+        # sidecar schema stays four keys wide.
         with open(path.with_suffix(".json")) as f:
             raw = json.load(f)
-        assert set(raw) == {
-            "format_version", "drowse_version", "method",
-            "tensor_sha256", "provenance",
-        }
+        assert set(raw) == {"format_version", "drowse_version", "method", "provenance"}
         assert raw["provenance"]["diagnostics"] == diagnostics
 
         # ...and flattens back to the top level on load, so the metadata the

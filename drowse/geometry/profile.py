@@ -17,7 +17,6 @@ subspace kernel reads the baked magnitudes as per-layer weights.
 from __future__ import annotations
 
 import json
-import hashlib
 import logging
 import math
 import pathlib
@@ -35,21 +34,19 @@ from drowse.errors import ProfileError as ProfileError
 
 log = logging.getLogger(__name__)
 
-# The exact on-disk sidecar schema.  Four identity fields plus one
-# free-form ``provenance`` object; a producer that wants to record
-# anything else puts it there rather than growing this set.
-_PROFILE_SIDECAR_FIELDS = {
-    "format_version", "drowse_version", "method", "tensor_sha256",
-    "provenance",
-}
+# The on-disk sidecar schema the reader requires: three identity fields plus
+# one free-form ``provenance`` object; a producer that wants to record
+# anything else puts it there rather than growing this set.  The reader
+# ignores any other key (6.1 sidecars carry a ``tensor_sha256``).
+_PROFILE_SIDECAR_FIELDS = frozenset({
+    "format_version", "drowse_version", "method", "provenance",
+})
 
 # Writer-stamped identity.  ``load_profile`` returns these alongside the
 # provenance so callers can read the format identity, and ``save_profile``
 # ignores them on the way back in (re-stamping fresh values) — that is what
 # makes ``Profile.load(p).save(q)`` a round-trip rather than a schema error.
-_PROFILE_STAMPED_FIELDS = frozenset({
-    "format_version", "drowse_version", "tensor_sha256",
-})
+_PROFILE_STAMPED_FIELDS = frozenset({"format_version", "drowse_version"})
 
 # The live producers of a profile sidecar: a bare fold / hand-built
 # ``Profile.save`` (``profile``), ``DrowseSession.extract``'s folded 2-node
@@ -97,13 +94,11 @@ def _validate_provenance(value: Any, *, depth: int = 0) -> None:
     )
 
 
-def _validate_profile_sidecar(
-    data: Any, *, tensor_sha256: str | None = None,
-) -> None:
+def _validate_profile_sidecar(data: Any) -> None:
     from drowse.base.integrity import PROFILE_FORMAT_VERSION
 
     # The version check leads: an older artifact should say *that*, not report
-    # whichever field the current exact-set schema happens to miss first.  The
+    # whichever field the current schema happens to miss first.  The
     # message names the remedy because there is no migration — a profile is a
     # user-saved interchange file, so the recompute is theirs to run.
     if isinstance(data, dict) and (
@@ -116,8 +111,8 @@ def _validate_profile_sidecar(
             f"{PROFILE_FORMAT_VERSION}. Re-save it with the current drowse "
             "(for an extracted concept, re-run `drowse manifold extract`)."
         )
-    if not isinstance(data, dict) or set(data) != _PROFILE_SIDECAR_FIELDS:
-        raise ProfileError("profile sidecar does not match the current exact schema")
+    if not isinstance(data, dict) or not _PROFILE_SIDECAR_FIELDS <= data.keys():
+        raise ProfileError("profile sidecar is missing required fields")
     method = data["method"]
     if method not in _PROFILE_METHODS:
         raise ProfileError(f"profile sidecar has invalid method {method!r}")
@@ -126,13 +121,6 @@ def _validate_profile_sidecar(
         or not data["drowse_version"]
     ):
         raise ProfileError("profile sidecar has invalid format identity")
-    digest = data["tensor_sha256"]
-    if (
-        not isinstance(digest, str) or len(digest) != 64
-        or any(c not in "0123456789abcdef" for c in digest)
-        or tensor_sha256 is not None and digest != tensor_sha256
-    ):
-        raise ProfileError("profile sidecar has invalid tensor sha256")
     provenance = data["provenance"]
     if not isinstance(provenance, dict):
         raise ProfileError("profile provenance must be an object")
@@ -155,8 +143,8 @@ def save_profile(
     Every *other* metadata key lands verbatim in the sidecar's free-form
     ``provenance`` object; it only has to be JSON-safe (see
     :func:`_validate_provenance`).  The writer-stamped identity fields
-    (``format_version`` / ``drowse_version`` / ``tensor_sha256``) are
-    ignored on input and re-stamped, so metadata handed back by
+    (``format_version`` / ``drowse_version``) are ignored on input and
+    re-stamped, so metadata handed back by
     :func:`load_profile` saves again unchanged.
 
     The safetensors file contains keys ``"layer_{i}"`` for each active layer.
@@ -201,7 +189,6 @@ def save_profile(
         for idx, vec in profile.items()
     }
     tensor_bytes = save_safetensors(tensors)
-    tensor_digest = hashlib.sha256(tensor_bytes).hexdigest()
 
     from drowse import __version__ as _drowse_version
     from drowse.base.integrity import PROFILE_FORMAT_VERSION
@@ -210,10 +197,9 @@ def save_profile(
         "format_version": PROFILE_FORMAT_VERSION,
         "drowse_version": _drowse_version,
         "method": method,
-        "tensor_sha256": tensor_digest,
         "provenance": provenance,
     }
-    _validate_profile_sidecar(sidecar, tensor_sha256=tensor_digest)
+    _validate_profile_sidecar(sidecar)
     from drowse.base.atomic import artifact_lock, write_bytes_atomic, write_json_atomic
 
     meta_path = path.with_suffix(".json")
@@ -288,9 +274,7 @@ def load_profile(path: str | pathlib.Path) -> tuple[dict[int, torch.Tensor], dic
         tensor_bytes = path.read_bytes()
         with open(meta_path) as f:
             metadata = json.load(f)
-    tensor_digest = hashlib.sha256(tensor_bytes).hexdigest()
     tensors = load_safetensors(tensor_bytes)
-
 
     if not tensors:
         raise ProfileError(f"profile tensor {path} has no layers")
@@ -306,15 +290,14 @@ def load_profile(path: str | pathlib.Path) -> tuple[dict[int, torch.Tensor], dic
         if not bool(torch.isfinite(tensor).all().item()):
             raise ProfileError(f"profile tensor {path} layer {layer} is non-finite")
         profile[layer] = tensor
-    _validate_profile_sidecar(metadata, tensor_sha256=tensor_digest)
+    _validate_profile_sidecar(metadata)
 
     # Flatten ``provenance`` back to the top level.  Producer keys are what
     # callers actually read, and the flat shape is what ``save_profile``
     # takes, so a loaded Profile saves again without translation.  The
-    # nesting exists only on disk, to keep the wire schema exact.
+    # nesting exists only on disk, to keep the wire schema small.
     out_metadata: dict[str, Any] = {
-        key: metadata[key] for key in ("format_version", "drowse_version", "method",
-                                       "tensor_sha256")
+        key: metadata[key] for key in ("format_version", "drowse_version", "method")
     }
     out_metadata.update(metadata["provenance"])
     return profile, out_metadata

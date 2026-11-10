@@ -473,7 +473,6 @@ def prove_lens_fit_noop(
     from drowse.lens.key import local_lens_kind
     from drowse.lens.store import (
         lens_fit_lock,
-        lens_payloads_match,
         load_local_lens_sidecar,
         remove_subsumed_lens_checkpoint,
     )
@@ -506,11 +505,7 @@ def prove_lens_fit_noop(
         source_fp = source_fingerprint()
         if source_fp is None or sidecar.get("model_source_fingerprint") != source_fp:
             return None
-        if not lens_payloads_match(model_id, sidecar, name=name):
-            return None
-        remove_subsumed_lens_checkpoint(
-            model_id, name=name, verified_final_sidecar=sidecar,
-        )
+        remove_subsumed_lens_checkpoint(model_id, name=name)
         return sidecar
 
 
@@ -815,7 +810,7 @@ class _FitRun:
         *,
         start: int,
         initial: "LensSums | None",
-        proof_out: list[Any] | None = None,
+        checkpointed: list[bool] | None = None,
     ) -> "LensFit":
         from drowse.lens.fit import fit_lens
 
@@ -827,7 +822,7 @@ class _FitRun:
             dim_batch=request.dim_batch,
             max_seq_len=request.seq_len,
             split_half=request.split_half,
-            on_checkpoint=self.checkpoint_writer(proof_out),
+            on_checkpoint=self.checkpoint_writer(checkpointed),
             checkpoint_every=request.checkpoint_every,
             on_progress=self.on_progress,
             progress_base=start,
@@ -839,26 +834,24 @@ class _FitRun:
         )
 
     def checkpoint_writer(
-        self, proof_out: list[Any] | None = None,
+        self, checkpointed: list[bool] | None = None,
     ) -> "Callable[[LensSums], None]":
+        """The estimator's checkpoint callback; it marks ``checkpointed``
+        non-empty once it has written one."""
         from drowse.lens.store import save_lens_checkpoint
 
         def save(sums: "LensSums") -> None:
             # The estimator owns the sums; any resume prefix is already
             # folded in.
-            out: list[Any] | None = None if proof_out is None else []
             save_lens_checkpoint(
                 sums.total, sums.n_prompts, sums.d_model, self.model_id, self.provenance(),
                 kind=self.request.kind,
                 consumed_prefix_sha256=self.identity.corpus.prefix_sha256(sums.n_prompts),
                 odd_sums=sums.odd,
                 split_half=sums.split_half(),
-                _proof_out=out,
             )
-            if proof_out is not None:
-                # Non-empty marks "a checkpoint was written" even when the
-                # store returned no proof.
-                proof_out[:] = out or [None]
+            if checkpointed is not None:
+                checkpointed[:] = [True]
 
         return save
 
@@ -877,14 +870,14 @@ class _FitRun:
 
     def obtain_durable(
         self, use: DurableUse, sidecar: Mapping[str, Any],
-    ) -> tuple[JacobianLens, Mapping[str, Any], Any] | None:
-        """The durable lens for ``use``: ``(lens, sidecar, reuse proof)``."""
-        from drowse.lens.store import _load_lens_verified
+    ) -> tuple[JacobianLens, Mapping[str, Any]] | None:
+        """The durable lens for ``use``: ``(lens, sidecar)``."""
+        from drowse.lens.store import _load_durable_lens
 
         if use == "resident":
             lens = self.residency.resident_lens
-            return None if lens is None else (lens, sidecar, None)
-        return _load_lens_verified(
+            return None if lens is None else (lens, sidecar)
+        return _load_durable_lens(
             self.model_id,
             name=self.identity.name,
             requested_layers=dict(self.identity.layers) if use == "selective" else None,
@@ -963,7 +956,6 @@ class _FitRun:
         plan: LensFitPlan,
         lens: JacobianLens,
         sidecar: Mapping[str, Any],
-        proof: Any,
     ) -> JacobianLens:
         from drowse.lens.store import (
             load_lens_checkpoint,
@@ -1008,7 +1000,6 @@ class _FitRun:
             reuse_layers={layer for site in lens.sites for layer in lens.layers(site)},
             split_half=_merge_split_half(kept, fitted_split),
             select=self.selects,
-            _verified_reuse_proof=proof,
         )
         remove_lens_checkpoint(self.model_id, self.identity.name)
         selected = merged.select_layers(self.identity.layers)
@@ -1071,17 +1062,17 @@ class _FitRun:
             # to sums; a resident that aliases it, or a stale replaced lens
             # with its device stacks, would break the one-matrix-set bound.
             self.residency.evict()
-        proof_out: list[Any] = []
+        checkpointed: list[bool] = []
         try:
             initial = None if base is None else self.resume_base(base, base_sidecar)
             base = None
             fitted = self.estimate(
                 prompts, self.identity.layers, start=start, initial=initial,
-                proof_out=proof_out,
+                checkpointed=checkpointed,
             )
             merged = fitted.lens
             corpus = self.identity.corpus
-            if proof_out and promote_lens_checkpoint(
+            if checkpointed and promote_lens_checkpoint(
                 self.model_id,
                 name=name,
                 n_prompts=merged.n_prompts,
@@ -1092,7 +1083,6 @@ class _FitRun:
                 d_model=merged.d_model,
                 model_fingerprint=self.identity.model_fingerprint,
                 select=self.selects,
-                _verified_proof=proof_out[0],
             ):
                 sidecar = load_local_lens_sidecar(self.model_id, name)
             else:

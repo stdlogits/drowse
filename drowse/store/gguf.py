@@ -72,7 +72,7 @@ def export_gguf_manifold(
     ``<name>.<safe_model_id>.gguf`` per model otherwise.  An export is a
     derived interchange file, never part of the artifact store: a
     destination inside ``$DROWSE_HOME`` is refused, so the manifold folder
-    and its integrity manifest are never touched.
+    is never touched.
     """
     from drowse.base.paths import (
         drowse_home, manifold_dir, parse_tensor_filename, tensor_filename,

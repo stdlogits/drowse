@@ -18,9 +18,7 @@ __all__ = ["MODEL", "author_manifold", "write_fitted_manifold"]
 MODEL = "google/gemma-2-2b-it"
 
 
-def write_fitted_manifold(
-    folder: Path, model_id: str, *, publish_manifest: bool = True,
-) -> Path:
+def write_fitted_manifold(folder: Path, model_id: str) -> Path:
     """Write one identity-consistent fitted 1-D affine pair into ``folder``."""
     import torch
 
@@ -29,7 +27,7 @@ def write_fitted_manifold(
     from drowse.geometry.subspace import LayerSubspace
     from drowse.store.manifold_tensors import save_manifold
 
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     node_coords = torch.tensor([[-1.0], [1.0]])
     manifold = Manifold(
         name=mf.name,
@@ -55,8 +53,6 @@ def write_fitted_manifold(
         "model_fingerprint": f"fp:{model_id}",
         "fit_policy_version": MANIFOLD_FIT_POLICY_VERSION,
     })
-    if publish_manifest:
-        mf.update_file_hashes(path, path.with_suffix(".json"))
     return path
 
 

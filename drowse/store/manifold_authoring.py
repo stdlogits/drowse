@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any, Callable, Iterator, Optional, Sequence
 
 from drowse.base.atomic import write_json_atomic
-from drowse.base.integrity import NAME_REGEX, canonical_json, hash_file
+from drowse.base.integrity import NAME_REGEX, canonical_json
 from drowse.base.paths import manifold_dir, manifolds_dir, tensor_filename
 from drowse.geometry.domains import domain_from_spec
 from drowse.store.manifold_folder import (
@@ -99,7 +99,7 @@ def iter_manifold_folders(
     match), and a folder must be named after its manifest: anything else is
     not an installed manifold.  Malformed folders are skipped, so one bad
     manifold never breaks a listing.  Discovery is metadata-only — fitted
-    payloads are proven at explicit use / publish / install boundaries.
+    payloads are read where they are used.
     """
     root = manifolds_dir()
     if not root.is_dir():
@@ -113,7 +113,7 @@ def iter_manifold_folders(
             if not NAME_REGEX.match(mdir.name) or not (mdir / "manifold.json").is_file():
                 continue
             try:
-                mf = ManifoldFolder.load(mdir, verify_manifest=False)
+                mf = ManifoldFolder.load(mdir)
             except ManifoldFormatError:
                 continue
             if mf.name == mdir.name:
@@ -418,9 +418,9 @@ def publish_baked_manifold(
     """Publish a corpus-less ``fit_mode="baked"`` manifold in one staged swap.
 
     The single producer for baked folders (merge outputs).  Every per-model
-    tensor pair and the manifest with its proofs are written and verified in
-    staging, then the whole folder swaps into place — there is no partially
-    published state to resume.  ``method`` is the sidecar provenance tag
+    tensor pair and the manifest are written in staging, then the whole
+    folder swaps into place — there is no partially published state to
+    resume.  ``method`` is the sidecar provenance tag
     (``"merge"`` stamps the merge bake policy).  Raises
     :class:`FileExistsError` when the manifold exists and ``force`` is unset.
     """
@@ -447,7 +447,6 @@ def publish_baked_manifold(
     ).hexdigest()
 
     def build(staging: Path) -> None:
-        files: dict[str, str] = {}
         for filename, item in outputs:
             meta: dict[str, object] = {
                 "method": method, "fit_mode": "baked", "nodes_sha256": nodes_sha,
@@ -457,18 +456,13 @@ def publish_baked_manifold(
                 meta["components"] = item.components
             if method == "merge":
                 meta["bake_policy"] = MERGE_BAKE_POLICY
-            tensor_path = staging / filename
-            save_manifold(item.manifold, tensor_path, meta)
-            for half in (tensor_path, tensor_path.with_suffix(".json")):
-                files[half.name] = hash_file(half)
+            save_manifold(item.manifold, staging / filename, meta)
         write_json_atomic(staging / "manifold.json", manifest_payload(
             name=name, description=description, fit_mode="baked",
             nodes=[ManifestNode(label) for label in labels],
-            domain=first.domain.to_spec(), files=files, source=source, tags=tags,
+            domain=first.domain.to_spec(), source=source, tags=tags,
         ))
-        # Structural check only: the pairs were just written by the
-        # validating writer and hashed above.
-        ManifoldFolder.load(staging, verify_manifest=False)
+        ManifoldFolder.load(staging)
 
     return _publish_folder(
         manifold_dir(namespace, name), build, force=force, label=f"{namespace}/{name}",
@@ -675,7 +669,7 @@ def merge_discover_manifolds(
         path = manifold_dir(ns, name)
         if not (path / "manifold.json").exists():
             raise FileNotFoundError(f"merge source {ns}/{name} not found at {path}")
-        mf = ManifoldFolder.load(path, verify_manifest=False)
+        mf = ManifoldFolder.load(path)
         if not mf.is_discover:
             raise ManifoldFormatError(
                 f"merge source {ns}/{name} is {mf.fit_mode!r}; merge supports "
@@ -752,7 +746,7 @@ def update_manifold_folder(
     ``(folder, advisories)``.
     """
     folder = Path(folder)
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     if nodes is not None and mf.fit_mode != "authored":
         raise ManifoldFormatError(
             f"manifold {mf.name!r} is {mf.fit_mode!r}; only an authored manifold's "

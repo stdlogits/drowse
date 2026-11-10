@@ -28,10 +28,11 @@ Schema (v3 — the cast model plus each generated turn's finish reason)::
         readings: {...}          # generated turns
         finish_reason: <reason>  # generated turns; ``cancelled`` = cut short
 
-The reader is strict like the tree's: a missing ``role``/``text``, an unknown
-key, a speaker or cast label that is not a role slug, a reading that is not a
-finite number, or a ``finish_reason`` outside ``FINISH_REASONS`` or on a turn
-without a recipe raises :class:`TranscriptFormatError`.
+The reader requires what it uses and ignores any other key, like the tree's:
+a missing ``role``/``text``, a speaker or cast label that is not a role slug,
+a reading that is not a finite number, or a ``finish_reason`` outside
+``FINISH_REASONS`` or on a turn without a recipe raises
+:class:`TranscriptFormatError`.
 
 On import, a turn with a ``recipe`` re-attaches as a *generated* node in its
 recorded seat (provenance = recipe presence, the cast model's invariant); a
@@ -111,21 +112,15 @@ class TranscriptProbeDriftError(TranscriptError):
 ImportMode = Literal["default", "here", "merge"]
 
 _ROOT_REQUIRED = frozenset({"drowse_transcript", "turns"})
-_ROOT_OPTIONAL = frozenset({"model_id", "system_prompt", "cast", "probes"})
 _TURN_REQUIRED = frozenset({"role", "text"})
-_TURN_OPTIONAL = frozenset({"speaker", "thinking", "recipe", "readings", "finish_reason"})
 _PROBE_FIELDS = frozenset({"name", "sha256"})
 
 
-def _check_keys(
-    data: Mapping[Any, Any], required: frozenset[str], optional: frozenset[str], label: str,
-) -> None:
+def _check_keys(data: Mapping[Any, Any], required: frozenset[str], label: str) -> None:
+    """Refuse a mapping missing a required key; other keys are ignored."""
     missing = sorted(required - data.keys())
     if missing:
         raise TranscriptFormatError(f"{label} is missing: {', '.join(missing)}")
-    unknown = sorted(str(k) for k in data.keys() - required - optional)
-    if unknown:
-        raise TranscriptFormatError(f"{label} has unknown keys: {', '.join(unknown)}")
 
 
 def _optional_str(data: Mapping[str, Any], key: str, label: str) -> str | None:
@@ -193,7 +188,7 @@ class Turn:
     def from_dict(cls, data: Any, label: str = "turn") -> "Turn":
         if not isinstance(data, Mapping):
             raise TranscriptFormatError(f"{label} must be a mapping")
-        _check_keys(data, _TURN_REQUIRED, _TURN_OPTIONAL, label)
+        _check_keys(data, _TURN_REQUIRED, label)
         role = data["role"]
         if role not in ("user", "assistant", "system"):
             raise TranscriptFormatError(f"{label}.role must be user, assistant or system")
@@ -367,7 +362,7 @@ class Transcript:
 
     @classmethod
     def from_dict(cls, data: Any) -> "Transcript":
-        """Read the transcript document — strict, see the module docstring."""
+        """Read the transcript document (see the module docstring)."""
         if not isinstance(data, Mapping):
             raise TranscriptFormatError(
                 f"transcript root must be a mapping, got {type(data).__name__}"
@@ -378,7 +373,7 @@ class Transcript:
                 f"unsupported drowse_transcript version {version!r} "
                 f"(this build requires {DROWSE_TRANSCRIPT_VERSION})"
             )
-        _check_keys(data, _ROOT_REQUIRED, _ROOT_OPTIONAL, "transcript")
+        _check_keys(data, _ROOT_REQUIRED, "transcript")
 
         raw_probes = data.get("probes") or []
         if not isinstance(raw_probes, list):
@@ -388,7 +383,7 @@ class Transcript:
             label = f"probes[{index}]"
             if not isinstance(raw, Mapping):
                 raise TranscriptFormatError(f"{label} must be a mapping")
-            _check_keys(raw, _PROBE_FIELDS, frozenset(), label)
+            _check_keys(raw, _PROBE_FIELDS, label)
             if not isinstance(raw["name"], str) or not isinstance(raw["sha256"], str):
                 raise TranscriptFormatError(f"{label} name and sha256 must be strings")
             probes.append(ProbeRef(name=raw["name"], sha256=raw["sha256"]))
@@ -411,8 +406,8 @@ class Transcript:
             _role_slug(label, f"cast.{label}")
             if not isinstance(raw, Mapping):
                 raise TranscriptFormatError(f"cast.{label} must be a mapping")
-            if "origin" in raw:
-                raise TranscriptFormatError(f"cast.{label} has unknown keys: origin")
+            if raw.get("origin") in ("structural", "observed"):
+                continue  # derived, not configuration (as the tree reads it)
             try:
                 cast[label] = CastMember.from_dict(dict(raw))
             except LoomTreeError as error:

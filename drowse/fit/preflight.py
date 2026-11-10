@@ -3,7 +3,7 @@
 The manifold counterpart of ``lens fit``'s model-free preflight: every
 component of the fit's cache key is re-derived from the folder, the
 checkpoint's published files, and the tokenizer, then matched against the
-digest-proven fitted sidecar — without instantiating the transformer.
+published fitted sidecar — without instantiating the transformer.
 """
 from __future__ import annotations
 
@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from drowse.base.paths import tensor_filename
 from drowse.fit.pipeline import MANIFOLD_CAPTURE_VERSION, offline_fit_identity
 from drowse.model.layers import resolve_model_layers
-from drowse.store.manifold_folder import ManifoldFolder, read_proven_sidecar
+from drowse.store.manifold_folder import ManifoldFolder, read_fitted_sidecar
 from drowse.store.manifold_schema import ManifoldFormatError
 from drowse.store.manifold_tensors import fitted_tensor_layers
 
@@ -25,7 +25,7 @@ class ManifoldFitProof:
 
     Returned only when *every* component of the fit's cache key was
     independently established without instantiating the transformer; every
-    field is read from the digest-proven sidecar.
+    field is read from the published sidecar.
     """
 
     folder: Path
@@ -96,7 +96,7 @@ def preflight_manifold_fit_noop(
         return None
     folder = Path(folder)
     try:
-        mf = ManifoldFolder.load(folder, verify_manifest=False)
+        mf = ManifoldFolder.load(folder)
     except (ManifoldFormatError, OSError, ValueError):
         return None
     if mf.fit_mode == "baked":
@@ -129,7 +129,7 @@ def preflight_manifold_fit_noop(
     if identity is None:
         return None
     tensor_path = folder / tensor_filename(model_id)
-    sidecar = read_proven_sidecar(folder, tensor_path)
+    sidecar = read_fitted_sidecar(tensor_path)
     if sidecar is None or (
         sidecar.nodes_sha256 != identity.nodes_sha256
         or tuple(sidecar.node_labels) != identity.node_labels

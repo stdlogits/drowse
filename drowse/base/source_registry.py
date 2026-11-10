@@ -197,9 +197,8 @@ class SourceFamily:
     def _ref_from(self, value: Any) -> SourceRef | None:
         if (
             not isinstance(value, dict)
-            or set(value) != {"kind", "name"}
-            or not isinstance(value["kind"], str)
-            or not isinstance(value["name"], str)
+            or not isinstance(value.get("kind"), str)
+            or not isinstance(value.get("name"), str)
         ):
             return None
         ref = SourceRef(value["kind"], value["name"])
@@ -215,7 +214,8 @@ class SourceFamily:
         Any deviation — unreadable file, non-current format version, foreign
         model id, unknown kind, ungrammatical name — reads as "no selection"
         rather than raising: a stale or hand-edited selection must not keep a
-        model from starting.
+        model from starting.  Keys the reader does not use are ignored, and a
+        slotted family's missing slot reads as empty.
         """
         path = self.active_path(model_id)
         if not path.exists():
@@ -231,15 +231,11 @@ class SourceFamily:
         ):
             return None
         if self.slots is None:
-            if set(data) != {"format_version", "model_id", "kind", "name"}:
-                return None
-            ref = self._ref_from({"kind": data["kind"], "name": data["name"]})
+            ref = self._ref_from(data)
             return None if ref is None else {"": ref}
-        if set(data) != {"format_version", "model_id", *self.slots.values()}:
-            return None
         out: dict[str, SourceRef | None] = {}
         for slot, key in self.slots.items():
-            if data[key] is None:
+            if data.get(key) is None:
                 out[slot] = None
                 continue
             ref = self._ref_from(data[key])

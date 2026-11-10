@@ -216,15 +216,6 @@ class TemplateFolder:
     ) -> "TemplateFolder":
         if not isinstance(data, dict):
             raise TemplateFormatError("template.json must be a JSON object")
-        allowed = {
-            "format_version", "name", "slot", "values", "contexts",
-            "description", "source", "tags",
-        }
-        unknown = set(data) - allowed
-        if unknown:
-            raise TemplateFormatError(
-                f"template.json has unknown field(s): {sorted(unknown)}"
-            )
         fmt = data.get("format_version")
         if (
             not isinstance(fmt, int)
@@ -346,12 +337,6 @@ def _validate_context(
             f"template {name!r} context {i} must be an object with "
             f"'turns' and 'assistant'"
         )
-    unknown = set(ctx) - {"turns", "assistant"}
-    if unknown:
-        raise TemplateFormatError(
-            f"template {name!r} context {i} has unknown field(s): "
-            f"{sorted(unknown)}"
-        )
     raw_turns = ctx.get("turns")
     if not isinstance(raw_turns, list) or not raw_turns:
         raise TemplateFormatError(
@@ -364,12 +349,6 @@ def _validate_context(
             raise TemplateFormatError(
                 f"template {name!r} context {i} turn {j} must be a "
                 f"{{role, content}} object"
-            )
-        unknown_turn = set(turn) - {"role", "content"}
-        if unknown_turn:
-            raise TemplateFormatError(
-                f"template {name!r} context {i} turn {j} has unknown field(s): "
-                f"{sorted(unknown_turn)}"
             )
         role = turn.get("role")
         content = turn.get("content")

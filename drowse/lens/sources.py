@@ -277,12 +277,13 @@ def _layer_tuple(value: Any) -> tuple[int, ...]:
 
 
 def _parse_binding(payload: Any, model_id: str, name: str) -> LensBinding:
-    """Strictly validate one current-format binding payload."""
+    """Validate one current-format binding payload (keys it does not use are
+    ignored)."""
     provider = LENS_PROVIDERS.get(name)
     if (
         provider is None
         or not isinstance(payload, dict)
-        or set(payload) != _BINDING_FIELDS
+        or not _BINDING_FIELDS <= payload.keys()
         or payload["format_version"] != LENS_BINDING_FORMAT_VERSION
         or payload["kind"] != HUGGINGFACE
         or payload["provider"] != provider.provider
@@ -306,7 +307,7 @@ def _parse_binding(payload: Any, model_id: str, name: str) -> LensBinding:
     for label, entry in raw_files.items():
         if (
             not isinstance(entry, dict)
-            or set(entry) != {"path", "sha256", "layers"}
+            or not {"path", "sha256", "layers"} <= entry.keys()
             or not isinstance(entry["path"], str) or not entry["path"]
             or not isinstance(entry["sha256"], str) or len(entry["sha256"]) != 64
         ):
@@ -315,11 +316,10 @@ def _parse_binding(payload: Any, model_id: str, name: str) -> LensBinding:
             entry["path"], entry["sha256"], _layer_tuple(entry["layers"]),
         )
     provenance = payload["provenance"]
-    if (
-        not isinstance(provenance, dict)
-        or set(provenance) != _PROVENANCE_FIELDS[provider.provider]
-    ):
+    fields = _PROVENANCE_FIELDS[provider.provider]
+    if not isinstance(provenance, dict) or not fields <= provenance.keys():
         raise ValueError("lens binding has invalid provenance")
+    provenance = {key: provenance[key] for key in sorted(fields)}
     if provider.provider == "neuronpedia":
         if (
             not isinstance(provenance["config_file"], str)

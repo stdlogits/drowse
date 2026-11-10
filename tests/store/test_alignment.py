@@ -235,6 +235,34 @@ class TestAlignmentCache:
         assert "0" in sidecar["quality_per_layer"]
         assert sidecar["quality_per_layer"]["0"] == pytest.approx(0.85)
 
+    def test_6_1_pointer_with_retired_digests_still_hits(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """A 6.1 pointer carries per-shard ``tensor_sha256`` and neutral
+        identities that also name ``tensor_sha256``/``tensor_schema``; the
+        reader ignores keys the current identity no longer has."""
+        monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
+        save_alignment_map(
+            _alignments({0: torch.eye(4)}), "a/b", "c/d",
+            source_identity=self._SRC_ID, target_identity=self._TGT_ID,
+        )
+        _anchor, pointer = _alignment_anchor_paths("a/b", "c/d")
+        legacy = json.loads(pointer.read_text())
+        legacy["tensor_sha256"] = {"0": "f" * 64}
+        for key in ("source_neutral_identity", "target_neutral_identity"):
+            legacy[key] = {**legacy[key], "tensor_sha256": {"0": "e" * 64}}
+        pointer.write_text(json.dumps(legacy))
+
+        result = load_alignment_map(
+            "a/b", "c/d", source_identity=self._SRC_ID,
+            target_identity=self._TGT_ID,
+        )
+        assert result is not None and set(result[0]) == {0}
+        assert load_alignment_map(
+            "a/b", "c/d", source_identity={**self._SRC_ID, "capture_sha256": "c" * 64},
+            target_identity=self._TGT_ID,
+        ) is None
+
     def test_load_missing_returns_none(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
         assert load_alignment_map(
@@ -515,9 +543,7 @@ class TestAlignmentCache:
         before = json.loads(pointer.read_text())
         layer0_name = before["tensor_files"]["0"]
         corrupt = anchor.parent / before["tensor_files"]["5"]
-        payload = bytearray(corrupt.read_bytes())
-        payload[-1] ^= 0x01
-        corrupt.write_bytes(payload)
+        corrupt.write_bytes(corrupt.read_bytes()[:16])
 
         partial = load_alignment_map(
             "a/b", "c/d", source_identity=self._SRC_ID,

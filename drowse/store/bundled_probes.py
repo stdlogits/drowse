@@ -116,11 +116,9 @@ def bootstrap_probe_roster(
         if name in probes or key in probes:
             continue
         try:
-            # Attach preflight needs fitted stems only.  The selected
-            # model pair is strictly verified by ``load``.
-            folder = ManifoldFolder.load(
-                manifold_dir("default", name), verify_manifest=False,
-            )
+            # Attach preflight needs fitted stems only; the selected
+            # model pair is checked by ``load``.
+            folder = ManifoldFolder.load(manifold_dir("default", name))
         except (ManifoldFormatError, FileNotFoundError):
             continue
         if stem not in folder.tensor_models():

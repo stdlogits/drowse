@@ -1,11 +1,11 @@
 """The fitted-manifold tensor codec and the activation-row spool.
 
 :func:`save_manifold` / :func:`load_manifold` read and write one fitted
-tensor/sidecar pair (atomic, fsynced, sidecar first) under the stable pair
+tensor/sidecar pair (atomic, fsynced, tensor first) under the stable pair
 lock; the sidecar schema is :class:`drowse.store.manifold_schema.ManifoldSidecar`.
 :class:`ActivationRowStore` is the mmap-backed per-layer row spool curved
-fitting consumes.  Folder-level orchestration (manifest, proofs, locks) lives
-in :mod:`drowse.store.manifold_folder`.
+fitting consumes.  Folder-level orchestration (manifest, locks) lives in
+:mod:`drowse.store.manifold_folder`.
 """
 from __future__ import annotations
 
@@ -28,7 +28,6 @@ from drowse.store.manifold_folder import (
     ManifoldFolder,
     _locked_manifest,
     manifold_pair_lock,
-    prove_pair,
 )
 from drowse.store.manifold_schema import (
     SIDECAR_DERIVED_FIELDS,
@@ -79,11 +78,10 @@ class ActivationRowStore:
     ) -> "ActivationRowStore":
         """Load independently persisted per-layer activation-row shards.
 
-        Capture-cache v4 stores one safetensors file per layer so a scoped fit
-        neither maps nor rewrites unrelated multi-GiB row payloads.  Every
-        shard must carry exactly its named ``layer_<L>`` tensor; the caller
-        validates the tensor's exact digest against the atomically published
-        capture metadata.
+        The capture cache stores one safetensors file per layer so a scoped
+        fit neither maps nor rewrites unrelated multi-GiB row payloads.  Every
+        shard must carry its named ``layer_<L>`` tensor; the caller checks the
+        shard's header identity.
         """
         if not paths:
             raise ValueError("activation-row shard selection must not be empty")
@@ -92,10 +90,10 @@ class ActivationRowStore:
             expected_key = f"layer_{int(idx)}"
             with safe_open(str(path), framework="pt", device="cpu") as tensors:
                 keys = list(tensors.keys())
-                if keys != [expected_key]:
+                if expected_key not in keys:
                     raise ValueError(
                         f"activation-row shard at {path} has keys {keys}, "
-                        f"expected [{expected_key!r}]"
+                        f"expected {expected_key!r}"
                     )
                 shape = tuple(
                     int(dim) for dim in tensors.get_slice(expected_key).get_shape()
@@ -223,14 +221,6 @@ def fitted_tensor_layers(tensor_path: Path) -> tuple[int, ...] | None:
         return None
 
 
-# Read-side annotations ``load_manifold`` stamps onto a loaded manifold's
-# ``metadata`` that must never reach disk.  ``_tensor_sha256`` is the digest the
-# integrity manifest proved for the payload just read; ``fit.bake`` consumes it
-# as component provenance.  A round-trip (load -> transfer -> save) carries it
-# along, so the writer tolerates exactly these keys.
-_TRANSIENT_METADATA_KEYS = frozenset({"_tensor_sha256"})
-
-
 def save_manifold(
     manifold: Manifold, path: str | Path, metadata: dict[str, object],
 ) -> None:
@@ -258,7 +248,7 @@ def save_manifold(
     # caller's metadata supplies provenance only.  A key outside the sidecar
     # schema would otherwise vanish silently — a new provenance field must be
     # added to the schema instead.
-    unknown = set(metadata) - SIDECAR_FIELDS - _TRANSIENT_METADATA_KEYS
+    unknown = set(metadata) - SIDECAR_FIELDS
     if unknown:
         raise ValueError(
             f"manifold writer metadata has unknown key(s): {sorted(unknown)}"
@@ -343,11 +333,12 @@ def save_manifold(
         sidecar_tmp = Path(sidecar_name)
         try:
             # Stage and fsync *both* payloads before replacing either canonical
-            # path.  Commit the sidecar first: an interruption on a first fit
-            # then leaves an ignored orphan sidecar, never the tensor-without-
-            # sidecar shape the folder loader must reject.  On replacement an
-            # interrupted mixed pair fails its old manifest proof and the next
-            # target fit deterministically overwrites it.
+            # path, then commit the tensor before its sidecar.  A pair is
+            # published when both halves exist, so an interruption on a first
+            # fit leaves a bare tensor (not a fit; the next fit of the target
+            # repairs it), and one on a refit leaves the new tensor under the
+            # old sidecar, whose identity reads as stale rather than claiming
+            # inputs the tensor was not fitted from.
             save_file(tensors, str(tensor_tmp))
             with open(tensor_tmp, "rb") as handle:
                 os.fsync(handle.fileno())
@@ -357,10 +348,9 @@ def save_manifold(
                 handle.write(sidecar_bytes)
                 handle.flush()
                 os.fsync(handle.fileno())
-            _replace_manifold_file(sidecar_tmp, sidecar_path)
             _replace_manifold_file(tensor_tmp, path)
-            # Make both directory entries durable before the manifest CAS can
-            # publish their hashes as the current pair.
+            _replace_manifold_file(sidecar_tmp, sidecar_path)
+            # Make both directory entries durable.
             try:
                 dir_fd = os.open(path.parent, os.O_RDONLY)
                 try:
@@ -381,76 +371,60 @@ def save_manifold(
 
 
 def load_manifold(
-    path: str | Path, *, verify_manifest: bool = True,
+    path: str | Path, *, check_current: bool = True,
 ) -> Manifold:
-    """Load a fitted manifold, proving its manifest pair by default.
+    """Load a fitted manifold.
 
-    With ``verify_manifest`` the folder manifest must prove both halves of
-    this pair, and a non-baked fit must also be current for the live corpus
-    (``nodes_sha256``) and the current numerical fit policy.
+    With ``check_current`` a non-baked fit inside a manifold folder must be
+    current for the live corpus (``nodes_sha256``) and the current numerical
+    fit policy; a caller that already accepted the sidecar passes ``False``.
     """
     resolved = Path(path)
-    if verify_manifest:
+    if check_current:
         # Global lock order for fitted artifacts is folder -> tensor pair.
         with _locked_manifest(resolved.parent):
             with manifold_pair_lock(resolved):
-                return _load_manifold_locked(resolved, verify_manifest=True)
+                return _load_manifold_locked(resolved, check_current=True)
     with manifold_pair_lock(resolved):
-        return _load_manifold_locked(resolved, verify_manifest=False)
+        return _load_manifold_locked(resolved, check_current=False)
 
 
 def _load_manifold_locked(
-    path: str | Path, *, verify_manifest: bool = True,
+    path: str | Path, *, check_current: bool = True,
 ) -> Manifold:
     """Read one fitted manifold while its tensor/sidecar pair lock is held."""
     path = Path(path)
-    folder_view: ManifoldFolder | None = None
-    if verify_manifest and (path.parent / "manifold.json").exists():
-        folder_view = ManifoldFolder.load(path.parent, verify_manifest=False)
-        if not prove_pair(path.parent, path, folder_view.files):
+    sidecar = ManifoldSidecar.load(path.with_suffix(".json")).to_payload()
+    if (
+        check_current
+        and sidecar["fit_mode"] != "baked"
+        and (path.parent / "manifold.json").exists()
+    ):
+        folder_view = ManifoldFolder.load(path.parent)
+        if sidecar["nodes_sha256"] != folder_view.nodes_sha256():
             raise ManifoldFormatError(
-                f"manifold integrity manifest has no proof for fitted pair {path.name}"
+                f"fitted manifold {path.name} is stale for the live corpus/"
+                "domain/template inputs; refit before loading"
+            )
+        if sidecar["fit_policy_version"] != MANIFOLD_FIT_POLICY_VERSION:
+            raise ManifoldFormatError(
+                f"fitted manifold {path.name} uses an older numerical fit "
+                "policy; refit it with the current drowse"
             )
     tensors = load_file(str(path))
-    sidecar = ManifoldSidecar.load(path.with_suffix(".json")).to_payload()
-    if folder_view is not None:
-        sidecar["_tensor_sha256"] = folder_view.files[path.name]
-        if sidecar["fit_mode"] != "baked":
-            if sidecar["nodes_sha256"] != folder_view.nodes_sha256():
-                raise ManifoldFormatError(
-                    f"fitted manifold {path.name} is stale for the live corpus/"
-                    "domain/template inputs; refit before loading"
-                )
-            if sidecar["fit_policy_version"] != MANIFOLD_FIT_POLICY_VERSION:
-                raise ManifoldFormatError(
-                    f"fitted manifold {path.name} uses an older numerical fit "
-                    "policy; refit it with the current drowse"
-                )
     # The shared, layer-agnostic node_coords tensor — pop it before the
     # per-layer key split, which assumes ``layer_<idx>.<field>``.
     node_coords = tensors.pop("node_coords", None)
     if node_coords is None:
         raise ManifoldFormatError("fitted manifold tensor is missing node_coords")
 
+    # ``layer_<L>.<field>``; any other key is ignored.
     by_layer: dict[int, dict[str, torch.Tensor]] = {}
-    allowed_fields = {
-        "mean", "basis", "read", "node_coords", "affine_map", "node_params",
-        "rbf_weights", "poly_coeffs", "coord_offset", "coord_scale",
-        "sigma_rbf_weights", "sigma_poly_coeffs",
-    }
     for key, tensor in tensors.items():
-        if key.count(".") != 1:
-            raise ManifoldFormatError(f"invalid fitted manifold tensor key {key!r}")
-        head, field_name = key.split(".", 1)
+        head, _, field_name = key.partition(".")
         raw_layer = head.removeprefix("layer_")
-        if (
-            not head.startswith("layer_") or not raw_layer.isascii()
-            or not raw_layer.isdecimal() or str(int(raw_layer)) != raw_layer
-            or field_name not in allowed_fields
-        ):
-            raise ManifoldFormatError(f"invalid fitted manifold tensor key {key!r}")
-        idx = int(raw_layer)
-        by_layer.setdefault(idx, {})[field_name] = tensor
+        if head.startswith("layer_") and raw_layer.isascii() and raw_layer.isdecimal():
+            by_layer.setdefault(int(raw_layer), {})[field_name] = tensor
 
     tensor_layers = set(by_layer)
     sidecar_layers = set(sidecar["fitted_layers"])
@@ -462,11 +436,9 @@ def _load_manifold_locked(
     layers: dict[int, LayerSubspace] = {}
     for idx, parts in by_layer.items():
         if "node_params" not in parts:
-            if not {"mean", "basis", "read"}.issubset(parts) or set(parts) - {
-                "mean", "basis", "read", "node_coords", "affine_map",
-            }:
+            if not {"mean", "basis", "read"}.issubset(parts):
                 raise ManifoldFormatError(
-                    f"affine manifold layer {idx} has invalid tensor fields"
+                    f"affine manifold layer {idx} is missing mean/basis/read"
                 )
             # Affine (flat / folded-vector) layer — only mean + frame on disk
             # (the coord normalization is identity, rebuilt from the basis
@@ -485,7 +457,6 @@ def _load_manifold_locked(
         sigma_fields = {"sigma_rbf_weights", "sigma_poly_coeffs"}
         if (
             not required_curved.issubset(parts)
-            or set(parts) - required_curved - sigma_fields
             or bool(set(parts) & sigma_fields) != sigma_fields.issubset(parts)
         ):
             raise ManifoldFormatError(

@@ -158,28 +158,6 @@ def test_compute_and_cache_paths_bit_identical(tmp_path: Path, monkeypatch: pyte
         )
 
 
-def test_metadata_returning_load_reuses_the_single_payload_digest(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Dependent builders get identity without rehashing a validated cache."""
-    _install_home(tmp_path, monkeypatch)
-    _patch_compute(monkeypatch, _deterministic_acts())
-    _compute()
-
-    from drowse.base.integrity import hash_file
-
-    acts, sidecar = load_or_compute_neutral_activations_with_metadata(
-        model=MODEL, tokenizer=TOKENIZER, layers=[0, 1, 2], model_id=MODEL_ID,
-    )
-
-    assert set(acts) == {0, 1, 2}
-    anchor, _ = _neutral_acts_paths(MODEL_ID)
-    assert sidecar["tensor_sha256"] == {
-        layer: hash_file(anchor.parent / filename)
-        for layer, filename in sidecar["tensor_files"].items()
-    }
-
-
 def test_concurrent_cold_neutral_cache_is_single_flight(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

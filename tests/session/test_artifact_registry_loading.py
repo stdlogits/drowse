@@ -10,7 +10,6 @@ import torch
 from drowse.model.fingerprint import loaded_model_fingerprint
 from drowse.session.registry import ArtifactRegistry, ModelBinding
 from drowse.geometry.fold import fold_directions_to_subspace
-from drowse.store.manifold_schema import ManifoldFormatError
 from drowse.store.manifold_authoring import BakedTensor, publish_baked_manifold
 from drowse.store.manifold_lifecycle import transfer_manifold
 from drowse.base.paths import encode_release_id
@@ -59,48 +58,6 @@ def test_baked_manifold_cold_loads_with_proven_fingerprint(
     registry = _registry(model_id, model)
     loaded = registry.ensure_manifold_loaded("local/merged")
     assert registry.manifolds["local/merged"] is loaded
-
-
-def test_cold_load_rejects_finite_tensor_corruption(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
-    model = torch.nn.Linear(4, 4, bias=False)
-    model_id = "test/model"
-    fingerprint = loaded_model_fingerprint(model, model_id)
-    manifold = _fold("merged", {0: torch.ones(4)}, label="merged")
-    folder = _publish(manifold, model_id, fingerprint)
-    tensor = next(folder.glob("*.safetensors"))
-    payload = bytearray(tensor.read_bytes())
-    payload[-1] ^= 1
-    tensor.write_bytes(payload)
-
-    with pytest.raises(ManifoldFormatError, match="integrity"):
-        _registry(model_id, model).ensure_manifold_loaded(
-            "local/merged",
-        )
-
-
-def test_cold_load_rejects_untracked_fitted_pair(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
-    model = torch.nn.Linear(4, 4, bias=False)
-    model_id = "test/model"
-    fingerprint = loaded_model_fingerprint(model, model_id)
-    manifold = _fold("merged", {0: torch.ones(4)}, label="merged")
-    folder = _publish(manifold, model_id, fingerprint)
-    manifest_path = folder / "manifold.json"
-    import json
-
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"] = {}
-    manifest_path.write_text(json.dumps(manifest))
-
-    with pytest.raises(ManifoldFormatError, match="no proof"):
-        _registry(model_id, model).ensure_manifold_loaded(
-            "local/merged",
-        )
 
 
 def test_transfer_variant_cold_loads_for_target_identity(

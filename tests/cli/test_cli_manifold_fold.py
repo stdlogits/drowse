@@ -57,7 +57,6 @@ def _seed_neutral_cache(model_id: str, *, n: int = 64, seed: int = 5) -> None:
     import json
 
     from safetensors.torch import save_file
-    from drowse.base.integrity import hash_file
 
     md = model_dir(model_id)
     md.mkdir(parents=True, exist_ok=True)
@@ -69,12 +68,10 @@ def _seed_neutral_cache(model_id: str, *, n: int = 64, seed: int = 5) -> None:
         X = torch.randn(n, _DIM, generator=g, dtype=torch.float32) * scale + mu
         acts[f"layer_{L}"] = X
     tensor_files: dict[str, str] = {}
-    tensor_sha256: dict[str, str] = {}
     for layer in _LAYERS:
         tensor_path = md / f"neutral_activations.layer-{layer}.gen-test.safetensors"
         save_file({f"layer_{layer}": acts[f"layer_{layer}"]}, str(tensor_path))
         tensor_files[str(layer)] = tensor_path.name
-        tensor_sha256[str(layer)] = hash_file(tensor_path)
     (md / "neutral_activations.json").write_text(json.dumps({
         "method": "neutral_activations",
         "format_version": 5,
@@ -82,7 +79,6 @@ def _seed_neutral_cache(model_id: str, *, n: int = 64, seed: int = 5) -> None:
         "capture_sha256": "test-capture",
         "model_fingerprint": "test-fingerprint",
         "model_source_fingerprint": "test-source",
-        "tensor_sha256": tensor_sha256,
         "tensor_files": tensor_files,
         "layers": list(_LAYERS),
         "tensor_schema": {
@@ -152,16 +148,13 @@ def _write_fitted_manifold(
         from drowse.store.manifold_folder import ManifoldFolder
 
         metadata["nodes_sha256"] = ManifoldFolder.load(
-            folder, verify_manifest=False,
+            folder,
         ).nodes_sha256()
         metadata["fit_policy_version"] = MANIFOLD_FIT_POLICY_VERSION
     save_manifold(mfld, path, metadata)
     if manifest.exists():
         from drowse.store.manifold_folder import ManifoldFolder
 
-        ManifoldFolder.load(folder, verify_manifest=False).update_file_hashes(
-            path, path.with_suffix(".json"),
-        )
     return path
 
 
@@ -200,7 +193,6 @@ class TestFoldHelper:
         from drowse.base.paths import encode_release_id
         from drowse.store.manifold_tensors import load_manifold, save_manifold
 
-        from drowse.store.manifold_folder import ManifoldFolder
 
         folder = _write_fitted_manifold("default", "happy.sad").parent
         raw = folder / tensor_filename(_MODEL)
@@ -209,9 +201,6 @@ class TestFoldHelper:
 
         def publish(path: Path, metadata: dict[str, Any]) -> None:
             save_manifold(manifold, path, metadata)
-            ManifoldFolder.load(folder, verify_manifest=False).update_file_hashes(
-                path, path.with_suffix(".json"),
-            )
 
         publish(moved, {
             **manifold.metadata, "method": "manifold_procrustes_transfer",
@@ -310,7 +299,6 @@ class TestCompareFold:
 def _make_full_manifold(ns: str, name: str, *, seed: int = 0) -> Path:
     """A complete manifold folder (manifold.json + nodes) plus a fitted tensor."""
     from drowse.store.manifold_authoring import create_discover_manifold_folder
-    from drowse.store.manifold_folder import ManifoldFolder, hash_manifold_files
     pos_label, neg_label = (
         name.split(".", 1) if "." in name else (name, f"{name}_neg")
     )
@@ -319,10 +307,7 @@ def _make_full_manifold(ns: str, name: str, *, seed: int = 0) -> Path:
         node_corpora={pos_label: ["a", "b"], neg_label: ["c", "d"]},
         hyperparams={"max_dim": 1, "var_threshold": 0.70},
     )
-    folder = _write_fitted_manifold(ns, name, seed=seed).parent
-    # Refresh the manifest so the fitted tensor passes integrity on load.
-    ManifoldFolder.load(folder).write_metadata(files=hash_manifold_files(folder))
-    return folder
+    return _write_fitted_manifold(ns, name, seed=seed).parent
 
 
 # ---------------------------------------------------------------------------
@@ -379,8 +364,7 @@ class TestGgufFold:
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
     ) -> None:
         """Regression: a default GGUF export used to land inside the manifold
-        folder and extend ``manifold.json::files`` with the ``.gguf``, which
-        then made ``.drowse`` export of that manifold fail."""
+        folder, which then made ``.drowse`` export of that manifold fail."""
         pytest.importorskip("gguf")
         from drowse.store.archive import export_drowse_archive
         from drowse.store.gguf import export_gguf_manifold
@@ -434,84 +418,4 @@ class TestGgufFold:
                 model_hint="llama",
             )
 
-    def test_export_preflight_skips_unrelated_variant_hashes(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-    ) -> None:
-        from drowse.store import gguf as gguf_io
-        from drowse.base import integrity
-        from drowse.store.gguf import export_gguf_manifold
-        from drowse.store.manifold_folder import ManifoldFolder
 
-        folder = _make_full_manifold("default", "happy.sad")
-        raw = folder / tensor_filename(_MODEL)
-        unrelated = folder / tensor_filename(_MODEL, release="unrelated")
-        unrelated.write_bytes(raw.read_bytes())
-        unrelated.with_suffix(".json").write_bytes(
-            raw.with_suffix(".json").read_bytes()
-        )
-        ManifoldFolder.load(folder, verify_manifest=False).update_file_hashes(
-            unrelated, unrelated.with_suffix(".json"),
-        )
-        integrity._FINGERPRINT_CACHE.clear()
-        real_hash = integrity.hash_file
-        hashed: list[str] = []
-
-        def track_hash(path: Path) -> str:
-            hashed.append(Path(path).name)
-            return real_hash(Path(path))
-
-        def fake_write(_profile: object, path: Path, **_kwargs: object) -> Path:
-            Path(path).parent.mkdir(parents=True, exist_ok=True)
-            Path(path).write_bytes(b"gguf")
-            return Path(path)
-
-        monkeypatch.setattr(integrity, "hash_file", track_hash)
-        monkeypatch.setattr(gguf_io, "write_gguf_profile", fake_write)
-        export_gguf_manifold(
-            "default", "happy.sad", model_scope=_MODEL,
-            output=str(tmp_path.parent / f"{tmp_path.name}-out" / "out.gguf"),
-            model_hint="llama",
-        )
-
-        assert raw.name in hashed and raw.with_suffix(".json").name in hashed
-        assert unrelated.name not in hashed
-        assert unrelated.with_suffix(".json").name not in hashed
-
-
-def test_default_probe_preflight_skips_unrelated_variant_hashes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from drowse.store.manifold_tensors import load_manifold
-    from drowse.base import integrity
-    from drowse.store.manifold_folder import ManifoldFolder
-    import drowse.store.bundled as bundled_module
-    import drowse.store.bundled_probes as probes_module
-
-    folder = _make_full_manifold("default", "probe")
-    raw = folder / tensor_filename(_MODEL)
-    unrelated = folder / tensor_filename(_MODEL, release="unrelated")
-    unrelated.write_bytes(raw.read_bytes())
-    unrelated.with_suffix(".json").write_bytes(raw.with_suffix(".json").read_bytes())
-    ManifoldFolder.load(folder, verify_manifest=False).update_file_hashes(
-        unrelated, unrelated.with_suffix(".json"),
-    )
-    integrity._FINGERPRINT_CACHE.clear()
-    real_hash = integrity.hash_file
-    hashed: list[str] = []
-
-    def track_hash(path: Path) -> str:
-        hashed.append(Path(path).name)
-        return real_hash(Path(path))
-
-    monkeypatch.setattr(integrity, "hash_file", track_hash)
-    monkeypatch.setattr(probes_module, "load_default_manifolds", lambda: {})
-    monkeypatch.setattr(bundled_module, "bundled_manifold_names", lambda: ["probe"])
-    probes = probes_module.bootstrap_probe_roster(
-        [], model_id=_MODEL, load=lambda _key: load_manifold(raw),
-        fit=lambda _folder, _progress: None, include_fitted_defaults=True,
-    )
-
-    assert "default/probe" in probes
-    assert raw.name in hashed and raw.with_suffix(".json").name in hashed
-    assert unrelated.name not in hashed
-    assert unrelated.with_suffix(".json").name not in hashed

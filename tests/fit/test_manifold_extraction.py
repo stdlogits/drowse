@@ -132,7 +132,7 @@ def test_templated_fit_rematerializes_value_and_assistant_edits() -> None:
         force=True,
     )
     fitted = pipe.fit(folder)
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
 
     assert fitted.node_labels == ["monday", "wednesday", "sunday"]
     assert dict(mf.node_groups())["wednesday"] == ["Wednesday answers now"]
@@ -420,7 +420,7 @@ def test_fit_overrides_share_manifest_transaction_without_lost_update(
         ("spectral", {"k_nn": 3}),
         ("pca", {"max_dim": 2}),
     ]
-    final = ManifoldFolder.load(folder, verify_manifest=False)
+    final = ManifoldFolder.load(folder)
     assert final.fit_mode == "pca"
     assert final.hyperparams == {"max_dim": 2}
     assert final.node_roles[0] == "captain"
@@ -525,6 +525,8 @@ def test_reader_stays_available_and_authoring_cas_rejects_stale_fit(
 def test_interrupted_pair_publish_is_retryable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """The tensor commits before its sidecar: a crash between them leaves a
+    bare tensor, which is not a fit and which the next fit repairs."""
     import drowse.store.manifold_tensors as manifold_module
 
     folder = _author_manifold(tmp_path)
@@ -532,27 +534,28 @@ def test_interrupted_pair_publish_is_retryable(
     real_replace = manifold_module._replace_manifold_file
     failed = False
 
-    def _fail_tensor_once(source: Path, target: Path) -> None:
+    def _fail_sidecar_once(source: Path, target: Path) -> None:
         nonlocal failed
-        if target.suffix == ".safetensors" and not failed:
+        if target.suffix == ".json" and not failed:
             failed = True
-            raise OSError("injected tensor commit failure")
+            raise OSError("injected sidecar commit failure")
         real_replace(source, target)
 
     monkeypatch.setattr(
-        manifold_module, "_replace_manifold_file", _fail_tensor_once,
+        manifold_module, "_replace_manifold_file", _fail_sidecar_once,
     )
     with pytest.raises(OSError, match="injected"):
         pipe.fit(folder)
-    assert not (folder / tensor_filename("stub-model")).exists()
-    assert (folder / Path(tensor_filename("stub-model")).with_suffix(".json").name).exists()
+    assert (folder / tensor_filename("stub-model")).exists()
+    assert not (folder / Path(tensor_filename("stub-model")).with_suffix(".json").name).exists()
+    assert ManifoldFolder.load(folder).tensor_models() == []
 
     monkeypatch.setattr(
         manifold_module, "_replace_manifold_file", real_replace,
     )
     fitted = pipe.fit(folder)
     assert fitted.name == "mood"
-    assert (folder / tensor_filename("stub-model")).exists()
+    assert ManifoldFolder.load(folder).tensor_models() == [Path(tensor_filename("stub-model")).stem]
 
 
 def test_interrupted_existing_pair_replacement_self_repairs(
@@ -582,35 +585,6 @@ def test_interrupted_existing_pair_replacement_self_repairs(
     with pytest.raises(OSError, match="replacement split"):
         pipe.fit(folder, force=True)
     monkeypatch.setattr(manifold_module, "_replace_manifold_file", real_replace)
-    pipe.fit(folder)
-    assert load_manifold(target).name == "mood"
-    ManifoldFolder.load(folder)
-
-
-def test_pair_committed_before_manifest_failure_self_repairs(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from drowse.store.manifold_tensors import load_manifold
-    from drowse.base.paths import tensor_filename
-
-    folder = _author_manifold(tmp_path)
-    pipe = ManifoldExtractionPipeline(StubHandle(), EventBus())
-    pipe.fit(folder)
-    target = folder / tensor_filename("stub-model")
-    real_update = ManifoldFolder.update_file_hashes
-    failed = False
-
-    def _fail_manifest_once(self: ManifoldFolder, *paths: Path) -> None:
-        nonlocal failed
-        if not failed:
-            failed = True
-            raise OSError("injected manifest commit failure")
-        real_update(self, *paths)
-
-    monkeypatch.setattr(ManifoldFolder, "update_file_hashes", _fail_manifest_once)
-    with pytest.raises(OSError, match="manifest commit"):
-        pipe.fit(folder, force=True)
-    monkeypatch.setattr(ManifoldFolder, "update_file_hashes", real_update)
     pipe.fit(folder)
     assert load_manifold(target).name == "mood"
     ManifoldFolder.load(folder)
@@ -848,8 +822,7 @@ def test_fit_writes_tensor_and_manifest(tmp_path: Path) -> None:
     assert (folder / tensor_name).exists()
     assert (folder / sidecar_name).exists()
     mf = ManifoldFolder.load(folder)
-    assert tensor_name in mf.files
-    assert sidecar_name in mf.files
+    assert mf.tensor_models() == [Path(tensor_name).stem]
 
 
 def test_fit_emits_event(tmp_path: Path) -> None:
@@ -916,28 +889,6 @@ def test_fitted_tensor_hit_does_not_resolve_whitener(
     second = pipe.fit(folder)
 
     assert torch.allclose(first.node_coords, second.node_coords)
-
-
-def test_fit_rebuilds_tampered_requested_tensor_from_capture_cache(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from drowse.base.paths import tensor_filename
-
-    folder = _author_manifold(tmp_path)
-    pipe = ManifoldExtractionPipeline(StubHandle(), EventBus())
-    pipe.fit(folder)
-    tensor = folder / tensor_filename("stub-model")
-    original = tensor.read_bytes()
-    damaged = bytearray(original)
-    damaged[-1] ^= 1
-    tensor.write_bytes(damaged)
-
-    def _must_not_capture(*_args: Any, **_kwargs: Any) -> Any:
-        raise AssertionError("artifact repair should reuse activation capture")
-
-    monkeypatch.setattr(V, "_encode_and_capture_all_batch", _must_not_capture)
-    pipe.fit(folder)
-    assert tensor.read_bytes() == original
 
 
 def test_capture_cache_identity_includes_node_partition(

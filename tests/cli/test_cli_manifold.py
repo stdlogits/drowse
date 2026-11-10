@@ -450,10 +450,7 @@ def test_run_manifold_transfer_calls_backend(monkeypatch: pytest.MonkeyPatch, tm
     from drowse.store.manifold_lifecycle import TransferSourceProof
 
     source_proof = TransferSourceProof(
-        tensor_name="source.safetensors",
-        tensor_sha256="a" * 64,
-        sidecar_sha256="b" * 64,
-        layers=(14, 15),
+        tensor_name="source.safetensors", layers=(14, 15),
     )
     monkeypatch.setattr(
         "drowse.store.manifold_lifecycle.preflight_transfer_manifold",

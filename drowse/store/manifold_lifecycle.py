@@ -2,7 +2,7 @@
 
 Every function here is addressed by a manifold folder or ``(namespace, name)``
 and builds on the folder primitives in :mod:`drowse.store.manifold_folder`
-(manifest CAS, pair scan / proof, the manifest-then-pairs lock order).  Each
+(pair scan, the manifest-then-pairs lock order).  Each
 entry point that can change the installed roster drops the selector index
 itself, so callers carry no invalidation duty.
 """
@@ -33,7 +33,7 @@ from drowse.store.manifold_folder import (
     fitted_name_selected,
     fitted_pair_files,
     locked_manifold_pairs,
-    prove_pair,
+    pair_is_complete,
     read_manifest,
 )
 from drowse.store.manifold_schema import (
@@ -116,20 +116,18 @@ def _capture_groups_for_models(safe_models: set[str]) -> set[tuple[str, str]]:
 
 
 def _delete_fitted_files(
-    files: list[Path], manifest_names: list[str], *, scoped_model: str | None = None,
+    files: list[Path], *, scoped_model: str | None = None,
 ) -> set[tuple[str, str]]:
     """Unlink ``files`` (pair locks held by the caller); return the GC set.
 
-    ``manifest_names`` are the selected ``files`` entries — after a crash or a
-    manual deletion they are the only surviving model hint.  ``scoped_model``
-    (a safe model id) is the model a scoped clear names: its captures are
-    swept even when no fitted file or manifest entry survives, which is
-    exactly what a fit killed after capture publication leaves behind.
+    ``scoped_model`` (a safe model id) is the model a scoped clear names: its
+    captures are swept even when no fitted file survives, which is exactly
+    what a fit killed after capture publication leaves behind.
     """
     affected_models = {
         parsed[0]
-        for name in [*manifest_names, *(path.name for path in files)]
-        if (parsed := fitted_name_selected(name)) is not None
+        for path in files
+        if (parsed := fitted_name_selected(path.name)) is not None
     }
     if scoped_model is not None:
         affected_models.add(scoped_model)
@@ -152,10 +150,9 @@ def clear_manifold_tensors(
 
     ``variant`` selects ``raw`` / ``sae`` / ``from`` / ``all`` tensors and
     ``model_scope`` (a raw model id) one model's.  Orphaned halves are cleared
-    too — this is the repair path — and only the selected ``files`` entries
-    are dropped, so an unrelated corrupt pair is never re-blessed.  Bumps the
-    selected ``fit_epochs`` key so an in-flight fit of that target cannot
-    publish over the clear.  Returns the number of files deleted.
+    too — this is the repair path.  Bumps the selected ``fit_epochs`` key so
+    an in-flight fit of that target cannot publish over the clear.  Returns
+    the number of files deleted.
     """
     folder = manifold_dir(namespace, name)
     with _locked_manifest(folder):
@@ -168,21 +165,11 @@ def clear_manifold_tensors(
                 f"re-fit); clearing its tensors is irreversible — use "
                 f"`manifold rm {namespace}/{name}` to delete it"
             )
-        manifest_files = manifest.get("files", {})
-        if not isinstance(manifest_files, dict):
-            raise ManifoldFormatError("manifold files manifest must be an object")
-        selected = [
-            entry for entry in manifest_files
-            if fitted_name_selected(entry, variant=variant, model_scope=model_scope)
-        ]
         files = fitted_pair_files(folder, variant=variant, model_scope=model_scope)
         scoped_model = safe_model_id(model_scope) if model_scope is not None else None
         with locked_manifold_pairs(files):
-            capture_groups = _delete_fitted_files(files, selected, scoped_model=scoped_model)
-            manifest["files"] = {
-                entry: digest for entry, digest in manifest_files.items()
-                if entry not in selected
-            }
+            capture_groups = _delete_fitted_files(files, scoped_model=scoped_model)
+            manifest.pop("files", None)
             epochs = manifest.get("fit_epochs", {})
             epochs = dict(epochs) if isinstance(epochs, dict) else {}
             epoch_key = f"{scoped_model or '*'}:{variant}"
@@ -212,11 +199,9 @@ def remove_manifold_folder(namespace: str, name: str) -> dict[str, Any]:
         source = manifest.get("source")
         if not isinstance(source, str) or not source:
             source = "bundled" if namespace == "default" else "local"
-        manifest_files = manifest.get("files", {})
-        names = list(manifest_files) if isinstance(manifest_files, dict) else []
         files = fitted_pair_files(folder)
         with locked_manifold_pairs(files), staging_area() as area:
-            capture_groups = _delete_fitted_files(files, names)
+            capture_groups = _delete_fitted_files(files)
             # One rename takes the folder out of every namespace; the scratch
             # area's cleanup deletes it, so a crash mid-delete never leaves a
             # half-removed manifold behind.
@@ -303,20 +288,18 @@ def refresh_manifold(
 
 @dataclass(frozen=True)
 class TransferSourceProof:
-    """Immutable source-pair generation selected before alignment work."""
+    """The source fit's layer roster the alignment was prepared for."""
 
     tensor_name: str
-    tensor_sha256: str
-    sidecar_sha256: str
     layers: tuple[int, ...]
 
 
 # Sidecar fields that describe how the *source* fit was produced.  A
 # transferred tensor was never captured on the target model, so it carries
 # none of the source's checkpoint / capture identity (its own identity is
-# ``model_fingerprint`` + the transfer provenance), and a merge's component
-# digests name source-model tensors.  Keeping them would make the ``_from-``
-# sidecar lie about the weights it belongs to.
+# ``model_fingerprint`` + the transfer provenance), and a merge's components
+# name source-model tensors.  Keeping them would make the ``_from-`` sidecar
+# lie about the weights it belongs to.
 _SOURCE_ONLY_FIELDS = (
     "model_source_fingerprint", "capture_sha256", "capture_version",
     "capture_render_sha256", "baseline_prompts_sha256", "context_binding_sha256",
@@ -333,44 +316,41 @@ def _transfer_paths(folder: Path, from_model: str, to_model: str) -> tuple[Path,
 
 def _transfer_preflight_locked(
     folder: Path, *, from_model: str, to_model: str, force: bool,
-) -> tuple[Path, Path, dict[str, Any], dict[str, str], bool]:
-    """Prove the source pair and classify the target with locks already held."""
+) -> tuple[Path, Path, bool]:
+    """Check the source pair and classify the target with locks already held."""
     source, target = _transfer_paths(folder, from_model, to_model)
-    manifest = read_manifest(folder)
-    files = manifest.get("files", {})
-    if not isinstance(files, dict):
-        raise ManifoldFormatError("manifold files manifest must be an object")
-    if not prove_pair(folder, source, files):
+    if not pair_is_complete(source):
         raise ManifoldNotFoundError(
-            f"manifold {folder.name!r} has no trusted fit for source model "
+            f"manifold {folder.name!r} has no fit for source model "
             f"{from_model!r} at {source}"
         )
-    target_trusted = prove_pair(folder, target, files)
-    if target_trusted and not force:
+    target_published = pair_is_complete(target)
+    if target_published and not force:
         raise ManifoldExistsError(f"{target} already exists; pass force=True to overwrite")
-    return source, target, manifest, dict(files), target_trusted
+    return source, target, target_published
+
+
+def _source_layers(source: Path) -> tuple[int, ...]:
+    layers = fitted_tensor_layers(source)
+    if layers is None:
+        raise ManifoldFormatError(f"source fit {source} has an unreadable tensor header")
+    if not layers:
+        raise ManifoldFormatError(f"source fit {source} carries no fitted layer means")
+    return layers
 
 
 def preflight_transfer_manifold(
     folder: Path, *, from_model: str, to_model: str, force: bool = False,
 ) -> TransferSourceProof:
-    """Prove transfer viability and return the locked source-fit layer header."""
+    """Check transfer viability and return the locked source-fit layer roster."""
     folder = Path(folder)
     with _locked_manifest(folder):
         with locked_manifold_pairs(list(_transfer_paths(folder, from_model, to_model))):
-            source, _target, _manifest, files, _trusted = _transfer_preflight_locked(
+            source, _target, _published = _transfer_preflight_locked(
                 folder, from_model=from_model, to_model=to_model, force=force,
             )
-            layers = fitted_tensor_layers(source)
-            if layers is None:
-                raise ManifoldFormatError(f"source fit {source} has an unreadable tensor header")
-            if not layers:
-                raise ManifoldFormatError(f"source fit {source} carries no fitted layer means")
             return TransferSourceProof(
-                tensor_name=source.name,
-                tensor_sha256=files[source.name],
-                sidecar_sha256=files[source.with_suffix(".json").name],
-                layers=layers,
+                tensor_name=source.name, layers=_source_layers(source),
             )
 
 
@@ -394,11 +374,11 @@ def transfer_manifold(
     supplied factorized alignment (:func:`drowse.geometry.transfer.
     transfer_manifold_subspaces` owns the math and the mandatory target-metric
     share re-bake — a missing or non-covering target ``whitener`` raises
-    ``WhitenerError``), and writes the ``_from-`` variant pair plus its
-    manifest proof in one locked transaction.  Layers the alignment does not
-    cover are dropped.  ``expected_source_proof`` pins the source generation
-    the alignment was prepared against.  An unproven (crash-left) target pair
-    is repaired by overwriting; a proven one needs ``force``.
+    ``WhitenerError``), and writes the ``_from-`` variant pair in one locked
+    transaction.  Layers the alignment does not cover are dropped.
+    ``expected_source_proof`` pins the source layer roster the alignment was
+    prepared for.  A half-written (crash-left) target pair is repaired by
+    overwriting; a complete one needs ``force``.
     """
     from drowse.geometry.transfer import transfer_manifold_subspaces
     from drowse.store.manifold_tensors import load_manifold, save_manifold
@@ -406,20 +386,12 @@ def transfer_manifold(
     folder = Path(folder)
     with _locked_manifest(folder):
         with locked_manifold_pairs(list(_transfer_paths(folder, from_model, to_model))):
-            src_tensor, out_path, manifest, files, target_trusted = (
-                _transfer_preflight_locked(
-                    folder, from_model=from_model, to_model=to_model, force=force,
-                )
+            src_tensor, out_path, target_published = _transfer_preflight_locked(
+                folder, from_model=from_model, to_model=to_model, force=force,
             )
             if expected_source_proof is not None and (
-                src_tensor.name,
-                files.get(src_tensor.name),
-                files.get(src_tensor.with_suffix(".json").name),
-            ) != (
-                expected_source_proof.tensor_name,
-                expected_source_proof.tensor_sha256,
-                expected_source_proof.sidecar_sha256,
-            ):
+                src_tensor.name, _source_layers(src_tensor),
+            ) != (expected_source_proof.tensor_name, expected_source_proof.layers):
                 raise ManifoldFormatError(
                     "source manifold fit changed while alignment was prepared; "
                     "retry the transfer against the current source generation"
@@ -459,18 +431,11 @@ def transfer_manifold(
             metadata["model_fingerprint"] = target_model_fingerprint
             if transfer_quality_estimate is not None:
                 metadata["transfer_quality_estimate"] = float(transfer_quality_estimate)
-            sidecar_path = out_path.with_suffix(".json")
-            if not target_trusted:
+            if not target_published:
                 out_path.unlink(missing_ok=True)
-                sidecar_path.unlink(missing_ok=True)
-                files.pop(out_path.name, None)
-                files.pop(sidecar_path.name, None)
-                manifest["files"] = files
-                write_json_atomic(folder / "manifold.json", manifest)
-            current = ManifoldFolder.load(folder, verify_manifest=False)
-            metadata["nodes_sha256"] = current.nodes_sha256()
+                out_path.with_suffix(".json").unlink(missing_ok=True)
+            metadata["nodes_sha256"] = ManifoldFolder.load(folder).nodes_sha256()
             save_manifold(transferred, out_path, metadata)
-            current.update_file_hashes(out_path, sidecar_path)
             return out_path
 
 
@@ -522,7 +487,7 @@ def manifold_summary(
     :func:`manifold_fit_summary` block per readable fitted stem.
     """
     folder = Path(folder)
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     if mf.fit_mode == "authored":
         domain = mf.domain
         domain_lbl = domain_label(domain)

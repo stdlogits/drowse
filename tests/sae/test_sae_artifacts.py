@@ -197,38 +197,14 @@ def _save_mine() -> Path:
     )
 
 
-def test_sae_source_listing_never_hashes_payloads(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A dashboard sources refresh must not re-hash multi-GB SAE payloads.
+def test_local_sae_manifest_ignores_keys_it_does_not_use() -> None:
+    """A manifest carrying an extra or retired key still loads."""
+    import json
 
-    Listing and selection read the manifest and the safetensors header only;
-    the digest is verified when the weights load.
-    """
-    import drowse.base.integrity as integrity
-    from drowse.sae.sources import list_sae_sources, use_sae_source
-
-    _save_mine()
-    calls: list[Path] = []
-    real_hash = integrity.hash_file
-    monkeypatch.setattr(
-        integrity, "hash_file",
-        lambda path: calls.append(Path(path)) or real_hash(path),
-    )
-    assert [row["source"] for row in list_sae_sources("org/model")] == ["local:mine"]
-    use_sae_source("org/model", "local:mine")
-    assert calls == []
-
-
-def test_local_sae_tensors_reject_a_tampered_payload() -> None:
     from drowse.sae.store import load_local_sae_manifest, load_local_sae_tensors
 
     manifest_path = _save_mine()
+    payload = json.loads(manifest_path.read_text())
+    manifest_path.write_text(json.dumps({**payload, "retired": True}))
+    assert load_local_sae_manifest("org/model", "mine") is not None
     assert load_local_sae_tensors("org/model", "mine") is not None
-    manifest = load_local_sae_manifest("org/model", "mine")
-    assert manifest is not None
-    payload = manifest_path.parent / manifest["tensor_file"]
-    data = bytearray(payload.read_bytes())
-    data[-1] ^= 0xFF  # same size, same header: only the digest can tell
-    payload.write_bytes(bytes(data))
-    assert load_local_sae_tensors("org/model", "mine") is None

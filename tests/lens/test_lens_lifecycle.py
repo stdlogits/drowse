@@ -388,10 +388,8 @@ def test_terminal_checkpoint_is_promoted_without_second_tensor_write(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import drowse.lens.store as lens_io
-    from drowse.base import integrity
     real_save = lens_io._save_fp32_square_safetensors_atomic
     writes = 0
-    hashes = 0
 
     def _counting_save(*args: Any, **kwargs: Any) -> Any:
         nonlocal writes
@@ -401,14 +399,6 @@ def test_terminal_checkpoint_is_promoted_without_second_tensor_write(
     monkeypatch.setattr(
         lens_io, "_save_fp32_square_safetensors_atomic", _counting_save,
     )
-    real_hash = integrity.hash_file
-
-    def _counting_hash(path: Path) -> str:
-        nonlocal hashes
-        hashes += 1
-        return real_hash(path)
-
-    monkeypatch.setattr(integrity, "hash_file", _counting_hash)
     fitted = LensHarness().lens.fit(
         _PROMPTS[:2], force=True, checkpoint_every=2, sites=("out",),
     )
@@ -418,7 +408,6 @@ def test_terminal_checkpoint_is_promoted_without_second_tensor_write(
     # promotion only switches the durable sidecar pointer and performs no
     # second serialization pass.
     assert writes == 2 * len(fitted.source_layers)
-    assert hashes == 0
     final = json.loads(lens_manifest_path(_MODEL_ID, "j").read_text())
     assert "odd" not in final["sites"]["out"]
     assert set(final["sites"]["out"]["split_half"]) == {"0", "1"}
@@ -574,18 +563,18 @@ def test_fresh_partial_extension_rejects_before_payload_and_preserves_union(
     assert resident_ref() is None
 
     payload_reads: list[str] = []
-    real_load = lens_io._load_lens_verified
+    real_load = lens_io._load_durable_lens
 
     def record_load(*args: Any, **kwargs: Any) -> Any:
         payload_reads.append("load")
         return real_load(*args, **kwargs)
 
-    monkeypatch.setattr(lens_io, "_load_lens_verified", record_load)
+    monkeypatch.setattr(lens_io, "_load_durable_lens", record_load)
     with pytest.raises(JacobianLensError, match="layers the request omits"):
         LensHarness().lens.fit(_PROMPTS, layers=[0], sites=("out",))
 
     assert payload_reads == []
-    monkeypatch.setattr(lens_io, "_load_lens_verified", real_load)
+    monkeypatch.setattr(lens_io, "_load_durable_lens", real_load)
     durable = load_lens(_MODEL_ID)
     assert durable is not None
     assert durable[0].source_layers == [0, 1]
@@ -639,35 +628,6 @@ def test_exact_noop_reaps_checkpoint_left_after_final_publication() -> None:
 
     assert selected.source_layers == full.source_layers
     assert load_lens_checkpoint(_MODEL_ID, "j") is None
-
-
-def test_resident_noop_does_not_reap_checkpoint_when_final_payload_corrupt() -> None:
-    s = LensHarness()
-    full = s.lens.fit(_PROMPTS, force=True, sites=("out",))
-    loaded = load_lens(_MODEL_ID)
-    assert loaded is not None
-    sidecar = loaded[1]
-    _save_checkpoint(
-        full, _MODEL_ID,
-        corpus_spec=str(sidecar["corpus_spec"]),
-        corpus_sha256=str(sidecar["corpus_sha256"]),
-        corpus_hash_kind=str(sidecar["corpus_hash_kind"]),
-        seq_len=int(sidecar["seq_len"]),
-        dim_batch=int(sidecar["dim_batch"]),
-        skip_first=int(sidecar["estimator_policy"]["skip_first_positions"]),
-        model_fingerprint=str(sidecar["model_fingerprint"]),
-    )
-    final_tensor = _first_shard(_MODEL_ID)
-    payload = bytearray(final_tensor.read_bytes())
-    payload[-1] ^= 1
-    final_tensor.write_bytes(payload)
-
-    # The resident lens makes the fit a no-op, but it is not proof that the
-    # current on-disk payload is sound enough to discard the recovery point.
-    selected = s.lens.fit(_PROMPTS, sites=("out",))
-
-    assert selected.source_layers == full.source_layers
-    assert load_lens_checkpoint(_MODEL_ID, "j") is not None
 
 
 def test_overlapping_topup_keeps_preserved_extra_layer_resident() -> None:
@@ -1069,7 +1029,7 @@ def test_fit_checkpoint_survives_two_interruptions(
         )
 
 
-def test_corrupt_farther_checkpoint_falls_back_to_durable_prefix(
+def test_unreadable_farther_checkpoint_falls_back_to_durable_prefix(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import drowse.lens.fit as jlens_mod
@@ -1096,10 +1056,16 @@ def test_corrupt_farther_checkpoint_falls_back_to_durable_prefix(
             session.model, _MODEL_ID,
         ),
     )
+    # A shard with a valid header but non-finite values: the checkpoint's
+    # sidecar reads, its payload does not.
     checkpoint_tensor = _first_shard(_MODEL_ID, checkpoint=True)
-    payload = bytearray(checkpoint_tensor.read_bytes())
-    payload[-1] ^= 1
-    checkpoint_tensor.write_bytes(payload)
+    layer = int(checkpoint_tensor.name.split(".layer-")[1].split(".")[0])
+    from safetensors.torch import save_file
+
+    save_file(
+        {f"layer_{layer}": torch.full((durable.d_model, durable.d_model), float("nan"))},
+        str(checkpoint_tensor),
+    )
 
     real_fit = jlens_mod.fit_lens
     initial_counts: list[int | None] = []
@@ -1273,7 +1239,6 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
 ) -> None:
     import drowse.lens.fit as jlens_mod
     import drowse.lens.store as lens_io
-    from drowse.base import integrity
     full = LensHarness().lens.fit(
         _PROMPTS, force=True, layers=[0, 1], sites=("out",),
     )
@@ -1301,15 +1266,6 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
     monkeypatch.setattr(jlens_mod, "fit_lens", real_fit)
     real_save = lens_io.save_lens
     reused: list[set[int]] = []
-    hashes = 0
-    real_hash = integrity.hash_file
-
-    def _count_hash(path: Path) -> str:
-        nonlocal hashes
-        hashes += 1
-        return real_hash(path)
-
-    monkeypatch.setattr(integrity, "hash_file", _count_hash)
 
     def _capture_reuse(*args: Any, **kwargs: Any) -> Any:
         reused.append(set(kwargs.get("reuse_layers") or ()))
@@ -1322,7 +1278,6 @@ def test_fit_missing_layer_topup_resumes_checkpoint(
     )
     assert any("missing-layer checkpoint at 2" in message for message in messages)
     assert reused == [{0}]
-    assert hashes == 0
     for layer in full.source_layers:
         assert torch.allclose(
             resumed.jacobians[layer], full.jacobians[layer], atol=2e-3,

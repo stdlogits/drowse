@@ -1,10 +1,10 @@
-"""Loom error types and the strict-reader field helpers they back.
+"""Loom error types and the reader field helpers they back.
 
-Every persisted loom shape (tree, node, recipe, cast member) is read by a
-strict reader: every field the writer emits is required and unknown keys are
-rejected.  The two helpers below are that rule; they raise
-:class:`LoomTreeError` so a corrupt or future-format document fails with a
-400-class error instead of a bare ``TypeError``.
+Every persisted loom shape (tree, node, recipe, cast member) is read the same
+way: every field the reader uses is required, and any other key is ignored.
+The helpers below are that rule; they raise :class:`LoomTreeError` so a
+document missing a field fails with a 400-class error instead of a bare
+``KeyError``.
 """
 
 from __future__ import annotations
@@ -54,20 +54,11 @@ class MutationDuringGenerationError(RuntimeError, LoomTreeError):
         return (409, str(self) or self.__class__.__name__)
 
 
-def require_fields(
-    data: dict[str, Any],
-    required: frozenset[str],
-    label: str,
-    *,
-    optional: frozenset[str] = frozenset(),
-) -> None:
-    """Reject a document missing a required key or carrying an unknown one."""
+def require_fields(data: dict[str, Any], required: frozenset[str], label: str) -> None:
+    """Reject a document missing a required key (other keys are ignored)."""
     missing = sorted(required - data.keys())
     if missing:
         raise LoomTreeError(f"{label} is missing required fields: {', '.join(missing)}")
-    unknown = sorted(data.keys() - required - optional)
-    if unknown:
-        raise LoomTreeError(f"{label} has unknown fields: {', '.join(unknown)}")
 
 
 def is_number(value: Any) -> bool:

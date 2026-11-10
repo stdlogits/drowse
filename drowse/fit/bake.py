@@ -42,11 +42,10 @@ def _manifold_tensor_path(ns: str, name: str, sid: str, variant: Optional[str]) 
 def _resolve_component(
     ns: str, name: str, sid: str, variant: Optional[str], coord: str,
 ) -> "tuple[Profile, dict[str, Any]]":
-    """Load a merge component as ``(profile, source_tensor_path)``.
+    """Load a merge component as ``(profile, sidecar metadata)``.
 
     Folds a fitted 2-node ``pca`` manifold down to a single direction
-    (:func:`~drowse.geometry.fold.folded_directions`).  The returned path
-    is the manifold's fitted tensor file, so provenance hashing is uniform.
+    (:func:`~drowse.geometry.fold.folded_directions`).
     """
     mpath = _manifold_tensor_path(ns, name, sid, variant)
     if mpath is None:
@@ -338,7 +337,6 @@ def _merge_into_manifold_locked(
             component_info[f"{term_index}:{term.coord}"] = {
                 "selector": term.coord,
                 "alpha": term.coeff,
-                "tensor_sha256": component_metadata.get("_tensor_sha256"),
             }
 
         merged = linear_sum(profiles_and_alphas, strict=strict)
@@ -378,7 +376,7 @@ def _merge_into_manifold_locked(
             components=component_info, model_id_is_safe=True,
         ))
 
-    # Every model is resolved, integrity-checked, folded, and identity-checked
+    # Every model is resolved, folded, and identity-checked
     # before the destination is touched; publication then builds the whole
     # folder in staging and swaps it in, so a late failure or a crash can never
     # leave a partial merge or delete a prior good force target.

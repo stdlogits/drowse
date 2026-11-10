@@ -90,7 +90,6 @@ def test_select_rejects_unknown_kind_bad_name_and_absent_source() -> None:
     {"kind": "bogus"},
     {"name": "MiXeD"},
     {"name": ""},
-    {"extra": 1},
 ])
 def test_read_rejects_any_deviation(mutate: dict[str, Any]) -> None:
     """A stale or hand-edited selection reads as 'none', never raises."""
@@ -103,6 +102,19 @@ def test_read_rejects_any_deviation(mutate: dict[str, Any]) -> None:
     }
     path.write_text(json.dumps(payload))
     assert fam.active("org/model") is None
+
+
+def test_read_ignores_keys_it_does_not_use() -> None:
+    """A selection carrying an extra or retired key still reads."""
+    fam = _family()
+    mine = SourceRef("local", "mine")
+    _prepare(fam, mine)
+    path = fam.active_path("org/model")
+    path.write_text(json.dumps({
+        "format_version": 1, "model_id": "org/model",
+        "kind": "local", "name": "mine", "extra": 1,
+    }))
+    assert fam.active("org/model") == mine
 
 
 def test_read_survives_corrupt_json() -> None:

@@ -1093,24 +1093,30 @@ def test_recipe_from_dict_rejects_missing_field():
         Recipe.from_dict(rd)
 
 
-def test_recipe_from_dict_rejects_unknown_field():
-    rd = Recipe().to_dict()
-    rd["mystery"] = 1
-    with pytest.raises(LoomTreeError, match="unknown fields"):
-        Recipe.from_dict(rd)
+def test_tree_reader_ignores_keys_it_does_not_use():
+    """A tree, node or cast member carrying an extra or retired key loads."""
+    from drowse.loom.recipe import CastMember
+
+    tree = _seed_tree()
+    tree.set_cast_member("deer", CastMember(recipe=Recipe(steering="0.2 skittish")))
+    raw = tree.to_dict()
+    raw["retired"] = True
+    for node in raw["nodes"]:
+        node["retired"] = True
+    raw["cast"]["deer"]["retired"] = True
+    loaded = LoomTree.from_dict(raw)
+    assert set(loaded.nodes) == set(tree.nodes) and set(loaded.cast) == {"deer"}
 
 
-def test_recipe_from_dict_rejects_unknown_sampling_key():
-    """An unrecognized sampling key is a ``LoomTreeError``, not a TypeError.
-
-    The nested ``SamplingConfig(**...)`` used to raise a bare ``TypeError``
-    straight out of the constructor, breaking the module's error contract.
-    """
-    rd = Recipe(sampling=SamplingConfig(temperature=0.5)).to_dict()
+def test_recipe_from_dict_ignores_keys_it_does_not_use():
+    """An extra key at the top level or in the sampling block is ignored
+    (it used to reach ``SamplingConfig(**...)`` as a bare ``TypeError``)."""
+    recipe = Recipe(sampling=SamplingConfig(temperature=0.5))
+    rd = recipe.to_dict()
     assert rd["sampling"] is not None
+    rd["mystery"] = 1
     rd["sampling"]["nonexistent_knob"] = 1
-    with pytest.raises(LoomTreeError, match="unknown fields"):
-        Recipe.from_dict(rd)
+    assert Recipe.from_dict(rd) == recipe
 
 
 def test_recipe_survives_node_and_cast_round_trips():

@@ -494,7 +494,6 @@ def test_import_merges_cast_and_flags_conflicts():
     ({"role": "user"}, "missing: text"),
     ({"role": "tool", "text": "x"}, "role must be"),
     ({"role": "user", "text": 3}, "text must be a string"),
-    ({"role": "user", "text": "x", "extra": 1}, "unknown keys: extra"),
     ({"role": "user", "text": "x", "speaker": "Captain Hook"}, "speaker"),
     ({"role": "user", "text": "x", "thinking": 7}, "thinking must be a string"),
     ({"role": "assistant", "text": "x", "readings": {"a": "high"}}, "finite numbers"),
@@ -518,9 +517,7 @@ def test_turn_reader_is_strict(turn: dict[str, Any], match: str):
 
 
 @pytest.mark.parametrize("extra, match", [
-    ({"surprise": 1}, "unknown keys: surprise"),
     ({"cast": {"Bad Label": {"recipe": None, "notes": ""}}}, "cast.Bad Label"),
-    ({"cast": {"deer": {"recipe": None, "notes": "", "origin": "observed"}}}, "origin"),
     ({"cast": {"deer": "skittish"}}, "must be a mapping"),
     ({"probes": [{"name": "calm"}]}, "missing: sha256"),
     ({"model_id": 3}, "model_id must be a string"),
@@ -528,6 +525,18 @@ def test_turn_reader_is_strict(turn: dict[str, Any], match: str):
 def test_root_reader_is_strict(extra: dict[str, Any], match: str):
     with pytest.raises(TranscriptFormatError, match=match):
         Transcript.from_dict({"drowse_transcript": 3, "turns": [], **extra})
+
+
+def test_reader_ignores_keys_it_does_not_use():
+    t = Transcript.from_dict({
+        "drowse_transcript": 3, "surprise": 1,
+        "cast": {
+            "deer": {"recipe": None, "notes": "", "retired": True},
+            "wolf": {"recipe": None, "notes": "", "origin": "observed"},  # derived
+        },
+        "turns": [{"role": "user", "text": "x", "extra": 1}],
+    })
+    assert [turn.text for turn in t.turns] == ["x"] and set(t.cast) == {"deer"}
 
 
 def test_minimal_transcript_reads_with_optional_header_fields_absent():

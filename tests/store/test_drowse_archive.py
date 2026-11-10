@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import hashlib
 import shutil
 import stat
 import zipfile
@@ -27,7 +26,6 @@ from drowse.base.paths import manifold_dir, drowse_home, tensor_filename
 from drowse.store.archive import (
     DROWSE_ARCHIVE_FORMAT_VERSION,
     DrowseArchiveError,
-    _tensor_shapes_and_finiteness,
     _validate_member_path,
     _validate_zip_infos,
     export_drowse_archive,
@@ -79,7 +77,7 @@ def _template_manifold() -> tuple[Path, Path]:
 
 
 def _fit(folder: Path, *, finite: bool = True) -> Path:
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     basis = torch.tensor([[1.0, 0.0]])
     if not finite:
         basis[0, 0] = float("nan")
@@ -111,7 +109,6 @@ def _fit(folder: Path, *, finite: bool = True) -> Path:
             "fit_policy_version": MANIFOLD_FIT_POLICY_VERSION,
         },
     )
-    mf.update_file_hashes(path, path.with_suffix(".json"))
     return path
 
 
@@ -142,41 +139,7 @@ def _replace_manifested_json(
     path: str,
     payload: dict[str, Any] | list[Any],
 ) -> None:
-    content = (json.dumps(payload, sort_keys=True) + "\n").encode()
-    entries[path] = content
-    manifest["files"][path] = {
-        "size": len(content),
-        "sha256": hashlib.sha256(content).hexdigest(),
-    }
-
-
-def _rewrite_fit_pair(
-    folder: Path,
-    tensor: Path,
-    *,
-    tensor_name: str,
-    sidecar_updates: dict[str, Any] | None = None,
-) -> Path:
-    sidecar = tensor.with_suffix(".json")
-    sidecar_payload = json.loads(sidecar.read_text())
-    sidecar_payload.update(sidecar_updates or {})
-    sidecar.write_text(json.dumps(sidecar_payload))
-    destination = folder / tensor_name
-    destination_sidecar = destination.with_suffix(".json")
-    tensor.rename(destination)
-    sidecar.rename(destination_sidecar)
-    manifest_path = folder / "manifold.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"].pop(tensor.name)
-    manifest["files"].pop(sidecar.name)
-    manifest["files"][destination.name] = hashlib.sha256(
-        destination.read_bytes(),
-    ).hexdigest()
-    manifest["files"][destination_sidecar.name] = hashlib.sha256(
-        destination_sidecar.read_bytes(),
-    ).hexdigest()
-    manifest_path.write_text(json.dumps(manifest))
-    return destination
+    entries[path] = (json.dumps(payload, sort_keys=True) + "\n").encode()
 
 
 def test_round_trip_preserves_manifold_and_exact_manifest(tmp_path: Path) -> None:
@@ -191,7 +154,7 @@ def test_round_trip_preserves_manifold_and_exact_manifest(tmp_path: Path) -> Non
     assert manifest["kind"] == "drowse-manifold"
     assert manifest["primary"] == "manifolds/local/demo"
     assert manifest["template"] is None
-    assert set(manifest["files"]) == names - {"pack.json"}
+    assert "files" not in manifest
     assert "manifolds/local/demo/manifold.json" in names
 
     shutil.rmtree(folder)
@@ -209,7 +172,7 @@ def test_monopolar_discover_fit_exports_and_installs(tmp_path: Path) -> None:
         node_corpora={"calm": ["calm"]},
         hyperparams={"max_dim": 1, "var_threshold": 0.7},
     )
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     node_coords = torch.tensor([[1.0]])
     manifold = Manifold(
         name=mf.name,
@@ -241,7 +204,6 @@ def test_monopolar_discover_fit_exports_and_installs(tmp_path: Path) -> None:
             "fit_policy_version": MANIFOLD_FIT_POLICY_VERSION,
         },
     )
-    mf.update_file_hashes(tensor, tensor.with_suffix(".json"))
 
     output = tmp_path / "monopolar.drowse"
     export_drowse_archive("local", "monopolar", output=output)
@@ -255,38 +217,15 @@ def test_monopolar_discover_fit_exports_and_installs(tmp_path: Path) -> None:
     assert sidecar.diagnostics == {}
 
 
-def test_install_rejects_duplicate_keys_in_inner_json(tmp_path: Path) -> None:
-    _discover()
-    valid = tmp_path / "valid.drowse"
-    invalid = tmp_path / "invalid.drowse"
-    export_drowse_archive("local", "demo", output=valid)
-
-    def mutate(manifest: dict[str, Any], entries: dict[str, bytes]) -> None:
-        path = "manifolds/local/demo/manifold.json"
-        entries[path] = entries[path].replace(
-            b'"name": "demo",',
-            b'"name": "demo",\n  "name": "demo",',
-            1,
-        )
-        manifest["files"][path] = {
-            "size": len(entries[path]),
-            "sha256": hashlib.sha256(entries[path]).hexdigest(),
-        }
-
-    _rewrite_manifest(valid, invalid, mutate)
-
-    with pytest.raises(DrowseArchiveError, match="duplicate key 'name'"):
-        install_manifold(invalid)
-
-
 def test_template_closure_installs_transactionally(tmp_path: Path) -> None:
     folder, template = _template_manifold()
     output = tmp_path / "days.drowse"
     export_drowse_archive("local", "days", output=output)
     with zipfile.ZipFile(output) as archive:
         manifest = json.loads(archive.read("pack.json"))
+        names = set(archive.namelist())
     assert manifest["template"] == "templates/local/weekday"
-    assert "templates/local/weekday/template.json" in manifest["files"]
+    assert "templates/local/weekday/template.json" in names
 
     shutil.rmtree(folder)
     shutil.rmtree(template)
@@ -333,37 +272,6 @@ def test_different_existing_template_blocks_whole_install(tmp_path: Path) -> Non
     assert TemplateFolder.load(template_dir("local", "weekday")).values == (
         "Friday", "Saturday",
     )
-
-
-def test_matching_template_symlink_is_never_reused(tmp_path: Path) -> None:
-    folder, template = _template_manifold()
-    template_bytes = (template / "template.json").read_bytes()
-    output = tmp_path / "days.drowse"
-    export_drowse_archive("local", "days", output=output)
-    shutil.rmtree(folder)
-    shutil.rmtree(template)
-    external = tmp_path / "template.json"
-    external.write_bytes(template_bytes)
-    template.mkdir(parents=True)
-    (template / "template.json").symlink_to(external)
-
-    with pytest.raises(DrowseArchiveError, match="not a regular file"):
-        install_manifold(output)
-    assert not manifold_dir("local", "days").exists()
-
-
-def test_matching_template_with_unexpected_entries_is_never_reused(
-    tmp_path: Path,
-) -> None:
-    folder, template = _template_manifold()
-    output = tmp_path / "days.drowse"
-    export_drowse_archive("local", "days", output=output)
-    shutil.rmtree(folder)
-    (template / "unexpected.txt").write_text("unowned")
-
-    with pytest.raises(DrowseArchiveError, match="exact template closure"):
-        install_manifold(output)
-    assert not manifold_dir("local", "days").exists()
 
 
 def test_force_replaces_template_and_manifold_together(tmp_path: Path) -> None:
@@ -467,9 +375,7 @@ def test_install_rejects_reserved_source_namespace(tmp_path: Path) -> None:
         new = "manifolds/jlens/demo"
         manifest["primary"] = new
         for path in [name for name in entries if name.startswith(old + "/")]:
-            replacement = new + path[len(old):]
-            entries[replacement] = entries.pop(path)
-            manifest["files"][replacement] = manifest["files"].pop(path)
+            entries[new + path[len(old):]] = entries.pop(path)
 
     _rewrite_manifest(valid, bad, mutate)
 
@@ -511,13 +417,6 @@ def test_fit_transaction_ownership_never_travels(tmp_path: Path) -> None:
     assert "fit_epochs" not in local_manifest
 
 
-def test_export_rejects_nonfinite_fitted_tensor(tmp_path: Path) -> None:
-    folder = _discover()
-    _fit(folder, finite=False)
-    with pytest.raises(DrowseArchiveError, match="non-finite"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
 def test_export_requires_drowse_archive_suffix(tmp_path: Path) -> None:
     _discover()
     with pytest.raises(DrowseArchiveError, match="must end in .drowse"):
@@ -556,159 +455,6 @@ def test_discover_hyperparameters_are_mode_validated(
             node_corpora={"calm": ["calm"], "alert": ["alert"]},
             hyperparams=hyperparams,
         )
-
-
-def test_export_rejects_sae_filename_for_raw_feature_space(tmp_path: Path) -> None:
-    folder = _discover()
-    tensor = _fit(folder)
-    _rewrite_fit_pair(
-        folder,
-        tensor,
-        tensor_name=tensor_filename("test/model", release="release-a"),
-    )
-
-    with pytest.raises(DrowseArchiveError, match="filename variant"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-def test_export_rejects_transfer_filename_with_different_source(
-    tmp_path: Path,
-) -> None:
-    folder = _discover()
-    tensor = _fit(folder)
-    _rewrite_fit_pair(
-        folder,
-        tensor,
-        tensor_name=tensor_filename(
-            "test/model", transferred_from="source/model-a",
-        ),
-        sidecar_updates={
-            "method": "manifold_procrustes_transfer",
-            "source_model_id": "source/model-b",
-            "source_model_fingerprint": "source-b-fingerprint",
-            "transfer_quality_estimate": 0.95,
-        },
-    )
-
-    with pytest.raises(DrowseArchiveError, match="filename variant"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-def test_export_validates_affine_map_against_domain_embedding_dimension(
-    tmp_path: Path,
-) -> None:
-    folder = _discover()
-    tensor = _fit(folder)
-    sidecar_path = tensor.with_suffix(".json")
-    sidecar = json.loads(sidecar_path.read_text())
-    sidecar["domain"] = {"type": "sphere", "dim": 1}
-    sidecar_path.write_text(json.dumps(sidecar))
-    manifest_path = folder / "manifold.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"][sidecar_path.name] = hashlib.sha256(
-        sidecar_path.read_bytes(),
-    ).hexdigest()
-    manifest_path.write_text(json.dumps(manifest))
-
-    with pytest.raises(DrowseArchiveError, match="needs affine_map"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-@pytest.mark.parametrize(
-    ("relative", "content", "match"),
-    [
-        ("checkpoint.bin", b"checkpoint", "not part of manifold v10"),
-        ("nested/hidden.safetensors", b"hidden", "not a top-level fitted file"),
-    ],
-)
-def test_export_rejects_unknown_manifested_manifold_files(
-    tmp_path: Path,
-    relative: str,
-    content: bytes,
-    match: str,
-) -> None:
-    folder = _discover()
-    path = folder / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_bytes(content)
-    manifest_path = folder / "manifold.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"][relative] = hashlib.sha256(content).hexdigest()
-    manifest_path.write_text(json.dumps(manifest))
-
-    with pytest.raises(DrowseArchiveError, match=match):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-def test_export_parses_every_node_corpus(tmp_path: Path) -> None:
-    folder = _discover()
-    (folder / "nodes" / "00_calm.json").write_text("{}")
-
-    with pytest.raises(DrowseArchiveError, match="node corpus failed validation"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-@pytest.mark.parametrize("field", ["node_roles", "node_kinds", "nodes_sha256"])
-def test_export_binds_fitted_sidecar_to_manifold_inputs(
-    tmp_path: Path, field: str,
-) -> None:
-    folder = _discover()
-    tensor = _fit(folder)
-    sidecar_path = tensor.with_suffix(".json")
-    sidecar = json.loads(sidecar_path.read_text())
-    if field == "node_roles":
-        sidecar[field] = ["guide", "guide"]
-    elif field == "node_kinds":
-        sidecar[field] = ["abstract", "abstract"]
-    else:
-        sidecar[field] = "f" * 64
-    sidecar_path.write_text(json.dumps(sidecar))
-    manifest_path = folder / "manifold.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"][sidecar_path.name] = hashlib.sha256(
-        sidecar_path.read_bytes(),
-    ).hexdigest()
-    manifest_path.write_text(json.dumps(manifest))
-
-    with pytest.raises(DrowseArchiveError, match="identity|node hash"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-def test_export_rejects_tensor_rank_larger_than_hidden_dimension(
-    tmp_path: Path,
-) -> None:
-    from safetensors.torch import load_file, save_file
-
-    folder = _discover()
-    tensor = _fit(folder)
-    values = load_file(str(tensor))
-    values["layer_0.basis"] = torch.zeros(3, 2)
-    save_file(values, str(tensor))
-    manifest_path = folder / "manifold.json"
-    manifest = json.loads(manifest_path.read_text())
-    manifest["files"][tensor.name] = hashlib.sha256(
-        tensor.read_bytes(),
-    ).hexdigest()
-    manifest_path.write_text(json.dumps(manifest))
-
-    with pytest.raises(DrowseArchiveError, match="invalid mean/basis"):
-        export_drowse_archive("local", "demo", output=tmp_path / "bad.drowse")
-
-
-def test_tensor_shape_is_bounded_before_chunk_iteration(tmp_path: Path) -> None:
-    path = tmp_path / "hostile.safetensors"
-    header = json.dumps({
-        "x": {
-            "dtype": "F32",
-            "shape": [18_446_744_073_709_551_615, 0],
-            "data_offsets": [0, 0],
-        },
-    }, separators=(",", ":")).encode()
-    header += b" " * (-len(header) % 8)
-    path.write_bytes(len(header).to_bytes(8, "little") + header)
-
-    with pytest.raises(DrowseArchiveError, match="zero or negative dimension"):
-        _tensor_shapes_and_finiteness(path)
 
 
 @pytest.mark.parametrize(
@@ -798,22 +544,6 @@ def test_rejects_entry_total_ratio_and_count_bounds(
         _validate_zip_infos([zipfile.ZipInfo("one"), zipfile.ZipInfo("two")])
 
 
-def test_rejects_payload_hash_mismatch(tmp_path: Path) -> None:
-    _discover()
-    valid = tmp_path / "valid.drowse"
-    bad = tmp_path / "bad.drowse"
-    export_drowse_archive("local", "demo", output=valid)
-    entries = _archive_entries(valid)
-    payload = next(name for name in entries if name.endswith("00_calm.json"))
-    original = entries[payload]
-    entries[payload] = bytes([original[0] ^ 1]) + original[1:]
-    _write_entries(bad, entries)
-
-    shutil.rmtree(manifold_dir("local", "demo"))
-    with pytest.raises(DrowseArchiveError, match="SHA-256"):
-        install_manifold(bad)
-
-
 @pytest.mark.parametrize("as_", [None, "shared/renamed"])
 def test_rejects_primary_identity_mismatch_before_optional_rewrite(
     tmp_path: Path, as_: str | None,
@@ -854,66 +584,6 @@ def test_rejects_template_path_identity_mismatch(tmp_path: Path) -> None:
         install_manifold(bad)
 
 
-def test_rejects_pack_source_that_contradicts_manifold(tmp_path: Path) -> None:
-    folder = _discover()
-    valid = tmp_path / "valid.drowse"
-    bad = tmp_path / "bad.drowse"
-    export_drowse_archive("local", "demo", output=valid)
-
-    def mutate(manifest: dict[str, Any], _entries: dict[str, bytes]) -> None:
-        manifest["source"] = {
-            "uri": "bundled", "repository": None, "revision": None,
-        }
-
-    _rewrite_manifest(valid, bad, mutate)
-    shutil.rmtree(folder)
-    with pytest.raises(DrowseArchiveError, match="does not match manifold.json"):
-        install_manifold(bad)
-
-
-def test_rejects_unpinned_hugging_face_provenance(tmp_path: Path) -> None:
-    folder = _discover()
-    valid = tmp_path / "valid.drowse"
-    bad = tmp_path / "bad.drowse"
-    export_drowse_archive("local", "demo", output=valid)
-
-    def mutate(manifest: dict[str, Any], _entries: dict[str, bytes]) -> None:
-        manifest["source"] = {
-            "uri": "hf://owner/repo",
-            "repository": "owner/repo",
-            "revision": None,
-        }
-
-    _rewrite_manifest(valid, bad, mutate)
-    shutil.rmtree(folder)
-    with pytest.raises(DrowseArchiveError, match="immutable revision"):
-        install_manifold(bad)
-
-
-def test_rejects_mutable_hugging_face_revision_provenance(tmp_path: Path) -> None:
-    _discover()
-    valid = tmp_path / "valid.drowse"
-    bad = tmp_path / "bad.drowse"
-    export_drowse_archive("local", "demo", output=valid)
-
-    def mutate(manifest: dict[str, Any], entries: dict[str, bytes]) -> None:
-        source = {
-            "uri": "hf://owner/repo@main",
-            "repository": "owner/repo",
-            "revision": "main",
-        }
-        manifest["source"] = source
-        path = "manifolds/local/demo/manifold.json"
-        payload = json.loads(entries[path])
-        payload["source"] = source["uri"]
-        _replace_manifested_json(manifest, entries, path, payload)
-
-    _rewrite_manifest(valid, bad, mutate)
-
-    with pytest.raises(DrowseArchiveError, match="commit SHA"):
-        install_manifold(bad)
-
-
 def test_accepts_immutable_hugging_face_commit_provenance(tmp_path: Path) -> None:
     folder = _discover()
     commit = "a" * 40
@@ -934,25 +604,48 @@ def test_accepts_immutable_hugging_face_commit_provenance(tmp_path: Path) -> Non
     }
 
 
-def test_rejects_unknown_root_even_when_manifested(tmp_path: Path) -> None:
+def test_ignores_entries_outside_its_closure(tmp_path: Path) -> None:
     _discover()
     valid = tmp_path / "valid.drowse"
-    bad = tmp_path / "bad.drowse"
+    extra = tmp_path / "extra.drowse"
     export_drowse_archive("local", "demo", output=valid)
 
-    def mutate(manifest: dict[str, Any], entries: dict[str, bytes]) -> None:
-        content = b"nope"
-        entries["models/weights.bin"] = content
-        import hashlib
+    def mutate(_manifest: dict[str, Any], entries: dict[str, bytes]) -> None:
+        entries["models/weights.bin"] = b"nope"
 
-        manifest["files"]["models/weights.bin"] = {
-            "size": len(content), "sha256": hashlib.sha256(content).hexdigest(),
-        }
-
-    _rewrite_manifest(valid, bad, mutate)
+    _rewrite_manifest(valid, extra, mutate)
     shutil.rmtree(manifold_dir("local", "demo"))
-    with pytest.raises(DrowseArchiveError, match="outside its closure"):
-        install_manifold(bad)
+    installed = install_manifold(extra)
+    assert ManifoldFolder.load(installed).name == "demo"
+    assert not (drowse_home() / "models" / "weights.bin").exists()
+
+
+def test_installs_a_6_1_archive_with_retired_hash_maps(tmp_path: Path) -> None:
+    """A 6.1 archive carries per-entry hashes in ``pack.json`` and a ``files``
+    map in ``manifold.json`` (plus a merge-style ``tensor_sha256``); all of
+    them are ignored."""
+    folder = _discover()
+    tensor = _fit(folder)
+    current = tmp_path / "current.drowse"
+    legacy = tmp_path / "legacy.drowse"
+    export_drowse_archive("local", "demo", output=current)
+
+    def mutate(manifest: dict[str, Any], entries: dict[str, bytes]) -> None:
+        manifest["files"] = {
+            name: {"size": len(content), "sha256": "0" * 64}
+            for name, content in entries.items() if name != "pack.json"
+        }
+        path = "manifolds/local/demo/manifold.json"
+        payload = json.loads(entries[path])
+        payload["files"] = {tensor.name: "0" * 64}
+        _replace_manifested_json(manifest, entries, path, payload)
+
+    _rewrite_manifest(current, legacy, mutate)
+    shutil.rmtree(folder)
+    installed = install_manifold(legacy)
+    loaded = ManifoldFolder.load(installed)
+    assert loaded.tensor_models() == [tensor.stem]
+    assert "files" not in json.loads((installed / "manifold.json").read_text())
 
 
 def test_rejects_missing_template_closure(tmp_path: Path) -> None:
@@ -962,9 +655,7 @@ def test_rejects_missing_template_closure(tmp_path: Path) -> None:
     export_drowse_archive("local", "days", output=valid)
 
     def mutate(manifest: dict[str, Any], entries: dict[str, bytes]) -> None:
-        template_path = "templates/local/weekday/template.json"
-        entries.pop(template_path)
-        manifest["files"].pop(template_path)
+        entries.pop("templates/local/weekday/template.json")
         manifest["template"] = None
 
     _rewrite_manifest(valid, bad, mutate)
@@ -1054,4 +745,4 @@ def test_manifold_loader_rejects_nonfinite_or_boolean_coords(
     manifest_path.write_text(json.dumps(manifest))
 
     with pytest.raises(ManifoldFormatError, match="needs 'coords'"):
-        ManifoldFolder.load(folder, verify_manifest=False)
+        ManifoldFolder.load(folder)

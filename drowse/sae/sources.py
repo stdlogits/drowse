@@ -100,12 +100,11 @@ def save_sae_metadata(
     opt-out ``fetch_lens_source`` has, for a caller that fetches or
     refreshes one source while another stays resident.
     """
-    if set(payload) != _RUNTIME_FIELDS:
-        raise ValueError(
-            f"SAE runtime metadata fields must be {sorted(_RUNTIME_FIELDS)}"
-        )
+    missing = _RUNTIME_FIELDS - payload.keys()
+    if missing:
+        raise ValueError(f"SAE runtime metadata is missing {sorted(missing)}")
     full = {
-        **payload,
+        **{key: payload[key] for key in sorted(_RUNTIME_FIELDS)},
         "format_version": SAE_RUNTIME_FORMAT_VERSION,
         "model_id": model_id,
         "release": release,
@@ -120,11 +119,13 @@ def save_sae_metadata(
     return path
 
 
+_RUNTIME_RECORD_FIELDS = frozenset({"format_version", "model_id", "release", *_RUNTIME_FIELDS})
+
+
 def _validate_runtime_payload(
     payload: Any, model_id: str, release: str,
 ) -> bool:
-    expected = {"format_version", "model_id", "release", *_RUNTIME_FIELDS}
-    if not isinstance(payload, dict) or set(payload) != expected:
+    if not isinstance(payload, dict) or not _RUNTIME_RECORD_FIELDS <= payload.keys():
         return False
     if (
         payload["format_version"] != SAE_RUNTIME_FORMAT_VERSION
@@ -160,12 +161,12 @@ def load_sae_metadata(model_id: str, release: str) -> dict[str, Any] | None:
         return None
     if not _validate_runtime_payload(payload, model_id, release):
         return None
-    return payload
+    return {key: payload[key] for key in sorted(_RUNTIME_RECORD_FIELDS)}
 
 
 def _validate_feature_entry(value: Any) -> dict[str, Any] | None:
-    """Validate one exact current ``{label, max_act}`` feature row."""
-    if not isinstance(value, dict) or set(value) != {"label", "max_act"}:
+    """Validate one ``{label, max_act}`` feature row (other keys ignored)."""
+    if not isinstance(value, dict) or not {"label", "max_act"} <= value.keys():
         return None
     label = value["label"]
     if label is not None and not (isinstance(label, str) and label.strip()):
@@ -201,12 +202,18 @@ def load_sae_feature_meta(
         return {}
     if (
         not isinstance(payload, dict)
-        or set(payload) != {"format_version", "model_id", "release", "source", "features"}
+        or not {"format_version", "model_id", "release", "source", "features"} <= payload.keys()
         or payload["format_version"] != SAE_FEATURE_META_FORMAT_VERSION
         or payload["model_id"] != model_id
         or payload["release"] != release
-        or payload["source"] != _feature_source(model_id, release, source)
     ):
+        return {}
+    stored = payload["source"]
+    if stored is not None:
+        if not isinstance(stored, dict) or not _RUNTIME_FIELDS <= stored.keys():
+            return {}
+        stored = {key: stored[key] for key in sorted(_RUNTIME_FIELDS)}
+    if stored != _feature_source(model_id, release, source):
         return {}
     features = payload["features"]
     if not isinstance(features, dict):

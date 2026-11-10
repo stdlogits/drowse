@@ -255,12 +255,13 @@ def push_manifold(
             (staging / "manifold.json").write_bytes(
                 packed.read(f"{primary}/manifold.json"),
             )
+            entries = packed.namelist()
         stems = sorted(
-            Path(entry).stem for entry in pack["files"]
+            Path(entry).stem for entry in entries
             if entry.startswith(f"{primary}/") and entry.endswith(".safetensors")
             and "/" not in entry[len(primary) + 1:]
         )
-        mf = ManifoldFolder.load(folder, verify_manifest=False)
+        mf = ManifoldFolder.load(folder)
         (staging / "README.md").write_text(
             _render_manifold_card(mf, stems, coord, archive.name), encoding="utf-8",
         )

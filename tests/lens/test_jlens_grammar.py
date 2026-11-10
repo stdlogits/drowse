@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 from pathlib import Path
 from typing import Any
 
@@ -500,7 +499,6 @@ def test_lens_noop_preflight_requires_exact_model_source(
         "sites": {"out": {
             "layers": [0],
             "tensor_files": {"0": shard_path.name},
-            "tensor_sha256": {"0": hashlib.sha256(b"lens").hexdigest()},
         }},
         "model_layer_count": 2,
         "model_source_fingerprint": "source-a",
@@ -527,9 +525,6 @@ def test_lens_noop_preflight_requires_exact_model_source(
         seq_len=None, corpus=None, prompts=100, kind="j", sites=("out",),
     )
     assert lens_fit_is_noop(args, [0], hf_corpus=corpus)
-    shard_path.write_bytes(b"corrupt")
-    assert not lens_fit_is_noop(args, [0], hf_corpus=corpus)
-    shard_path.write_bytes(b"lens")
     sidecar["model_source_fingerprint"] = "source-b"
     assert not lens_fit_is_noop(args, [0], hf_corpus=corpus)
 
@@ -552,7 +547,6 @@ def test_lens_noop_preflight_rejects_changed_dataset_revision(
         "sites": {"out": {
             "layers": [0],
             "tensor_files": {"0": shard_path.name},
-            "tensor_sha256": {"0": hashlib.sha256(b"lens").hexdigest()},
         }},
         "model_layer_count": 2,
         "model_source_fingerprint": "source-a",

@@ -290,8 +290,8 @@ def resolve_folder(manifold: "str | Path | ManifoldFolder") -> "ManifoldFolder":
             )
         path = matches[0].folder
     # Only the authoring geometry and the corpus are read here; the fitted
-    # payloads' integrity is the session fit's concern.
-    return ManifoldFolder.load(path, verify_manifest=False)
+    # payloads are the session fit's concern.
+    return ManifoldFolder.load(path)
 
 
 def preflight(

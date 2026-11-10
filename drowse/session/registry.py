@@ -564,9 +564,7 @@ class ArtifactRegistry:
             from drowse.fit.pipeline import prepare_manifold_capture_identity
             from drowse.store.manifold_folder import ManifoldFolder
 
-            folder_mf = ManifoldFolder.load(
-                tensor_path.parent, verify_manifest=False,
-            )
+            folder_mf = ManifoldFolder.load(tensor_path.parent)
             expected_capture = prepare_manifold_capture_identity(
                 self._binding, folder_mf, live_fingerprint,
             ).capture_sha256

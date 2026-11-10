@@ -498,6 +498,13 @@ def test_sae_runtime_metadata_roundtrip(
         "repo_id": "org/sae",
         "neuronpedia_id": None,
     }
+    # A binding carrying an extra or retired key still reads (minus the key).
+    import json
+
+    payload = json.loads(path.read_text())
+    path.write_text(json.dumps({**payload, "retired": True}))
+    loaded = load_sae_metadata("org/model", "release/name")
+    assert loaded is not None and "retired" not in loaded and loaded["layer"] == 14
 
 
 def test_sae_feature_meta_roundtrip(
@@ -525,8 +532,6 @@ def test_sae_feature_meta_roundtrip(
         lambda payload: payload.update(format_version=1),
         lambda payload: payload.update(model_id="other/model"),
         lambda payload: payload.update(release="other-release"),
-        lambda payload: payload.update(extra=True),
-        lambda payload: payload["features"]["7"].update(checked=True),
         lambda payload: payload["features"].update({"8": {"label": None}}),
     ],
 )
@@ -556,6 +561,33 @@ def test_sae_feature_meta_rejects_non_current_shapes(
     mutation(payload)
     path.write_text(json.dumps(payload))
     assert load_sae_feature_meta("org/model", "rel") == {}
+
+
+def test_sae_feature_meta_ignores_keys_it_does_not_use(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
+    import json
+
+    from drowse.sae.sources import (
+        SAE_FEATURE_META_FORMAT_VERSION,
+        load_sae_feature_meta,
+        sae_features_path,
+    )
+
+    path = sae_features_path("org/model", "rel")
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "format_version": SAE_FEATURE_META_FORMAT_VERSION,
+        "model_id": "org/model",
+        "release": "rel",
+        "source": None,
+        "features": {"7": {"label": "weekdays", "max_act": 3.0, "checked": True}},
+        "extra": True,
+    }))
+    assert load_sae_feature_meta("org/model", "rel") == {
+        "7": {"label": "weekdays", "max_act": 3.0},
+    }
 
 
 @pytest.mark.parametrize("max_act", [float("nan"), float("inf")])

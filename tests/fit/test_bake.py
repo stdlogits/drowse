@@ -170,12 +170,10 @@ def _seed_neutral_cache(model_id: str, profile: dict[int, torch.Tensor]) -> None
     """Give offline bake the persisted metric its current contract requires."""
     import json
     from safetensors.torch import save_file
-    from drowse.base.integrity import hash_file
 
     md = model_dir(model_id)
     md.mkdir(parents=True, exist_ok=True)
     files: dict[str, str] = {}
-    hashes: dict[str, str] = {}
     schema: dict[str, dict[str, Any]] = {}
     for layer, direction in profile.items():
         dim = int(direction.numel())
@@ -184,14 +182,13 @@ def _seed_neutral_cache(model_id: str, profile: dict[int, torch.Tensor]) -> None
         path = md / f"neutral_activations.layer-{layer}.gen-test.safetensors"
         save_file({f"layer_{layer}": acts}, str(path))
         files[str(layer)] = path.name
-        hashes[str(layer)] = hash_file(path)
         schema[str(layer)] = {"shape": list(acts.shape), "dtype": "torch.float32"}
     (md / "neutral_activations.json").write_text(json.dumps({
         "method": "neutral_activations", "format_version": 5,
         "capture_version": 2, "capture_sha256": "test-capture",
         "model_fingerprint": "test-fingerprint",
         "model_source_fingerprint": "test-source",
-        "tensor_sha256": hashes, "tensor_files": files,
+        "tensor_files": files,
         "layers": list(profile), "tensor_schema": schema,
         "n_prompts": 64, "n_layers": len(profile),
         "units": {"available": False, "reason": "test"},
@@ -260,9 +257,6 @@ def test_role_variant_uses_and_validates_canonical_tensor(
     payload = __import__("json").loads(sidecar_path.read_text())
     payload["node_roles"] = ["pirate"] * int(payload["node_count"])
     sidecar_path.write_text(__import__("json").dumps(payload))
-    ManifoldFolder.load(folder, verify_manifest=False).update_file_hashes(
-        tensor_path, sidecar_path,
-    )
 
     assert bake.shared_models("default/happy:role-pirate") == [safe_model_id("gemma")]
     with pytest.raises(MergeError, match="no shared models"):
@@ -292,9 +286,6 @@ def test_transfer_variant_routes_concrete_tensor(
     payload["components"] = None
     payload["bake_policy"] = None
     target_sidecar.write_text(__import__("json").dumps(payload))
-    ManifoldFolder.load(folder, verify_manifest=False).update_file_hashes(
-        target_tensor, target_sidecar,
-    )
     _seed_neutral_cache("target", {0: torch.tensor([1.0])})
 
     variant = f"from-{encode_release_id('src')}"
@@ -409,26 +400,3 @@ def test_merge_into_manifold_explicit_model(monkeypatch: pytest.MonkeyPatch, tmp
     assert not (dst / tensor_filename("qwen")).is_file()
 
 
-def test_component_provenance_refuses_unknown_fields(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-) -> None:
-    monkeypatch.setenv("DROWSE_HOME", str(tmp_path))
-    folder = _make_concept_with_tensors(
-        tmp_path, "local", "legacy", {"gemma": {0: torch.tensor([1.0, 2.0])}},
-    )
-    tensor_path = folder / tensor_filename("gemma")
-    sidecar_path = tensor_path.with_suffix(".json")
-    sidecar = sidecar_path.read_text()
-    payload = __import__("json").loads(sidecar)
-    payload["method"] = "merge"
-    payload["components"] = {
-        "default/a": {
-            "alpha": 1.0,
-            "project_away": "default/b",
-            "tensor_sha256": "legacy",
-        }
-    }
-    sidecar_path.write_text(__import__("json").dumps(payload))
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
-    with pytest.raises(Exception, match="invalid component provenance"):
-        mf.sidecar(tensor_path.stem)

@@ -464,7 +464,7 @@ def _find_manifold(namespace: str, name: str) -> ManifoldFolder:
     folder = manifold_dir(namespace, name)
     if not (folder / "manifold.json").exists():
         raise HTTPException(404, f"manifold {namespace}/{name} not found")
-    return ManifoldFolder.load(folder, verify_manifest=False)
+    return ManifoldFolder.load(folder)
 
 
 # ------------------------------------------------------------------- routes ---

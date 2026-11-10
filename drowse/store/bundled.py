@@ -19,8 +19,8 @@ removed, fits and all.
 
 A manifold is copied through stage-and-swap, so a crash never leaves a
 half-copied folder in ``default/``.  Fitted tensor pairs are local state and
-survive a re-copy together with their manifest proofs; the per-tensor
-``nodes_sha256`` decides whether an old fit is still current.
+survive a re-copy; the per-tensor ``nodes_sha256`` decides whether an old fit
+is still current.
 """
 from __future__ import annotations
 
@@ -185,23 +185,11 @@ def _link_or_copy(source: Path, dest: Path) -> None:
 def _stage_bundled_manifold(pkg_root: Any, target: Path, staging: Path) -> None:
     """Build a fresh copy of the bundle in ``staging``, carrying local fits."""
     payload = json.loads(pkg_root.joinpath("manifold.json").read_bytes())
-    old_files: dict[str, Any] = {}
-    if (target / "manifold.json").is_file():
-        try:
-            old_payload = json.loads((target / "manifold.json").read_bytes())
-            if isinstance(old_payload, dict) and isinstance(old_payload.get("files"), dict):
-                old_files = old_payload["files"]
-        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
-            old_files = {}
-    carried: dict[str, Any] = {}
+    payload.pop("files", None)
     for tensor in manifold_folder_tensor_paths(target):
         for half in (tensor, tensor.with_suffix(".json")):
             if half.is_file():
                 _link_or_copy(half, staging / half.name)
-                if half.name in old_files:
-                    carried[half.name] = old_files[half.name]
-    shipped_files = payload.get("files")
-    payload["files"] = {**carried, **(shipped_files if isinstance(shipped_files, dict) else {})}
     nodes_dir = staging / "nodes"
     nodes_dir.mkdir()
     pkg_nodes = pkg_root.joinpath("nodes")
@@ -285,7 +273,7 @@ def refresh_bundled_manifold(name: str) -> None:
 
     The explicit ``pack refresh`` path: bypasses the process-scope guard and
     the drift check, restoring the shipped manifest and every shipped node
-    corpus file while keeping the folder's fitted pairs and their proofs.
+    corpus file while keeping the folder's fitted pairs.
     """
     from drowse.store.selectors import invalidate as invalidate_selector_index
 

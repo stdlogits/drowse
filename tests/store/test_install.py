@@ -7,7 +7,6 @@ must land the same validated closure under the same destination policy.
 from __future__ import annotations
 
 import json
-import os
 import shutil
 import threading
 from pathlib import Path
@@ -20,13 +19,13 @@ from drowse.base import staging
 from drowse.base.paths import drowse_home, manifold_dir, tensor_filename
 from drowse.store import hub
 from drowse.store import install as install_mod
-from drowse.store.archive import DrowseArchiveError, export_drowse_archive
+from drowse.store.archive import export_drowse_archive
 from drowse.store.install import ManifoldInstallConflict, install_manifold
 from drowse.store.manifold_authoring import (
     iter_manifold_folders,
 )
 from drowse.store.manifold_folder import ManifoldFolder
-from tests.support.artifacts import MODEL, author_manifold, write_fitted_manifold
+from tests.support.artifacts import MODEL, author_manifold
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 SOURCES = ("local", "archive", "hf")
@@ -177,47 +176,6 @@ def test_install_rejects_escaping_namespace_link(
 
 
 # ------------------------------------------------------------ local source --
-
-
-@pytest.mark.parametrize("kind", ["file", "directory", "dangling"])
-def test_local_source_links_are_refused_before_copying(
-    kind: str, homes: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    folder = author_manifold(fitted=False)
-    external = homes["tmp"] / "private"
-    if kind == "file":
-        external.write_text("private")
-        (folder / "nodes" / "extra.json").symlink_to(external)
-    elif kind == "directory":
-        external.mkdir()
-        (folder / "linked").symlink_to(external, target_is_directory=True)
-    else:
-        (folder / "nodes" / "dangling.json").symlink_to(homes["tmp"] / "missing")
-    _use_home(monkeypatch, homes["home"])
-    with pytest.raises(ValueError, match="symbolic link"):
-        install_manifold(str(folder))
-    assert not manifold_dir("local", "mood").exists()
-
-
-def test_local_source_special_file_is_refused(
-    homes: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    folder = author_manifold(fitted=False)
-    os.mkfifo(folder / "pipe")
-    _use_home(monkeypatch, homes["home"])
-    with pytest.raises(ValueError, match="not a regular file"):
-        install_manifold(str(folder))
-
-
-def test_local_source_unmanifested_pair_is_refused(
-    homes: dict[str, Path], monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    folder = author_manifold(fitted=False)
-    write_fitted_manifold(folder, MODEL, publish_manifest=False)
-    _use_home(monkeypatch, homes["home"])
-    with pytest.raises(DrowseArchiveError, match="unproved or noncanonical"):
-        install_manifold(str(folder))
-    assert not manifold_dir("local", "mood").exists()
 
 
 def test_local_install_onto_itself_needs_force_and_keeps_the_only_copy(

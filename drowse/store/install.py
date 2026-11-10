@@ -3,34 +3,33 @@
 Every source only *materializes* a closure into a private staging area
 (:func:`drowse.base.staging.staging_area`, outside every artifact root):
 
-* a ``.drowse`` is validated and extracted by
+* a ``.drowse`` is checked and extracted by
   :func:`drowse.store.archive.extract_drowse_archive`;
-* a local folder has its exact closure (manifest, corpora, manifested fitted
-  pairs, referenced template) copied by :func:`_materialize_local_closure`;
+* a local folder has its closure (manifest, corpora, published fitted pairs,
+  referenced template) copied by :func:`_materialize_local_closure`;
 * a Hugging Face coord resolves to a commit, downloads the repo's single root
   ``.drowse`` (:mod:`drowse.store.hub`), and takes the archive path.
 
 :func:`install_closure` then applies one policy to all three: destination
 ``local/<name>`` unless ``as_`` says otherwise (never a reserved or the
 bundled ``default`` namespace), identity rewrite for a rename, ``source``
-stamped ``local`` or ``hf://<repo>@<sha>``, every fitted pair proven by
-:func:`drowse.store.archive.validate_fitted_pair` on the exact bytes being
-published, and template-then-manifold promotion under the manifest, template,
-and pair locks.  A crash between the two promotions leaves a valid template
-beside the previous manifold generation (a stale fit, never corruption).
+stamped ``local`` or ``hf://<repo>@<sha>``, and template-then-manifold
+promotion under the manifest, template, and pair locks.  Fitted tensors are
+validated by the tensor codec when they load.  A crash between the two
+promotions leaves a valid template beside the previous manifold generation
+(a stale fit, never corruption).
 """
 
 from __future__ import annotations
 
 import json
-import os
 import shutil
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
 from drowse.base.atomic import write_json_atomic
-from drowse.base.integrity import NAME_REGEX, hash_file
+from drowse.base.integrity import NAME_REGEX
 from drowse.base.paths import manifold_dir, manifolds_dir
 from drowse.base.staging import promote, recover_backup, staging_area
 from drowse.errors import DrowseError, RequestError, SourceSpecError
@@ -39,15 +38,9 @@ from drowse.store.archive import (
     LOCAL_ONLY_MANIFOLD_KEYS,
     ArchiveClosure,
     DrowseArchiveError,
-    _fitted_tensor_paths,
-    _load_exact_json,
-    _METADATA_JSON_MAX_BYTES,
     _payload_paths,
-    _preflight_manifold_codec_sizes,
-    _read_limited,
     extract_drowse_archive,
     validate_closure,
-    validate_fitted_pair,
 )
 from drowse.store.manifold_folder import (
     ManifoldFolder,
@@ -133,32 +126,15 @@ def install_manifold(
 # ------------------------------------------------------ local materializer --
 
 
-def _validate_local_tree(source: Path) -> None:
-    if source.is_symlink():
-        raise RequestError(f"local manifold source {source} is a symbolic link")
-    for root, directories, files in os.walk(source, followlinks=False):
-        for name in directories + files:
-            path = Path(root) / name
-            if path.is_symlink():
-                raise RequestError(f"local manifold source {path} is a symbolic link")
-            if not path.is_dir() and not path.is_file():
-                raise RequestError(
-                    f"local manifold source {path} is not a regular file or directory"
-                )
-
-
 def _materialize_local_closure(source: Path, area: Path) -> ArchiveClosure:
-    """Copy a local folder's exact closure (+ referenced template) into ``area``.
+    """Copy a local folder's closure (+ referenced template) into ``area``.
 
     Only the closure travels: ``manifold.json``, the node corpora, and the
-    manifested fitted pairs.  An unmanifested tensor fails, exactly as it
-    would fail ``.drowse`` export.
+    published fitted pairs (the files a ``.drowse`` export would carry).
     """
     from drowse.store.templates import resolve_template
 
-    _validate_local_tree(source)
     try:
-        _preflight_manifold_codec_sizes(source)
         folder = ManifoldFolder.load(source)
     except (ManifoldFormatError, DrowseArchiveError) as exc:
         raise RequestError(f"{source}: source folder is not a manifold ({exc})") from exc
@@ -240,15 +216,10 @@ def _install_locks(target: Path, template_target: Path | None) -> Iterator[None]
 
 
 def _same_template(staged: Path, installed: Path) -> bool:
-    entries = sorted(path.name for path in installed.iterdir())
-    if entries != ["template.json"]:
-        raise DrowseArchiveError(
-            f"template target {installed} is not an exact template closure"
-        )
     target = installed / "template.json"
-    if target.is_symlink() or not target.is_file():
-        raise DrowseArchiveError(f"template target {target} is not a regular file")
-    return hash_file(staged / "template.json") == hash_file(target)
+    return target.is_file() and (
+        (staged / "template.json").read_bytes() == target.read_bytes()
+    )
 
 
 def _template_dependents(template_ref: str, *, excluding: Path) -> list[str]:
@@ -269,14 +240,10 @@ def _template_dependents(template_ref: str, *, excluding: Path) -> list[str]:
                 or not manifest.is_file()
             ):
                 continue
-            payload = _load_exact_json(
-                _read_limited(
-                    manifest,
-                    maximum=_METADATA_JSON_MAX_BYTES,
-                    label=f"manifold metadata {manifest}",
-                ),
-                label=f"manifold metadata {manifest}",
-            )
+            try:
+                payload = json.loads(manifest.read_bytes())
+            except (OSError, ValueError):
+                continue
             if isinstance(payload, dict) and payload.get("template_ref") == template_ref:
                 dependents.append(f"{namespace.name}/{candidate.name}")
     return dependents
@@ -319,7 +286,7 @@ def _rewrite_identity(
 
     Drops local-only transaction keys, renames the manifest *and* every fitted
     sidecar (a sidecar repeats its manifold's name) when the destination name
-    differs, stamps ``source``, and re-proves the manifest's hash map.
+    differs, and stamps ``source``.
     """
     manifest = stage / "manifold.json"
     payload = json.loads(manifest.read_text())
@@ -327,17 +294,15 @@ def _rewrite_identity(
         payload.pop(key, None)
     write_json_atomic(manifest, payload)
     staged = ManifoldFolder.load(stage)
-    files = dict(staged.files)
     if staged.name != name:
         for stem in staged.tensor_models():
             sidecar_path = staged.tensor_path(stem).with_suffix(".json")
             sidecar = json.loads(sidecar_path.read_text())
             sidecar["name"] = name
             write_json_atomic(sidecar_path, sidecar)
-            files[sidecar_path.name] = hash_file(sidecar_path)
         staged.name = name
     staged.source = source
-    staged.write_metadata(files=files)
+    staged.write_metadata()
     try:
         return ManifoldFolder.load(stage)
     except ManifoldFormatError as exc:
@@ -375,11 +340,7 @@ def install_closure(
             closure, template_target, target, force=force,
         )
         _report(on_progress, f"Staging {label}...")
-        staged = _rewrite_identity(closure.manifold, name=name, source=source)
-        for tensor in _fitted_tensor_paths(staged):
-            validate_fitted_pair(
-                tensor, staged, template_sha256=closure.template_sha256,
-            )
+        _rewrite_identity(closure.manifold, name=name, source=source)
         _report(on_progress, f"Installing {label}...")
         if install_template:
             assert closure.template is not None and template_target is not None

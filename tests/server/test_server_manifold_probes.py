@@ -1196,7 +1196,7 @@ def _fitted_discover_manifold(model_id: str, name: str = "heap") -> Any:
         feature_space="raw",
         whitener=isotropic_whitener(means, 4),
     )
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     path = folder / tensor_filename(model_id)
     save_manifold(manifold, path, {
         "method": "manifold_pca",
@@ -1204,7 +1204,6 @@ def _fitted_discover_manifold(model_id: str, name: str = "heap") -> Any:
         "model_fingerprint": f"fp:{model_id}",
         "fit_policy_version": MANIFOLD_FIT_POLICY_VERSION,
     })
-    mf.update_file_hashes(path, path.with_suffix(".json"))
     return folder, path
 
 

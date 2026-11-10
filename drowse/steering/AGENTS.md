@@ -3,23 +3,23 @@
 The steering language and its lowering: the expression grammar and its IR
 (`Steering`), triggers and probe gates, the composer that turns a steering
 stack into a `SteeringPlan`, and the forward hooks that run it. The kernel
-math (`subspace_inject`, `synthesize_subspace`, the fold and projection
-primitives) lives in `drowse/geometry/`; this package decides what gets
-injected, where, when, and how strongly.
+math (`subspace_inject`, `synthesize_subspace`, fold and projection) lives in
+`drowse/geometry/`; this package decides what is injected, where, when and how
+strongly.
 
 | Module | Owns |
 |---|---|
-| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr` (the joined `term_parts` texts; `TermPart` is one term with its fields, for `POST .../steering/validate`: its trigger both as the clause text and as `phase`, `first_n`, `after_n` and `gate`, a projection's `(base, operator, onto)`, so a client shows it as a chip without a parser), `referenced_selectors`; term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
+| `grammar.py` | Lexer, parser, fold; `parse_expr`, `format_expr`, `referenced_selectors`; `TermPart` (one term with its trigger as clause text and as `phase`/`first_n`/`after_n`/`gate`, and a projection's `(base, operator, onto)`, for `POST .../steering/validate`); term types `ProjectedTerm`, `AblationTerm`, `UnitAblationTerm`, `ManifoldTerm`; `LayerScope`, `format_layer_clause`, `split_layer_clause`; `DEFAULT_COEFF = 0.5`, `DEFAULT_ABLATION_COEFF = 1.0` |
 | `terms.py` | `Steering` (frozen IR), `AlphaEntry`, `SteeringStackEntry`, `term_entry` / `entry_trigger` / `entry_coeff` |
 | `triggers.py` | `Trigger` + presets, `ProbeGate`, `TriggerContext` |
-| `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries, `term_layers`), `SteeringScope`, `TermLayers`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` protocols |
+| `composer.py` | `SteeringComposer` (stack, scopes, resolution, composition, plan cache, stack queries, `term_layers`), `SteeringScope`, `TermLayers`, `resolve_scope_role`, `select_term_layers`, `affine_manifold_push`, the `ArtifactSource` / `NeutralSource` / `UnitSource` protocols |
 | `hooks.py` | `SteeringPlan`, `_lower_affine_subspaces`, `AffineOp`, `SteeringHook`, `UnitTerm` / `UnitOp` / `UnitHook` (unit ablation), `SteeringManager`, `install_persistent_offset_hooks`, the gain constants |
 
-Layering: `grammar`/`terms`/`triggers`
-sit above `store` (parsing resolves bare atoms against installed manifolds via
-`store.selectors`) and below `readout`; `composer`/`hooks` sit above
-`lens`/`sae` and below `generation`. Lower layers that must refuse work under
-steering take `SteeringComposer.assert_unsteered` as an injected callable.
+Layering: `grammar`/`terms`/`triggers` sit above `store` (parsing resolves bare
+atoms against installed manifolds via `store.selectors`) and below `readout`;
+`composer`/`hooks` sit above `lens`/`sae`/`units` and below `generation`.
+Lower layers that must refuse work under steering take
+`SteeringComposer.assert_unsteered` as an injected callable.
 
 Flow: text → `parse_expr` → `Steering` → `SteeringComposer.open_scope`
 (`resolve` + role policy) → `SteeringScope.__enter__` → `push` →
@@ -29,11 +29,10 @@ on `SteeringHook`s, or the compiled offset buffers.
 
 ## Expression grammar (authoritative)
 
-Every live surface (Python, YAML `vectors:`, HTTP, CLI, loom recipes) parses
-through `parse_expr`. `fit/bake.py::_parse_merge_expr` walks the private AST
+Every surface (Python, YAML `vectors:`, HTTP, CLI, loom recipes) parses through
+`parse_expr`. `fit/bake.py::_parse_merge_expr` walks the parser's private AST
 (`_lex`, `_Parser`, `_Term`/`_Selector`/`_Atom`) to accept only
-namespace-qualified additive scalar terms, refusing any `_Term.layers`; keep
-those fields stable or update it.
+namespace-qualified additive scalar terms. drowse.ai reimplements the grammar.
 
 ```text
 expr       := [sign] term (sign term)*
@@ -60,71 +59,62 @@ signed_num := ["+" | "-"] NUM
 UNIT       := "L" INT ("n" | "h") INT                  # any letter case; n under neuron/, h under head/
 ```
 
-Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`), and every digit,
-in `NUM`, `INT` and a layer clause, is ASCII `0-9` (an Arabic-Indic or
-fullwidth digit is an unexpected character); a term's sign
-comes from the leading/separating `+`/`-` and applies to every value of a
-comma run (`-0.6,0.3 m%x` is `along=-0.6, onto=-0.3`). `IDENT` is
-`[A-Za-z][A-Za-z0-9_]*`, and a `-` between two identifier characters joins
-segments, so `a-b` is one name (slugged to `a_b`) and `0.5 a-0.3 b` is a parse
-error; write `a - b`. Multi-word names use `_`; quotes, `==`, and `a.b.c` are
-errors. `SteeringExprError` (400) carries the failing `col`.
+Lexical rules: `NUM` is unsigned (`1`, `.5`, `2.`, `1e-3`); every digit is
+ASCII `0-9`. A term's sign comes from the leading/separating `+`/`-` and
+applies to every value of a comma run (`-0.6,0.3 m%x` is `along=-0.6,
+onto=-0.3`). `IDENT` is `[A-Za-z][A-Za-z0-9_]*`, and a `-` between two
+identifier characters joins segments, so `a-b` is one name (slugged to `a_b`)
+and `0.5 a-0.3 b` is a parse error; write `a - b`. Multi-word names use `_`;
+quotes, `==` and `a.b.c` are errors. `SteeringExprError` (400) carries the
+failing `col`.
 
 The lexer takes a `{…}` clause whole and hands its body to
 `model/layers.py::parse_layer_selector(body, allow_sample=False)`, the one
-layer-selector parser (whitespace inside is free). The clause follows the
-whole selector (after `%pos`, `~b`, `|b`) and precedes `@`. Parse errors,
-each with a `col` (a `LayerSelectorError`'s offset maps into the expression):
-an empty clause, `sample`, an empty entry, a negative index, a reversed range
-(`8-4`), a layer named twice (`4-8,6`), an unterminated `{`, a second clause,
-a `~`/`|`/`%` after the clause, a clause after `@` (gate probes take none),
-and a clause on a selector with a `neuron/` or `head/` atom (unit atoms carry
-their own layer).
+layer-selector parser. The clause follows the whole selector (after `%pos`,
+`~b`, `|b`) and precedes `@`. Errors, each with a `col`: an empty clause,
+`sample`, an empty entry, a negative index, a reversed range (`8-4`), a layer
+named twice (`4-8,6`), an unterminated `{`, a second clause, a `~`/`|`/`%`
+after the clause, a clause after `@` (gate probes take none), and a clause on
+a selector with a unit atom (units carry their own layer).
 
 **Unit atoms.** `neuron/L8n344` and `head/L20h17` name one MLP neuron or one
 attention head. The name lexes as one `IDENT` and goes through
-`naming.parse_unit_ref` (any letter case, leading zeros dropped), so the key,
+`naming.parse_unit_ref` (any letter case, leading zeros dropped), so keys,
 `format_expr` and `referenced_selectors` carry the canonical `L8n344`; the
-letter must match the namespace. Parse errors, each with a `col`: a malformed
-unit (`neuron/L8h344`, `neuron/8`), a `.` after a unit, a `:variant`, a unit
-as an operand of `~`, `|` or `%` (either side), a layer clause, and a head
-without `!` (`a head has no single write direction; silence it with
-!head/…`). Gate probes take units too (`@when:neuron/L8n344 > 2`), stored
-canonical; a unit probe is one scalar, so a channel suffix after it
-(`:fraction`, `@label`, `~label`, `[i]`) is a parse error rather than a gate
-that never fires.
+letter must match the namespace. Errors: a malformed unit (`neuron/L8h344`,
+`neuron/8`), a `.` after a unit, a `:variant`, a unit as an operand of `~`,
+`|` or `%`, a layer clause, and a head without `!` (a head has no single write
+direction). Gate probes take units too (`@when:neuron/L8n344 > 2`); a unit
+probe is one scalar, so a channel suffix after it is a parse error.
 
 | Form | IR value (`Steering.alphas` key) | Lowered as |
 |---|---|---|
 | `α x` | `ManifoldTerm` via the bare-atom ladder, else `α` / `(α, Trigger)` under `x` | push |
 | `α a~b` / `α a\|b` | `ProjectedTerm` under `a~b` / `a\|b` | Mahalanobis LEACE `project_profile`: keep / remove the component of `a` along `b`, then push |
 | `α !x` | `AblationTerm` under `!x` | LEACE toward neutral, `h' = h − α((h − μ)·Σ⁻¹d / d·Σ⁻¹d)·d`: reads with the covector, writes along `d`; bare `!x` is α = 1 |
-| `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's `+`-pole write at its layer (a one-layer profile, folded and pushed like any vector); a negative α pushes along the `−` pole's |
-| `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | a `UnitOp` pre-hook on the down / output projection: the unit's activation (a neuron's `act`, a head's `z_h`) becomes `(1 − α)·x + α·mean`, its neutral mean; never a residual direction ablation |
+| `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's `+`-pole write at its layer (a one-layer profile); a negative α pushes along the `−` pole's |
+| `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | a `UnitOp` pre-hook on the down / output projection: the unit's activation (a neuron's `act`, a head's `z_h`) becomes `(1 − α)·x + α·mean`, its neutral mean; not a residual direction ablation |
 | `along[,onto] m%pos` | `ManifoldTerm` under `m%pos` | affine fit: push fragment; curved fit: own term |
-| any of these but a unit atom `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`deceptive{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
+| any of these but a unit atom, `+ {L}` | the same value with `layers` set (`LayerScope`), under the key plus the canonical clause (`deceptive{12-20}`, `!jlens/Paris{24-30}`, `m%x{workspace}`); a plain term carries it only in its key | the same, restricted to the selected layers |
 
 `LayerScope` is `None` (every fitted layer), `"workspace"`, or a sorted index
-tuple; `{all}` is `None`. The clause is part of the term's identity: the same
-selector under two clauses is two keys, and equal clauses merge as below
-(written order is irrelevant: `a{5,4}` is `a{4-5}`). `split_layer_clause(key)`
-reads a key back into `(bare key, LayerScope)`.
+tuple; `{all}` is `None`. The clause is part of the term's identity: one
+selector under two clauses is two keys, equal clauses merge, and written order
+is irrelevant (`a{5,4}` is `a{4-5}`). `split_layer_clause(key)` reads a key
+back into `(bare key, LayerScope)`.
 
 Omitted coefficient: 0.5 (`DEFAULT_COEFF`), or 1.0 after `!`. Parse-time
 rejections: `!` with `~`/`|`/`%`; `%` with `~`/`|` or a second `%`; chained
 projections; a two-value comma run on anything that does not resolve to a `%`
 term (a bare node label does: `0.6,0.3 pirate` is legal); more than two
 values; more than one `@` clause or gate per term. Repeated keys merge: equal
-triggers sum coefficients (`along` and `onto` separately), differing triggers
-raise, and one key used both as a plain term and as a projection raises. A
-coordinate `%` key renders its position with `%g`, so two positions that agree
-to six significant digits (`m%0.1234567` and `m%0.1234568`) share a key: they
-raise rather than merge, since summing would move one term onto the other's
-point.
-Projection, ablation and `%` terms default to `Trigger.BOTH`; a plain term
-without `@`, or with `@both`, stores a bare float that inherits
-`Steering.trigger` (`Trigger.BOTH` for every parsed value), so `x@both` and
-`x` are one IR and merge.
+triggers sum coefficients (`along` and `onto` separately); differing triggers,
+or one key used both as a plain term and as a projection, raise. A coordinate
+`%` key renders its position with `%g`, so two positions equal to six
+significant digits share a key and raise rather than merge. Projection,
+ablation and `%` terms default to `Trigger.BOTH`; a plain term without `@`, or
+with `@both`, stores a bare float that inherits `Steering.trigger`, so `x@both`
+and `x` are one IR.
 
 ### Triggers
 
@@ -141,15 +131,15 @@ without `@`, or with `@both`, stores a bare float that inherits
 
 `@response` includes thinking tokens; only bare `@after` excludes them, and
 `@after:N` is a token window, not a phase. `gen_step` counts raw generated
-positions from 0, thinking included. A gate can never fire during prefill, so
+positions from 0, thinking included. A gate cannot fire during prefill, so
 `@before&when:…` parses but never fires.
 
 ### Probe gates
 
-The gate's probe string is stored verbatim in `ProbeGate.probe` and must
-equal a scalar key the read side writes into `TriggerContext.probe_scores`,
-i.e. the attached probe's exact name plus a channel suffix (a probe attached
-as `default/emotions` is gated as `default/emotions@happy`).
+The gate's probe string is stored verbatim in `ProbeGate.probe` and equals a
+scalar key the read side writes into `TriggerContext.probe_scores`: the
+attached probe's exact name plus a channel suffix (a probe attached as
+`default/emotions` is gated as `default/emotions@happy`).
 
 | Shape | Channel (`readout.types`) | Produced by |
 |---|---|---|
@@ -159,56 +149,34 @@ as `default/emotions` is gated as `default/emotions@happy`).
 | `p@label` | `Distance` | geometry: negated distance in typical label spacings (larger = closer); only for nodes in the reading's `nearest` list; `neutral` names the frame anchor |
 | `p~label` | `Assignment` | geometry: soft-assignment probability, [0, 1] |
 
-Channel semantics and units are owned by `drowse/readout/AGENTS.md`. A dotted
-probe name takes only the axis forms (`a.b:fraction` and `a.b@x` are parse
-errors). Evaluation (`Trigger.active`): a missing key is inactive, never an
-error. The decode loop replaces `probe_scores` after every forward, so a gate
-on forward t reads the reading scored after forward t−1 (the prefill for the
-first decode step). Validation happens at generation preflight in
-`ReadPlane.resolve_gates` (`generation/read_plane.py`): a gate naming a probe
-attached to the lens or SAE family on a channel that family cannot produce
-raises `UnsupportedProbeChannelError` (400); geometry accepts every channel;
-a gate on a unit reads it whether or not a unit probe is attached, and a unit
-outside the model is a `UnitIndexError` (400) there; any other gate naming no
+Channel semantics and units are in `drowse/readout/AGENTS.md`. A dotted probe
+name takes only the axis forms. `Trigger.active` treats a missing key as
+inactive, never an error. The decode loop replaces `probe_scores` after every
+forward, so a gate on forward t reads the reading scored after forward t−1
+(the prefill for the first decode step). Validation is at generation preflight
+in `ReadPlane.resolve_gates` (`generation/read_plane.py`): a gate naming a
+lens/SAE probe on a channel its family cannot produce raises
+`UnsupportedProbeChannelError` (400); geometry accepts every channel; a unit
+outside the model is a `UnitIndexError` (400); any other gate naming no
 attached probe is silently inactive.
 
 ### Round trip
 
 `format_expr` renders the canonical form: resolved registry keys (`0.5 pirate`
-→ `0.5 default/personas%pirate`), `%g` numbers (C's `%g`: six significant
-digits, so lossy beyond that; trailing zeros and a bare point dropped;
-exponent form when the decimal exponent is below −4 or at least 6, written
-`e`, a sign and at least two digits: `1e-05`, `1e+06`, `-1.23457e+06`; the
-same rendering spells a coordinate `%` position in its key), no tag for `Trigger.BOTH`, canonical preset spellings
-(`before`, `response`), `!x` / `-!x` for ±1 ablations, a `%` term's
-`onto` rendered relative to `along`'s sign so mixed-sign terms (the loom
-`inverted` regen negates only `along`) re-parse exactly, and the canonical
-layer clause (`format_layer_clause`): indices sorted, each maximal run of
-consecutive layers as `a-b` (`{4,5}` → `{4-5}`) and a lone layer as `a`, joined
-by `,` with no spaces (`model/layers.py::format_layer_indices`); `workspace`
-lower-case; `{all}` and no clause render nothing.
+→ `0.5 default/personas%pirate`), `%g` numbers (six significant digits, so
+lossy beyond that; the same rendering spells a coordinate `%` position in its
+key), no tag for `Trigger.BOTH`, canonical preset spellings (`before`,
+`response`), `!x` / `-!x` for ±1 ablations, a `%` term's `onto` relative to
+`along`'s sign (so the loom `inverted` regen, which negates only `along`,
+re-parses exactly) and the canonical layer clause (`format_layer_clause`:
+sorted, runs as `a-b`, no spaces; `{all}` renders nothing).
 `parse_expr(format_expr(s)) == s` holds for every IR the parser produces and
-every trigger built from the presets, `first`/`after`/`when`, or
-`replace(preset, gate=…)`. Any other hand-built `Trigger` has no grammar form
-and `format_expr` raises `SteeringExprError`; because results stamp
-`applied_steering = str(steering)` (as do loom recipes and scoring), such a
-trigger fails there. `referenced_selectors` returns the pre-resolution concept
-atoms `(namespace, concept, variant)`, skipping `%` terms and never carrying a
-layer clause (pack-install checks in `cli/config_file.py`).
-
-The browser edition reimplements this grammar.
-`tests/fixtures/browser_steering_expression.json` (accepted expressions with
-their `referenced_selectors`, plus rejected ones) is pinned by
-`tests/browser/test_browser_parity.py`; a grammar change updates the fixture
-and is an interface change for drowse.ai. The parsed form is pinned
-separately by `tests/fixtures/steering_ir.json`
-(`tests/steering/test_steering_ir.py`): every accepted expression's ordered
-terms (key, kind, coefficient or along/onto, operands, position, layer scope,
-trigger) and canonical string against a small fixture registry, and every
-rejected expression's error class. It is Python-only today and is the target
-drowse.ai's parser will match; a change to any parsed value regenerates it
-(`PYTHONPATH=. python -m tests.steering.test_steering_ir`) and is the same
-interface change.
+every trigger built from presets, `first`/`after`/`when` or
+`replace(preset, gate=…)`; any other hand-built `Trigger` has no grammar form
+and `format_expr` raises `SteeringExprError`, which results, loom recipes and
+scoring hit when they stamp `str(steering)`. `referenced_selectors` returns the
+pre-resolution concept atoms `(namespace, concept, variant)`, skipping `%`
+terms and layer clauses (pack-install checks in `cli/config_file.py`).
 
 ## Names, atoms and resolution
 
@@ -221,26 +189,25 @@ interface change.
   bare labels stay unambiguous; `@` is forbidden (HF revision separator).
 - **Reserved namespaces** (`RESERVED_NAMESPACES`: `jlens`, `slens`, `sae`,
   `neuron`, `head`) name instrument units: the name is kept verbatim and
-  case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are the
-  exception, canonicalized as above), takes no `:variant` (not even `:raw`),
-  and skips every manifold tier. The session wires resolvers for `jlens`,
-  `slens` (the token's S-lens footprint direction, `register_input_direction`),
-  `sae` and `neuron` (`ArtifactRegistry.set_atom_resolver`; `neuron` is
-  `units.instrument.UnitsInstrument.register_direction`, which checks the unit
-  against the model: a 400 at `open_scope`).
+  case-preserving (`jlens/Paris` ≠ `jlens/paris`; unit names are canonicalized
+  as above), takes no `:variant`, and skips every manifold tier. The session
+  wires resolvers for `jlens`, `slens` (the token's S-lens footprint direction,
+  `register_input_direction`), `sae` and `neuron` (`ArtifactRegistry.
+  set_atom_resolver`; `neuron` is `UnitsInstrument.register_direction`, which
+  checks the unit against the model: a 400 at `open_scope`).
 - **Variants**: `raw` (default), `sae` / `sae-<release>`, `role` /
   `role-<id>` (role-augmented fit; its role becomes the scope's assistant
-  label), `from` / `from-<src>` (cross-model transfer). There is no `pca`
-  variant. Non-`%` atoms are checked against `VARIANT_SUFFIX_RE` at parse
-  time; a `%` operand's variant is checked when the manifold loads.
+  label), `from` / `from-<src>` (cross-model transfer). Non-`%` atoms are
+  checked against `VARIANT_SUFFIX_RE` at parse time; a `%` operand's variant is
+  checked when the manifold loads.
 
 Plain-term resolution in `_fold`, in order:
 
 1. Reserved namespace → key `ns/name`.
-2. `profile_names` override: if the canonical key exactly matches an in-memory
+2. `profile_names` override: a canonical key exactly matching an in-memory
    profile (`open_scope` passes the registry's names: extracts, bakes,
-   instrument atoms, and any 2-node manifold the registry already folded as an
-   `!`/`~`/`|` operand), it is a plain vector. So `0.5 formal.casual` is a `%`
+   instrument atoms, and any 2-node manifold already folded as an
+   `!`/`~`/`|` operand) is a plain vector. So `0.5 formal.casual` is a `%`
    push in a fresh session but a folded-vector push after
    `session.extract("formal.casual")` or `!formal.casual`, and the two weight
    layers differently (folded `mahalanobis_share` versus the pole's
@@ -250,23 +217,22 @@ Plain-term resolution in `_fold`, in order:
    manifolds becomes `<ns>/<manifold>%<label>`; **name tier** (`raw`) → a
    2-node `pca` manifold name becomes `%` toward node 0, the + pole;
    **pole tier** → `canonicalize_atom` (slug + variant), a plain vector key.
-   Collisions in either manifold tier raise `AmbiguousSelectorError`. The
+   A collision in either manifold tier raises `AmbiguousSelectorError`. The
    ladder reads a memoized walk of installed manifold folders, so labels
    resolve whether or not the manifold is fitted for the loaded model.
 
-Projection operands and ablation targets skip both manifold tiers: they must
-fold to a single direction (a 2-node `pca` manifold name, an instrument atom,
-or an in-memory profile), so write `!formal.casual`, not `!formal`. A `%`
-left operand is a manifold name verbatim: no slugging, no pole resolution.
-Keys carry `<ns>/` only when typed and `:<variant>` only when not `raw`.
+Projection operands and ablation targets skip both manifold tiers and must
+fold to a single direction (a 2-node `pca` manifold name, an instrument atom or
+an in-memory profile): `!formal.casual`, not `!formal`. A `%` left operand is a
+manifold name verbatim. Keys carry `<ns>/` only when typed and `:<variant>`
+only when not `raw`.
 
 ## Composition (`composer.py`)
 
-`SteeringComposer` reaches the session only through its constructor
-arguments: the `ArtifactSource`, `NeutralSource` and `UnitSource` protocols
-(the session's `ArtifactRegistry`, `NeutralBaseline` and
-`units.runtime.UnitsRuntime`), the manager, the exclusive generation lock, the
-event bus, and two callbacks.
+`SteeringComposer` reaches the session only through constructor arguments: the
+`ArtifactSource`, `NeutralSource` and `UnitSource` protocols (the session's
+`ArtifactRegistry`, `NeutralBaseline` and `units.runtime.UnitsRuntime`), the
+manager, the exclusive generation lock, the event bus and two callbacks.
 
 **Resolution.** `open_scope(value)` parses (with `profile_names`), then
 `resolve()` concretizes and loads every artifact: `concretize_key` pins a bare
@@ -274,165 +240,144 @@ event bus, and two callbacks.
 `AmbiguousVariantError` 400); `ensure_profile_registered` returns an in-memory
 profile, an instrument atom, or a fitted 2-node manifold folded to its
 direction; `ensure_manifold_loaded` loads `%` targets. Unknown names and labels
-raise here, before the scope is entered. `resolve_scope_role` then picks the
-scope's assistant-role label: explicit `:role-<id>` keys must agree (else
-`SteeringExprError`), plain keys mixed in warn (`RoleBaselineMismatchWarning`);
-each `%` term implies its nearest node's role, disagreements resolve to the
-highest `|along|` with a warning, and an explicit role beats an implied one.
+raise here, before the scope is entered. `resolve_scope_role` picks the scope's
+assistant-role label: explicit `:role-<id>` keys must agree (else
+`SteeringExprError`), plain keys mixed in warn; each `%` term implies its
+nearest node's role (disagreements resolve to the highest `|along|` with a
+warning), and an explicit role beats an implied one.
 
 **Scopes and the stack.** Entering a `SteeringScope` pushes its frame (and
-role) and reinstalls the flattened head: later frames overwrite equal keys,
-and the innermost frame naming a role sets `active_role`. `push` refuses to run
-from inside a generation callback (`generation_phase()` non-None →
-`ConcurrentGenerationError`, 409), then takes the generation lock, so
-another thread's push waits for an in-flight generation. It is transactional:
-if composition or install raises, the frame pops and the outer plan stays
-installed, so composition errors surface on `__enter__`, not at `open_scope`.
+role) and reinstalls the flattened head: later frames overwrite equal keys, and
+the innermost frame naming a role sets `active_role`. `push` takes the
+generation lock (another thread's push waits for an in-flight generation) and
+raises `ConcurrentGenerationError` (409) from inside a generation callback. It
+is transactional: if composition or install raises, the frame pops and the
+outer plan stays installed, so composition errors surface on `__enter__`.
 `pop` is fail-closed: if the outer head no longer composes, all steering is
-cleared before the error propagates. `pop(internal=True)` is the generation's
-own teardown and bypasses the phase guard. Each change emits
-`SteeringApplied` (or `SteeringCleared` when the stack empties), and a head
-that steers the prefill calls `on_prefill_steering_change` (the session drops
-its unsteered prefix cache).
+cleared before the error propagates. Each change emits `SteeringApplied` (or
+`SteeringCleared`); a head that steers the prefill calls
+`on_prefill_steering_change` (the session drops its unsteered prefix cache).
 
-**`compose(entries)`** builds a fresh plan without touching installed state.
-It calls `neutral.ensure()` (the first steer on a fresh model may build the
+**`compose(entries)`** builds a fresh plan without touching installed state. It
+calls `neutral.ensure()` (the first steer on a fresh model may build the
 neutral baseline) and needs the means plus a whitener covering every steered
-layer (`WhitenerError` otherwise; there is no Euclidean path).
+layer (`WhitenerError` otherwise).
 
 | Entry | Lowering |
 |---|---|
 | `(α, trigger)` vector | profile → `fold_directions_to_subspace` (neutral-anchored rank-1 ray, + pole at `‖d_L‖`) → `affine_manifold_push(folded, "+")`, coefficient α |
-| `ProjectedTerm` | `project_profile(base, onto, op, whitener=…)`, memoized on the identities of base, onto and whitener under the clause-free key (one projection serves every clause) and never registered → folded and pushed like a vector |
+| `ProjectedTerm` | `project_profile(base, onto, op, whitener=…)`, memoized on the identities of base, onto and whitener under the clause-free key (one projection serves every clause), never registered → folded and pushed like a vector |
 | `AblationTerm` | target profile's per-layer direction(s) → ablate fragment with its coefficient |
-| `UnitAblationTerm` | `resolve` checks the unit against the model (`UnitIndexError` 400 before the scope); `compose` takes its `UnitSite` (module, coordinate span, neutral mean) from `UnitSource.site` and registers `SteeringPlan.add_unit_ablation(…, coeff, trigger)`; it joins no affine group. The plan cache records the neutral unit statistics it read. Without unit statistics: `UnitsUnavailableError` (422); on a model `BlockSpec` refuses: `UnsupportedBlockError` (422) |
+| `UnitAblationTerm` | `resolve` checks the unit against the model (`UnitIndexError` 400); `compose` takes its `UnitSite` (module, coordinate span, neutral mean) from `UnitSource.site` and registers `SteeringPlan.add_unit_ablation(…, coeff, trigger)`; it joins no affine group. The plan cache records the neutral unit statistics it read. Without unit statistics: `UnitsUnavailableError` (422); on a model `BlockSpec` refuses: `UnsupportedBlockError` (422) |
 | affine `ManifoldTerm` | `affine_manifold_push(manifold, position)`, coefficient `along` (`onto` is vacuous and dropped) |
 | curved `ManifoldTerm` | `SteeringPlan.add_manifold(…, layers=…)` (its own term) |
 
 **Layer scoping.** Before grouping, `select_term_layers(key, fitted, scope,
-n_layers=len(layers))` turns each term's `LayerScope` into its layers: a
+n_layers=…)` turns each term's `LayerScope` into layers: `fitted` is a
 vector's or ablation target's profile layers, a projection's projected layers,
-or a manifold's fitted layers are `fitted`. An index scope must lie inside
-`fitted`; `workspace` resolves against the model depth
-(`resolve_layer_selector("workspace", range(n_layers), …)`) and intersects
-`fitted`. A selected layer outside the fit, or an empty intersection, raises
+or a manifold's fitted layers. An index scope must lie inside `fitted`;
+`workspace` resolves against the model depth and intersects `fitted`. A
+selected layer outside the fit, or an empty intersection, raises
 `SteeringCompositionError` (422) naming the term and its fitted layers. The
-term's per-layer directions or push fragments are restricted to the selection
-(a curved term passes `layers` to `add_manifold`, which restricts its shares
-and lowered layers), so synthesis, the mean-1 share normalization and the
-compiled offsets see only selected layers. A plain vector's scope is read from
-its key (`split_layer_clause`); the other kinds carry `layers`. Ablation
-coefficients stay exact under any selection (`eff_along · κ` is still the
-user's coefficient).
+term's directions or push fragments are restricted to the selection (a curved
+term passes `layers` to `add_manifold`, which restricts its shares and lowered
+layers), so synthesis, the mean-1 share normalization and the compiled offsets
+see only selected layers. A plain vector's scope is read from its key; the
+other kinds carry `layers`. Ablation coefficients stay exact under any
+selection (`eff_along · κ` is the user's coefficient).
 
-`SteeringComposer.term_layers(entries)` (and `SteeringScope.term_layers()`)
-reports where each resolved term acts, for the dashboard's term editor (`POST
-.../steering/validate`): a `TermLayers` of its fitted layers, its share at each
-(mean 1 over the fitted layers) and the layers its clause selects
-(`select_term_layers`, so a clause composition refuses raises here too). Each
-term is weighed alone and unscoped, as composition weighs it: a push (vector,
-pole, projection, affine `%`) by its whitened displacement `‖Δ_L‖_M`, a curved
-`%` by its baked Mahalanobis share, an ablation evenly (its coefficient is exact
-at every layer), a unit at its own layer. It takes the exclusive lock and
-changes nothing installed.
+`SteeringComposer.term_layers(entries)` reports where each resolved term acts,
+for the dashboard's term editor: its fitted layers, its share at each (mean 1)
+and the layers its clause selects. Each term is weighed alone and unscoped: a
+push by its whitened displacement `‖Δ_L‖_M`, a curved `%` by its baked share,
+an ablation evenly, a unit at its own layer.
 
 Push and ablate fragments group by trigger equality; each group becomes one
 `synthesize_subspace` call (one merged affine subspace per layer, push wins a
 direction shared with an ablation) registered as `__affine__<i>`. Distinct
-triggers produce distinct groups, each with its own share normalization over
-the union of its terms' layers, so a scoped term sharing a trigger with an
-unscoped one is normalized over the union; a scoped term alone in its group
-is normalized over its selection.
-`affine_manifold_push` with a label uses that node's per-layer `node_coords`;
-with coordinates it blends the per-layer coords by cardinal RBF weights over
-the shared layout (exact at nodes). Coordinate arity raises
+triggers make distinct groups, each normalizing shares over the union of its
+terms' layers, so a scoped term sharing a trigger with an unscoped one is
+normalized over the union, and a scoped term alone in its group over its
+selection. `affine_manifold_push` with a label uses that node's per-layer
+`node_coords`; with coordinates it blends the per-layer coords by cardinal RBF
+weights over the shared layout (exact at nodes). Wrong coordinate arity raises
 `ManifoldArityError`; a non-poised layout raises `SteeringExprError` advising
 the label form.
 
-**Plan cache.** `plan_for` keys on `tuple(entries.items())` (entries are
-frozen, and every key carries its canonical layer clause, so two clauses are
-two plans) in an LRU of `_PLAN_CACHE_SIZE = 16`, enough for the push/pop pair of
-each `generate(steering=…)`. A hit is reused only while every registry object
-composition read is still the identical object (`_CachedPlan.deps`;
-registries replace values, so a re-extract, eviction, whitener rebuild or
-neutral refresh misses). Plans memoize their lowering per `(device, dtype)`
-and their static offsets.
+**Plan cache.** `plan_for` keys an LRU (`_PLAN_CACHE_SIZE = 16`, enough for the
+push/pop pair of each `generate(steering=…)`) on `tuple(entries.items())`. A hit
+is reused only while every registry object composition read is still the
+identical object (`_CachedPlan.deps`; a re-extract, eviction, whitener rebuild
+or neutral refresh misses). Plans memoize lowering per `(device, dtype)`.
 
-**Stack queries.** `gate_refs()` → `(scalar key, GateRef)` pairs for the read
-plane; `steering_needs_probe_gating()` → the engine wires the gate score
-callback only when true; `steering_active_in_prefill()` (a term steers prefill
+**Stack queries.** `gate_refs()` gives the read plane its `(scalar key,
+GateRef)` pairs; `steering_needs_probe_gating()` decides whether the engine
+wires the gate callback; `steering_active_in_prefill()` (a term steers prefill
 iff `trigger.prompt and trigger.gate is None`) gates prefix-cache reuse;
-`steering_value_prefill_inactive(value)` answers the same for an incoming
-value (batch prefill sharing; a malformed value reports active);
-`snapshot_steering_alphas()` feeds result receipts (`along` for `%`);
-`assert_unsteered()` raises `ConcurrentExtractionError` for artifact-producing
-work inside a scope, whose hooks would bake into the artifact (injected into
-extraction and fits, the lens fit and the SAE runtime; the neutral baseline
-checks for an installed plan itself).
+`snapshot_steering_alphas()` feeds result receipts. `assert_unsteered()` raises
+`ConcurrentExtractionError` for artifact-producing work inside a scope, whose
+hooks would bake into the artifact.
 
 ## Lowering and hooks (`hooks.py`)
 
-`SteeringPlan.lower(device, dtype)` places curved groups first at each layer
-(a curved term lowers only at the layers of its `shares`). Two curved spans
-sharing a layer with max Mahalanobis |cosine| (`B_new · P_prevᵀ`) above `_CURVED_ORTHO_TOL = 1e-3` raise
-`OverlappingManifoldError` (422); disjoint layer clauses let one curved
-manifold appear twice (`m%a{0-3} + m%b{4-7}`). Each affine
-term then goes through `_lower_affine_subspaces`, the single affine lowering:
-mean-1 share normalization, `_orthogonalize_affine_against` the curved span at
-that layer (Mahalanobis-orthogonally, through the curved frames' read rows;
-the curved term owns shared directions; κ is carried through the
+`SteeringPlan.lower(device, dtype)` places curved groups first at each layer (a
+curved term lowers only at the layers of its `shares`). Two curved spans
+sharing a layer with max Mahalanobis |cosine| (`B_new · P_prevᵀ`) above
+`_CURVED_ORTHO_TOL = 1e-3` raise `OverlappingManifoldError` (422); disjoint
+layer clauses let one curved manifold appear twice (`m%a{0-3} + m%b{4-7}`).
+Each affine term then goes through `_lower_affine_subspaces`, the single
+affine lowering: mean-1 share normalization, orthogonalization against the
+curved span at that layer (Mahalanobis-orthogonally through the curved frames'
+`read` rows; the curved term owns shared directions; κ is carried through the
 re-orthonormalization; a fully contained span drops the layer),
 `eff_along = share_L · _SUBSPACE_GAIN`, and `kappa = requested_κ / eff_along`,
 so `eff_along · κ` is exactly the user's ablation coefficient and ablation
-strength is independent of share and gain. Both the transient `AffineOp` and
-the compiled offsets (`LoweredAffine.offset`) consume this result; tests pin
-their parity.
+strength is independent of share and gain. The transient `AffineOp` and the
+compiled offsets (`LoweredAffine.offset`) both consume this result.
 
 ### Gains
 
 `_normalize_shares_mean1` makes `Σ_L share_L = n_layers`, so a 1-layer or
 30-layer fit, 4-dim or 16-dim, lands in the same α band; `n_layers` counts the
-layers a group or curved term acts on, so a layer clause selecting one layer
-lands there too. The raw share is
+layers a group or curved term acts on. The raw share is
 `SynthesizedSubspace.share` (the whitened push displacement `‖Δ_L‖_M`; a
 positive proxy on pure-ablation layers) or a curved fit's baked
-`mahalanobis_share`, which must cover exactly its fitted layers and is then
-normalized over the term's selected layers.
-`synthesize_subspace` makes each push target whitened-unit, so every target
-gets the same whitened budget (`Σ_L eff_along_L = gain · n_layers`; rationale
-in `ARCHITECTURE.md` §6.4). There is no lever or N correction and no clamp or
-water-fill on affine `along`; a high-share layer is meant to overshoot,
-bounded by the whitened-unit target.
+`mahalanobis_share`, which covers exactly its fitted layers and is normalized
+over the term's selected layers. `synthesize_subspace` makes each push target
+whitened-unit, so every target gets the same whitened budget (`Σ_L eff_along_L
+= gain · n_layers`; rationale in `ARCHITECTURE.md` §6.4). Affine `along` has no
+clamp or water-fill: a high-share layer overshoots by design, bounded by the
+whitened-unit target.
 
 | Constant | Value | Applies as | Calibration |
 |---|---|---|---|
-| `_SUBSPACE_GAIN` | 8.0 | affine: `eff_along_L = share_L · 8`, α already folded into the target | First set at 16 on a gemma-4-12b α sweep over `formal.casual%formal`, `personas%caveman`, `personas%hacker` with covector writes: dead → expressive at `16·α ≈ 7–8`, coherence ceilings about 2× apart; α ≈ 0.5 expressive, α ≈ 1.0 strong / over-steer. Typed frames write along `δ`, which disrupts more per whitened unit, so the gain was re-fit to keep those α bands: the new α matching the old code's neutral-text NLL cost at α ∈ {0.25, 0.5, 1} was 0.47–0.48× the old one (six bipolar concepts on SmolLM2-360M, gemma-3-4b, Llama-3.1-8B, gemma-4-12b; per model 0.44–0.55). At matched cost the `δ` write moves pole preference more for most concepts. |
-| `_MANIFOLD_ALONG_GAIN` | 2.0 | curved: `eff_along_L = along · share_L · 2`; periodic `BoxDomain`: `min(1, along · 2)` on every layer | First set at 4 on a stateless gemma-4-12b `months_loop%january` sweep (`along = 1.0` vivid and coherent), when curved surfaces passed through the centroids' projections onto the covector span. They now pass through the centroids, so the same fraction moves 2–3× further; equal-cost `along` on spectral `emotions` (SmolLM2-360M, gemma-4-12b) was 0.35–0.80× the old one, geo-mean about 0.55, hence 2. `eff_along = 1` lands on the node; `norm_cap = 3·‖h‖` bounds overshoot. |
-| `_MANIFOLD_ONTO_GAIN` | 0.5 | curved: `eff_onto_L = min(1, onto · share_L · 0.5)` | gemma-4-12b `emotions%dominant` sweep at along 0.3: onto ≈ 0.5 sweet spot, 1.0 strong but coherent. Too much `onto` erases per-token variation and loops. |
+| `_SUBSPACE_GAIN` | 8.0 | affine: `eff_along_L = share_L · 8`, α already folded into the target | gemma-4-12b α sweeps (`formal.casual%formal`, `personas%caveman`, `personas%hacker`): α ≈ 0.5 expressive, α ≈ 1.0 strong / over-steer. Re-fit when frames began writing along `δ` rather than `Σ⁻¹δ`, matching neutral-text NLL cost at α ∈ {0.25, 0.5, 1} (six bipolar concepts on SmolLM2-360M, gemma-3-4b, Llama-3.1-8B, gemma-4-12b). |
+| `_MANIFOLD_ALONG_GAIN` | 2.0 | curved: `eff_along_L = along · share_L · 2`; periodic `BoxDomain`: `min(1, along · 2)` on every layer | `months_loop%january` on gemma-4-12b (`along = 1.0` vivid and coherent), and equal-cost `along` on spectral `emotions` (SmolLM2-360M, gemma-4-12b). `eff_along = 1` lands on the node. |
+| `_MANIFOLD_ONTO_GAIN` | 0.5 | curved: `eff_onto_L = min(1, onto · share_L · 0.5)` | gemma-4-12b `emotions%dominant` at along 0.3: onto ≈ 0.5 sweet spot, 1.0 strong but coherent. Too much `onto` erases per-token variation and loops. |
 
-Curved `along` and `onto` are fractions: each caps at 1 before gain, and a
-negative value raises `SteeringCompositionError` (422) in `add_manifold`
-because a curved position has no opposite. Periodic fits drop share weighting
-because share × gain would send some layers past the node and each would wrap
-to a different one; consequently every `along ≥ 0.5` lands all layers on the
-node. `fit_mode=auto` can resolve flat on one model and curved on another, so
-the same negative `%` coefficient pushes away on one and raises on the other.
-Recommended affine α is about 0.5, toward 1.0 for stronger expression.
+Curved `along` and `onto` are fractions, capped at 1 before gain; a negative
+value raises `SteeringCompositionError` (422) in `add_manifold` because a
+curved position has no opposite. Periodic fits drop share weighting (share ×
+gain would send some layers past the node, each wrapping to a different one),
+so every `along ≥ 0.5` lands all layers on the node. `fit_mode=auto` can
+resolve flat on one model and curved on another, so the same negative `%`
+coefficient pushes away on one and raises on the other. Recommended affine α
+is about 0.5, toward 1.0 for stronger expression.
 
 ### Hooks and installation
 
 `AffineOp` applies `h += c − ((h·Pₐᵀ − μPₐᵀ) ⊙ s) Bₐ`, with the fixed push
 `c = eff_along · target @ B` and the activation-dependent ablation restricted
-to the nonzero-κ axes: read rows `Pₐ` measure, write rows `Bₐ` move
-(`s = eff_along · κ`). A pure push is one `add_`; a rank-1 ablation is a dot
-plus `addcmul_` (MPS dispatch makes this cheaper than a tiny GEMM). Constants are built in fp32 and cast once to the residual dtype
-(re-cast once if the residual is narrower). There is no norm cap on this path:
-a flat fit has no RBF to extrapolate.
+to the nonzero-κ axes: read rows `Pₐ` (`read`) measure, write rows `Bₐ`
+(`basis`) move (`s = eff_along · κ`). A pure push is one `add_`; a rank-1
+ablation is a dot plus `addcmul_` (cheaper than a tiny GEMM under MPS
+dispatch). Constants are built in fp32 and cast once to the residual dtype.
+There is no norm cap on this path (a flat fit has no RBF to extrapolate).
 
 `SteeringHook.recompose` arms a layer. One always-active `AffineGroup` makes
-the hook static: `hook_fn` is a single `AffineOp.apply` with no
-`TriggerContext` read. Otherwise it walks the groups, skipping inactive
-triggers (`_trigger_active` short-circuits on `is Trigger.BOTH`, and
+the hook static: `hook_fn` is a single `AffineOp.apply` with no `TriggerContext`
+read. Otherwise it walks the groups, skipping inactive triggers
+(`_trigger_active` short-circuits on `is Trigger.BOTH`, and
 `_canonical_trigger` interns equal-to-BOTH triggers at registration so that
 identity holds). Curved groups run `subspace_inject` in fp32 with a
 warm-started foot: the previous token's foot seeds one Gauss-Newton step; a
@@ -442,72 +387,44 @@ foot carries from prefill into decode; `reset_manifold_feet()` cold-starts
 every generation.
 
 **Unit ablation.** `SteeringPlan.add_unit_ablation` records a `UnitTerm`
-(module, coordinate span `[start, stop)` of its input, width, neutral mean,
-coefficient, trigger); `lower_units(device, dtype)` (memoized) groups terms by
-module and trigger into one `UnitOp` each: full-width fp32 constants `keep`
-(1, and `1 − α` on the units' coordinates) and `bias` (0, and `α·mean`),
-composed in registration order when two terms share a span, cast once to the
-activation dtype. `UnitOp.apply` is `x.mul_(keep).add_(bias)` on the
-projection's input: two elementwise ops, no gather, no allocation, no host
-sync, every position the forward carries (the whole prompt in a prefill)
-except the attention sink. The unit means count positions from 1, so position
-0 keeps its own activation: `TriggerContext.sink_column` names the column
-holding absolute position 0 (rest state 0, for replays, captures and scores
-over a sequence from the start; the decode loop sets 0 on a prefill from
-position 0 or a cacheless re-feed and `None` on incremental steps, as the
-joint-logprob replay does, and both restore 0 after), and the `UnitHook`
-holds that one column aside and writes it back after its ops (one
-`[B, 1, F]` copy, only in a forward that carries position 0). A left-padded
-batch has a per-row sink column, so `session/batch.py` sends a batch with a
-unit ablation to the serial loop. A `UnitHook` is a forward pre-hook on the
-down or output projection; one always-active group makes it static (no
-trigger evaluation), otherwise it walks its groups like a `SteeringHook`. Unit terms make `static_offsets()`
-`None`: the compiled graph was not traced with a module pre-hook.
+(module, input coordinate span, neutral mean, coefficient, trigger);
+`lower_units` groups terms by module and trigger into one `UnitOp`: fp32
+`keep` (1, and `1 − α` on the units' coordinates) and `bias` (0, and `α·mean`)
+constants, composed in registration order when spans overlap. `UnitOp.apply` is
+`x.mul_(keep).add_(bias)` on the projection's input at every position the
+forward carries except the attention sink: the unit means count positions from
+1, so position 0 keeps its own activation. `TriggerContext.sink_column` names
+the column holding absolute position 0 (0 for a forward from the start, `None`
+on incremental decode steps), and the `UnitHook` holds that column aside and
+writes it back. A left-padded batch has per-row sink columns, so
+`session/batch.py` sends a batch with a unit ablation to the serial loop. A
+`UnitHook` is a forward pre-hook on the down or output projection; unit terms
+make `static_offsets()` `None`, since the compiled graph was not traced with a
+module pre-hook.
 
 `SteeringManager.install(plan, …)`: when the session adopted compiled offset
 buffers (`install_persistent_offset_hooks` runs before `torch.compile` on
-CUDA/MPS; `adopt_compiled_offsets`) and `plan.static_offsets()` returns a map
-(no curved term, no unit term, every group `Trigger.BOTH`, every layer a pure
-push), it writes the buffers in place (`copy_`; reassigning would change
-identity and force a retrace; untouched layers are zeroed), attaches no
-transient hook and sets `uses_compiled_offsets`. Otherwise it zeroes the
-buffers and attaches or re-arms one transient `SteeringHook` per steered layer
-and one `UnitHook` per module carrying unit ablations (`unit_hooks`, keyed by
-module id). Lowering and validation run before any state changes, so a
-raising install keeps the previous plan; `clear_all()` is the inverse, and an
-empty stack always clears. Routing predicates for `session/engine.py`:
-`all_fast_path()` (no transient hook, unit hooks included: unsteered or on
-offsets, so the compiled graph is valid) and `static_steerable()` (hooks
-attached, every layer hook and unit hook static, so StaticCache stays
-eligible). On a compiled session any transient hook, a unit hook or the units
-read tap included, routes to the eager original module: a unit ablation never
-rides the compiled graph (`tests/units/test_unit_steering.py` pins the
-predicates).
+CUDA/MPS) and `plan.static_offsets()` returns a map (no curved or unit term,
+every group `Trigger.BOTH`, every layer a pure push), it writes the buffers in
+place (`copy_`; reassigning would force a retrace; untouched layers are zeroed)
+and attaches no transient hook. Otherwise it zeroes the buffers and attaches
+or re-arms one transient `SteeringHook` per steered layer and one `UnitHook`
+per module carrying unit ablations. Lowering and validation run before any
+state changes, so a raising install keeps the previous plan; `clear_all()` is
+the inverse. Routing predicates for `session/engine.py`: `all_fast_path()` (no
+transient or unit hook, so the compiled graph is valid) and `static_steerable()`
+(every layer and unit hook static, so StaticCache stays eligible). On a compiled
+session any transient hook, a unit hook or the units read tap routes to the
+eager original module.
 
 `TriggerContext` is `SteeringManager.ctx`. `generation/decode.py::generate_steered`
 sets `is_prefill`, `thinking` and `gen_step` before each forward and replaces
-`probe_scores` after it; hooks only read it.
-
-Hot-path rules (gated by `tests/gpu/test_smoke.py::test_throughput_regression`,
-steered ≥ 85% of vanilla tok/s): hooks write the layer output in place, never
-call `.item()` or otherwise sync the host, and create nothing per call beyond
-the op's own tensors. Validation, overlap checks and constant preparation
-belong in compose or lower.
+`probe_scores` after it; hooks only read it. Hooks write the layer output in
+place and do no host sync (the throughput gate is in the root `AGENTS.md`);
+validation, overlap checks and constant preparation belong in compose or lower.
 
 ## Tests
 
-All CPU, in `tests/steering/`: grammar and round trips
-(`test_steering_expr.py`, `test_manifold_grammar.py`, unit atoms in
-`test_unit_grammar.py`, the parsed-IR golden in `test_steering_ir.py`), triggers
-(`test_triggers.py`), scopes on a real session and on
-`tests/support/composer.py::SteeringRig` (`test_steering_context.py`,
-`test_steering_context_ablation.py`), installed state and offset buffers
-(`test_steering_install.py`), affine lowering, gain, κ compensation and
-compiled/eager parity (`test_subspace_steering.py`), `AffineOp` against
-`subspace_inject` on a frame whose reads differ from its writes
-(`test_hooks_triggers.py`), curved lowering and foot state
-(`test_manifold_steering.py`), layer clauses through composition: coverage,
-ablation exactness, shares over the selection, 422s, curved restriction,
-compiled/eager parity and plan-cache keying (`test_layer_scoped_steering.py`).
-Unit ablation and neuron pushes against hand-patched forwards:
-`tests/units/test_unit_steering.py`. Kernel math lives in `tests/geometry/`.
+`tests/steering/` is CPU-only. `tests/support/composer.py::SteeringRig` drives
+the composer without a session; `tests/units/test_unit_steering.py` checks unit
+ablation and neuron pushes against hand-patched forwards.

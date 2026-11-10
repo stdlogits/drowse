@@ -16,11 +16,14 @@ from safetensors.torch import load_file, save_file
 import torch
 
 from drowse.base.atomic import artifact_lock, fsync_directory, write_json_atomic
-from drowse.base.integrity import hash_file, is_sha256_digest, verify_integrity
+from drowse.base.integrity import hash_file
 from drowse.base.source_registry import LOCAL, SourceRef
 from drowse.sae.sources import SAE_SOURCES, sae_release
 
 LOCAL_SAE_FORMAT_VERSION = 1
+#: What the reader needs; other keys are ignored.  ``tensor_sha256`` is the
+#: payload's identity (the backend's ``revision`` and ``fingerprint``), not an
+#: integrity check: loads never re-hash the payload.
 _MANIFEST_FIELDS = {
     "format_version",
     "kind",
@@ -55,8 +58,8 @@ def _validate_manifest(
     model_id: str,
     name: str,
 ) -> dict[str, Any]:
-    if not isinstance(payload, dict) or set(payload) != _MANIFEST_FIELDS:
-        raise ValueError("local SAE manifest has an invalid schema")
+    if not isinstance(payload, dict) or not _MANIFEST_FIELDS <= payload.keys():
+        raise ValueError("local SAE manifest is missing fields")
     if (
         payload.get("format_version") != LOCAL_SAE_FORMAT_VERSION
         or payload.get("kind") != "local"
@@ -98,19 +101,16 @@ def _validate_manifest(
         or not tensor_file.endswith(".safetensors")
     ):
         raise ValueError("local SAE manifest has invalid tensor_file")
-    if not is_sha256_digest(payload.get("tensor_sha256")):
-        raise ValueError("local SAE manifest has invalid tensor digest")
+    if not isinstance(payload["tensor_sha256"], str) or not payload["tensor_sha256"]:
+        raise ValueError("local SAE manifest has an invalid tensor identity")
     return payload
 
 
 def load_local_sae_manifest(model_id: str, name: str) -> dict[str, Any] | None:
     """The validated manifest of a trained SAE, or ``None``.
 
-    Metadata-only: the schema and the payload's safetensors header (keys,
-    shapes, dtype) are checked, but the multi-GB payload is not hashed —
-    listing and selection run on every dashboard refresh.  The digest is
-    verified where the bytes are actually used, in
-    :func:`load_local_sae_tensors`.
+    Metadata-only: the fields and the payload's safetensors header (the four
+    weights' shapes and dtype) are checked; the payload is never hashed.
     """
     path = local_sae_manifest_path(model_id, name)
     if not path.exists():
@@ -127,7 +127,7 @@ def load_local_sae_manifest(model_id: str, name: str) -> dict[str, Any] | None:
             "b_dec": (payload["d_model"],),
         }
         with safe_open(str(tensor_path), framework="pt", device="cpu") as tensors:
-            if set(tensors.keys()) != set(expected):
+            if not set(expected) <= set(tensors.keys()):
                 return None
             for key, shape in expected.items():
                 view = tensors.get_slice(key)
@@ -142,21 +142,13 @@ def load_local_sae_tensors(
     model_id: str,
     name: str,
 ) -> tuple[dict[str, torch.Tensor], dict[str, Any]] | None:
-    """Load a trained SAE's weights after verifying their recorded digest.
-
-    The digest check rides :func:`verify_integrity`'s stat-identity cache,
-    so a warm reload of an unchanged payload does not re-hash it.
-    """
+    """Load a trained SAE's four weights, refusing non-finite ones."""
     manifest = load_local_sae_manifest(model_id, name)
     if manifest is None:
         return None
     root = SAE_SOURCES.local_dir(model_id, name)
-    ok, _bad = verify_integrity(
-        root, {manifest["tensor_file"]: manifest["tensor_sha256"]},
-    )
-    if not ok:
-        return None
-    tensors = load_file(str(root / manifest["tensor_file"]))
+    loaded = load_file(str(root / manifest["tensor_file"]))
+    tensors = {key: loaded[key] for key in ("W_enc", "W_dec", "b_enc", "b_dec")}
     if any(not torch.isfinite(value).all() for value in tensors.values()):
         return None
     return tensors, manifest

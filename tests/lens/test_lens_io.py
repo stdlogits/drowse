@@ -134,7 +134,7 @@ def test_save_load_round_trip() -> None:
     site = sidecar["sites"]["out"]
     assert site["layers"] == [0, 1, 2]
     assert set(site["tensor_files"]) == {"0", "1", "2"}
-    assert set(site["tensor_sha256"]) == {"0", "1", "2"}
+    assert "tensor_sha256" not in site
     assert all(
         filename.startswith(f"out.layer-{layer}.gen-")
         for layer, filename in site["tensor_files"].items()
@@ -180,40 +180,6 @@ def test_missing_layer_topup_reuses_immutable_existing_shards() -> None:
     assert loaded is not None and loaded[0].source_layers == [0, 1, 2]
 
 
-def test_unverified_shard_reuse_falls_back_to_payload_hashes(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import drowse.base.integrity as integrity
-
-    initial = _lens(n_layers=2)
-    _save(initial)
-    merged = JacobianLens(
-        {**initial.jacobians, 2: torch.eye(_D)},
-        n_prompts=initial.n_prompts,
-        d_model=_D,
-    )
-    real_hash = integrity.hash_file
-    hashed: list[Path] = []
-
-    def _count_hash(path: Path) -> str:
-        hashed.append(path)
-        return real_hash(path)
-
-    monkeypatch.setattr(integrity, "hash_file", _count_hash)
-    _save_lens(
-        merged, _MODEL,
-        corpus_spec="test-corpus", corpus_sha256=_digest("abc123"),
-        seq_len=128, dim_batch=8, skip_first=16,
-        reuse_layers={0, 1},
-    )
-
-    assert len(hashed) == 2
-    assert {path.name for path in hashed} == {
-        json.loads(_paths()[1].read_text())["sites"]["out"]["tensor_files"][layer]
-        for layer in ("0", "1")
-    }
-
-
 def test_shard_reuse_is_refused_when_fit_identity_changes() -> None:
     lens = _lens(n_layers=2)
     _save(lens)
@@ -244,34 +210,6 @@ def test_artifact_size_refreshes_a_stale_sidecar_snapshot() -> None:
     )
 
     assert lens_artifact_size(_MODEL, name="j") == expected
-
-
-def test_corrupt_reusable_shard_is_rewritten_while_valid_shard_is_kept() -> None:
-    initial = _lens(n_layers=2)
-    _save(initial)
-    _, sc_path = _paths()
-    before = json.loads(sc_path.read_text())["sites"]["out"]["tensor_files"]
-    corrupt = sc_path.parent / before["0"]
-    payload = bytearray(corrupt.read_bytes())
-    payload[-1] ^= 1
-    corrupt.write_bytes(payload)
-    merged = JacobianLens(
-        {**initial.jacobians, 2: torch.eye(_D)},
-        n_prompts=initial.n_prompts, d_model=_D,
-    )
-
-    _save_lens(
-        merged, _MODEL,
-        corpus_spec="test-corpus", corpus_sha256=_digest("abc123"),
-        seq_len=128, dim_batch=8, skip_first=16,
-        reuse_layers={0, 1},
-    )
-
-    after = json.loads(sc_path.read_text())["sites"]["out"]["tensor_files"]
-    assert after["0"] != before["0"]
-    assert after["1"] == before["1"]
-    loaded = load_lens(_MODEL)
-    assert loaded is not None and loaded[0].source_layers == [0, 1, 2]
 
 
 def test_save_load_checkpoint_round_trip() -> None:
@@ -377,34 +315,6 @@ def test_checkpoint_promotion_sidecar_failure_preserves_both_artifacts(
     assert still_checkpoint is not None and still_checkpoint[0].n_prompts == 5
 
 
-def test_checkpoint_promotion_rejects_corrupt_shard_and_keeps_pointers() -> None:
-    _save_lens(
-        _lens(n_layers=2, n_prompts=3), _MODEL,
-        corpus_spec="old", corpus_sha256=_digest("old-sha"),
-        seq_len=128, dim_batch=8, skip_first=16,
-        model_fingerprint="weights",
-    )
-    _save_checkpoint(
-        _lens(n_layers=2, n_prompts=5), _MODEL,
-        corpus_spec="new", corpus_sha256=_digest("new-sha"),
-        corpus_hash_kind="token_ids_v1", seq_len=128, dim_batch=8,
-        skip_first=16, model_fingerprint="weights",
-    )
-    checkpoint_ts, checkpoint_sc = _paths(checkpoint=True)
-    payload = bytearray(checkpoint_ts.read_bytes())
-    payload[-1] ^= 1
-    checkpoint_ts.write_bytes(payload)
-
-    assert not promote_lens_checkpoint(
-        _MODEL, name="j", n_prompts=5, site_layers={"out": [0, 1]},
-        corpus_sha256=_digest("new-sha"), corpus_hash_kind="token_ids_v1",
-        seq_len=128, d_model=_D, model_fingerprint="weights",
-    )
-    final = load_lens(_MODEL)
-    assert final is not None and final[0].n_prompts == 3
-    assert checkpoint_sc.exists() and checkpoint_ts.exists()
-
-
 def test_subsumed_checkpoint_recovery_handles_subset_layers() -> None:
     final = _lens(n_layers=3, n_prompts=7)
     _save_lens(
@@ -465,7 +375,7 @@ def test_subsumed_checkpoint_recovery_preserves_other_corpus() -> None:
     assert load_lens_checkpoint(_MODEL, "j") is not None
 
 
-def test_subsumed_checkpoint_recovery_preserves_recovery_point_if_final_corrupt() -> None:
+def test_subsumed_checkpoint_recovery_preserves_recovery_point_if_final_unreadable() -> None:
     _save_lens(
         _lens(n_layers=2, n_prompts=7), _MODEL,
         corpus_spec="same", corpus_sha256=_digest("same-sha"),
@@ -479,9 +389,7 @@ def test_subsumed_checkpoint_recovery_preserves_recovery_point_if_final_corrupt(
         skip_first=16, model_fingerprint="weights",
     )
     final_tensor, _ = _paths()
-    payload = bytearray(final_tensor.read_bytes())
-    payload[-1] ^= 1
-    final_tensor.write_bytes(payload)
+    final_tensor.unlink()
 
     assert not remove_subsumed_lens_checkpoint(_MODEL, name="j")
     assert load_lens_checkpoint(_MODEL, "j") is not None
@@ -566,15 +474,6 @@ def test_load_non_finite_returns_none() -> None:
     lens = _lens()
     lens.jacobians[1][0, 0] = float("inf")
     _save(lens)
-    assert load_lens(_MODEL) is None
-
-
-def test_load_rejects_same_shape_finite_payload_corruption() -> None:
-    _save(_lens())
-    ts_path, _ = _paths()
-    payload = bytearray(ts_path.read_bytes())
-    payload[-1] ^= 1
-    ts_path.write_bytes(payload)
     assert load_lens(_MODEL) is None
 
 
@@ -792,11 +691,10 @@ def test_checkpoint_payload_is_durable_before_pointer_publication(
     real_payload = lens_io._save_fp32_square_safetensors_atomic
     real_pointer = lens_io.write_json_atomic
 
-    def record_payload(*args: object, **kwargs: object) -> str:
+    def record_payload(*args: object, **kwargs: object) -> None:
         assert kwargs.get("durable") is True
-        digest = real_payload(*args, **kwargs)  # type: ignore[arg-type]
+        real_payload(*args, **kwargs)  # type: ignore[arg-type]
         events.append("payload")
-        return digest
 
     def record_pointer(path: Path, payload: object) -> None:
         events.append("pointer")

@@ -68,28 +68,14 @@ def _publish_noble(baker: _Baker, tmp_path: Path) -> tuple[Path, Any]:
         "noble", dirs, means,
         whitener=isotropic_whitener(dirs, 4), label="merged",
     )
-    from drowse.base.integrity import hash_file
-
-    honest_source = tmp_path / "honest-source.safetensors"
-    warm_source = tmp_path / "warm-source.safetensors"
-    honest_source.write_bytes(b"manifest-proven honest source")
-    warm_source.write_bytes(b"manifest-proven warm source")
     merged_folder = publish_baked_manifold(
         "local", "noble", "merged",
         [BakedTensor(
             model_id=baker.model_id, manifold=manifold,
             model_fingerprint=loaded_model_fingerprint(baker.model, baker.model_id),
             components={
-            "0": {
-                "selector": "default/honest",
-                "alpha": 0.3,
-                "tensor_sha256": hash_file(honest_source),
-            },
-            "1": {
-                "selector": "default/warm",
-                "alpha": 0.4,
-                "tensor_sha256": hash_file(warm_source),
-            },
+            "0": {"selector": "default/honest", "alpha": 0.3},
+            "1": {"selector": "default/warm", "alpha": 0.4},
         },
         )],
         method="merge",

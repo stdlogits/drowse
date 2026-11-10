@@ -325,7 +325,7 @@ class Extraction:
         """
         from drowse.store.manifold_folder import ManifoldFolder
 
-        nodes = len(ManifoldFolder.load(folder, verify_manifest=False).node_labels)
+        nodes = len(ManifoldFolder.load(folder).node_labels)
         if nodes <= 2:
             return
         where = f"{target.namespace}/{name}"
@@ -342,7 +342,7 @@ class Extraction:
         """Refuse to reuse a folder whose role baseline is not uniformly ``role``."""
         from drowse.store.manifold_folder import ManifoldFolder
 
-        existing = ManifoldFolder.load(folder, verify_manifest=False).roles
+        existing = ManifoldFolder.load(folder).roles
         if existing and all(value == role for value in existing):
             return
         where = f"{target.namespace}/{name}"

@@ -123,6 +123,25 @@ def test_pre_v7_binding_reads_as_absent(tmp_path: Path) -> None:
     assert sources.load_external_lens_binding("org/model", "neuronpedia") is None
 
 
+def test_binding_ignores_keys_it_does_not_use(tmp_path: Path) -> None:
+    from drowse.lens import sources
+
+    config = tmp_path / "config.yaml"
+    config.write_text("x")
+    checkpoint = tmp_path / "lens.pt"
+    checkpoint.write_bytes(b"x")
+    binding = _neuronpedia_binding(config, checkpoint)
+    payload = binding.to_json()
+    payload["retired"] = True
+    payload["provenance"]["retired"] = True
+    for entry in payload["files"].values():
+        entry["retired"] = True
+    write_json_atomic(
+        sources.LENS_SOURCES.binding_path("org/model", "neuronpedia"), payload,
+    )
+    assert sources.load_external_lens_binding("org/model", "neuronpedia") == binding
+
+
 def test_local_lens_layout_and_source_selection() -> None:
     from drowse.lens.sources import LENS_SOURCES, list_lens_sources
     from drowse.lens.store import lens_manifest_path

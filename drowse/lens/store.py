@@ -12,10 +12,10 @@ live in the model's lens source family (:data:`~drowse.lens.sources.LENS_SOURCES
 
 One artifact is one estimator run: one :class:`~drowse.lens.key.LensKey` kind
 with one or both sites (``out``, ``mid``).  The manifest names the kind, and
-per site the layers, shard files, and per-shard sha256::
+per site the layers and shard files::
 
     {"format_version": 7, "kind": "R",
-     "sites": {"out": {"layers": [...], "tensor_files": {...}, "tensor_sha256": {...},
+     "sites": {"out": {"layers": [...], "tensor_files": {...},
                        "split_half": {...}},     # optional; "odd" too in checkpoints
                "mid": {...}},
      "estimator_policy": {"direction", "rules", "skip_first_positions",
@@ -32,7 +32,10 @@ and in memory keeps resumed fits numerically identical to uninterrupted ones.
 The token-id corpus sha256 and loaded-model fingerprint make a different
 corpus or mutable model revision read as stale; ``n_prompts`` is what lets an
 interrupted fit resume (a checkpoint is the estimator's raw sums, averaged
-stripe by stripe while it streams, so it is self-contained).
+stripe by stripe while it streams, so it is self-contained).  Readers require
+the keys they use and ignore the rest (6.1 manifests' per-shard
+``tensor_sha256`` included); shards are checked for their header, shape and
+finiteness, never re-hashed.
 """
 
 from __future__ import annotations
@@ -81,20 +84,20 @@ _PROVENANCE_FIELDS = (
     "raw_corpus_sha256", "raw_prompt_count", "usable_prompt_count",
     "model_layer_count", "model_fingerprint", "model_source_fingerprint",
 )
+#: The keys a manifest must carry; any other key is ignored.
 _MANIFEST_FIELDS = frozenset({
     "format_version", "kind", "sites", "estimator_policy", "n_prompts",
     "d_model", "dtype", "checkpoint", "consumed_prefix_sha256",
     *_PROVENANCE_FIELDS,
 })
-_SITE_FIELDS = frozenset({"layers", "tensor_files", "tensor_sha256"})
+_SITE_FIELDS = frozenset({"layers", "tensor_files"})
 #: Optional per-site fields.  ``split_half`` (``{layer: float}``, every
 #: layer of the site) is the fit's split-half difference: local fits record
-#: it, external imports lack it.  ``odd`` (checkpoints only) names the
-#: odd-half mean shards a resumed fit continues its split-half check from;
-#: promotion drops it.
+#: it, external imports lack it.  ``odd`` (read only in a checkpoint) names
+#: the odd-half mean shards a resumed fit continues its split-half check
+#: from; promotion drops it.
 _SITE_SPLIT_HALF = "split_half"
 _SITE_ODD = "odd"
-_ODD_FIELDS = frozenset({"tensor_files", "tensor_sha256"})
 
 
 def _shard_shape(kind: str, d_model: int) -> tuple[int, int]:
@@ -203,38 +206,6 @@ def lens_identity(sidecar: Mapping[str, Any] | None) -> str | None:
     return hashlib.sha256(canonical).hexdigest()
 
 
-# -- transaction proofs -----------------------------------------------------
-
-@dataclass(frozen=True)
-class _LensPayloadProof:
-    """Transaction-scoped proof that one immutable pointer was byte-verified.
-
-    Constructed only after a successful load or pointer publication.  Callers
-    may reuse it while holding ``lens_fit_lock``; public/unverified callers
-    pass no proof and retain full digest verification.
-    """
-
-    anchor: str
-    pointer_sha256: str
-
-
-def _lens_payload_proof(
-    anchor: Path, sidecar: Mapping[str, Any],
-) -> _LensPayloadProof:
-    return _LensPayloadProof(
-        anchor=str(anchor.resolve(strict=False)),
-        pointer_sha256=cast(str, lens_identity(sidecar)),
-    )
-
-
-def _proof_matches(
-    proof: _LensPayloadProof | None,
-    anchor: Path,
-    sidecar: Mapping[str, Any],
-) -> bool:
-    return proof == _lens_payload_proof(anchor, sidecar) if proof is not None else False
-
-
 # -- paths ------------------------------------------------------------------
 
 def _local_dir(model_id: str, name: str) -> Path:
@@ -300,37 +271,11 @@ def lens_artifact_size(
         for site, entry in current["sites"].items():
             layers = lens_layers(current, site)
             paths.update(_site_tensor_paths(directory, current, site, layers).values())
-            if _SITE_ODD in entry:
+            if checkpoint and _SITE_ODD in entry:
                 paths.update(shard_paths(
                     directory / "pointer", entry[_SITE_ODD], layers, label=_LENS_LABEL,
                 ).values())
         return sum(path.stat().st_size for path in paths)
-
-
-def lens_payloads_match(
-    model_id: str, sidecar: Mapping[str, Any], *, name: str,
-) -> bool:
-    """Validate exact payload digests without materializing fp32 matrices."""
-    from drowse.base.integrity import hash_file
-
-    directory = _local_dir(model_id, name)
-    try:
-        for site, entry in sidecar["sites"].items():
-            expected = entry.get("tensor_sha256")
-            if not isinstance(expected, Mapping):
-                return False
-            paths = _site_tensor_paths(
-                directory, sidecar, site, lens_layers(sidecar, site),
-            )
-            if not all(
-                isinstance(expected.get(str(layer)), str)
-                and hash_file(path) == expected[str(layer)]
-                for layer, path in paths.items()
-            ):
-                return False
-        return True
-    except (OSError, ValueError, KeyError, TypeError, AttributeError):
-        return False
 
 
 @contextmanager
@@ -417,9 +362,13 @@ def _is_count(value: Any, *, minimum: int = 0) -> bool:
 def _validate_manifest(
     sidecar: Any, *, checkpoint: bool, name: str | None,
 ) -> dict[str, Any]:
-    """Exact v7 schema checks that need no payload bytes; raises ``ValueError``."""
-    if not isinstance(sidecar, dict) or set(sidecar) != _MANIFEST_FIELDS:
-        raise ValueError("lens manifest does not match the v7 schema")
+    """v7 schema checks that need no payload bytes; raises ``ValueError``.
+
+    Requires the keys the reader uses and ignores any other, at the top level
+    and per site.  ``odd`` is read only in a checkpoint.
+    """
+    if not isinstance(sidecar, dict) or not _MANIFEST_FIELDS <= sidecar.keys():
+        raise ValueError("lens manifest is missing v7 fields")
     if sidecar["format_version"] != LENS_FORMAT_VERSION:
         raise ValueError(
             f"lens manifest has format_version {sidecar['format_version']!r} "
@@ -472,12 +421,9 @@ def _validate_manifest(
     sites = sidecar["sites"]
     if not isinstance(sites, dict) or not sites or set(sites) - set(LENS_SITES):
         raise ValueError("lens manifest has invalid sites")
-    optional = {_SITE_SPLIT_HALF, _SITE_ODD} if checkpoint else {_SITE_SPLIT_HALF}
     for site, entry in sites.items():
         LensKey(kind, site)
-        if not isinstance(entry, dict) or not (
-            _SITE_FIELDS <= set(entry) <= _SITE_FIELDS | optional
-        ):
+        if not isinstance(entry, dict) or not _SITE_FIELDS <= entry.keys():
             raise ValueError(f"lens site {site!r} has an invalid schema")
         layers = entry["layers"]
         if (
@@ -487,13 +433,6 @@ def _validate_manifest(
         ):
             raise ValueError(f"lens site {site!r} has invalid layers")
         keys = {str(layer) for layer in layers}
-        digests = entry["tensor_sha256"]
-        if (
-            not isinstance(digests, dict)
-            or set(digests) != keys
-            or not all(_is_digest(digest) for digest in digests.values())
-        ):
-            raise ValueError(f"lens site {site!r} digest keys do not match its layers")
         if _SITE_SPLIT_HALF in entry:
             values = entry[_SITE_SPLIT_HALF]
             if (
@@ -505,15 +444,12 @@ def _validate_manifest(
                 )
             ):
                 raise ValueError(f"lens site {site!r} has an invalid split_half")
-        if _SITE_ODD in entry:
+        if checkpoint and _SITE_ODD in entry:
             odd = entry[_SITE_ODD]
             if (
-                not isinstance(odd, dict) or set(odd) != _ODD_FIELDS
-                or not isinstance(odd["tensor_files"], dict)
+                not isinstance(odd, dict)
+                or not isinstance(odd.get("tensor_files"), dict)
                 or set(odd["tensor_files"]) != keys
-                or not isinstance(odd["tensor_sha256"], dict)
-                or set(odd["tensor_sha256"]) != keys
-                or not all(_is_digest(digest) for digest in odd["tensor_sha256"].values())
             ):
                 raise ValueError(f"lens site {site!r} has invalid odd-half shards")
     return sidecar
@@ -540,7 +476,7 @@ def _load_sidecar_at(
         for site in sidecar["sites"]:
             layers = lens_layers(sidecar, site)
             paths = list(_site_tensor_paths(directory, sidecar, site, layers).items())
-            odd = sidecar["sites"][site].get(_SITE_ODD)
+            odd = sidecar["sites"][site].get(_SITE_ODD) if checkpoint else None
             if odd is not None:
                 paths += list(shard_paths(
                     directory / "pointer", odd, layers, label=_LENS_LABEL,
@@ -610,7 +546,6 @@ def save_lens(
     reuse_layers: Iterable[int] | None = None,
     split_half: SplitHalf | None = None,
     select: bool | None = None,
-    _verified_reuse_proof: _LensPayloadProof | None = None,
 ) -> Path:
     """Persist a fitted lens and atomically point at its layer generations.
 
@@ -639,7 +574,7 @@ def save_lens(
                 sites, lens.n_prompts, lens.d_model, directory,
                 kind=lens.kind, provenance=provenance, durable=durable,
                 checkpoint=False, name=name, reuse_layers=reuse_layers,
-                verified_reuse_proof=_verified_reuse_proof, split_half=split_half,
+                split_half=split_half,
             )
     if lens_selectable(lens.sites) if select is None else select:
         select_local_lens(model_id, name)
@@ -683,7 +618,6 @@ def save_lens_checkpoint(
     name: str | None = None,
     odd_sums: Mapping[str, Mapping[int, torch.Tensor]] | None = None,
     split_half: SplitHalf | None = None,
-    _proof_out: list[_LensPayloadProof] | None = None,
 ) -> Path:
     """Write a self-contained checkpoint directly from raw estimator sums.
 
@@ -703,8 +637,7 @@ def save_lens_checkpoint(
             sums, n_prompts, d_model, directory,
             kind=kind, provenance=provenance, durable=True,
             checkpoint=True, name=name, raw_sum_count=int(n_prompts),
-            consumed_prefix_sha256=consumed_prefix_sha256,
-            proof_out=_proof_out, split_half=split_half,
+            consumed_prefix_sha256=consumed_prefix_sha256, split_half=split_half,
             odd_sums=odd_sums if int(n_prompts) // 2 > 0 else None,
         )
 
@@ -722,9 +655,7 @@ def _save_components(
     name: str | None,
     raw_sum_count: int | None = None,
     reuse_layers: Iterable[int] | None = None,
-    verified_reuse_proof: _LensPayloadProof | None = None,
     consumed_prefix_sha256: str | None = None,
-    proof_out: list[_LensPayloadProof] | None = None,
     split_half: SplitHalf | None = None,
     odd_sums: Mapping[str, Mapping[int, torch.Tensor]] | None = None,
 ) -> Path:
@@ -763,9 +694,6 @@ def _save_components(
             and current["estimator_policy"] == policy
         ):
             current = None
-    pointer_verified = current is not None and _proof_matches(
-        verified_reuse_proof, _anchor(directory, checkpoint=checkpoint), current,
-    )
     site_entries: dict[str, dict[str, Any]] = {}
     created: list[Path] = []
     try:
@@ -782,43 +710,25 @@ def _save_components(
                 return value.contiguous()
 
             tensor_files: dict[str, str] = {}
-            tensor_sha256: dict[str, str] = {}
             if current is not None and site in current["sites"]:
-                from drowse.base.integrity import hash_file
-
                 current_layers = lens_layers(current, site)
                 current_paths = _site_tensor_paths(
                     directory, current, site, current_layers,
                 )
-                current_digests = current["sites"][site]["tensor_sha256"]
                 for layer in sorted(reuse_set & set(layer_ids) & set(current_layers)):
-                    digest = current_digests[str(layer)]
-                    path = current_paths[layer]
-                    try:
-                        matches = path.exists() and (
-                            pointer_verified or hash_file(path) == digest
-                        )
-                    except OSError:
-                        matches = False
-                    if matches:
-                        tensor_files[str(layer)] = path.name
-                        tensor_sha256[str(layer)] = digest
+                    if current_paths[layer].exists():
+                        tensor_files[str(layer)] = current_paths[layer].name
             site_anchor = _site_anchor(directory, site, checkpoint=checkpoint)
             for layer in layer_ids:
                 if str(layer) in tensor_files:
                     continue
                 generation_path = _new_layer_generation(site_anchor, layer)
-                digest = _save_fp32_square_safetensors_atomic(
+                _save_fp32_square_safetensors_atomic(
                     generation_path, layer, d_model, _rows, durable=durable,
                 )
                 created.append(generation_path)
                 tensor_files[str(layer)] = generation_path.name
-                tensor_sha256[str(layer)] = digest
-            entry: dict[str, Any] = {
-                "layers": layer_ids,
-                "tensor_files": tensor_files,
-                "tensor_sha256": tensor_sha256,
-            }
+            entry: dict[str, Any] = {"layers": layer_ids, "tensor_files": tensor_files}
             values = (split_half or {}).get(site)
             if values is not None and {int(layer) for layer in values} >= set(layer_ids):
                 entry[_SITE_SPLIT_HALF] = {
@@ -837,15 +747,14 @@ def _save_components(
 
                 odd_anchor = _site_anchor(directory, f"{site}.odd", checkpoint=True)
                 odd_files: dict[str, str] = {}
-                odd_digests: dict[str, str] = {}
                 for layer in layer_ids:
                     generation_path = _new_layer_generation(odd_anchor, layer)
-                    odd_digests[str(layer)] = _save_fp32_square_safetensors_atomic(
+                    _save_fp32_square_safetensors_atomic(
                         generation_path, layer, d_model, _odd_rows, durable=durable,
                     )
                     created.append(generation_path)
                     odd_files[str(layer)] = generation_path.name
-                entry[_SITE_ODD] = {"tensor_files": odd_files, "tensor_sha256": odd_digests}
+                entry[_SITE_ODD] = {"tensor_files": odd_files}
             site_entries[site] = entry
     except BaseException:
         for path in created:
@@ -881,10 +790,6 @@ def _save_components(
     # previous pointer named. Otherwise power loss can roll the directory back
     # to an old pointer whose shards GC already removed.
     fsync_directory(directory)
-    if proof_out is not None:
-        proof_out[:] = [
-            _lens_payload_proof(_anchor(directory, checkpoint=checkpoint), sidecar),
-        ]
     _cleanup_unreferenced_generations(directory)
     fsync_directory(directory)
     return sc_path
@@ -897,7 +802,7 @@ def _save_fp32_square_safetensors_atomic(
     rows: Callable[[int, int, int], torch.Tensor],
     *,
     durable: bool = True,
-) -> str:
+) -> None:
     """Stream one square fp32 layer tensor into an atomic safetensors file.
 
     ``safetensors.torch.save_file`` requires a complete tensor mapping, which
@@ -909,13 +814,10 @@ def _save_fp32_square_safetensors_atomic(
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_name(path.name + ".tmp")
     prefix, raw_header = _lens_safetensors_header(layer, d_model)
-    digest = hashlib.sha256()
     try:
         with open(tmp, "wb", buffering=0) as f:
             f.write(prefix)
-            digest.update(prefix)
             f.write(raw_header)
-            digest.update(raw_header)
             for start in range(0, d_model, 256):
                 block = rows(layer, start, min(start + 256, d_model))
                 expected = (min(start + 256, d_model) - start, d_model)
@@ -925,11 +827,9 @@ def _save_fp32_square_safetensors_atomic(
                         f"{tuple(block.shape)} {block.dtype}; expected "
                         f"{expected} float32"
                     )
-                # Both file.write and hashlib accept the buffer protocol; keep
-                # the stripe tensor alive and avoid a second payload-sized copy.
-                payload = memoryview(cast(Any, block.numpy())).cast("B")
-                f.write(payload)
-                digest.update(payload)
+                # file.write takes the buffer protocol: keep the stripe tensor
+                # alive and avoid a second payload-sized copy.
+                f.write(memoryview(cast(Any, block.numpy())).cast("B"))
             if durable:
                 os.fsync(f.fileno())
     except BaseException:
@@ -937,11 +837,10 @@ def _save_fp32_square_safetensors_atomic(
             tmp.unlink()
         raise
     os.replace(tmp, path)
-    return digest.hexdigest()
 
 
 def _lens_safetensors_header(layer: int, d_model: int) -> tuple[bytes, bytes]:
-    """Canonical writer header bytes, shared by save and load-time digest."""
+    """Canonical writer header bytes (8-byte length prefix, padded JSON)."""
     nbytes = int(d_model) * int(d_model) * 4
     raw_header = json.dumps(
         {
@@ -964,8 +863,7 @@ def load_local_lens(
     model_id: str, name: str,
 ) -> tuple[JacobianLens, dict[str, Any]] | None:
     """Load a Drowse-owned lens (every site it holds) when usable, else ``None``."""
-    loaded = _load_lens_verified(model_id, name=name)
-    return None if loaded is None else (loaded[0], loaded[1])
+    return _load_durable_lens(model_id, name=name)
 
 
 def load_lens(
@@ -982,17 +880,16 @@ def load_lens(
     return load_external_lens(model_id, active.name)
 
 
-def _load_lens_verified(
+def _load_durable_lens(
     model_id: str,
     *,
     name: str,
     requested_layers: Mapping[str, Iterable[int]] | None = None,
-) -> tuple[JacobianLens, dict[str, Any], _LensPayloadProof | None] | None:
-    """Load a durable lens plus a proof reusable under the fit transaction.
+) -> tuple[JacobianLens, dict[str, Any]] | None:
+    """Load a durable lens under the fit lock.
 
     ``requested_layers`` (``{site: layers}``) loads only those sites and
-    layers (see :func:`_load_lens_at`); the proof covers the artifact only
-    when the request names all of it.
+    layers (see :func:`_load_lens_at`).
     """
     directory = _local_dir(model_id, name)
     anchor = _anchor(directory, checkpoint=False)
@@ -1005,19 +902,9 @@ def _load_lens_verified(
             model_id, directory, sidecar, label="lens",
             requested_layers=requested_layers,
         )
-        if loaded is None:
-            return None
-        lens, verified = loaded
-        _cleanup_unreferenced_generations(directory)
-        fully_verified = requested_layers is None or all(
-            site in requested_layers
-            and {int(layer) for layer in requested_layers[site]}
-            >= set(lens_layers(verified, site))
-            for site in verified["sites"]
-        )
-        return lens, verified, (
-            _lens_payload_proof(anchor, verified) if fully_verified else None
-        )
+        if loaded is not None:
+            _cleanup_unreferenced_generations(directory)
+        return loaded
 
 
 def load_lens_checkpoint(
@@ -1041,11 +928,11 @@ def load_lens_checkpoint(
 def load_lens_checkpoint_odd(
     model_id: str, name: str, sidecar: Mapping[str, Any],
 ) -> dict[str, dict[int, torch.Tensor]] | None:
-    """The odd-half means a checkpoint stores, verified, or ``None``.
+    """The odd-half means a checkpoint stores, or ``None``.
 
     ``sidecar`` is the checkpoint the caller loaded; ``None`` when it names
     no odd-half shards, when the checkpoint was replaced since, or when a
-    shard fails verification (the resumed fit then records no split-half).
+    shard fails to read (the resumed fit then records no split-half).
     """
     directory = _local_dir(model_id, name)
     with lens_fit_lock(model_id, name), artifact_lock(_anchor(directory, checkpoint=True)):
@@ -1065,34 +952,19 @@ def load_lens_checkpoint_odd(
                 odd = entry[_SITE_ODD]
                 layers = lens_layers(current, site)
                 paths = shard_paths(directory / "pointer", odd, layers, label=_LENS_LABEL)
-                out[site] = {
-                    layer: _read_verified_shard(
-                        paths[layer], layer, d_model, shape, odd["tensor_sha256"][str(layer)],
-                    )
-                    for layer in layers
-                }
+                out[site] = {layer: _read_shard(paths[layer], layer, shape) for layer in layers}
             return out
         except Exception as exc:
             log.warning("ignoring the odd-half checkpoint for %s (%s)", model_id, exc)
             return None
 
 
-def _read_verified_shard(
-    path: Path, layer: int, d_model: int, shape: tuple[int, int], expected: str,
-) -> torch.Tensor:
-    """One shard's fp32 matrix after its canonical digest and finiteness checks."""
-    prefix, raw_header = _lens_safetensors_header(layer, d_model)
-    digest = hashlib.sha256(prefix)
-    digest.update(raw_header)
+def _read_shard(path: Path, layer: int, shape: tuple[int, int]) -> torch.Tensor:
+    """One shard's fp32 matrix after its shape and finiteness checks."""
     with safe_open(str(path), framework="pt", device="cpu") as tensors:
         raw = tensors.get_tensor(f"layer_{layer}")
     if raw.dtype != torch.float32 or tuple(raw.shape) != shape:
         raise ValueError(f"layer {layer} has shape {tuple(raw.shape)}")
-    for start in range(0, d_model, 256):
-        block = raw[start:start + 256].contiguous()
-        digest.update(memoryview(cast(Any, block.numpy())).cast("B"))
-    if digest.hexdigest() != expected:
-        raise ValueError(f"layer {layer} failed tensor digest validation")
     if not bool(torch.isfinite(raw).all()):
         raise ValueError(f"layer {layer} contains non-finite values")
     return raw
@@ -1135,7 +1007,7 @@ def _load_lens_at(
     label: str,
     requested_layers: Mapping[str, Iterable[int]] | None = None,
 ) -> tuple[JacobianLens, dict[str, Any]] | None:
-    """Materialize the artifact's matrices, verifying each shard's digest.
+    """Materialize the artifact's matrices (each shard's shape and finiteness checked).
 
     ``requested_layers`` maps each site to load to its layers
     (``{"out": {0, 1}, "mid": {0, 1, 2}}``); unnamed sites are not read.
@@ -1167,13 +1039,10 @@ def _load_lens_at(
                 directory, sidecar, site, layers,
                 require_exact_keys=(layers == durable_layers),
             )
-            digests = sidecar["sites"][site]["tensor_sha256"]
             matrices: dict[int, torch.Tensor] = {}
             for layer in layers:
                 try:
-                    matrices[layer] = _read_verified_shard(
-                        paths[layer], layer, d_model, shape, digests[str(layer)],
-                    )
+                    matrices[layer] = _read_shard(paths[layer], layer, shape)
                 except ValueError as exc:
                     raise ValueError(f"{site} {exc}") from exc
             loaded[site] = matrices
@@ -1205,7 +1074,6 @@ def promote_lens_checkpoint(
     d_model: int,
     model_fingerprint: str,
     select: bool | None = None,
-    _verified_proof: _LensPayloadProof | None = None,
 ) -> bool:
     """Promote a complete checkpoint to the durable lens without rewriting it.
 
@@ -1242,10 +1110,6 @@ def promote_lens_checkpoint(
             or sidecar["d_model"] != int(d_model)
             or sidecar["model_fingerprint"] != model_fingerprint
         ):
-            return False
-        if not _proof_matches(
-            _verified_proof, checkpoint_anchor, sidecar,
-        ) and not lens_payloads_match(model_id, sidecar, name=name):
             return False
         # Re-fsync the checkpoint payloads before publishing the final pointer.
         for site in sidecar["sites"]:
@@ -1297,20 +1161,13 @@ def _final_lens_subsumes_checkpoint(
     ) and int(final["n_prompts"]) >= int(checkpoint["n_prompts"]) > 0
 
 
-def remove_subsumed_lens_checkpoint(
-    model_id: str,
-    *,
-    name: str,
-    verified_final_sidecar: Mapping[str, Any] | None = None,
-) -> bool:
+def remove_subsumed_lens_checkpoint(model_id: str, *, name: str) -> bool:
     """Reap a crash-left checkpoint only when the durable lens proves it redundant.
 
     Final publication and checkpoint unlink are two filesystem operations; a
     process death between them leaves two complete shard sets.  This keeps a
-    farther-ahead or semantically different checkpoint and validates the
-    final payload before discarding the recovery point.  A caller that just
-    validated the exact current final sidecar may pass it to avoid hashing a
-    multi-GiB lens twice.
+    farther-ahead or semantically different checkpoint, and a checkpoint
+    whose durable lens does not read (its shards missing or malformed).
     """
     directory = _local_dir(model_id, name)
     with (
@@ -1330,12 +1187,6 @@ def remove_subsumed_lens_checkpoint(
             label="lens", checkpoint=False, name=name,
         )
         if final is None or not _final_lens_subsumes_checkpoint(final, checkpoint):
-            return False
-        caller_verified = (
-            verified_final_sidecar is not None
-            and dict(verified_final_sidecar) == final
-        )
-        if not caller_verified and not lens_payloads_match(model_id, final, name=name):
             return False
         checkpoint_sc.unlink(missing_ok=True)
         # The pointer removal must be durable before any shard it named is

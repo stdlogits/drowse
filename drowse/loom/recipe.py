@@ -166,17 +166,23 @@ class Recipe:
     def from_dict(cls, data: dict[str, Any]) -> "Recipe":
         """Read the complete current writer shape — strict, like its siblings.
 
-        A recipe is nested inside both node and cast payloads, so a lenient
-        read here would let a corrupt or future-format recipe slip through the
-        strict outer gate and land as a partially-defaulted object.  Every
-        field ``to_dict`` writes is required; unknown keys are rejected; the
-        nested sampling block is checked against ``SamplingConfig``'s own
-        fields so a bad key raises :class:`LoomTreeError` rather than a bare
-        ``TypeError`` out of the constructor.  The top-level ``seed`` folds
+        Every field ``to_dict`` writes is required (``system_prompt`` is
+        optional: absent means inherit) and any other key is ignored, at the
+        top level and in the nested sampling block, which is read against
+        ``SamplingConfig``'s own fields.  A malformed value of a known field,
+        or the browser's ``position_spans`` (which this build cannot honor),
+        raises :class:`LoomTreeError`.  The top-level ``seed`` folds
         into ``sampling.seed`` (it wins when both are set); a seed with a
         null sampling block reads back :attr:`seed_only`.
         """
-        require_fields(data, _RECIPE_FIELDS, "recipe", optional=frozenset({"system_prompt"}))
+        require_fields(data, _RECIPE_FIELDS, "recipe")
+        if "position_spans" in data:
+            # The browser runtime's positional targeting: ignoring it would
+            # replay the steering at every position instead.
+            raise LoomTreeError(
+                "recipe position_spans (browser position targeting) cannot be "
+                "replayed by this build"
+            )
         if "system_prompt" in data and data["system_prompt"] is not None and not isinstance(data["system_prompt"], str):
             raise LoomTreeError("recipe system_prompt must be a string or null")
         seed = data["seed"]
@@ -201,8 +207,8 @@ class Recipe:
         if s is not None:
             if not isinstance(s, dict):
                 raise LoomTreeError("recipe sampling must be an object or null")
-            s = dict(s)
             require_fields(s, _SAMPLING_FIELDS, "recipe sampling")
+            s = {key: s[key] for key in _SAMPLING_FIELDS}
             if s.get("logit_bias") is not None:
                 try:
                     s["logit_bias"] = {
@@ -590,12 +596,9 @@ class CastMember:
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> "CastMember":
         # Native effective-roster responses annotate whether the member was
-        # structural, observed, or explicitly configured.  Origin is derived
-        # and is not persisted as configuration.
-        require_fields(
-            data, _CAST_MEMBER_FIELDS, "cast member",
-            optional=frozenset({"origin"}),
-        )
+        # structural, observed, or explicitly configured (``origin``): derived,
+        # never persisted, and ignored here like any other extra key.
+        require_fields(data, _CAST_MEMBER_FIELDS, "cast member")
         recipe = None
         if data["recipe"] is not None:
             if not isinstance(data["recipe"], dict):

@@ -4,7 +4,7 @@ A fit computes for minutes against one manifold folder that readers keep
 using and authors may edit.  This module owns the two short folder
 transactions that bracket that compute:
 
-- :func:`take_authoring_snapshot` — under the folder's manifest lock: repair an
+- :func:`take_authoring_snapshot` — under the folder's manifest lock: remove an
   interrupted one-sided tensor pair, merge the request's discover overrides
   into ``manifold.json``, re-materialize a drifted templated corpus, and record
   the exact authoring revision the fit runs against;
@@ -35,6 +35,7 @@ from drowse.store.manifold_folder import (
     ManifoldFolder,
     _locked_manifest,
     manifold_pair_lock,
+    pair_is_complete,
     write_node_corpus,
 )
 from drowse.store.manifold_schema import ManifoldSidecar, sanitize_hyperparams
@@ -144,9 +145,6 @@ def publish_fit_if_current(
         current = _authoring_snapshot_locked(folder, tensor_path, default_prompts)
         _check_revision(expected_revision, current.revision)
         save_manifold(manifold, tensor_path, metadata)
-        current.manifold.update_file_hashes(
-            tensor_path, tensor_path.with_suffix(".json"),
-        )
 
 
 def load_published_fit(
@@ -157,37 +155,23 @@ def load_published_fit(
     """The currently published pair for ``tensor_path`` if ``accept`` takes it.
 
     Clear/rm/refresh take the folder lock and then this same stable pair lock.
-    The fast path takes only the pair lock: it proves the *current* manifest
-    pair, reads the sidecar, and loads the tensor in one transaction, avoiding
-    both a proof->load deletion window and a folder/pair lock inversion.  Any
-    unreadable or unproven pair is simply not a hit.
+    The fast path takes only the pair lock: it reads the sidecar and loads the
+    tensor in one transaction, avoiding both a read->load deletion window and
+    a folder/pair lock inversion.  Any unreadable or half-written pair is
+    simply not a hit.
     """
-    from drowse.base.integrity import verify_integrity
     from drowse.store.manifold_tensors import _load_manifold_locked
 
-    sidecar_path = tensor_path.with_suffix(".json")
     with manifold_pair_lock(tensor_path):
+        if not pair_is_complete(tensor_path):
+            return None
         try:
-            with open(folder / "manifold.json") as handle:
-                files = json.load(handle).get("files", {})
-            expected = {
-                name: files[name]
-                for name in (tensor_path.name, sidecar_path.name)
-                if isinstance(files, dict) and name in files
-            }
-            if (
-                len(expected) != 2
-                or not tensor_path.exists()
-                or not sidecar_path.exists()
-                or not verify_integrity(folder, expected)[0]
-            ):
-                return None
-            sidecar = ManifoldSidecar.load(sidecar_path)
-        except (OSError, json.JSONDecodeError, KeyError, ValueError):
+            sidecar = ManifoldSidecar.load(tensor_path.with_suffix(".json"))
+        except (OSError, ValueError):
             return None
         if not accept(sidecar):
             return None
-        return _load_manifold_locked(tensor_path, verify_manifest=False)
+        return _load_manifold_locked(tensor_path, check_current=False)
 
 
 def _check_revision(expected: str, actual: str) -> None:
@@ -207,7 +191,7 @@ def _apply_fit_overrides_locked(
     """Merge discover-fit overrides into ``manifold.json`` (lock held)."""
     if fit_mode is None and hyperparams is None:
         return
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     if not mf.is_discover:
         raise ManifoldSpecError(
             "fit_mode/hyperparams overrides are discover-mode only; "
@@ -253,22 +237,12 @@ def _apply_fit_overrides_locked(
 
 
 def _repair_incomplete_target_locked(folder: Path, tensor_path: Path) -> None:
-    """Remove an interrupted one-sided fitted pair and its stale proofs."""
+    """Remove an interrupted one-sided fitted pair."""
     sidecar_path = tensor_path.with_suffix(".json")
     if tensor_path.exists() == sidecar_path.exists():
         return
     tensor_path.unlink(missing_ok=True)
     sidecar_path.unlink(missing_ok=True)
-    manifest_path = folder / "manifold.json"
-    with open(manifest_path) as handle:
-        payload = json.load(handle)
-    files = payload.get("files", {})
-    if isinstance(files, dict):
-        files = dict(files)
-        files.pop(tensor_path.name, None)
-        files.pop(sidecar_path.name, None)
-        payload["files"] = files
-        write_json_atomic(manifest_path, payload)
 
 
 def _authoring_snapshot_locked(
@@ -300,7 +274,7 @@ def _authoring_snapshot_locked(
     )
     target_epochs = {key: int(fit_epochs.get(key, 0)) for key in epoch_keys}
 
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
     template_sha: str | None = None
     baseline: list[str | list[dict[str, str]]]
     if mf.template_ref is not None:
@@ -315,7 +289,7 @@ def _authoring_snapshot_locked(
             mf.node_roles = [None] * len(mf.node_labels)
             mf.node_kinds = [None] * len(mf.node_labels)
             mf.write_metadata()
-            mf = ManifoldFolder.load(folder, verify_manifest=False)
+            mf = ManifoldFolder.load(folder)
         baseline = [context.messages() for context in tmpl.contexts]
     else:
         baseline = list(default_prompts())

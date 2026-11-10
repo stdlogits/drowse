@@ -343,6 +343,12 @@ class PromptCapture:
         if not isinstance(data, dict):
             raise LoomTreeError("loom node field 'prompt_capture' must be an object or null")
         require_fields(data, _PROMPT_CAPTURE_FIELDS, "loom prompt capture")
+        # Token rows and their anchor keep exact key sets: the dashboard's
+        # snapshot validator (webui ``tokenRows.ts``) refuses exactly what
+        # this reader refuses, pinned by ``tests/fixtures/token_rows.json``.
+        unknown = sorted(data.keys() - _PROMPT_CAPTURE_FIELDS)
+        if unknown:
+            raise LoomTreeError(f"loom prompt capture has unknown fields: {', '.join(unknown)}")
         for name in ("steering", "system_prompt"):
             if data[name] is not None and not isinstance(data[name], str):
                 raise LoomTreeError(f"prompt capture field {name!r} must be a string or null")
@@ -1698,9 +1704,7 @@ class LoomTree:
         *,
         events: EventBus | None = None,
     ) -> "LoomTree":
-        require_fields(
-            data, _TREE_FIELDS, "loom tree", optional=frozenset({"token_sidecar"})
-        )
+        require_fields(data, _TREE_FIELDS, "loom tree")
         version = data["tree_format"]
         if version != TREE_FORMAT_VERSION:
             raise LoomTreeError(
@@ -1930,9 +1934,7 @@ class LoomTree:
             )
         if not isinstance(data, dict):
             raise LoomTreeError("loom tree file must contain an object")
-        require_fields(
-            data, _TREE_FIELDS, "loom tree", optional=frozenset({"token_sidecar"})
-        )
+        require_fields(data, _TREE_FIELDS, "loom tree")
         if data["tree_format"] != TREE_FORMAT_VERSION:
             raise LoomTreeError(
                 f"unsupported tree_format {data['tree_format']!r} "

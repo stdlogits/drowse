@@ -133,9 +133,6 @@ def _rewrite_sidecar(fitted: Any, **fields: Any) -> None:
     payload = json.loads(sidecar_path.read_text())
     payload.update(fields)
     sidecar_path.write_text(json.dumps(payload))
-    ManifoldFolder.load(fitted.folder, verify_manifest=False).update_file_hashes(
-        fitted.tensor, sidecar_path,
-    )
 
 
 # ---- the acceptance case --------------------------------------------------
@@ -318,7 +315,7 @@ def test_old_format_sidecar_reads_as_a_cache_miss_not_an_error(
 
     _rewrite_sidecar(fitted, format_version=MANIFOLD_FORMAT_VERSION - 1)
 
-    mf = ManifoldFolder.load(fitted.folder, verify_manifest=False)
+    mf = ManifoldFolder.load(fitted.folder)
     assert mf.node_labels == list(_CORPORA)
     assert mf.tensor_models() == []
 
@@ -372,13 +369,11 @@ def test_corrupt_sidecar_still_raises(fitted: Any) -> None:
     payload["node_labels"] = ["only-one"]
     sidecar_path.write_text(json.dumps(payload))
     # Discovery stays up — one bad fit must not hide the manifold — but the
-    # fit is unavailable and the strict read refuses it.
-    mf = ManifoldFolder.load(fitted.folder, verify_manifest=False)
+    # fit is unavailable and reading its sidecar refuses it.
+    mf = ManifoldFolder.load(fitted.folder)
     assert mf.tensor_models() == []
     with pytest.raises(ManifoldFormatError):
         mf.sidecar(fitted.tensor.stem)
-    with pytest.raises(ManifoldFormatError):
-        ManifoldFolder.load(fitted.folder)
 
 
 # ---- CLI adoption ----------------------------------------------------------
@@ -434,9 +429,6 @@ def _republish_as(fitted: Any, name: str) -> None:
     sidecar = json.loads(sidecar_path.read_text())
     sidecar["name"] = name
     sidecar_path.write_text(json.dumps(sidecar))
-    ManifoldFolder.load(target, verify_manifest=False).update_file_hashes(
-        target / fitted.tensor.name, sidecar_path,
-    )
 
 
 def test_cli_extract_reports_the_hit_without_constructing_a_session(

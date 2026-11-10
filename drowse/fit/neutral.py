@@ -72,8 +72,8 @@ def load_or_compute_neutral_activations_with_metadata(
     """The activations plus the sidecar proven in the same transaction.
 
     Alignment fitting needs both the materialized neutral rows and their stable
-    cache identity; returning the validated sidecar avoids a second full-file
-    digest pass.
+    cache identity; returning the sidecar read in the same transaction avoids a
+    second read.
     """
     cache = load_or_compute_neutral_cache(
         model, tokenizer, layers, model_id=model_id, force=force,
@@ -125,11 +125,11 @@ def _load_or_compute_neutral_activations_with_metadata_locked(
 
 def _units_well_formed(units: NeutralUnits) -> bool:
     """A cached units record the units package can read: unavailable, or
-    exactly the current tensor names at every layer."""
+    the current tensor names at every layer (extra names are ignored)."""
     if units.tensors is None:
         return True
     names = set(UNIT_TENSOR_NAMES)
-    return all(set(row) == names for row in units.tensors.values())
+    return all(names <= set(row) for row in units.tensors.values())
 
 
 def _failed_on_a_described_model(cache: NeutralCache, model: Any) -> bool:
@@ -168,8 +168,8 @@ def _load_or_compute_neutral_cache_locked(
     """Disk-cached per-statement activations and unit statistics for one model.
 
     Cache identity binds the exact rendered token rows and pooling positions,
-    the loaded model weights, and the fitted layer set. The tensor payload is
-    digest-verified before reuse. A stale cache is recomputed and replaced.
+    the loaded model weights, and the fitted layer set. A stale or unreadable
+    cache is recomputed and replaced.
 
     Activations are ``{layer_idx: [N, D] fp32 CPU tensor}``, stored fp32 so the
     whitener covariance is built and inverted at full precision and the

@@ -9,7 +9,6 @@ import pytest
 
 pa = pytest.importorskip("pyarrow")
 
-from drowse.base.integrity import hash_file  # noqa: E402
 from drowse.naming import HeadRef, NeuronRef  # noqa: E402
 from drowse.units import catalog as cat  # noqa: E402
 from drowse.units.reads import HeadRead, NeuronRead  # noqa: E402
@@ -129,12 +128,6 @@ _SKIPPED_PATHS = (
 )
 
 
-def _upstream_sha(path: str) -> str:
-    import hashlib
-
-    return hashlib.sha256(path.encode()).hexdigest()
-
-
 @pytest.fixture
 def hub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     """A fake Hub: the dataset's sibling listing (the real path filter runs
@@ -146,15 +139,12 @@ def hub(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[str, Any]:
     calls: dict[str, Any] = {"listings": 0, "reads": [], "downloads": []}
 
     class FakeApi:
-        def dataset_info(self, repo_id: str, *, revision: str, files_metadata: bool) -> Any:
-            assert (repo_id, revision, files_metadata) == (cat.CATALOG_REPO, cat.CATALOG_REVISION, True)
+        def dataset_info(self, repo_id: str, *, revision: str) -> Any:
+            assert (repo_id, revision) == (cat.CATALOG_REPO, cat.CATALOG_REVISION)
             calls["listings"] += 1
             siblings = [
-                SimpleNamespace(
-                    rfilename=path, size=1000 + i,
-                    lfs=SimpleNamespace(sha256=_upstream_sha(path), size=1000 + i),
-                )
-                for i, path in enumerate(sorted([*_remote_paths(), *_SKIPPED_PATHS]))
+                SimpleNamespace(rfilename=path)
+                for path in sorted([*_remote_paths(), *_SKIPPED_PATHS])
             ]
             return SimpleNamespace(siblings=siblings)
 
@@ -206,20 +196,15 @@ def test_fetch_binds_labels_and_projected_tables(hub: dict[str, Any], catalogued
     assert on_disk == record
     entry = record["files"]["neurons/acts/L02.parquet"]
     assert entry["upstream"] == f"{SLUG}/neurons/acts/L02.parquet"
-    assert entry["sha256"] == hash_file(root / "neurons/acts/L02.parquet")
     assert entry["rows"] == 2 * D_FF
     # The listing's path filter keeps exactly this model's label, acts and
-    # legible tables (4-part neuron paths, 3-part head paths) and records
-    # each one's upstream LFS digest; nothing else is read.
+    # legible tables (4-part neuron paths, 3-part head paths); nothing else
+    # is read.
     assert sorted(item["upstream"] for item in record["files"].values()) == sorted(_remote_paths())
-    assert all(
-        item["upstream_sha256"] == _upstream_sha(item["upstream"]) for item in record["files"].values()
-    )
     assert sorted(path for path, _ in hub["reads"]) == sorted(_parquet_paths())
     assert hub["downloads"] == [COUNTS_PATH]
     entry = record["files"][cat.TOKEN_COUNTS_FILE]
     assert entry["upstream"] == COUNTS_PATH and entry["rows"] == COUNTS_VOCAB
-    assert entry["sha256"] == hash_file(root / cat.TOKEN_COUNTS_FILE)
     # Labels whole; acts and legible projected (the bulk columns never asked for).
     asked = dict(hub["reads"])
     assert asked[f"{SLUG}/neurons/labels/L00.parquet"] is None

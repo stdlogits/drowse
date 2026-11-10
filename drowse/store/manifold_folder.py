@@ -1,4 +1,4 @@
-"""A manifold folder on disk: corpus, integrity, fitted pairs, and locks.
+"""A manifold folder on disk: corpus, fitted pairs, and locks.
 
 ```
 ~/.drowse/manifolds/<ns>/<name>/
@@ -11,10 +11,11 @@
 
 The schema of ``manifold.json`` and of the fitted sidecar lives in
 :mod:`drowse.store.manifold_schema`; this module owns the filesystem side —
-:class:`ManifoldFolder`, the manifest read-modify-write CAS, the fitted-pair
-scan / proof primitives, and the lock order every mutator shares (manifest
-lock, then stable pair locks in tensor-path order).  Tensor save/load lives in
-:mod:`drowse.store.manifold_tensors`.
+:class:`ManifoldFolder`, the fitted-pair scan, and the lock order every
+mutator shares (manifest lock, then stable pair locks in tensor-path order).
+A fitted pair is published when both halves are on disk: the tensor writer
+commits the tensor before its sidecar, so a sidecar always names the tensor
+beside it.  Tensor save/load lives in :mod:`drowse.store.manifold_tensors`.
 """
 from __future__ import annotations
 
@@ -25,20 +26,14 @@ import shutil
 from contextlib import ExitStack, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Iterator, Optional
+from typing import Any, Callable, Iterator
 
 from drowse.base.atomic import artifact_lock, write_json_atomic
-from drowse.base.integrity import (
-    canonical_json,
-    hash_file,
-    is_sha256_digest,
-    verify_integrity,
-)
+from drowse.base.integrity import canonical_json
 from drowse.base.paths import parse_tensor_filename, safe_model_id
 from drowse.base.staging import promote, recover_backup, staging_area
 from drowse.store.manifold_schema import (
     FIT_MODES_DISCOVER,
-    MANIFOLD_FORMAT_VERSION,
     ManifestNode,
     ManifestSpec,
     ManifoldFormatError,
@@ -191,11 +186,9 @@ def manifold_folder_tensor_paths(
 ) -> list[Path]:
     """Canonical tensor paths for every fitted or orphaned pair in ``folder``.
 
-    Scans both halves independently (an interrupted publication or a corrupt
-    folder may hold only one) and canonicalizes sidecars back to their tensor
-    path, so each logical pair appears exactly once.  The manifest's ``files``
-    map is deliberately not consulted: destructive operations are also the
-    repair path for pairs that never acquired a proof.
+    Scans both halves independently (an interrupted publication may hold only
+    one) and canonicalizes sidecars back to their tensor path, so each
+    logical pair appears exactly once.
     """
     folder = Path(folder)
     if not folder.is_dir():
@@ -219,54 +212,24 @@ def fitted_pair_files(
     return out
 
 
-def prove_pair(folder: Path, tensor_path: Path, files: dict[str, Any]) -> bool:
-    """Whether ``files`` carries valid digests that match both halves on disk.
+def pair_is_complete(tensor_path: Path) -> bool:
+    """Whether both halves of one fitted pair are on disk (a published pair)."""
+    tensor_path = Path(tensor_path)
+    return tensor_path.is_file() and tensor_path.with_suffix(".json").is_file()
 
-    The one fitted-pair proof.  A pair missing either digest is unproven
-    (``False``); a present but malformed digest is a corrupt manifest and
-    raises :class:`ManifoldFormatError`.
+
+def read_fitted_sidecar(tensor_path: Path) -> ManifoldSidecar | None:
+    """Read one published pair's sidecar under its pair lock.
+
+    A half-published or unreadable pair reads as no sidecar at all.
     """
-    names = (tensor_path.name, tensor_path.with_suffix(".json").name)
-    if any(name not in files for name in names):
-        return False
-    for name in names:
-        if not is_sha256_digest(files[name]):
-            raise ManifoldFormatError(
-                f"manifold integrity manifest has invalid sha256 for {name!r}"
-            )
-    return verify_integrity(Path(folder), {name: files[name] for name in names})[0]
-
-
-def read_proven_sidecar(folder: Path, tensor_path: Path) -> ManifoldSidecar | None:
-    """Read one pair's sidecar only once the current manifest proves both files.
-
-    Takes the stable pair lock, proves the *current* manifest's digests for
-    exactly this pair, then reads.  An unproven, half-published, malformed, or
-    foreign pair reads as no sidecar at all.
-    """
-    folder = Path(folder)
     with manifold_pair_lock(tensor_path):
+        if not pair_is_complete(tensor_path):
+            return None
         try:
-            files = read_manifest(folder).get("files", {})
-            if not isinstance(files, dict) or not prove_pair(folder, tensor_path, files):
-                return None
-            return ManifoldSidecar.load(tensor_path.with_suffix(".json"))
+            return ManifoldSidecar.load(Path(tensor_path).with_suffix(".json"))
         except (OSError, ManifoldFormatError):
             return None
-
-
-def hash_manifold_files(folder: Path) -> dict[str, str]:
-    """``{name: sha256}`` for every top-level fitted file in ``folder``.
-
-    Skips ``manifold.json`` and the ``nodes/`` corpus: editing the corpus is
-    the normal re-fit trigger (tracked by the per-tensor ``nodes_sha256``), so
-    it must never fail an integrity check.
-    """
-    return {
-        entry.name: hash_file(entry)
-        for entry in sorted(Path(folder).iterdir())
-        if entry.is_file() and entry.name != "manifold.json"
-    }
 
 
 def read_manifest(folder: Path) -> dict[str, Any]:
@@ -326,7 +289,6 @@ class ManifoldFolder:
     domain: dict[str, Any]
     node_labels: list[str]
     node_coords: list[list[float]]
-    files: dict[str, str]
     fit_mode: str = "authored"
     hyperparams: dict[str, Any] = field(default_factory=dict)
     # Provenance tier: ``"local"``; ``"bundled"`` (shipped under
@@ -363,7 +325,6 @@ class ManifoldFolder:
             domain=dict(spec.domain),
             node_labels=spec.labels,
             node_coords=[list(node.coords) for node in spec.nodes if node.coords is not None],
-            files=dict(spec.files),
             fit_mode=spec.fit_mode,
             hyperparams=dict(spec.hyperparams),
             source=spec.source,
@@ -374,26 +335,18 @@ class ManifoldFolder:
         )
 
     @classmethod
-    def load(cls, folder: Path, *, verify_manifest: bool = True) -> "ManifoldFolder":
-        """Parse and structurally validate a manifold folder.
+    def load(cls, folder: Path) -> "ManifoldFolder":
+        """Parse a manifold folder.
 
-        Runtime/install/push callers keep the default full integrity walk over
-        ``files``; metadata-only callers (inventory, authoring, lifecycle
-        routing, fit) pass ``verify_manifest=False`` and prove only the pair
-        they consume.  Every declared node corpus file must exist (except for
-        a baked manifold, which has no corpus but must carry a fitted pair).
+        Every declared node corpus file must exist (except for a baked
+        manifold, which has no corpus but must carry a fitted pair).  Fitted
+        sidecars are read lazily, where they are consumed.
         """
         folder = Path(folder)
         meta_path = folder / "manifold.json"
         if not meta_path.exists():
             raise ManifoldFormatError(f"no manifold.json in {folder}")
         spec = parse_manifest(load_manifest_data(meta_path), location=str(meta_path))
-        if spec.files and verify_manifest:
-            ok, bad = verify_integrity(folder, spec.files)
-            if not ok:
-                raise ManifoldFormatError(
-                    f"manifold integrity check failed in {folder}: tampered/missing {bad}"
-                )
         inst = cls.from_spec(folder, spec)
         if spec.fit_mode != "baked":
             for idx in range(len(inst.node_labels)):
@@ -402,26 +355,15 @@ class ManifoldFolder:
                     raise ManifoldFormatError(
                         f"manifold {spec.name!r} missing node corpus file {path}"
                     )
-        tensors = [t for t in manifold_folder_tensor_paths(folder) if t.exists()]
         inst._tensor_stems = tuple(
-            tensor.stem for tensor in tensors if tensor.with_suffix(".json").exists()
+            tensor.stem for tensor in manifold_folder_tensor_paths(folder)
+            if pair_is_complete(tensor)
         )
         if spec.fit_mode == "baked" and not inst._tensor_stems:
             raise ManifoldFormatError(
                 f"baked manifold {spec.name!r} has no fitted tensor — a corpus-less "
                 f"manifold carries its geometry only in the per-model tensor"
             )
-        if verify_manifest:
-            # The strict read (install, push, runtime): every fitted pair must
-            # be whole and every current-format sidecar valid.
-            for tensor in tensors:
-                if tensor.stem not in inst._tensor_stems:
-                    raise ManifoldFormatError(
-                        f"manifold {spec.name!r} tensor {tensor.name} has no sidecar"
-                    )
-                loaded = inst._load_sidecar(tensor.stem)
-                if isinstance(loaded, ManifoldFormatError) and not isinstance(loaded, _StaleFit):
-                    raise loaded
         return inst
 
     # -- manifest ------------------------------------------------------------
@@ -443,62 +385,28 @@ class ManifoldFolder:
             ),
             domain=dict(self.domain),
             hyperparams=dict(self.hyperparams),
-            files=dict(self.files),
             source=self.source or "local",
             tags=tuple(self.tags),
             template_ref=self.template_ref,
         )
 
-    def write_metadata(self, *, files: Optional[dict[str, str]] = None) -> None:
-        """Rewrite the authored manifest while preserving trusted fitted hashes.
+    def write_metadata(self) -> None:
+        """Rewrite the authored manifest, keeping the locked latest local state.
 
-        Fitted writers must call :meth:`update_file_hashes` with their exact
-        outputs; a metadata-only rewrite never scans and blesses unrelated
-        files.  The locked latest manifest supplies ``files`` (and the local
-        ``artifact_id`` / ``fit_epochs`` state) unless ``files`` is explicit.
+        The manifest on disk supplies ``artifact_id`` / ``fit_epochs`` (the
+        fit transaction's identity), so a metadata rewrite never resets them.
         """
         with _locked_manifest(self.folder):
             latest = read_manifest(self.folder)
-            if files is None:
-                files = latest.get("files", {})
-                if not isinstance(files, dict):
-                    raise ManifoldFormatError("manifold files manifest is not an object")
-            self.files = dict(files)
             spec = self.spec()
             write_json_atomic(self.folder / "manifold.json", manifest_payload(
                 name=spec.name, description=spec.description, fit_mode=spec.fit_mode,
                 nodes=spec.nodes, domain=spec.domain, hyperparams=spec.hyperparams,
-                files=spec.files, source=spec.source, tags=spec.tags,
+                source=spec.source, tags=spec.tags,
                 template_ref=spec.template_ref,
                 artifact_id=latest.get("artifact_id"),
                 fit_epochs=latest.get("fit_epochs"),
             ))
-
-    def update_file_hashes(self, *paths: Path) -> None:
-        """Record the digests of newly written fitted files in the manifest CAS.
-
-        Only the named paths are hashed: implicitly hashing other pairs here
-        would launder an interrupted or tampered artifact merely because
-        another model was fitted.
-        """
-        resolved_paths = [Path(path) for path in paths]
-        for resolved in resolved_paths:
-            if resolved.parent != self.folder or not resolved.is_file():
-                raise ValueError(
-                    f"manifest update path must be a fitted file in {self.folder}: {resolved}"
-                )
-        with _locked_manifest(self.folder):
-            payload = read_manifest(self.folder)
-            latest = payload.get("files", {})
-            if not isinstance(latest, dict):
-                raise ManifoldFormatError("manifold files manifest is not an object")
-            files = dict(latest)
-            for resolved in resolved_paths:
-                files[resolved.name] = hash_file(resolved)
-            payload["format_version"] = MANIFOLD_FORMAT_VERSION
-            payload["files"] = files
-            write_json_atomic(self.folder / "manifold.json", payload)
-            self.files = files
 
     def _padded(self, values: list[str | None]) -> list[str | None]:
         if len(values) == len(self.node_labels):

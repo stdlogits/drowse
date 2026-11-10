@@ -100,13 +100,18 @@ def test_an_invalid_split_half_reads_as_no_lens(bad: dict[str, Any]) -> None:
     assert load_local_lens_sidecar(_MODEL, "r") is None
 
 
-def test_odd_half_shards_are_checkpoint_only() -> None:
+def test_a_durable_manifest_ignores_keys_it_does_not_use() -> None:
+    """A 6.1 manifest's per-shard ``tensor_sha256``, an ``odd`` entry (read
+    only in a checkpoint) and any other extra key are ignored."""
     save_lens(_lens(), _MODEL, _prov())
     path = lens_manifest_path(_MODEL, "r")
     manifest = json.loads(path.read_text())
-    manifest["sites"]["out"]["odd"] = {"tensor_files": {}, "tensor_sha256": {}}
+    manifest["retired"] = True
+    manifest["sites"]["out"]["odd"] = {"tensor_files": {}}
+    manifest["sites"]["out"]["tensor_sha256"] = {"0": "0" * 64, "1": "0" * 64}
     path.write_text(json.dumps(manifest))
-    assert load_local_lens_sidecar(_MODEL, "r") is None
+    assert load_local_lens_sidecar(_MODEL, "r") is not None
+    assert load_local_lens(_MODEL, "r") is not None
 
 
 def _checkpoint(n: int, *, odd: bool = True) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -130,7 +135,7 @@ def _checkpoint(n: int, *, odd: bool = True) -> tuple[dict[str, Any], dict[str, 
 def test_checkpoint_odd_halves_round_trip_and_promotion_drops_them() -> None:
     _total, odd_sums = _checkpoint(5)
     sidecar = load_lens_checkpoint_sidecar(_MODEL, "r")
-    assert sidecar is not None and set(sidecar["sites"]["out"]["odd"]) == {"tensor_files", "tensor_sha256"}
+    assert sidecar is not None and set(sidecar["sites"]["out"]["odd"]) == {"tensor_files"}
     odd = load_lens_checkpoint_odd(_MODEL, "r", sidecar)
     assert odd is not None
     for site, matrices in odd_sums.items():

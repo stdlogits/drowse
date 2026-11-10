@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -62,10 +63,11 @@ def _write_v6_lens(
     digests: dict[str, str] = {}
     for layer, matrix in matrices.items():
         name = f"{stem}.layer-{layer}.gen-{os.urandom(4).hex()}.safetensors"
-        digests[str(layer)] = _save_fp32_square_safetensors_atomic(
+        _save_fp32_square_safetensors_atomic(
             directory / name, layer, _D,
             lambda _l, start, end, m=matrix: m[start:end].contiguous(),
         )
+        digests[str(layer)] = hashlib.sha256((directory / name).read_bytes()).hexdigest()
         files[str(layer)] = name
     policy = _v6_policy(relp=relp, pre_fix=pre_fix)
     pointer = {

@@ -107,20 +107,20 @@ def test_a_cache_without_mid_means_recomputes(tiny_session: Any) -> None:
     assert load_neutral_cache(tiny_session.model_id).sidecar["mid"] == {"available": True}
 
 
-def test_a_malformed_mid_block_or_tensor_is_rejected(tiny_session: Any) -> None:
+def test_a_malformed_mid_block_is_rejected_and_extra_keys_ignored(tiny_session: Any) -> None:
     from drowse.base.paths import model_dir
     from drowse.store.neutral import load_neutral_cache
 
     pointer = model_dir(tiny_session.model_id) / "neutral_activations.json"
     sidecar = json.loads(pointer.read_text())
-    pointer.write_text(json.dumps({**sidecar, "mid": {"available": True, "extra": 1}}))
+    pointer.write_text(json.dumps({**sidecar, "mid": {"available": "yes"}}))
     with pytest.raises(ValueError, match="mid"):
         load_neutral_cache(tiny_session.model_id)
-    # A cache that says mid means are unavailable while its shards hold them
-    # does not match its sidecar.
-    pointer.write_text(json.dumps({**sidecar, "mid": {"available": False, "reason": "x"}}))
-    with pytest.raises(ValueError, match="keys"):
-        load_neutral_cache(tiny_session.model_id)
+    pointer.write_text(json.dumps({
+        **sidecar, "mid": {"available": True, "extra": 1},
+        "tensor_sha256": {"0": "0" * 64}, "future_field": 1,
+    }))
+    assert load_neutral_cache(tiny_session.model_id).mid.means is not None
 
 
 def test_an_undescribed_model_has_no_mid_means_and_mid_reads_refuse(

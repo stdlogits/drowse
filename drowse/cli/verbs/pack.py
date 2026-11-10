@@ -86,9 +86,9 @@ def run_show(args: argparse.Namespace) -> None:
     if args.json_output:
         emit_json(manifold_summary(folder, include_fits=True))
         return
-    # An inventory view: fitted payload hashes are verified where they are
-    # used, not where they are listed.
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    # An inventory view: fitted payloads are read where they are used, not
+    # where they are listed.
+    mf = ManifoldFolder.load(folder)
     fits = [manifold_fit_summary(mf.sidecar(stem), stem) for stem in mf.tensor_models()]
     roles = mf.roles  # padded to the label count
 
@@ -333,9 +333,8 @@ GROUP = Verb(
                 Verb(
                     "archive", "Export a manifold (+ referenced template) as .drowse",
                     run=run_export_archive,
-                    description="Write one complete manifold closure as a validated "
-                                ".drowse archive. Checksums establish integrity, not "
-                                "publisher identity.",
+                    description="Write one manifold closure (manifest, corpora, "
+                                "fitted pairs, referenced template) as a .drowse archive.",
                     args=(_NAME, arg("-o", "--output", default=None, metavar="FILE")),
                 ),
             ),

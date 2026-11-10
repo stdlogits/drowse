@@ -80,7 +80,7 @@ def _corpus_roles_match(folder: Path, role: str | None) -> bool:
     from drowse.store.manifold_schema import ManifoldFormatError
 
     try:
-        roles = ManifoldFolder.load(folder, verify_manifest=False).roles
+        roles = ManifoldFolder.load(folder).roles
     except (ManifoldFormatError, OSError, ValueError):
         return False
     return bool(roles) and all(r == role for r in roles)
@@ -105,7 +105,7 @@ def run_extract(args: argparse.Namespace) -> None:
     variant_tail = f":role-{args.role}" if args.role else ""
 
     # Bare file existence proves nothing: the weight-free preflight checks
-    # sidecar integrity, corpus / role / template identity, the token-exact
+    # the published sidecar, corpus / role / template identity, the token-exact
     # render and the source fingerprint, and falls through when any is unproven.
     if _corpus_roles_match(folder, args.role):
         proof = _fit_noop(args, folder, sae=args.sae)
@@ -233,7 +233,7 @@ def run_fit(args: argparse.Namespace) -> None:
     if layers == "sample":
         raise CliError("--layers takes explicit indices, workspace, or all")
     folder = folder_or_manifold(args.target)
-    mf = ManifoldFolder.load(folder, verify_manifest=False)
+    mf = ManifoldFolder.load(folder)
 
     hyperparams = {k: getattr(args, k) for k in _HYPERPARAMS if getattr(args, k) is not None}
     overriding = bool(hyperparams) or args.method is not None

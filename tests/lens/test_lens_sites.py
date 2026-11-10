@@ -194,14 +194,15 @@ def test_save_lens_at_writes_every_site_without_selecting(tmp_path: Path) -> Non
 
 
 def test_save_lens_at_keeps_an_out_only_pack_in_the_browser_readers_shape(tmp_path: Path) -> None:
-    """drowse.ai's v7 reader takes exactly one ``sites.out`` holding exactly
-    ``layers``/``tensor_files``/``tensor_sha256``.  The hosted packaging path
-    (an output lens at ``out`` only, no split-half) must keep writing that."""
+    """The hosted packaging path (an output lens at ``out`` only, no
+    split-half) writes one ``sites.out`` holding ``layers`` and
+    ``tensor_files``.  6.1 also wrote a per-shard ``tensor_sha256``;
+    drowse.ai's reader, which requires it, must drop that requirement."""
     lens = JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("R"))
     manifest = json.loads(save_lens_at(lens, tmp_path / "pack", _PROV).read_text())
     assert manifest["format_version"] == 7
     assert list(manifest["sites"]) == ["out"]
-    assert sorted(manifest["sites"]["out"]) == ["layers", "tensor_files", "tensor_sha256"]
+    assert sorted(manifest["sites"]["out"]) == ["layers", "tensor_files"]
 
 
 def _mid_only(kind: str) -> JacobianLens:
@@ -258,32 +259,30 @@ def test_selective_load_asks_each_site_for_its_own_layers() -> None:
     unusable artifact; a request the artifact cannot meet is a typed 404,
     not "re-fit".
     """
-    from drowse.lens.store import _load_lens_verified
+    from drowse.lens.store import _load_durable_lens
 
     save_lens(_two_site("R"), _MODEL, _PROV)  # out [0..2], mid [0..3]
-    loaded = _load_lens_verified(_MODEL, name="r", requested_layers={"out": {1, 2}, "mid": {1, 2}})
+    loaded = _load_durable_lens(_MODEL, name="r", requested_layers={"out": {1, 2}, "mid": {1, 2}})
     assert loaded is not None
-    lens, _sidecar, proof = loaded
+    lens, _sidecar = loaded
     assert lens.layers("out") == [1, 2] and lens.layers("mid") == [1, 2]
-    assert proof is None  # a partial load proves nothing about the rest
 
-    asymmetric = _load_lens_verified(
+    asymmetric = _load_durable_lens(
         _MODEL, name="r", requested_layers={"out": {0, 1, 2}, "mid": {0, 1, 2, 3}},
     )
     assert asymmetric is not None
-    lens, _sidecar, proof = asymmetric
+    lens, _sidecar = asymmetric
     assert lens.layers("out") == [0, 1, 2] and lens.layers("mid") == [0, 1, 2, 3]
-    assert proof is not None  # the request names the whole artifact
 
-    last = _load_lens_verified(_MODEL, name="r", requested_layers={"mid": {3}})
+    last = _load_durable_lens(_MODEL, name="r", requested_layers={"mid": {3}})
     assert last is not None and last[0].sites == ("mid",) and last[0].layers("mid") == [3]
 
     with pytest.raises(LensNotFittedError, match=r"layers \[3\] not in fitted R:out") as info:
-        _load_lens_verified(_MODEL, name="r", requested_layers={"out": {3}})
+        _load_durable_lens(_MODEL, name="r", requested_layers={"out": {3}})
     assert info.value.user_message()[0] == 404
     save_lens(JacobianLens(_mats(range(3), 1), n_prompts=5, d_model=_D, key=LensKey("R")), _MODEL, _PROV)
     with pytest.raises(LensNotFittedError, match="no 'mid' site"):
-        _load_lens_verified(_MODEL, name="r", requested_layers={"mid": {0}})
+        _load_durable_lens(_MODEL, name="r", requested_layers={"mid": {0}})
 
 
 def _checkpoint(kind: str, lens: JacobianLens, **extra: Any) -> Path:

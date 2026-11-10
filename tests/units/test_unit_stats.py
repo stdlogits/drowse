@@ -312,9 +312,9 @@ def test_a_malformed_units_block_is_rejected(tiny_session: Any) -> None:
 
     pointer = model_dir(tiny_session.model_id) / "neutral_activations.json"
     sidecar = json.loads(pointer.read_text())
-    sidecar["units"]["schema"]["0"]["neuron_mean"] = [999]
+    sidecar["units"]["available"] = "yes"
     pointer.write_text(json.dumps(sidecar))
-    with pytest.raises(ValueError, match="unit"):
+    with pytest.raises(ValueError, match="units block"):
         load_neutral_cache(tiny_session.model_id)
 
 

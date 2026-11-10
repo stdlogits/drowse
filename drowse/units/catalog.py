@@ -26,7 +26,7 @@ downloaded: drowse computes its own reads.  Projection reads only the wanted
 column chunks over HTTP ranges.  The binding lives under
 ``$DROWSE_HOME/models/<id>/units/catalog/`` with ``catalog.json``
 (:data:`CATALOG_FORMAT`) recording the repository, the commit, and per file
-its upstream LFS ``sha256``, the columns kept and the local file's ``sha256``.
+its upstream path, the columns kept and the row count.
 A binding of another format, repository or commit is not read (``fetch``
 again); there is no migration.
 
@@ -47,7 +47,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from drowse.base.atomic import artifact_lock, write_json_atomic
-from drowse.base.integrity import hash_file
 from drowse.base.paths import model_dir
 from drowse.base.staging import promote, recover_backup, staging_area
 from drowse.errors import DrowseError
@@ -177,22 +176,12 @@ def unit_url(slug: str, ref: UnitRef) -> str:
 # Fetch
 # ---------------------------------------------------------------------------
 
-@dataclass(frozen=True)
-class RemoteFile:
-    """One catalog file at the pinned commit: its path and LFS digest."""
-
-    path: str
-    sha256: str | None
-    size: int | None
-
-
-def _remote_files(slug: str, revision: str) -> list[RemoteFile]:
-    """The catalog files a binding copies, with their upstream digests (one
-    metadata request)."""
+def _remote_files(slug: str, revision: str) -> list[str]:
+    """The catalog file paths a binding copies (one listing request)."""
     from huggingface_hub import HfApi
 
-    info = HfApi().dataset_info(CATALOG_REPO, revision=revision, files_metadata=True)
-    out: list[RemoteFile] = []
+    info = HfApi().dataset_info(CATALOG_REPO, revision=revision)
+    out: list[str] = []
     for sibling in info.siblings or ():
         path = sibling.rfilename
         parts = path.split("/")
@@ -207,13 +196,8 @@ def _remote_files(slug: str, revision: str) -> list[RemoteFile]:
             len(parts) == 3 and parts[1] == "heads" and parts[2][: -len(".parquet")] in HEAD_COLUMNS
         )
         if wanted:
-            lfs = getattr(sibling, "lfs", None)
-            out.append(RemoteFile(
-                path,
-                None if lfs is None else getattr(lfs, "sha256", None),
-                getattr(sibling, "size", None),
-            ))
-    return sorted(out, key=lambda item: item.path)
+            out.append(path)
+    return sorted(out)
 
 
 def _read_remote_table(path: str, revision: str, columns: Sequence[str] | None) -> Any:
@@ -287,48 +271,44 @@ def fetch_catalog(
             return existing
         report(f"listing {CATALOG_REPO}@{CATALOG_REVISION[:12]} ({entry.slug})…")
         remote = _remote_files(entry.slug, CATALOG_REVISION)
-        if not any(item.path.endswith("labels.parquet") for item in remote):
+        if not any(path.endswith("labels.parquet") for path in remote):
             raise UnitCatalogError(
                 f"{CATALOG_REPO}@{CATALOG_REVISION[:12]} holds no {entry.slug} labels"
             )
         files: dict[str, dict[str, Any]] = {}
         with staging_area() as stage:
             root = stage / "catalog"
-            if not any(item.path.endswith("/" + TOKEN_COUNTS_UPSTREAM) for item in remote):
+            if not any(path.endswith("/" + TOKEN_COUNTS_UPSTREAM) for path in remote):
                 raise UnitCatalogError(
                     f"{CATALOG_REPO}@{CATALOG_REVISION[:12]} holds no {entry.slug} "
                     f"{TOKEN_COUNTS_UPSTREAM}"
                 )
-            for done, item in enumerate(remote, start=1):
-                if item.path.endswith("/" + TOKEN_COUNTS_UPSTREAM):
+            for done, path in enumerate(remote, start=1):
+                if path.endswith("/" + TOKEN_COUNTS_UPSTREAM):
                     root.mkdir(parents=True, exist_ok=True)
                     destination = root / TOKEN_COUNTS_FILE
                     rows = _write_token_counts(
-                        _download_remote(item.path, CATALOG_REVISION), destination,
+                        _download_remote(path, CATALOG_REVISION), destination,
                     )
                     files[TOKEN_COUNTS_FILE] = {
-                        "upstream": item.path,
-                        "upstream_sha256": item.sha256,
+                        "upstream": path,
                         "columns": ["counts"],
                         "rows": rows,
-                        "sha256": hash_file(destination),
                     }
-                    report(f"{done}/{len(remote)} {item.path} ({rows} token ids)")
+                    report(f"{done}/{len(remote)} {path} ({rows} token ids)")
                     continue
-                local = item.path.split("/", 1)[1]
-                columns = _columns_for(item.path)
-                table = _read_remote_table(item.path, CATALOG_REVISION, columns)
+                local = path.split("/", 1)[1]
+                columns = _columns_for(path)
+                table = _read_remote_table(path, CATALOG_REVISION, columns)
                 destination = root / local
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 pq.write_table(table, str(destination), compression="zstd")
                 files[local] = {
-                    "upstream": item.path,
-                    "upstream_sha256": item.sha256,
+                    "upstream": path,
                     "columns": None if columns is None else list(columns),
                     "rows": int(table.num_rows),
-                    "sha256": hash_file(destination),
                 }
-                report(f"{done}/{len(remote)} {item.path} ({table.num_rows} rows)")
+                report(f"{done}/{len(remote)} {path} ({table.num_rows} rows)")
             record = {
                 "format": CATALOG_FORMAT,
                 "model_id": entry.model_id,
@@ -701,7 +681,6 @@ __all__ = [
     "LABEL_CREDIT",
     "NEURON_COLUMNS",
     "NoUnitCatalogError",
-    "RemoteFile",
     "SITE",
     "UnitCatalog",
     "UnitCatalogDependencyError",

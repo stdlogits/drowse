@@ -161,7 +161,7 @@ def test_push_filters_fitted_pairs_by_model_and_variant(
     hub.push_manifold(folder, "alice/mood", variant="sae")
     snapshot = api.calls[-1]["snapshot"]
     assert _archive_tensors(snapshot / "mood.drowse") == []
-    assert json.loads((snapshot / "manifold.json").read_text())["files"] == {}
+    assert "files" not in json.loads((snapshot / "manifold.json").read_text())
 
 
 def test_push_dry_run_never_touches_the_hub(
@@ -174,17 +174,6 @@ def test_push_dry_run_never_touches_the_hub(
     assert hub.push_manifold(folder, "alice/mood", dry_run=True) == (
         "https://huggingface.co/alice/mood", None,
     )
-
-
-def test_push_rejects_a_stale_fit(home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from drowse.store.archive import DrowseArchiveError
-
-    folder = author_manifold()
-    node = next((folder / "nodes").iterdir())
-    node.write_text(json.dumps(["edited corpus"]))
-    monkeypatch.setattr(hub, "_hf_api", lambda: pytest.fail("pushed a stale fit"))
-    with pytest.raises(DrowseArchiveError, match="node hash"):
-        hub.push_manifold(folder, "alice/mood")
 
 
 def test_pushed_repo_installs_through_the_pull_path(
