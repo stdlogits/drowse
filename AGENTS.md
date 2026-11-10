@@ -180,9 +180,10 @@ persisted in recipes. Pre-5.4 lens homes need `scripts/migrate_lens_v7.py`.
 this repo as a submodule, runs `webui/src` with a WebGPU runtime (the
 `RuntimeClient` contract in `webui/src/lib/runtime/contracts.ts` and the
 `@runtime-*` aliases), reimplements the grammar, sampler, lowering and fit in
-the browser, and calls a few Python APIs (`lens.store.save_lens_at`,
-`units.reads.UnitReader.population_artifacts`/`null_basis`/`head_kept_ids`,
-`tests/browser_drowse_archive_bridge.py`). There are no goldens here: a semantic
+the browser. Its pack builder and reference tests import drowse Python
+(lens and neutral-cache identities, `load_local_lens_sidecar`, the unit reads,
+fold and `load_manifold`, `tests/browser_drowse_archive_bridge.py`) and read
+these formats in TypeScript. There are no goldens here: a semantic or format
 change is an interface change drowse.ai catches up to when it moves its pin,
 computing parity from the pinned Python.
 
