@@ -209,11 +209,12 @@ get wrong raises `RequestError` (400, text verbatim) or a subclass
 failures after parsing are `SteeringCompositionError` (422). A bare
 `ValueError` is a broken invariant: the server logs it and answers a scrubbed
 500. The wire `code` is the exception class name. The CLI maps 404 → exit 1,
-other 4xx → 2, 5xx → 1. `tests/invariants/test_user_message.py` enforces the
-family.
+other 4xx → 2, 5xx → 1.
 
-**Persisted formats are exact.** Readers accept only the current version and
-never migrate (a derived cache recomputes instead). These froze at 6.0.0:
+**Persisted formats are versioned.** Readers accept only the current version and
+never migrate (a derived cache recomputes instead); the fitted sidecar reader
+ignores keys the contract has retired, so dropping provenance never strands a
+fit. These froze at 6.0.0:
 `manifold.json` v10, `template.json` v2, `.drowse` v1, loom `tree_format` 2
 with token sidecar 3 (token rows carry measurement envelope v2; a node's
 `finish_reason` is one of `stop`, `length`, `stop_sequence`, `cancelled`),
@@ -309,10 +310,11 @@ fit loop, `lens/fit.py`, is the reference pattern).
 tiny generated checkpoint (`tiny_session`); route tests that need no behavior
 use the autospec `tests.support.server.mock_session`. GPU tests (`gpu` marker)
 load `HuggingFaceTB/SmolLM2-360M-Instruct` unless `DROWSE_TEST_MODEL` names
-another; `gpu_gemma` needs gated Gemma access. Every bug fix lands with a
-regression test. A test never touches the real home (an autouse fixture sets a
-scratch `DROWSE_HOME`). CI runs ruff, pyright, the CPU suite on Python 3.13
-(`-n auto`) and the webui build with a dist-drift check. Details: `tests/AGENTS.md`.
+another; the GPU suite is one end-to-end smoke plus the throughput gates. Add a
+regression test when a bug could quietly come back, not as a ritual. A test
+never touches the real home (an autouse fixture sets a scratch `DROWSE_HOME`). CI runs ruff, pyright, the CPU suite on Python 3.13
+(four parallel shards, `-n auto`, CPU torch via uv) and the webui build with a
+dist-drift check. Details: `tests/AGENTS.md`.
 
 ## State and environment
 
@@ -333,4 +335,4 @@ downloads, and Python saves only to an explicit `LoomTree.save(path)`.
 | `DROWSE_STRICT_MODEL` | OpenAI/Ollama 404 on a model-name mismatch |
 | `DROWSE_MAX_REQUEST_BYTES` | request body cap (default 64 MiB) |
 | `DROWSE_MANIFOLD_CAPTURE_CACHE_GB` | fit capture cache bound (default 8) |
-| `DROWSE_TEST_MODEL`, `DROWSE_TEST_SAELENS`, `DROWSE_TEST_LIVE_TOKENIZERS` | test knobs (`tests/AGENTS.md`) |
+| `DROWSE_TEST_MODEL`, `DROWSE_TEST_LIVE_TOKENIZERS` | test knobs (`tests/AGENTS.md`) |

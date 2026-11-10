@@ -446,5 +446,6 @@ and stitcher against the Jinja fakes in `tests/support/chat_templates.py`
 `test_role_template_drift.py` checks `SEAT_HEADERS` against real tokenizers in
 the local HF cache; `DROWSE_TEST_LIVE_TOKENIZERS=1` permits downloads (run it
 before a release). `tests/support/tiny_models.py` supplies genuine 4-layer
-models with real family templates for CPU end-to-end tests; real-weight checks
-are `tests/gpu/test_model_numerics_gpu.py` (`DROWSE_TEST_MODEL`).
+models with real family templates for CPU end-to-end tests;
+`tests/model/test_model_numerics.py` carries `mps` params for real-device
+numerics.

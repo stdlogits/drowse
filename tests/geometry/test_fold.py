@@ -127,7 +127,6 @@ def test_fold_directions_to_subspace_neutral_anchored():
     )
     assert mfld.node_labels == ["merged"]
     assert torch.allclose(mfld.node_coords, torch.tensor([[1.0]]))  # display layout
-    assert mfld.metadata["share_metric"] == "mahalanobis"
     assert mfld.origin == {}
     for L, raw in ((2, dir0), (5, dir1)):
         sub = mfld.layers[L]

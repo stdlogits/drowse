@@ -167,8 +167,6 @@ def _sidecar_payload(
         "baseline_prompts_sha256": None,
         "fitted_layers": [],
         "fit_policy_version": None,
-        "share_metric": None,
-        "subspace_metric": None,
         "rbf_smoothing_per_layer": {},
         "sigma_field_per_layer": {},
         "resolved_fit_mode": None,
@@ -968,18 +966,18 @@ def test_sidecar_requires_current_identity_fields(tmp_path: Path) -> None:
     payload.pop("fit_mode")
     path.write_text(json.dumps(payload))
 
-    with pytest.raises(ManifoldFormatError, match="exact schema"):
+    with pytest.raises(ManifoldFormatError, match="current schema"):
         ManifoldSidecar.load(path)
 
 
-def test_sidecar_rejects_unknown_fields(tmp_path: Path) -> None:
+def test_sidecar_ignores_retired_fields(tmp_path: Path) -> None:
     path = tmp_path / "model.json"
     payload = _sidecar_payload()
-    payload["legacy_diagnostics"] = {}
+    payload["share_metric"] = "mahalanobis"
     path.write_text(json.dumps(payload))
 
-    with pytest.raises(ManifoldFormatError, match="exact schema"):
-        ManifoldSidecar.load(path)
+    sidecar = ManifoldSidecar.load(path)
+    assert not hasattr(sidecar, "share_metric")
 
 
 @pytest.mark.parametrize(
@@ -2809,8 +2807,7 @@ def test_transfer_manifold_rebakes_share_in_target_space(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ):
     """A target whitener covering the transferred layers re-bakes the
-    Mahalanobis share in target space (instead of dropping it) and records
-    ``share_metric == "mahalanobis"``."""
+    Mahalanobis share in target space (instead of dropping it)."""
     import torch
     from drowse.geometry.whitener import LayerWhitener
     from drowse.store.manifold_tensors import load_manifold
@@ -2847,9 +2844,6 @@ def test_transfer_manifold_rebakes_share_in_target_space(
         assert tgt_man.mahalanobis_share[L] > 0.0
     # They are *target*-metric values, not the source's hand-set share.
     assert tgt_man.mahalanobis_share != src_man.mahalanobis_share
-    with open(out.with_suffix(".json")) as f:
-        sc = json.load(f)
-    assert sc["share_metric"] == "mahalanobis"
 
 
 def test_transfer_manifold_rotation_maps_subspace(
@@ -3181,7 +3175,6 @@ def test_manifold_summary_reports_transfer_variant(
     variant_stem = f"{tgt_safe}_from-{encode_release_id('src/m')}"
     assert set(stems) == {src_safe, variant_stem}
     assert stems[variant_stem]["method"] == "manifold_procrustes_transfer"
-    assert stems[variant_stem]["share_metric"] == "mahalanobis"
 
 
 def test_manifold_summary_reports_template_ref(
@@ -3250,7 +3243,6 @@ def test_manifold_fit_summary_surfaces_auto_topology_evidence(tmp_path: Path):
         "method": "manifold_discover_auto", "fit_mode": "auto",
         "resolved_fit_mode": "pca", "topology_winner": "flat-pca",
         "topology_candidates": candidates,
-        "share_metric": "mahalanobis", "subspace_metric": "mahalanobis",
         "sae_release": "test", "sae_revision": "rev-1",
         "sae_fingerprint": "fingerprint", "sae_ids_by_layer": {"4": "mock-4"},
     })
@@ -3259,15 +3251,11 @@ def test_manifold_fit_summary_surfaces_auto_topology_evidence(tmp_path: Path):
     assert sc.resolved_fit_mode == "pca"
     assert sc.topology_winner == "flat-pca"
     assert [c["name"] for c in sc.topology_candidates] == ["flat-pca"]
-    assert sc.share_metric == "mahalanobis"
-    assert sc.subspace_metric == "mahalanobis"
 
     entry = manifold_fit_summary(sc, "autotopo2")
     assert entry["resolved_fit_mode"] == "pca"
     assert entry["topology_winner"] == "flat-pca"
     assert [c["name"] for c in entry["topology_candidates"]] == ["flat-pca"]
-    assert entry["share_metric"] == "mahalanobis"
-    assert entry["subspace_metric"] == "mahalanobis"
     # Empty diagnostics stay omitted so a pinned/authored fit reads terse.
     assert "rbf_smoothing" not in entry
     assert "sigma_field" not in entry

@@ -457,10 +457,6 @@ def transfer_manifold(
             metadata["source_model_id"] = from_model
             metadata["source_model_fingerprint"] = source_model_fingerprint
             metadata["model_fingerprint"] = target_model_fingerprint
-            # The share was re-baked in the target metric; ``subspace_metric``
-            # keeps the source value (the basis was selected there and only
-            # rotated here).
-            metadata["share_metric"] = "mahalanobis"
             if transfer_quality_estimate is not None:
                 metadata["transfer_quality_estimate"] = float(transfer_quality_estimate)
             sidecar_path = out_path.with_suffix(".json")
@@ -502,8 +498,6 @@ def manifold_fit_summary(sidecar: ManifoldSidecar, stem: str) -> dict[str, Any]:
         ("hyperparams", sidecar.hyperparams),
         ("diagnostics", sidecar.diagnostics),
         ("node_spread", sidecar.node_spread_per_layer),
-        ("share_metric", sidecar.share_metric),
-        ("subspace_metric", sidecar.subspace_metric),
         ("resolved_fit_mode", sidecar.resolved_fit_mode),
         ("topology_winner", sidecar.topology_winner),
         ("topology_candidates", sidecar.topology_candidates),

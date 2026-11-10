@@ -145,7 +145,6 @@ def _write_fitted_manifold(
     path = folder / tensor_filename(_MODEL, release=None)
     metadata: dict[str, object] = {
         "method": "manifold_discover_pca", "fit_mode": "pca",
-        "share_metric": "euclidean",
         "model_fingerprint": "test-fingerprint",
     }
     manifest = folder / "manifold.json"

@@ -393,6 +393,6 @@ the root `AGENTS.md` "Errors" rule; `user_message()` defaults to
   `tests.support.engine.engine_over`, `tests.support.extraction.make_extraction`.
   Route tests use `tests.support.server.mock_session`, an autospec that fails on
   removed or renamed members.
-- GPU: `tests/gpu/test_session.py`, and `tests/gpu/test_smoke.py` (owns the
-  throughput regression), on `HuggingFaceTB/SmolLM2-360M-Instruct` unless
-  `DROWSE_TEST_MODEL` names another model.
+- GPU: `tests/gpu/test_smoke.py` (one end-to-end smoke and the throughput
+  gates), on `HuggingFaceTB/SmolLM2-360M-Instruct` unless `DROWSE_TEST_MODEL`
+  names another model.

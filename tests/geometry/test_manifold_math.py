@@ -787,8 +787,14 @@ def test_save_load_manifold_round_trip(tmp_path: Path, monkeypatch: pytest.Monke
         _attach_constant_sigma(sub, 0.1)
     path = tmp_path / "mood" / "model.safetensors"
     save_manifold(manifold, path, {"method": "manifold_pca",
-                                   "nodes_sha256": "abc123",
-                                   "share_metric": "mahalanobis"})
+                                   "nodes_sha256": "abc123"})
+    # A key the sidecar contract has retired (6.1.0 wrote ``share_metric``)
+    # is ignored on read rather than stranding the fit.
+    import json
+    sidecar_path = path.with_suffix(".json")
+    sidecar = json.loads(sidecar_path.read_text())
+    sidecar["share_metric"] = "mahalanobis"
+    sidecar_path.write_text(json.dumps(sidecar))
     loaded = load_manifold(path)
 
     assert loaded.name == "mood"
@@ -800,7 +806,6 @@ def test_save_load_manifold_round_trip(tmp_path: Path, monkeypatch: pytest.Monke
     # New v4+ companion fields round-trip: the per-layer whitened share
     # and the metric label that records which weighting the fit used.
     assert loaded.mahalanobis_share == {4: 1.5, 9: 2.0}
-    assert loaded.metadata["share_metric"] == "mahalanobis"
     # The per-layer ``origin`` round-trips through the sidecar.
     assert sorted(loaded.origin) == [4, 9]
     for idx in (4, 9):
@@ -1591,7 +1596,6 @@ def test_save_load_affine_manifold_round_trip(
         "components": {"0:default/x": {
             "selector": "default/x", "alpha": 1.0, "tensor_sha256": "0" * 64,
         }},
-        "share_metric": "mahalanobis",
     })
 
     # The on-disk payload omits the RBF triple + coord normalization for the

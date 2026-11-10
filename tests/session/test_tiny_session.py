@@ -58,7 +58,7 @@ def test_stream_merges_partial_utf8_tokens_into_one_event(
 ) -> None:
     """A multi-byte character spans several tokens but streams as one event.
 
-    Regression for the flaky ``test_session.py::test_generate_stream``: it
+    Regression for the flaky GPU ``test_generate_stream`` (since removed): it
     asserted one event per token, which breaks whenever the model samples a
     character that needs more than one token (``é`` is two bytes here).
     """

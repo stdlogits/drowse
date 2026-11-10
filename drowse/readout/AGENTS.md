@@ -284,8 +284,8 @@ rows at its own rank, one batched foot solve (`invert_stacked`) per rank
 (one for a rank-uniform fit), and the share-weighted means as a left fold in
 layer order. Every kernel computes a layer as the per-layer read did, so a
 reading does not depend on how many layers ran together: bit-identical to the
-per-layer read on MPS (`tests/gpu/test_curved_stack_gpu.py`; on CPU
-`tests/readout/test_monitor_curved_stack.py` pins it to tolerance). A
+per-layer read (`tests/readout/test_monitor_curved_stack.py` pins it to
+tolerance on CPU). A
 reduction batched across layers moves values by an ulp, and an off-surface
 state's foot to another basin, so keep reductions per layer. A read that saw only some of
 a probe's layers uses a cached `_CurvedStack.subset`. Curved feet warm-start

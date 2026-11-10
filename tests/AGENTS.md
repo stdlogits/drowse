@@ -26,8 +26,7 @@ goldens the drowse.ai browser runtime replays.
 
 | Variable | Effect |
 |---|---|
-| `DROWSE_TEST_MODEL` | The model GPU tests load (`tests/support/gpu.py::gpu_model_id`); default `HuggingFaceTB/SmolLM2-360M-Instruct`, public. Any compatible chat model works; `tests/gpu/test_model_numerics_gpu.py` checks one model per run. |
-| `DROWSE_TEST_SAELENS=1` | Opts into `tests/gpu/test_sae_lens_smoke.py` (needs `sae_lens`; downloads a real SAE release). |
+| `DROWSE_TEST_MODEL` | The model GPU tests load (`tests/support/gpu.py::gpu_model_id`); default `HuggingFaceTB/SmolLM2-360M-Instruct`, public. Any compatible chat model works. |
 | `DROWSE_TEST_LIVE_TOKENIZERS=1` | Lets `tests/model/test_role_template_drift.py` download the per-family tokenizers (some gated) instead of reading only the local HF cache. Run it before a release. |
 
 Never point a test at the real home: a session-scoped autouse fixture sets a
@@ -65,19 +64,17 @@ so keep test modules exactly one directory deep.
 
 | Marker | Meaning | Where |
 |---|---|---|
-| `gpu` | Needs CUDA or MPS; may download weights. CI deselects it. | `tests/gpu/` except `test_gpu_model.py` (CPU tests of the skip helper); the `mps` params of `tests/model/test_model_numerics.py` and `tests/generation/test_generation_metadata.py`; `tests/generation/test_scoring.py::test_real_forward_score_choices_distribution`. A test that requests `gpu_session` is marked automatically. |
-| `gpu_gemma` | Needs explicit gated Gemma model and artifact access. | `tests/gpu/test_sae_lens_smoke.py` (also `gpu`, and opt-in via `DROWSE_TEST_SAELENS`). |
+| `gpu` | Needs CUDA or MPS; may download weights. CI deselects it. | `tests/gpu/test_smoke.py` (one extract → steer → generate smoke and the perf gates); the `mps` params of `tests/model/test_model_numerics.py` and `tests/generation/test_generation_metadata.py`; `tests/generation/test_scoring.py::test_real_forward_score_choices_distribution`. A test that requests `gpu_session` is marked automatically. |
 | `perf` | Wall-clock throughput; serial only. | `tests/gpu/test_smoke.py`: `test_throughput_regression` (steered ≥ 85% of vanilla tok/s), `test_throughput_with_ablation` (ablation plus additive ≥ 80%; the extra matmul per ablation layer is why the bar is lower) and `test_throughput_with_unit_ablation` (8 neurons and 2 heads mean-ablated ≥ 80%) and `test_throughput_with_dashboard_instruments` (the served dashboard's decode ≥ 50%: the default roster scored per token with subspace coordinates, the live R readout over a micro-fit lens's every layer, eight alternatives, a loom row and a serialized WebSocket frame per token; about 63% on SmolLM2/MPS). All are also `gpu`. |
 
 GPU modules load with `device="auto"` (cuda > mps > cpu) and skip without CUDA
 or MPS. `load_or_skip_inaccessible` skips when loading fails on access (a gated
 repo, or a 401/403 auth error anywhere in the cause chain) and re-raises
-anything else, so OOM or shape errors still fail. Each module builds its own
-module-scoped session under its own scratch home (`test_session.py` needs
-`probes=["register"]`); the conftest `gpu_session` (session scope,
-`probes=[]`) is available for new GPU tests that need no roster. MPS runs the
-default model 3 to 5 times slower than CUDA, so `test_smoke.py`'s extraction
-budget is 60 s on MPS and 10 s on CUDA.
+anything else, so OOM or shape errors still fail. The conftest `gpu_session`
+(session scope, `probes=[]`) is available for a GPU test that needs a session.
+Real-device behavior is otherwise covered by the tiny sessions on CPU; add a
+GPU test only for something a CPU run cannot show (device numerics, MPS
+kernels, throughput).
 
 Two MPS parity tests (`tests/geometry/test_frame_transport.py::test_two_d_pairs_on_mps_match_cpu`,
 `tests/geometry/test_synthesize_subspace.py::test_provider_fragments_follow_runtime_layer_device`)
@@ -241,7 +238,6 @@ files from it, so their paths are part of its interface:
 
 | Test | Enforces |
 |---|---|
-| `invariants/test_user_message.py` | The error family, over every non-underscore module under `drowse/`: each public exception class subclasses `DrowseError`, and the reparented ones keep their stdlib base; each `RequestError` subclass is a `ValueError` answering 400 with its own text. `_OVERRIDES` pins every overriding class's status; changing one is a user-visible contract change. |
 | `invariants/test_webui_types_parity.py` | `webui/src/lib/types.gen.ts` equals a fresh render (regenerate with `python scripts/generate_webui_types.py`); every native JSON route declares a response schema; native paths are kebab-case. |
 
 Contract pins elsewhere: `readout/test_measurements_envelope.py` (exact
@@ -256,7 +252,8 @@ rest of the suite builds on).
 
 ## Writing tests
 
-- Every bug fix lands with a regression test.
+- Add a regression test when a bug could quietly come back; skip it when the fix
+  makes the bug unrepresentable or another test already covers it.
 - Write artifacts only under `isolated_home` or a `tmp_path` home.
 - A change to a wire record, an error status or a native route shape fails the
   pins above by design; update the pin in the same change.

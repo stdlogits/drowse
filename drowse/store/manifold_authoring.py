@@ -453,9 +453,6 @@ def publish_baked_manifold(
                 "method": method, "fit_mode": "baked", "nodes_sha256": nodes_sha,
                 "model_fingerprint": item.model_fingerprint,
             }
-            share_metric = item.manifold.metadata.get("share_metric")
-            if share_metric:
-                meta["share_metric"] = share_metric
             if item.components:
                 meta["components"] = item.components
             if method == "merge":

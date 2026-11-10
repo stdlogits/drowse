@@ -89,7 +89,6 @@ addopts = ["--strict-markers"]
 xfail_strict = true
 markers = [
     "gpu: requires a CUDA or MPS backend (deselect with `-m \"not gpu\"`)",
-    "gpu_gemma: requires explicit gated Gemma model and artifact access",
     "perf: wall-clock throughput test; skipped under xdist, run with `pytest -m perf -p no:xdist`",
 ]
 filterwarnings = [

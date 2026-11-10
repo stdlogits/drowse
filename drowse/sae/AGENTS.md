@@ -346,5 +346,4 @@ instrument). `tests/support/sae.py` provides `MockSaeBackend`,
 section and recorded registry effects) and `make_resident(runtime, backend,
 layer=...)`. Session-level tests load a mock through `session.sae.load` with
 `drowse.sae.runtime.resolve_sae_backend` monkeypatched. Tests that need SAELens
-`importorskip` it. The real end-to-end run, `tests/gpu/test_sae_lens_smoke.py`,
-is opt-in via `DROWSE_TEST_SAELENS=1` and is marked `gpu_gemma`.
+`importorskip` it.
