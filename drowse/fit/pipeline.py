@@ -485,7 +485,9 @@ class _ResolvedGeometry:
     #: bases, carried out of topology scoring so the final layer fit doesn't
     #: repeat the layout QR/eigh/LU.
     rbf_plan: Any = None
-    fisher_bases: dict[int, torch.Tensor] = field(default_factory=dict)
+    fisher_bases: dict[int, tuple[torch.Tensor, torch.Tensor]] = field(
+        default_factory=dict,
+    )
 
 
 def _resolve_fit_geometry(
@@ -538,7 +540,7 @@ def _resolve_fit_geometry(
     # and the topology ``select_topology`` picks for ``fit_mode="auto"``.
     effective_fit_mode = mf.fit_mode
     auto_rbf_plan = None
-    auto_fisher_bases: dict[int, torch.Tensor] = {}
+    auto_fisher_bases: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
     if mf.fit_mode == "authored":
         domain = domain_from_spec(mf.domain)
         node_coords = torch.tensor(mf.node_coords, dtype=torch.float32)
@@ -1503,7 +1505,7 @@ class ManifoldExtractionPipeline:
             raw_fits[idx] = (fit.subspace, fit.mu_coords)
         kept = compute_dls_axes(
             {idx: stacks[idx] for idx in raw_fits},
-            {idx: sub.basis for idx, (sub, _mu) in raw_fits.items()},
+            {idx: sub.read for idx, (sub, _mu) in raw_fits.items()},
             means if dls else None,
         )
         layer_subs: dict[int, LayerSubspace] = {}

@@ -106,7 +106,7 @@ must stay deterministic.
 | Constant | Bump invalidates |
 |---|---|
 | `MANIFOLD_CAPTURE_VERSION = 3` (`pipeline.py`) | all fitted tensors and all cached captures |
-| `MANIFOLD_FIT_POLICY_VERSION = 1` (`geometry/manifold.py`) | fitted tensors only |
+| `MANIFOLD_FIT_POLICY_VERSION = 2` (`geometry/manifold.py`; 2 typed the frames: vector write rows, dual read rows) | fitted tensors only |
 | `CAPTURE_CACHE_FORMAT = "5"` (`capture_cache.py`) | capture shards |
 | `NEUTRAL_CAPTURE_VERSION = 2` (`store/neutral.py`; 2 added the mid means) | neutral caches |
 
@@ -180,7 +180,8 @@ identity, but never uses them.
 
 **Flat**: `fit_affine_subspace` with `n_components` = the layout width (a flat
 subspace *is* its layout span, so `max_subspace_dim` does not apply) and
-`orient_to=0` (node 0 positive, so a 2-node fit is `+δ̂`: PCA@2 ≡ DiM). DLS
+`orient_to=0` (node 0 positive, so a 2-node fit writes `+δ` and reads
+`Σ⁻¹δ`: PCA@2 ≡ DiM). DLS
 then prunes axes and `subspace_share` is baked on the survivors. The display
 layout is translated onto neutral (`_neutral_centered_layout`) so `% 0,…,0`
 reads as neutral; steering is unchanged. No origin is stored (neutral's foot
@@ -194,7 +195,8 @@ the σ-field, and each layer stores `origin`, the neutral foot that seeds the
 solve. There is no DLS, since a curved fit has no polarity.
 
 **DLS** (`compute_dls_axes`; Dang & Ngo 2026, Selective Steering, Eq. 9) keeps
-axis `d̂_r` at layer L iff `{(c_i − ν_L)·d̂_r}` straddles zero. Same-side axes
+axis `r` at layer L iff the node readings `{(c_i − ν_L)·p_r}` through its read
+row `p_r` (`LayerSubspace.read`) straddle zero. Same-side axes
 encode intensity, not polarity, and at K=2 this is exactly the bipolar
 opposite-sign test. Edge cases: `layer_means=None` (`dls=False`) keeps every
 axis; a zero-norm axis drops; a layer with no ν keeps every checkable axis; if

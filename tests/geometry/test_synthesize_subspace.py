@@ -24,7 +24,7 @@ from drowse.geometry.domains import CustomDomain
 from drowse.geometry.subspace import LayerSubspace
 from drowse.geometry.inject import (
     SynthesizedSubspace,
-    _ortho_basis,
+    _ortho_frame,
     subspace_inject,
     synthesize_subspace as _synthesize_subspace,
 )
@@ -56,7 +56,14 @@ def _row(v: torch.Tensor) -> torch.Tensor:
     return _unit(v).reshape(1, -1)
 
 
-# --------------------------------------------------------------- _ortho_basis ---
+def _ortho_basis(rows: torch.Tensor) -> tuple[torch.Tensor, list[int]]:
+    """The Euclidean case of :func:`_ortho_frame` (reads are the rows)."""
+    basis, read, kept = _ortho_frame(rows, rows)
+    assert torch.allclose(read, basis)
+    return basis, kept
+
+
+# --------------------------------------------------------------- _ortho_frame ---
 
 def test_ortho_basis_orthonormal_and_ordered():
     torch.manual_seed(0)
@@ -82,6 +89,26 @@ def test_ortho_basis_all_degenerate_empty():
     basis, kept = _ortho_basis(torch.zeros(1, 5))
     assert basis.shape == (0, 5)
     assert kept == []
+
+
+def test_ortho_frame_is_mahalanobis_orthonormal_and_dual() -> None:
+    """Under an anisotropic metric the frame is M-orthonormal, its reads are
+    ``Σ⁻¹`` of its rows (so ``read @ basisᵀ = I``), and it spans the inputs."""
+    from tests.support.whitener import synthetic_whitener
+
+    torch.manual_seed(4)
+    D = 16
+    whitener = synthetic_whitener([0], D)
+    rows = torch.randn(3, D)
+    basis, read, kept = _ortho_frame(rows, whitener.apply_inv(0, rows))
+    assert kept == [0, 1, 2]
+    assert torch.allclose(read, whitener.apply_inv(0, basis), atol=1e-4)
+    assert torch.allclose(read @ basis.T, torch.eye(3), atol=1e-4)
+    # same span: each input row is reproduced by its own coordinates
+    assert torch.allclose((rows @ read.T) @ basis, rows, atol=1e-4)
+    # order preserved: the first axis is the first row, Mahalanobis-normalized
+    first = rows[0] / float((rows[0] @ whitener.apply_inv(0, rows[0])).sqrt())
+    assert torch.allclose(basis[0], first, atol=1e-4)
 
 
 # ---------------------------------------------------------- single push (fold) ---
@@ -384,7 +411,7 @@ def test_synth_validation_does_not_concatenate_device_views(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Dispatch validation must avoid the MPS ``cat`` Metal-blit crash path."""
-    sub = LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4))
+    sub = LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4), torch.eye(2, 4))
 
     def explode(*_args: object, **_kwargs: object) -> None:
         raise AssertionError("SynthesizedSubspace validation called torch.cat")
@@ -395,7 +422,7 @@ def test_synth_validation_does_not_concatenate_device_views(
 
 
 def test_synth_rejects_mean_basis_width_mismatch() -> None:
-    sub = LayerSubspace.affine(torch.zeros(4), torch.eye(2, 5))
+    sub = LayerSubspace.affine(torch.zeros(4), torch.eye(2, 5), torch.eye(2, 5))
     with pytest.raises(ValueError, match="mean width"):
         _synth_from_subspace(sub)
 
@@ -404,7 +431,7 @@ def test_synth_rejects_wrong_coordinate_normalization_shape() -> None:
     from dataclasses import replace
 
     sub = replace(
-        LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4)),
+        LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4), torch.eye(2, 4)),
         coord_offset=torch.zeros(1),
     )
     with pytest.raises(ValueError, match="coord_offset/coord_scale"):
@@ -415,27 +442,26 @@ def test_synth_rejects_artifact_only_fields() -> None:
     from dataclasses import replace
 
     sub = replace(
-        LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4)),
+        LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4), torch.eye(2, 4)),
         affine_map=torch.eye(2),
     )
     with pytest.raises(ValueError, match="artifact surface fields"):
         _synth_from_subspace(sub)
 
 
-def test_synth_rejects_nonorthonormal_basis() -> None:
-    sub = LayerSubspace.affine(
-        torch.zeros(4), torch.tensor([
-            [1.0, 0.0, 0.0, 0.0],
-            [1.0, 0.0, 0.0, 0.0],
-        ]),
-    )
-    with pytest.raises(ValueError, match="orthonormal"):
+def test_synth_rejects_reads_not_dual_to_the_basis() -> None:
+    rows = torch.tensor([
+        [1.0, 0.0, 0.0, 0.0],
+        [1.0, 0.0, 0.0, 0.0],
+    ])
+    sub = LayerSubspace.affine(torch.zeros(4), rows, rows.clone())
+    with pytest.raises(ValueError, match="dual"):
         _synth_from_subspace(sub)
 
 
 @pytest.mark.parametrize("share", [0.0, -1.0, float("inf"), True, "1.0"])
 def test_synth_rejects_invalid_share_scalar(share: object) -> None:
-    sub = LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4))
+    sub = LayerSubspace.affine(torch.zeros(4), torch.eye(2, 4), torch.eye(2, 4))
     with pytest.raises(ValueError, match="finite and positive"):
         SynthesizedSubspace(
             layers={0: sub}, target_coord={0: torch.zeros(2)},

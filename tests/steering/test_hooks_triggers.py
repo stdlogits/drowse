@@ -22,9 +22,9 @@ from drowse.steering.hooks import (
 )
 from drowse.geometry.domains import CustomDomain
 from drowse.geometry.subspace import LayerSubspace
-from drowse.geometry.inject import subspace_inject, synthesize_subspace
+from drowse.geometry.inject import _ortho_frame, subspace_inject, synthesize_subspace
 from drowse.steering.triggers import Trigger, TriggerContext
-from tests.support.whitener import isotropic_whitener
+from tests.support.whitener import isotropic_whitener, synthetic_whitener
 
 
 _DIM = 16
@@ -55,14 +55,24 @@ def _affine_group(layer: int, trigger: Trigger) -> AffineGroup:
     )
 
 
+def _oblique_frame(rank: int, seed: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """A Mahalanobis-orthonormal frame under an anisotropic metric: its reads
+    differ from its rows, so the parity below exercises the typing."""
+    whitener = synthetic_whitener([0], _DIM, seed=seed)
+    rows = torch.randn(rank, _DIM, generator=torch.Generator().manual_seed(seed))
+    basis, read, kept = _ortho_frame(rows, whitener.apply_inv(0, rows))
+    assert len(kept) == rank and not torch.allclose(read, basis, atol=1e-2)
+    return basis, read
+
+
 def _mixed_op(kappa: torch.Tensor, along: float, dtype: torch.dtype = torch.float32):
-    basis = torch.eye(2, _DIM)
+    basis, read = _oblique_frame(2, seed=5)
     mean = torch.linspace(-0.2, 0.3, _DIM)
-    sub = LayerSubspace.affine(mean, basis)
+    sub = LayerSubspace.affine(mean, basis, read)
     target = torch.tensor([0.7, -0.25])
     low = LoweredAffine(subspace=sub, target=target, eff_along=along, kappa=kappa)
     op = AffineOp.from_lowered(low, device=torch.device("cpu"), dtype=dtype)
-    return op, sub, target, mean, basis
+    return op, sub, target, mean, read
 
 
 # ----------------------------------------------------------------- grouping ---
@@ -102,11 +112,11 @@ def test_both_trigger_always_applies():
 def test_affine_op_matches_unified_kernel(kappa: torch.Tensor) -> None:
     """The split push + compact ablation is algebraically the affine kernel."""
     along = 0.65
-    op, sub, target, mean, basis = _mixed_op(kappa, along)
+    op, sub, target, mean, read = _mixed_op(kappa, along)
     hidden = torch.randn(1, 3, _DIM)
     expected, _ = subspace_inject(
         hidden, sub, CustomDomain(2), target, torch.zeros(2), along, 0.0,
-        mean_proj=mean @ basis.T, kappa=kappa,
+        mean_proj=mean @ read.T, kappa=kappa,
     )
     actual = hidden.clone()
     op.apply(actual)
@@ -115,9 +125,9 @@ def test_affine_op_matches_unified_kernel(kappa: torch.Tensor) -> None:
 
 def test_rank_one_ablation_matches_unified_kernel() -> None:
     """The rank-1 dot + ``addcmul_`` path is the same projection."""
-    basis = _unit(_DIM, seed=3).reshape(1, -1)
+    basis, read = _oblique_frame(1, seed=3)
     mean = torch.linspace(-0.2, 0.3, _DIM)
-    sub = LayerSubspace.affine(mean, basis)
+    sub = LayerSubspace.affine(mean, basis, read)
     target = torch.tensor([0.3])
     kappa = torch.tensor([0.8])
     low = LoweredAffine(subspace=sub, target=target, eff_along=1.5, kappa=kappa)
@@ -142,13 +152,13 @@ def test_affine_op_recast_is_memoized_and_exact() -> None:
     """
     kappa = torch.tensor([0.0, 1.0])
     along = 0.65
-    op, sub, target, mean, basis = _mixed_op(kappa, along)
+    op, sub, target, mean, read = _mixed_op(kappa, along)
     assert op.rows is not None and op.rows.dtype is torch.float32
 
     hidden = torch.randn(1, 3, _DIM).to(torch.float16)
     expected, _ = subspace_inject(
         hidden.to(torch.float32), sub, CustomDomain(2), target, torch.zeros(2),
-        along, 0.0, mean_proj=mean @ basis.T, kappa=kappa,
+        along, 0.0, mean_proj=mean @ read.T, kappa=kappa,
     )
     actual = hidden.clone()
     op.apply(actual)

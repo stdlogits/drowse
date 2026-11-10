@@ -21,7 +21,7 @@ from drowse.errors import WhitenerError
 from drowse.geometry.domains import ManifoldDomain
 from drowse.geometry.invert import DEFAULT_INVERSION_DAMPING, _gn_step
 from drowse.geometry.rbf import eval_rbf, eval_rbf_jet
-from drowse.geometry.subspace import LayerSubspace
+from drowse.geometry.subspace import LayerSubspace, dual_read
 
 if TYPE_CHECKING:
     from drowse.geometry.whitener import LayerWhitener
@@ -33,18 +33,23 @@ if TYPE_CHECKING:
 _ROTATE_EPSILON: float = 1e-6
 
 
-def _ortho_basis(
-    rows: torch.Tensor, *, eps: float = 1e-6,
-) -> tuple[torch.Tensor, list[int]]:
-    """Ordered Gram-Schmidt orthonormalization of ``rows`` ``(N, D)``.
+def _ortho_frame(
+    rows: torch.Tensor, reads: torch.Tensor, *, eps: float = 1e-6,
+) -> tuple[torch.Tensor, torch.Tensor, list[int]]:
+    """Ordered Gram-Schmidt of write ``rows`` in the metric their ``reads`` define.
 
-    Processes rows in order; each is unit-normalized first (a basis of the
-    *span* — magnitudes are irrelevant), and a row whose residual after
-    removing its projection onto the accepted rows falls below ``eps`` is
-    dropped (collinear / duplicate directions add no axis).  Unit space makes
-    ``eps`` a scale-free tolerance (fp32 leaves ~1e-7 on a truly parallel
-    row).  Returns ``(B, kept)``: the ``(R, D)`` orthonormal basis on the input
-    device and the indices of the rows that became axes, in order.
+    ``rows`` ``(N, D)`` are write vectors and ``reads`` ``(N, D)`` the metric's
+    image of each (``Σ⁻¹`` of the row), so ``⟨u, v⟩_M = u · read(v)``: the
+    Mahalanobis inner product without a ``D × D`` matrix.  Every operation
+    applied to a row is applied to its read, so the result stays dual.  Rows
+    are processed in order; each is unit-normalized first (a basis of the
+    *span*: magnitudes are irrelevant), and a row whose residual after removing
+    its projection onto the accepted rows falls below ``eps`` is dropped
+    (collinear / duplicate directions add no axis).  Unit space makes ``eps``
+    scale-free.  Returns ``(B, P, kept)``: the ``(R, D)`` orthonormal write
+    rows, their dual read rows (``P Bᵀ = I``) on the input device, and the
+    indices of the rows that became axes, in order.  ``reads = rows`` is the
+    Euclidean case.
 
     Ordering is load-bearing for :func:`synthesize_subspace`: push rows before
     ablation rows keep the push displacement inside the earlier axes, so the
@@ -54,25 +59,33 @@ def _ortho_basis(
     """
     device = rows.device
     work = rows.detach().to(device="cpu", dtype=torch.float32)
-    accepted: list[torch.Tensor] = []
+    work_r = reads.detach().to(device="cpu", dtype=torch.float32)
+    accepted: list[tuple[torch.Tensor, torch.Tensor]] = []
     kept: list[int] = []
-    for i, d in enumerate(work):
-        dn = float(torch.linalg.vector_norm(d))
-        if dn < 1e-12:                 # exact-zero input — no direction
+    for i in range(int(work.shape[0])):
+        b, r = work[i], work_r[i]
+        n2 = float(b @ r)
+        if n2 < 1e-24:                 # exact-zero input — no direction
             continue
-        v = d / dn
-        for b in accepted:
-            v = v - (v @ b) * b
-        nv = float(torch.linalg.vector_norm(v))
-        if nv < eps:                   # collinear with an accepted row
+        n = math.sqrt(n2)
+        b, r = b / n, r / n
+        for ab, ar in accepted:
+            c = ar @ b                 # ⟨accepted, b⟩_M
+            b = b - c * ab
+            r = r - c * ar
+        n2 = float(b @ r)
+        if n2 < eps * eps:             # collinear with an accepted row
             continue
-        accepted.append(v / nv)
+        n = math.sqrt(n2)
+        accepted.append((b / n, r / n))
         kept.append(i)
-    basis = (
-        torch.stack(accepted) if accepted
-        else work.new_zeros((0, work.shape[-1]))
-    )
-    return basis.to(device), kept
+    if accepted:
+        basis = torch.stack([b for b, _r in accepted])
+        read = dual_read(basis, torch.stack([r for _b, r in accepted]))
+    else:
+        basis = work.new_zeros((0, work.shape[-1]))
+        read = work.new_zeros((0, work.shape[-1]))
+    return basis.to(device), read.to(device), kept
 
 
 @dataclass
@@ -88,7 +101,8 @@ class SynthesizedSubspace:
     collide at shared layers, ``OverlappingManifoldError``).
 
     Per layer the subspace spans the union of every active term's directions
-    (push + ablation).  The ``along`` step **translates** the foot by the
+    (push + ablation), as a Mahalanobis-orthonormal frame: write rows
+    ``basis`` and their dual ``read`` rows.  The ``along`` step **translates** the foot by the
     ``target_coord`` offset on each *push* axis (preserving the per-token
     spread → coherent strong steer) and **collapses** the foot toward ``0`` on
     each *ablation* axis (removing the requested fraction of that component).
@@ -109,7 +123,7 @@ class SynthesizedSubspace:
     non-degenerate active direction (and present in ``neutral_means``) appear.
     """
 
-    layers: dict[int, "LayerSubspace"]        # affine: mean = neutral_L, basis = ortho span
+    layers: dict[int, "LayerSubspace"]        # affine: mean = neutral_L, M-orthonormal frame
     target_coord: dict[int, torch.Tensor]     # (R_L,) the along target (poles / 0)
     share: dict[int, float]                   # ‖Δ_L‖, un-normalized budget weight
     kappa: dict[int, torch.Tensor] = field(   # (R_L,) per-axis requested ablation coefficient
@@ -133,7 +147,7 @@ class SynthesizedSubspace:
         # with one host read per device, not several per layer.  (They avoid
         # ``torch.cat``: the MPS Metal blit path can segfault on the mixed
         # view/stride shapes dispatch-time synthesis produces.)
-        not_orthonormal: dict[torch.device, torch.Tensor] = {}
+        not_dual: dict[torch.device, torch.Tensor] = {}
         not_finite: dict[torch.device, torch.Tensor] = {}
         for layer, sub in self.layers.items():
             if not sub.is_affine:
@@ -146,6 +160,8 @@ class SynthesizedSubspace:
             dim = int(sub.basis.shape[1])
             if sub.mean.shape != (dim,):
                 raise ValueError("synthesized mean width must match basis width")
+            if sub.read.shape != sub.basis.shape:
+                raise ValueError("synthesized read rows must have the basis shape")
             if sub.coord_offset.shape != (rank,) or sub.coord_scale.shape != (rank,):
                 raise ValueError(
                     "synthesized coord_offset/coord_scale must have shape (R,)"
@@ -177,28 +193,33 @@ class SynthesizedSubspace:
                     "SynthesizedSubspace shares must be finite and positive"
                 )
             device = sub.basis.device
-            gram = sub.basis @ sub.basis.T
+            # The kernel's invariant is duality (``read @ basisᵀ = I``): reads
+            # recover the coordinates the basis writes.  Mahalanobis
+            # orthonormality is the synthesizer's construction, not checkable
+            # here without ``Σ``.
+            gram = sub.read @ sub.basis.T
             identity = torch.eye(rank, dtype=gram.dtype, device=device)
-            bad_gram = ~torch.isclose(gram, identity, atol=1e-5, rtol=1e-5).all()
+            bad_gram = ~torch.isclose(gram, identity, atol=1e-3, rtol=1e-3).all()
             bad_values = ~(
                 torch.isfinite(sub.mean).all()
                 & torch.isfinite(sub.basis).all()
+                & torch.isfinite(sub.read).all()
                 & torch.isfinite(self.target_coord[layer]).all().to(device)
                 & torch.isfinite(self.kappa[layer]).all().to(device)
             )
-            not_orthonormal[device] = (
-                bad_gram if device not in not_orthonormal
-                else not_orthonormal[device] | bad_gram
+            not_dual[device] = (
+                bad_gram if device not in not_dual
+                else not_dual[device] | bad_gram
             )
             not_finite[device] = (
                 bad_values if device not in not_finite
                 else not_finite[device] | bad_values
             )
-        for device, bad_gram in not_orthonormal.items():
+        for device, bad_gram in not_dual.items():
             # One host read per device encodes both flags.
             flags = int((bad_gram.to(torch.uint8) * 2 + not_finite[device].to(torch.uint8)).item())
             if flags & 2:
-                raise ValueError("synthesized basis rows must be orthonormal")
+                raise ValueError("synthesized read rows must be dual to the basis")
             if flags & 1:
                 raise ValueError("SynthesizedSubspace tensors must be finite")
 
@@ -219,7 +240,7 @@ def synthesize_subspace(
     Each **push** term is an affine subspace fragment
     ``(basis_rows, coord_target, coeff)``:
 
-    - ``basis_rows`` — per-layer ``(R_i, D)`` orthonormal rows (a steering
+    - ``basis_rows`` — per-layer ``(R_i, D)`` write rows (a steering
       *vector* is rank-1, ``(1, D)``; ``personas%pirate`` is rank-8, ``(8, D)``).
     - ``coord_target`` — per-layer ``(R_i,)`` target position *in that fragment's
       own basis* (a pole / node coordinate, origin-relative).
@@ -230,18 +251,23 @@ def synthesize_subspace(
     is the origin (``0``).  ``neutral_means`` supplies each layer's anchor
     (``mean``); it must cover every participating layer.
 
-    Per layer (over the union of layers any term touches):
+    Per layer (over the union of layers any term touches), all in the
+    Mahalanobis metric (one batched Woodbury ``Σ⁻¹`` over the layer's rows,
+    then :func:`_ortho_frame` on write/read pairs):
 
     - Orthonormalize the push span, project ablation directions out of it (push
       wins a shared direction), and build the reduced symmetric ablation
       operator ``A = Σ coeffᵢ uᵢuᵢᵀ`` on the remaining span.  Diagonalizing
       ``A`` gives an orthonormal ablation basis and one exact collapse
       coefficient per axis, including partial, repeated, and negative terms.
+      An ablation axis writes along the direction and reads with its ``Σ⁻¹``
+      covector, so a full ``!`` is LEACE against the neutral mean.
     - World push displacement ``Δ = Σ_push coeffᵢ·(coord_targetᵢ @ basis_rowsᵢ)``
       — each fragment's own ``(R_i,) @ (R_i, D) = (D,)`` world vector, scaled by
-      its coeff.  ``target = B @ Δ`` is its coordinate in the merged basis.
-      Because ``Δ`` lives in the push span and the ablation-only axes are its
-      orthogonal complement, those axes get ``target ≈ 0``.
+      its coeff.  ``target = P @ Δ`` (the merged read rows) is its coordinate
+      in the merged frame.  Because ``Δ`` lives in the push span and the
+      ablation-only axes are its Mahalanobis-orthogonal complement, those axes
+      get ``target ≈ 0``.
     - Per-axis ``kappa`` ``(R,)`` — ``0`` on the push span and the eigenvalues of
       ``A`` on the ablation-only complement.  The apply path gain-compensates
       these coefficients before the kernel evaluates
@@ -252,13 +278,13 @@ def synthesize_subspace(
 
     **Whitened normalization (Mahalanobis-only).**  ``whitener`` is required and
     must cover every synthesized layer; the push is normalized in the Mahalanobis
-    metric ``M_R = B Σ⁻¹ Bᵀ`` (the engine-wide read/fit metric):
+    metric (the engine-wide read/fit metric):
 
     - ``share = ‖Δ‖_M`` (whitened displacement) — the cross-layer profile weights
       by *whitened* signal, matching the baked ``mahalanobis_share`` rather than
       the raw activation distance.
-    - ``target = (B @ Δ) / ‖Δ‖_M`` — a **whitened-unit** direction (``‖B@target‖_M
-      = 1``), so the apply path's ``eff_along_L = mean1(share)·gain`` puts the same
+    - ``target = (P @ Δ) / ‖Δ‖_M`` — a **whitened-unit** coordinate
+      (``‖target‖ = ‖target @ B‖_M = 1``), so the apply path's ``eff_along_L = mean1(share)·gain`` puts the same
       *whitened* slide on every target.  The push still aims at the node centroid
       (whitening a direction toward a fixed point is metric-invariant — only the
       calibration changes), it is just measured in std-units instead of the
@@ -306,7 +332,9 @@ def synthesize_subspace(
     target_coord: dict[int, torch.Tensor] = {}
     share: dict[int, float] = {}
     kappa: dict[int, torch.Tensor] = {}
-    finished: list[tuple[int, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]] = []
+    finished: list[
+        tuple[int, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+    ] = []
 
     for L in present_layers:
         # Every fragment is co-located on CPU: fitted manifolds follow the
@@ -360,25 +388,31 @@ def synthesize_subspace(
         raw_delta = zeros
         for cf, wd in push_frags:
             raw_delta = raw_delta + cf * wd
-        # One batched Woodbury apply for every Mahalanobis norm this layer
-        # needs: the ablation rows, each push world direction, and the raw
-        # coeff-weighted push displacement (last row).
-        m_norms = whitener.mahalanobis_norms(L, torch.stack(
-            [row for _cf, row in ablate_rows]
-            + [wd for _cf, wd in push_frags]
-            + [raw_delta]
-        )).tolist()
+        # One batched Woodbury apply for every Σ⁻¹ this layer needs: the push
+        # rows (their reads), the ablation rows, each push world direction and
+        # the raw coeff-weighted push displacement (last row).  Mahalanobis
+        # norms are ``sqrt(v · Σ⁻¹v)`` of the same rows.
+        n_push_rows = sum(int(block.shape[0]) for block in push_blocks)
         n_ab = len(ablate_rows)
-        frag_norms = m_norms[n_ab:n_ab + len(push_frags)]
+        stacked = torch.cat(
+            push_blocks
+            + [row.reshape(1, -1) for _cf, row in ablate_rows]
+            + [wd.reshape(1, -1) for _cf, wd in push_frags]
+            + [raw_delta.reshape(1, -1)]
+        )
+        sinv = whitener.apply_inv(L, stacked)
+        m_norms = (stacked * sinv).sum(dim=-1).clamp_min(0.0).sqrt().tolist()
+        push_rows, push_reads = stacked[:n_push_rows], sinv[:n_push_rows]
+        ab_rows = stacked[n_push_rows:n_push_rows + n_ab]
+        ab_reads = sinv[n_push_rows:n_push_rows + n_ab]
+        ab_norms = m_norms[n_push_rows:n_push_rows + n_ab]
+        frag_norms = m_norms[n_push_rows + n_ab:n_push_rows + n_ab + len(push_frags)]
 
         # A strictly positive proxy is sufficient for a pure-ablation share:
         # hook-time gain compensation cancels share from the ablation amount.
         ablate_share = sum(
-            abs(cf) * max(m_norms[i], eps) for i, (cf, _row) in enumerate(ablate_rows)
+            abs(cf) * max(ab_norms[i], eps) for i, (cf, _row) in enumerate(ablate_rows)
         )
-        ablate_frags = [
-            (cf, row / float(torch.linalg.vector_norm(row))) for cf, row in ablate_rows
-        ]
 
         # The active push target in world coordinates.  If all pushes cancel,
         # they must not suppress an ablation on the same axis.
@@ -389,41 +423,51 @@ def synthesize_subspace(
         has_push = float(torch.linalg.vector_norm(world_target)) >= eps
 
         if has_push:
-            B_push, _ = _ortho_basis(torch.cat(push_blocks))
+            B_push, P_push, _ = _ortho_frame(push_rows, push_reads)
         else:
-            B_push = zeros.new_zeros((0, width))
+            B_push = P_push = zeros.new_zeros((0, width))
 
         # Push wins shared directions.  The remaining ablation operator is
         # diagonalized in its own small span so coefficients survive exactly;
-        # a per-axis mask cannot represent unequal non-orthogonal terms.
-        projected_ablate: list[tuple[float, torch.Tensor]] = []
-        for coeff_f, unit in ablate_frags:
-            residual = unit
+        # a per-axis mask cannot represent unequal non-orthogonal terms.  Each
+        # ablation row is Mahalanobis-unit, and its push-span component is
+        # removed Mahalanobis-orthogonally (coefficients ``P_push @ u``).
+        projected_ablate: list[tuple[float, torch.Tensor, torch.Tensor]] = []
+        for i, (coeff_f, _row) in enumerate(ablate_rows):
+            norm_i = ab_norms[i]
+            if norm_i < eps:
+                continue
+            residual, residual_read = ab_rows[i] / norm_i, ab_reads[i] / norm_i
             if B_push.shape[0]:
-                residual = residual - (residual @ B_push.T) @ B_push
-            rn = float(torch.linalg.vector_norm(residual))
+                coef = P_push @ residual
+                residual = residual - coef @ B_push
+                residual_read = residual_read - coef @ P_push
+            rn = math.sqrt(max(float(residual @ residual_read), 0.0))
             if rn >= eps:
-                projected_ablate.append((coeff_f, residual / rn))
+                projected_ablate.append((coeff_f, residual / rn, residual_read / rn))
 
-        B_ab = zeros.new_zeros((0, width))
+        B_ab = P_ab = zeros.new_zeros((0, width))
         ablate_eigenvalues = zeros.new_zeros((0,))
         if projected_ablate:
-            B_ab_span, _ = _ortho_basis(
-                torch.stack([row for _cf, row in projected_ablate]),
+            B_ab_span, P_ab_span, _ = _ortho_frame(
+                torch.stack([row for _cf, row, _read in projected_ablate]),
+                torch.stack([read for _cf, _row, read in projected_ablate]),
             )
             reduced = B_ab_span.new_zeros((B_ab_span.shape[0], B_ab_span.shape[0]))
-            for coeff_f, row in projected_ablate:
-                coord = B_ab_span @ row
+            for coeff_f, row, _read in projected_ablate:
+                coord = P_ab_span @ row
                 reduced = reduced + coeff_f * torch.outer(coord, coord)
             eigenvalues, eigenvectors = torch.linalg.eigh(reduced)
             keep = eigenvalues.abs() >= eps
             if bool(keep.any()):
                 ablate_eigenvalues = eigenvalues[keep]
                 B_ab = eigenvectors[:, keep].T @ B_ab_span
+                P_ab = eigenvectors[:, keep].T @ P_ab_span
 
         if B_push.shape[0] == 0 and B_ab.shape[0] == 0:
             continue
         basis = torch.cat((B_push, B_ab), dim=0)
+        read = torch.cat((P_push, P_ab), dim=0)
 
         if has_push:
             # The (whitened) raw displacement magnitude is the per-layer
@@ -432,34 +476,40 @@ def synthesize_subspace(
             share_L = m_norms[-1]
             if share_L < eps:
                 share_L = sum(abs(cf) * wn for (cf, _wd), wn in zip(push_frags, frag_norms))
-            target = basis @ world_target                   # ablation axes ≈ 0
+            target = read @ world_target                    # ablation axes ≈ 0
         else:
             share_L = ablate_share
             target = basis.new_zeros(basis.shape[0])
         if share_L < eps:
             continue
         axis_kappa = torch.cat((basis.new_zeros(B_push.shape[0]), ablate_eigenvalues))
-        finished.append((L, neutral, basis, target, axis_kappa))
+        finished.append((L, neutral, basis, read, target, axis_kappa))
         share[L] = float(share_L)
 
     # One host→device transfer per device: pack every finished layer's
-    # (basis, target, kappa) into a flat CPU buffer and slice views back out.
-    by_device: dict[torch.device, list[tuple[int, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]]] = {}
+    # (basis, read, target, kappa) into a flat CPU buffer and slice views back out.
+    by_device: dict[
+        torch.device,
+        list[tuple[int, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]],
+    ] = {}
     for item in finished:
         by_device.setdefault(item[1].device, []).append(item)
     for device, items in by_device.items():
         packed = torch.cat([
-            torch.cat((basis.reshape(-1), target, axis_kappa))
-            for _L, _neutral, basis, target, axis_kappa in items
+            torch.cat((basis.reshape(-1), read.reshape(-1), target, axis_kappa))
+            for _L, _neutral, basis, read, target, axis_kappa in items
         ]).to(device)
         offset = 0
-        for L, neutral, basis, target, axis_kappa in items:
+        for L, neutral, basis, read, target, axis_kappa in items:
             rank, width = basis.shape
             span = rank * width
-            layers[L] = LayerSubspace.affine(
-                mean=neutral, basis=packed[offset:offset + span].view(rank, width),
-            )
+            frame_basis = packed[offset:offset + span].view(rank, width)
             offset += span
+            frame_read = packed[offset:offset + span].view(rank, width)
+            offset += span
+            layers[L] = LayerSubspace.affine(
+                mean=neutral, basis=frame_basis, read=frame_read,
+            )
             target_coord[L] = packed[offset:offset + rank]
             offset += rank
             kappa[L] = packed[offset:offset + rank]
@@ -701,15 +751,17 @@ def subspace_inject(
       fills its subspace (``H_n ≈ 0``, every affine term).
 
     The off-*subspace* residual ``H_o`` is **always kept verbatim**.  That is the
-    composition invariant: ``H_o`` is the orthogonal complement of *this*
-    subspace, i.e. every composing neighbor's span, so touching it would couple
-    otherwise-orthogonal terms.  ``~``/``|`` semantics live inside the subspace
-    instead, as push/ablation axes of the merged affine basis.
+    composition invariant: ``H_o`` is the Mahalanobis-orthogonal complement of
+    *this* subspace, i.e. every composing neighbor's span, so touching it would
+    couple otherwise-orthogonal terms.  ``~``/``|`` semantics live inside the
+    subspace instead, as push/ablation axes of the merged affine basis.
 
-    All subspace arithmetic runs in **reduced (R-dim) coordinates**; because
-    ``basis`` is orthonormal, ``‖H_n_reduced‖ = ‖H_n‖`` exactly, so the
-    transport's norm-preservation holds and the cost is ``O(R)`` not ``O(D)``.
-    fp32 throughout (fp16 sum-of-squares overflows at large ``D``).
+    All subspace arithmetic runs in **reduced (R-dim) coordinates**: ``read``
+    rows read them and ``basis`` rows write them back.  The frame is
+    Mahalanobis-orthonormal, so ``‖H_n_reduced‖ = ‖H_n‖_M`` exactly, the
+    transport's norm-preservation holds in that metric, and the cost is
+    ``O(R)`` not ``O(D)``.  fp32 throughout (fp16 sum-of-squares overflows at
+    large ``D``).
 
     ``foot_seed`` ``(.., n)`` is the warm start for the nearest-point foot — the
     previous token's foot on the hot path, refined by ``gn_steps`` shared
@@ -726,30 +778,32 @@ def subspace_inject(
     """
     h_f32 = h.to(torch.float32)
     mean = subspace.mean.to(torch.float32)            # (D,)
-    basis = subspace.basis.to(torch.float32)          # (R, D)
+    basis = subspace.basis.to(torch.float32)          # (R, D) write rows
+    read = subspace.read.to(torch.float32)            # (R, D) read rows
     target = target_coord.to(device=h_f32.device, dtype=torch.float32)
 
     if subspace.is_affine:
         # --- flat (folded-vector) shortcut --------------------------------
         # The surface fills the subspace, so the injected target is already in
-        # the layer's orthonormal reduced frame: the foot is ``q`` exactly,
+        # the layer's reduced frame: the foot is ``q`` exactly,
         # ``H_n ≡ 0`` and ``onto`` is vacuous (ignored).  Ordinary fits have an
         # identity authoring→reduced map; rectangular transfers bake their
         # explicit map into the resolved per-layer target before this kernel.
         # No GN solve, no RBF eval, no tangent Gram-solve — the cost the common
         # steering case can't pay.
         #
-        # ``q = (h − mean)·basisᵀ = h·basisᵀ − mean·basisᵀ`` is computed
+        # ``q = (h − mean)·readᵀ = h·readᵀ − mean·readᵀ`` is computed
         # **without** the full-width ``centered = h − mean`` temporary: the
-        # ``(R,)`` ``mean_proj = mean·basisᵀ`` is a tiny reduced-space constant
+        # ``(R,)`` ``mean_proj = mean·readᵀ`` is a tiny reduced-space constant
         # (one dot product at R=1).  Hot callers (the single-affine fast hook)
         # precompute it once at ``recompose`` and thread it in; everyone else
-        # gets the inline ``mean @ basis.T``.  ALONG translates ``q`` by the
-        # fixed offset ``along·target``; the off-subspace residual ``H_o`` is
-        # kept verbatim (``h_new = h + Δ·basis`` is a fresh tensor, never an
+        # gets the inline ``mean @ read.T``.  ALONG translates ``q`` by the
+        # fixed offset ``along·target``; the off-subspace residual ``H_o`` (the
+        # Mahalanobis-orthogonal complement, ``(I − basisᵀ read)(h − mean)``)
+        # is kept verbatim (``h_new = h + Δ·basis`` is a fresh tensor, never an
         # in-place mutation of ``h``).
-        mp = mean_proj if mean_proj is not None else (mean @ basis.T)  # (R,)
-        q = h_f32 @ basis.T - mp                        # (.., R)
+        mp = mean_proj if mean_proj is not None else (mean @ read.T)  # (R,)
+        q = h_f32 @ read.T - mp                         # (.., R)
         # Per-axis κ-blend of the foot toward ``target`` (``origin`` is span-coord
         # 0 in the ν-anchored affine frame; an affine fit is always on the flat
         # ``CustomDomain`` — identity clamp — so this analytic is exact):
@@ -779,10 +833,12 @@ def subspace_inject(
         return h_new, q
 
     # Reduced coords of ``h`` without a full-width ``h − mean`` temporary: the
-    # basis is orthonormal, so ``q = h·Bᵀ − mean·Bᵀ`` and the whole update is
-    # one reduced displacement ``δ`` added back as ``h + δ·B``.
-    mp = mean_proj if mean_proj is not None else (mean @ basis.T)  # (R,)
-    q = h_f32 @ basis.T - mp                           # (.., R)
+    # read rows are dual to the basis, so ``q = h·Pᵀ − mean·Pᵀ`` and the whole
+    # update is one reduced displacement ``δ`` added back as ``h + δ·B``.
+    # Reduced coordinates are Mahalanobis-orthonormal, so the foot solve,
+    # the residual transport and the σ-tube below all measure in that metric.
+    mp = mean_proj if mean_proj is not None else (mean @ read.T)  # (R,)
+    q = h_f32 @ read.T - mp                            # (.., R)
 
     np_, rw, pc = subspace.rbf_params()
     np_ = np_.to(torch.float32)
@@ -845,14 +901,17 @@ def subspace_inject(
     # The off-subspace residual ``H_o`` rides ``h`` untouched: it is every
     # composing neighbor's span, so only the in-subspace displacement is added.
     delta = foot_new_red + Hn_final - q                       # (.., R)
-    # Soft cap ``‖h_new‖ ≤ norm_cap·‖h‖`` against off-domain RBF extrapolation,
-    # with ``‖h + δ·B‖² = ‖h‖² + 2 (q + mp)·δ + ‖δ‖²`` evaluated in reduced
-    # space (orthonormal ``B``): one full-width reduction, one full-width write.
+    # Soft cap ``‖h_new‖ ≤ norm_cap·‖h‖`` against off-domain RBF extrapolation:
+    # a guard on the raw residual norm, so Euclidean.  ``‖h + δ·B‖² = ‖h‖²
+    # + 2 (h·Bᵀ)·δ + δ (B Bᵀ) δᵀ`` evaluated in reduced space (the frame is
+    # Mahalanobis-, not Euclidean-orthonormal, hence the ``B Bᵀ`` Gram): one
+    # full-width reduction and one ``R``-wide product, one full-width write.
     norm_pre = torch.linalg.vector_norm(h_f32, dim=-1, keepdim=True)   # (.., 1)
+    h_on_basis = h_f32 @ basis.T                              # (.., R)
     norm_post_sq = (
         norm_pre * norm_pre
-        + 2.0 * ((q + mp) * delta).sum(dim=-1, keepdim=True)
-        + (delta * delta).sum(dim=-1, keepdim=True)
+        + 2.0 * (h_on_basis * delta).sum(dim=-1, keepdim=True)
+        + ((delta @ (basis @ basis.T)) * delta).sum(dim=-1, keepdim=True)
     )
     cap = _soft_norm_cap_scale(norm_pre, norm_post_sq, norm_cap)  # (.., 1)
     h_new = (delta @ basis).add_(h_f32).mul_(cap)        # (.., D)

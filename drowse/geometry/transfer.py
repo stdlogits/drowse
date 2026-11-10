@@ -2,9 +2,10 @@
 
 The pure-tensor core of ``manifold transfer``: map each layer's frame through
 a per-layer affine alignment (source → target activation space), keep the
-runtime basis orthonormal by QR reparameterization, re-bake the Mahalanobis
-share in the target metric, and re-solve curved origins against the target
-neutral mean.  The alignment fit is :mod:`drowse.geometry.procrustes`;
+runtime frame orthonormal in the *target* Mahalanobis metric by a Cholesky
+reparameterization (with its dual read rows recomputed there), re-bake the
+Mahalanobis share in the target metric, and re-solve curved origins against
+the target neutral mean.  The alignment fit is :mod:`drowse.geometry.procrustes`;
 folder I/O and orchestration live in :mod:`drowse.fit.transfer`.
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ from drowse.errors import DrowseError, WhitenerError
 from drowse.geometry.invert import neutral_origin
 from drowse.geometry.manifold import Manifold
 from drowse.geometry.rbf import eval_rbf
-from drowse.geometry.subspace import LayerSubspace, subspace_share
+from drowse.geometry.subspace import LayerSubspace, dual_read, subspace_share
 
 if TYPE_CHECKING:
     from drowse.geometry.whitener import LayerWhitener
@@ -58,13 +59,18 @@ def transfer_manifold_subspaces(
     ``Manifold`` whose subspaces live in target space.
 
     Means and manifold points use the affine map (linear factor plus fitted
-    translation); basis rows and direction profiles use only its linear factor.
-    The mapped rows are QR-reparameterized to an orthonormal target frame and
-    every affine/RBF reduced-coordinate coefficient is transformed by the exact
-    companion matrix, preserving world points. A collapsed source span is
-    rejected. Curved transfer requires that companion map to be an isometry:
-    a non-isometric map turns the scalar tube thickness anisotropic, which the
-    current manifold representation cannot encode. Layers the alignment doesn't
+    translation); basis rows (write vectors) and direction profiles use only
+    its linear factor.  The source read rows are source-metric covectors and
+    do not transfer: the mapped write rows ``B_raw`` are reparameterized to a
+    target-Mahalanobis-orthonormal frame ``B_tgt = L⁻¹ B_raw`` (``L Lᵀ =
+    B_raw Σ_tgt⁻¹ B_rawᵀ``) with reads ``L⁻¹ B_raw Σ_tgt⁻¹``, and every
+    affine/RBF reduced-coordinate coefficient is transformed by the exact
+    companion matrix ``L``, preserving world points. A collapsed source span
+    is rejected.  ``L`` is orthogonal only where the alignment carries the
+    source metric exactly onto the target's; otherwise a curved fit's scalar
+    tube thickness turns anisotropic, which the σ-field cannot encode, so σ is
+    rescaled by ``(Π sᵢ)^(1/R)`` (``sᵢ`` the singular values of ``L``): the
+    volume-preserving isotropic approximation.  Layers the alignment doesn't
     cover drop.
 
     **Target-metric share re-bake (mandatory).**  The source fit's per-layer
@@ -87,17 +93,34 @@ def transfer_manifold_subspaces(
     """
     src.validate_runtime_geometry()
 
+    covered = [layer for layer in src.layers if layer in alignment]
+    if not covered:
+        raise ValueError(
+            f"alignment for {from_model!r} → {to_model!r} covered none of the "
+            f"source manifold's fitted layers ({sorted(src.layers)})"
+        )
+    # The frame is orthonormal in the target metric and the source model's
+    # Mahalanobis share is per-model (Σ and the neutral activations are both
+    # ``from_model`` quantities), so the **target** whitener is mandatory and
+    # must cover every transferred layer (all-or-nothing, mirroring the fit
+    # gate).  No Euclidean path — a missing / partial whitener is an error.
+    if whitener is None or not whitener.covers_all(covered):
+        raise WhitenerError(
+            "manifold transfer requires a Mahalanobis whitener covering every "
+            f"transferred layer {sorted(covered)}; generate neutral "
+            "activations for the TARGET model first (the Euclidean path is gone)"
+        )
+
     # Map each covered layer's subspace into target space.  ``M_L`` is
     # ``(D_tgt, D_src)`` so ``mean_tgt = M_L @ mean_src`` and each basis row
     # transforms the same way → ``basis_tgt = basis_src @ M_L^T``.
     new_layers: dict[int, LayerSubspace] = {}
-    for layer, sub in src.layers.items():
-        M_L = alignment.get(layer)
-        if M_L is None:
-            continue
+    for layer in covered:
+        sub = src.layers[layer]
+        M_L = alignment[layer]
         mean_f = sub.mean.to(torch.float32)
         basis_f = sub.basis.to(torch.float32)
-        raw_basis = M_L.apply_vectors(basis_f)
+        raw_basis = M_L.apply_vectors(basis_f).to(device="cpu", dtype=torch.float32)
         mean_tgt_f = M_L.apply_points(mean_f)
 
         rank = int(raw_basis.shape[0])
@@ -106,39 +129,43 @@ def transfer_manifold_subspaces(
                 f"alignment for layer {layer} cannot carry rank-{rank} source "
                 f"subspace into target shape {tuple(raw_basis.shape)}"
             )
-        # Reparameterize B_raw = A @ B_ortho.  Runtime projection/injection
-        # requires orthonormal basis rows, while multiplying every reduced output
-        # by A preserves each mapped world-space manifold point exactly.
-        raw_gram = raw_basis @ raw_basis.transpose(0, 1)
+        # Reparameterize B_raw = L @ B_tgt with B_tgt orthonormal in the target
+        # metric.  Runtime projection/injection requires an orthonormal frame,
+        # while multiplying every reduced output by L preserves each mapped
+        # world-space manifold point exactly.
+        raw_read = whitener.apply_inv(layer, raw_basis)            # Σ_tgt⁻¹ B_rawᵀ rows
+        raw_gram = raw_basis @ raw_read.transpose(0, 1)
+        raw_gram = 0.5 * (raw_gram + raw_gram.transpose(0, 1))
         identity = torch.eye(rank, dtype=raw_gram.dtype, device=raw_gram.device)
         if torch.allclose(raw_gram, identity, atol=1e-5, rtol=1e-5):
-            # Preserve an already-orthonormal map byte-for-byte (identity and
-            # square Procrustes rotations need no coordinate change).
+            # Keep an already-orthonormal frame as is (an identity map within
+            # one model's metric needs no coordinate change).
             basis_tgt_f = raw_basis.contiguous()
+            read_tgt_f = raw_read.contiguous()
             reduced_map = identity
         else:
-            Q, R = torch.linalg.qr(raw_basis.transpose(0, 1), mode="reduced")
-            # Unpivoted QR diagonals are not rank-revealing for oblique
-            # dependencies. Rank-test only this small R×R factor with singular
-            # values before publishing a supposedly orthonormal frame.
-            singular_values = torch.linalg.svdvals(R)
+            eigenvalues = torch.linalg.eigvalsh(raw_gram)
             tol = (
-                torch.finfo(R.dtype).eps * max(raw_basis.shape)
-                * float(singular_values.max())
+                torch.finfo(raw_gram.dtype).eps * max(raw_basis.shape)
+                * float(eigenvalues.abs().max())
             )
-            if (
-                singular_values.numel() != rank
-                or bool((singular_values <= tol).any())
-            ):
+            if bool((eigenvalues <= tol).any()):
                 raise ValueError(
                     f"alignment for layer {layer} collapses the rank-{rank} manifold "
                     "subspace; refusing a rank-deficient transfer"
                 )
-            basis_tgt_f = Q.transpose(0, 1).contiguous()
-            reduced_map = R.transpose(0, 1).contiguous()
+            chol = torch.linalg.cholesky(raw_gram)                 # L, lower
+            basis_tgt_f = torch.linalg.solve_triangular(
+                chol, raw_basis, upper=False,
+            ).contiguous()
+            read_tgt_f = dual_read(basis_tgt_f, torch.linalg.solve_triangular(
+                chol, raw_read, upper=False,
+            ))
+            reduced_map = chol.contiguous()
         kwargs: dict[str, Any] = {
             "mean": mean_tgt_f.to(dtype=sub.mean.dtype),
-            "basis": basis_tgt_f.to(dtype=sub.basis.dtype),
+            "basis": basis_tgt_f.to(device=sub.basis.device, dtype=sub.basis.dtype),
+            "read": read_tgt_f.to(device=sub.read.device, dtype=sub.read.dtype),
         }
         if sub.is_affine:
             source_map = (
@@ -167,40 +194,23 @@ def transfer_manifold_subspaces(
             kwargs["poly_coeffs"] = (
                 sub.poly_coeffs.to(torch.float32) @ reduced_map
             ).to(dtype=sub.poly_coeffs.dtype)
-            # A scalar isotropic tube thickness is invariant only under an
-            # isometry of this reduced frame. The current representation has no
-            # anisotropic tube field, so reject an unrepresentable transfer.
-            gram = reduced_map @ reduced_map.transpose(0, 1)
-            isometric = torch.allclose(
-                gram, torch.eye(rank, dtype=gram.dtype, device=gram.device),
-                atol=1e-4, rtol=1e-4,
-            )
-            if not isometric:
-                raise ValueError(
-                    f"alignment for layer {layer} is non-isometric in curved "
-                    "manifold coordinates; anisotropic tube transfer is not "
-                    "representable by the current scalar sigma field"
+            if sub.sigma_poly_coeffs is not None:
+                # The scalar tube thickness is exact only under an isometry of
+                # the reduced frame; the companion map is one only where the
+                # alignment carries the source metric onto the target's.  The
+                # ball of radius σ maps to an ellipsoid with semi-axes σ·sᵢ
+                # (``sᵢ`` the companion's singular values); keep its volume:
+                # σ ← σ·(Π sᵢ)^(1/R), a shift of the log-σ field's constant term.
+                log_scale = float(
+                    torch.linalg.svdvals(reduced_map).clamp_min(1e-30).log().mean()
+                )
+                sigma_poly = sub.sigma_poly_coeffs.to(torch.float32).clone()
+                sigma_poly[0] += log_scale
+                kwargs["sigma_poly_coeffs"] = sigma_poly.to(
+                    dtype=sub.sigma_poly_coeffs.dtype,
                 )
         new_layers[layer] = replace(sub, **kwargs)
 
-    if not new_layers:
-        raise ValueError(
-            f"alignment for {from_model!r} → {to_model!r} covered none of the "
-            f"source manifold's fitted layers ({sorted(src.layers)})"
-        )
-
-    # The source model's Mahalanobis share is per-model (Σ and the neutral
-    # activations are both ``from_model`` quantities), so it's invalid in
-    # ``to_model`` space.  The **target** whitener is mandatory and must cover
-    # every transferred layer (all-or-nothing, mirroring the fit gate);
-    # recompute the share in target space.  No Euclidean rebake — a missing /
-    # partial whitener is an error.
-    if whitener is None or not whitener.covers_all(new_layers.keys()):
-        raise WhitenerError(
-            "manifold transfer requires a Mahalanobis whitener covering every "
-            f"transferred layer {sorted(new_layers.keys())}; generate neutral "
-            "activations for the TARGET model first (the Euclidean path is gone)"
-        )
     curved_layers = {
         layer for layer, subspace in new_layers.items() if not subspace.is_affine
     }

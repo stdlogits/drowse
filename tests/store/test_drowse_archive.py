@@ -91,7 +91,7 @@ def _fit(folder: Path, *, finite: bool = True) -> Path:
         node_coords=node_coords,
         layers={
             0: LayerSubspace.affine(
-                mean=torch.zeros(2), basis=basis,
+                mean=torch.zeros(2), basis=basis, read=basis.clone(),
                 node_coords=node_coords.clone(),
             ),
         },
@@ -220,6 +220,7 @@ def test_monopolar_discover_fit_exports_and_installs(tmp_path: Path) -> None:
             0: LayerSubspace.affine(
                 mean=torch.zeros(2),
                 basis=torch.tensor([[1.0, 0.0]]),
+                read=torch.tensor([[1.0, 0.0]]),
                 node_coords=node_coords.clone(),
             ),
         },

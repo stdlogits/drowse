@@ -608,7 +608,11 @@ class TopologyChoice:
     # spends this work while scoring the candidate; the final per-layer fit can
     # reuse it instead of repeating QR/eigh/LU over the same node geometry.
     rbf_plan: "RbfFitPlan | None" = None
-    fisher_bases: "dict[int, torch.Tensor]" = field(default_factory=dict)
+    # The per-layer whitened ``(basis, read)`` frames the scoring solved;
+    # the final fit reuses them (``basis_override``).
+    fisher_bases: "dict[int, tuple[torch.Tensor, torch.Tensor]]" = field(
+        default_factory=dict,
+    )
 
 
 def _gcv_value(rss: float, edf: float, K: int) -> float:
@@ -1237,7 +1241,7 @@ def select_topology(
     **(a) flat vs curved** — compare the flat affine fit (``pca`` mode, at its
     PCA variance-threshold dim) against the curved RBF fit (``spectral`` mode,
     floored to the *same* dim) by **GCV** in a shared per-layer whitened / Fisher
-    reduced metric (``targets[L] = X̃_L · basis_Lᵀ``).  GCV's ``(K − edf)²``
+    reduced metric (``targets[L] = X̃_L · read_Lᵀ``, whitened coordinates).  GCV's ``(K − edf)²``
     denominator charges each mode for its own effective dof, so a more flexible
     candidate must earn its flexibility — a fair model-selection comparison
     rather than a coordinate-count race.  The curved candidate's dim is floored
@@ -1275,19 +1279,19 @@ def select_topology(
     # predicts the *same* y in the *same* metric, so the comparison isolates
     # the coordinate geometry + surface, not the basis (common-mode).
     targets: dict[int, torch.Tensor] = {}
-    fisher_bases: dict[int, torch.Tensor] = {}
+    fisher_bases: dict[int, tuple[torch.Tensor, torch.Tensor]] = {}
     for L in fit_layers:
         X = stacks[L].to(torch.float32)
         X = X - X.mean(dim=0, keepdim=True)
-        basis, _ev = pca_basis(
+        basis, read, _ev = pca_basis(
             X, n_components=R, whitener=whitener, layer=L,
             whitened_gram=layer_grams[L],
             whitened_rows=(
                 whitened_rows.get(L) if whitened_rows is not None else None
             ),
         )
-        fisher_bases[L] = basis
-        targets[L] = (X @ basis.transpose(0, 1)).contiguous()      # (K, R)
+        fisher_bases[L] = (basis, read)
+        targets[L] = (X @ read.transpose(0, 1)).contiguous()       # (K, R)
 
     candidates: list[TopologyCandidate] = []
 

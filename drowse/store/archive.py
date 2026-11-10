@@ -756,7 +756,7 @@ def validate_fitted_pair(
             f"fitted tensor {path.name} has invalid node_coords shape"
         )
     fields = {
-        "mean", "basis", "node_coords", "affine_map", "node_params",
+        "mean", "basis", "read", "node_coords", "affine_map", "node_params",
         "rbf_weights", "poly_coeffs", "coord_offset", "coord_scale",
         "sigma_rbf_weights", "sigma_poly_coeffs",
     }
@@ -792,9 +792,10 @@ def validate_fitted_pair(
         if (
             mean is None or len(mean) != 1 or basis is None or len(basis) != 2
             or basis[0] < 1 or mean[0] != basis[1] or basis[0] > basis[1]
+            or parts.get("read") != basis
         ):
             raise DrowseArchiveError(
-                f"fitted tensor {path.name} layer {layer} has invalid mean/basis"
+                f"fitted tensor {path.name} layer {layer} has invalid mean/basis/read"
             )
         rank, dim = basis
         if hidden_dim is None:
@@ -807,7 +808,7 @@ def validate_fitted_pair(
         if curved:
             curved_layers.add(layer)
             required = {
-                "mean", "basis", "node_params", "rbf_weights", "poly_coeffs",
+                "mean", "basis", "read", "node_params", "rbf_weights", "poly_coeffs",
                 "coord_offset", "coord_scale",
             }
             sigma = {"sigma_rbf_weights", "sigma_poly_coeffs"}
@@ -842,7 +843,7 @@ def validate_fitted_pair(
                     f"fitted tensor {path.name} layer {layer} has invalid sigma shapes"
                 )
         else:
-            allowed = {"mean", "basis", "node_coords", "affine_map"}
+            allowed = {"mean", "basis", "read", "node_coords", "affine_map"}
             if set(parts) - allowed or parts.get("node_coords") != (node_count, rank):
                 raise DrowseArchiveError(
                     f"fitted tensor {path.name} layer {layer} has invalid affine fields"

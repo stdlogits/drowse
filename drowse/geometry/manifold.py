@@ -28,8 +28,10 @@ from drowse.geometry.subspace import LayerSubspace
 
 # Numerical fitting semantics are independent of the folder/tensor wire
 # format. Bump this whenever PCA/Fisher selection, topology choice, RBF/sigma
-# fitting, DLS, or share allocation changes incompatibly.
-MANIFOLD_FIT_POLICY_VERSION = 1
+# fitting, DLS, or share allocation changes incompatibly.  2: typed frames —
+# write rows are vectors (Mahalanobis-orthonormal), with their dual read rows
+# stored beside them.
+MANIFOLD_FIT_POLICY_VERSION = 2
 
 
 class _OmittedNodeRoster(list[str | None]):

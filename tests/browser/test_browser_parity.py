@@ -179,11 +179,16 @@ def _profile(selector: list[str], *, folded: bool) -> dict[int, torch.Tensor]:
 ABLATION_LOWERING = json.loads(
     (
         GOLDENS
-        / "affine-ablation-lowering-v1.json"
+        / "affine-ablation-lowering-v2.json"
     ).read_text()
 )
 
-def test_browser_rank_one_ablation_matches_python() -> None:
+def _ablation_lowering_layers(fixture: dict[str, Any]) -> list[dict[str, Any]]:
+    """The ablation golden's per-layer frame and output, from its inputs.
+
+    A ``!`` axis writes along the Mahalanobis-unit direction and reads with
+    its dual ``Σ⁻¹`` covector (LEACE against the neutral mean).
+    """
     whitener, means = _whitener()
     directions = {
         row["layer"]: torch.tensor(row["basis"], dtype=torch.float32)
@@ -192,25 +197,39 @@ def test_browser_rank_one_ablation_matches_python() -> None:
     }
     synthesized = synthesize_subspace(
         [],
-        [(directions, ABLATION_LOWERING["coefficient"])],
+        [(directions, fixture["coefficient"])],
         means,
         whitener=whitener,
     )
     lowered = _lower_affine_subspaces(synthesized)
-
-    for expected in ABLATION_LOWERING["layers"]:
-        actual = lowered[expected["layer"]]
-        assert actual.subspace.basis[0].tolist() == pytest.approx(expected["basis"])
-        assert actual.subspace.mean.tolist() == pytest.approx(expected["neutral"])
+    rows = []
+    for row in fixture["layers"]:
+        actual = lowered[row["layer"]]
         assert actual.target.tolist() == pytest.approx([0.0])
         collapse = actual.eff_along * actual.kappa
-        assert collapse.tolist() == pytest.approx([ABLATION_LOWERING["coefficient"]])
-        residual = torch.tensor(expected["input"], dtype=torch.float32)
-        coordinate = actual.subspace.basis @ (residual - actual.subspace.mean)
+        assert collapse.tolist() == pytest.approx([fixture["coefficient"]])
+        residual = torch.tensor(row["input"], dtype=torch.float32)
+        coordinate = actual.subspace.read @ (residual - actual.subspace.mean)
         output = residual + actual.eff_along * (
             actual.target - actual.kappa * coordinate
         ) @ actual.subspace.basis
-        assert output.tolist() == pytest.approx(expected["expected"])
+        rows.append({
+            "layer": row["layer"],
+            "basis": actual.subspace.basis[0].tolist(),
+            "read": actual.subspace.read[0].tolist(),
+            "neutral": actual.subspace.mean.tolist(),
+            "input": row["input"],
+            "expected": output.tolist(),
+        })
+    return rows
+
+
+def test_browser_rank_one_ablation_matches_python() -> None:
+    actual_rows = _ablation_lowering_layers(ABLATION_LOWERING)
+    for expected, actual in zip(ABLATION_LOWERING["layers"], actual_rows, strict=True):
+        assert actual["layer"] == expected["layer"]
+        for key in ("basis", "read", "neutral", "expected"):
+            assert actual[key] == pytest.approx(expected[key]), key
 
 
 # ---------------------------------------------------------------------------
@@ -262,7 +281,75 @@ def test_browser_affine_lowering_fixture_matches_python() -> None:
 # ---------------------------------------------------------------------------
 
 
-AFFINE_FISHER = GOLDENS / "affine-fisher-fit-v1.json"
+AFFINE_FISHER = GOLDENS / "affine-fisher-fit-v2.json"
+
+def _affine_fisher_expected(fixture: dict[str, Any]) -> dict[str, Any]:
+    """The Fisher golden's ``expected`` block, recomputed from its inputs."""
+    columns = fixture["columns"]
+    neutral = torch.tensor(fixture["neutral"], dtype=torch.float32).reshape(-1, columns)
+    centroids = torch.tensor(fixture["centroids"], dtype=torch.float32).reshape(-1, columns)
+    neutral_mean = neutral.mean(dim=0)
+    whitener = LayerWhitener.from_neutral_activations(
+        {0: neutral}, {0: neutral_mean}, ridge_scale=fixture["ridgeScale"],
+    )
+    centered = centroids - centroids.mean(dim=0, keepdim=True)
+    gram = whitener.subspace_gram(0, centered)
+    inverse_rows = whitener.apply_inv(0, centered)
+    fit = fit_affine_subspace(
+        centroids, neutral_mean=neutral_mean, n_components=fixture["maxComponents"],
+        whitener=whitener, layer=0, whitened_gram=gram, whitened_rows=inverse_rows,
+        orient_to=fixture["orientTo"],
+    )
+    subspace, mu = fit.subspace, fit.mu_coords
+    assert subspace.node_coords is not None
+    neutral_cross_gram = inverse_rows @ (neutral_mean - centroids.mean(dim=0))
+    layout, _diagnostics = derive_pca_coords(gram, max_dim=2, var_threshold=0.7)
+    neutral_layout = neutral_layout_coord(layout, neutral_cross_gram)
+    selected = subspace.select_axes([0])
+    assert selected.node_coords is not None
+    return {
+        "neutralMean": neutral_mean.tolist(),
+        "centroidMean": centroids.mean(dim=0).tolist(),
+        "mean": subspace.mean.tolist(),
+        "basis": subspace.basis.flatten().tolist(),
+        "read": subspace.read.flatten().tolist(),
+        "nodeCoordinates": subspace.node_coords.flatten().tolist(),
+        "muCoordinates": mu.flatten().tolist(),
+        "explainedVariance": fit.explained_variance,
+        "mahalanobisShare": subspace_share(mu, subspace.basis, whitener=whitener, layer=0),
+        "neutralCrossGram": neutral_cross_gram.tolist(),
+        "layoutCoordinates": layout.flatten().tolist(),
+        "neutralLayoutCoordinate": neutral_layout.tolist(),
+        "anchoredLayoutCoordinates": (layout - neutral_layout).flatten().tolist(),
+        "axisZeroFinal": {
+            "mean": selected.mean.tolist(),
+            "basis": selected.basis.flatten().tolist(),
+            "read": selected.read.flatten().tolist(),
+            "nodeCoordinates": selected.node_coords.flatten().tolist(),
+            "muCoordinates": mu[:, [0]].flatten().tolist(),
+            "mahalanobisShare": subspace_share(
+                mu[:, [0]], selected.basis, whitener=whitener, layer=0,
+            ),
+        },
+        "whitenedGram": gram.flatten().tolist(),
+    }
+
+
+def regenerate_affine_goldens() -> None:
+    """Recompute the Fisher-fit and ablation-lowering goldens from their inputs."""
+    # Only the ``expected`` block (the last key) is recomputed; the inputs
+    # above it keep their row-per-sample layout.
+    text = AFFINE_FISHER.read_text()
+    head, sep, _old = text.partition('  "expected": ')
+    assert sep, "affine Fisher golden lost its expected block"
+    head = head.replace('"schemaVersion": 1,', '"schemaVersion": 2,', 1)
+    expected = _affine_fisher_expected(json.loads(text))
+    AFFINE_FISHER.write_text(head + sep + _golden_json(expected, "  ") + "\n}\n")
+    path = GOLDENS / "affine-ablation-lowering-v2.json"
+    ablation = json.loads(path.read_text())
+    ablation.update(schemaVersion=2, layers=_ablation_lowering_layers(ablation))
+    path.write_text(_golden_json(ablation) + "\n")
+
 
 def test_browser_affine_fisher_fixture_matches_python_source_of_truth() -> None:
     fixture = json.loads(AFFINE_FISHER.read_text())
@@ -295,6 +382,14 @@ def test_browser_affine_fisher_fixture_matches_python_source_of_truth() -> None:
     assert centroids.mean(dim=0).tolist() == pytest.approx(expected["centroidMean"], rel=1e-5, abs=1e-6)
     assert subspace.mean.tolist() == pytest.approx(expected["mean"], rel=1e-5, abs=1e-6)
     assert subspace.basis.flatten().tolist() == pytest.approx(expected["basis"], rel=1e-5, abs=1e-6)
+    assert subspace.read.flatten().tolist() == pytest.approx(expected["read"], rel=1e-4, abs=1e-5)
+    # Typed frame: Mahalanobis-orthonormal write rows, exactly dual reads.
+    assert torch.allclose(
+        whitener.subspace_gram(0, subspace.basis), torch.eye(subspace.rank), atol=1e-4,
+    )
+    assert torch.allclose(
+        subspace.read @ subspace.basis.T, torch.eye(subspace.rank), atol=1e-5,
+    )
     assert subspace.node_coords is not None
     # Eigensolve outputs carry fp32 BLAS-order noise (~2e-6 on macOS arm64).
     assert subspace.node_coords.flatten().tolist() == pytest.approx(
@@ -328,6 +423,9 @@ def test_browser_affine_fisher_fixture_matches_python_source_of_truth() -> None:
     selected_expected = expected["axisZeroFinal"]
     assert selected.mean.tolist() == pytest.approx(selected_expected["mean"], rel=1e-5, abs=1e-6)
     assert selected.basis.flatten().tolist() == pytest.approx(selected_expected["basis"], rel=1e-5, abs=1e-6)
+    assert selected.read.flatten().tolist() == pytest.approx(
+        selected_expected["read"], rel=1e-4, abs=1e-5,
+    )
     assert selected.node_coords is not None
     assert selected.node_coords.flatten().tolist() == pytest.approx(
         selected_expected["nodeCoordinates"], rel=1e-5, abs=1e-6,
@@ -406,7 +504,7 @@ def test_browser_rank_one_hook_fixture_matches_python_fp32(case_index: int) -> N
     coordinate = torch.dot(residual - neutral, basis)
     result, _ = subspace_inject(
         residual,
-        LayerSubspace.affine(neutral, basis.reshape(1, -1)),
+        LayerSubspace.affine(neutral, basis.reshape(1, -1), basis.reshape(1, -1).clone()),
         CustomDomain(1),
         torch.tensor([case["target"]], dtype=torch.float32),
         torch.zeros(1, dtype=torch.float32),
@@ -534,7 +632,9 @@ def _flat_manifold(
         basis = torch.tensor([row["basis"]], dtype=torch.float32)
         mean = (means[row["layer"]] @ basis.T) @ basis
         coords = torch.tensor([[c] for c in row["nodeCoordinates"]], dtype=torch.float32)
-        layers[row["layer"]] = LayerSubspace.affine(mean, basis, node_coords=coords)
+        layers[row["layer"]] = LayerSubspace.affine(
+            mean, basis, basis.clone(), node_coords=coords,
+        )
     labels = spec["labels"]
     return Manifold(
         name=name, domain=CustomDomain(1), node_labels=labels,
@@ -1197,6 +1297,7 @@ def _curve_subspace(curve: dict[str, Any]) -> LayerSubspace:
     return LayerSubspace(
         mean=torch.tensor(curve["neutral"], dtype=torch.float32),
         basis=torch.tensor(curve["basis"], dtype=torch.float32),
+        read=torch.tensor(curve["basis"], dtype=torch.float32),
         node_params=torch.tensor(curve["nodeParameters"], dtype=torch.float32),
         rbf_weights=torch.tensor(curve["rbfWeights"], dtype=torch.float32),
         poly_coeffs=torch.tensor(curve["polynomial"], dtype=torch.float32),
@@ -1627,4 +1728,9 @@ def test_units_golden_matches_python(name: str, arch: str) -> None:
 
 
 if __name__ == "__main__":
-    regenerate_term_layers()
+    import sys
+
+    if sys.argv[1:] == ["affine"]:
+        regenerate_affine_goldens()
+    else:
+        regenerate_term_layers()

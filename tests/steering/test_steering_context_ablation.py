@@ -122,13 +122,32 @@ def test_zero_ablation_coefficient_is_a_true_noop() -> None:
 
 
 def test_mean_ablation_pins_the_concept_coordinate_to_neutral(tiny_session: Any) -> None:
-    """``!a`` at alpha 1 replaces every position's component along the
-    concept direction with the neutral mean's: ``h'.d = mu.d`` (the
-    Euclidean operator ``h' = h - (h.d - mu.d) d``), read from the layer
-    outputs of a real forward."""
+    """``!a`` at alpha 1 is LEACE against the neutral mean: every position's
+    reading along the concept covector ``Σ⁻¹d`` becomes the neutral mean's
+    (``h'·Σ⁻¹d = mu·Σ⁻¹d``), and the edit moves along ``d`` itself
+    (``h' = h - ((h - mu)·Σ⁻¹d / d·Σ⁻¹d) d``), read from the layer outputs of
+    a real forward."""
     profile = register_vectors(tiny_session, "a")["a"]
     means = tiny_session.layer_means
+    whitener = tiny_session.whitener
     seen: dict[int, torch.Tensor] = {}
+    clean: dict[int, torch.Tensor] = {}
+
+    def _record_clean(layer: int) -> Any:
+        def hook(_module: Any, _inputs: Any, output: Any) -> None:
+            hidden = output[0] if isinstance(output, tuple) else output
+            clean[layer] = hidden[0].detach().float().clone()
+        return hook
+
+    handles = [
+        module.register_forward_hook(_record_clean(layer))
+        for layer, module in enumerate(tiny_session.layers)
+    ]
+    try:
+        forward_logits(tiny_session)
+    finally:
+        for handle in handles:
+            handle.remove()
 
     def _record(layer: int) -> Any:
         def hook(_module: Any, _inputs: Any, output: Any) -> None:
@@ -148,9 +167,22 @@ def test_mean_ablation_pins_the_concept_coordinate_to_neutral(tiny_session: Any)
                 handle.remove()
 
     assert sorted(seen) == list(range(len(tiny_session.layers)))
-    for layer, hidden in seen.items():
-        direction = profile[layer] / profile[layer].norm()
-        neutral = float(means[layer].float() @ direction)
+    layer = 0
+    hidden = seen[layer]
+    direction = profile[layer].float()
+    covector = whitener.apply_inv(layer, direction).float()
+    neutral = float(means[layer].float() @ covector)
+    assert torch.allclose(
+        hidden @ covector, torch.full((hidden.shape[0],), neutral),
+        atol=1e-4, rtol=1e-4,
+    )
+    # Layer 0 sees the clean input, so its edit is exactly along ``d``.
+    edit = hidden - clean[layer]
+    along = (edit @ direction / (direction @ direction)).unsqueeze(-1) * direction
+    assert torch.allclose(edit, along, atol=1e-4)
+    for later, h in seen.items():
+        cov = whitener.apply_inv(later, profile[later].float()).float()
         assert torch.allclose(
-            hidden @ direction, torch.full((hidden.shape[0],), neutral), atol=1e-5,
+            h @ cov, torch.full((h.shape[0],), float(means[later].float() @ cov)),
+            atol=1e-4, rtol=1e-4,
         )

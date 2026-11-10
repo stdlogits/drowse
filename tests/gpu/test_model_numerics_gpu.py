@@ -105,7 +105,7 @@ def test_native_steering_matches_manual_intervention(loaded: tuple[Any, Any], ab
     mean = torch.zeros(dim)
     target = torch.tensor([.25, 0. if ablate else -.125])
     kappa = torch.tensor([0., .5 if ablate else 0.])
-    synth = SynthesizedSubspace({layer: LayerSubspace.affine(mean, basis)}, {layer: target}, {layer: 1.}, {layer: kappa})
+    synth = SynthesizedSubspace({layer: LayerSubspace.affine(mean, basis, basis.clone())}, {layer: target}, {layer: 1.}, {layer: kappa})
     plan = SteeringPlan()
     plan.add_subspace("check", synth)
     manager = SteeringManager()

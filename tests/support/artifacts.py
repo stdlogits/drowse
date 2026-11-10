@@ -39,6 +39,7 @@ def write_fitted_manifold(
         layers={
             0: LayerSubspace.affine(
                 mean=torch.zeros(2), basis=torch.tensor([[1.0, 0.0]]),
+                read=torch.tensor([[1.0, 0.0]]),
                 node_coords=node_coords.clone(),
             ),
         },

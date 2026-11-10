@@ -98,7 +98,7 @@ that never fires.
 |---|---|---|
 | `α x` | `ManifoldTerm` via the bare-atom ladder, else `α` / `(α, Trigger)` under `x` | push |
 | `α a~b` / `α a\|b` | `ProjectedTerm` under `a~b` / `a\|b` | Mahalanobis LEACE `project_profile`: keep / remove the component of `a` along `b`, then push |
-| `α !x` | `AblationTerm` under `!x` | `h' = h − α(h·d̂ − μ·d̂)d̂`; bare `!x` is α = 1 |
+| `α !x` | `AblationTerm` under `!x` | LEACE toward neutral, `h' = h − α((h − μ)·Σ⁻¹d / d·Σ⁻¹d)·d`: reads with the covector, writes along `d`; bare `!x` is α = 1 |
 | `α neuron/L8n344` | `α` / `(α, Trigger)` under `neuron/L8n344` | push along the neuron's `+`-pole write at its layer (a one-layer profile, folded and pushed like any vector); a negative α pushes along the `−` pole's |
 | `α !neuron/L8n344`, `α !head/L20h17` | `UnitAblationTerm(unit, coeff, trigger)` under `!neuron/L8n344` | a `UnitOp` pre-hook on the down / output projection: the unit's activation (a neuron's `act`, a head's `z_h`) becomes `(1 − α)·x + α·mean`, its neutral mean; never a residual direction ablation |
 | `along[,onto] m%pos` | `ManifoldTerm` under `m%pos` | affine fit: push fragment; curved fit: own term |
@@ -374,12 +374,13 @@ checks for an installed plan itself).
 
 `SteeringPlan.lower(device, dtype)` places curved groups first at each layer
 (a curved term lowers only at the layers of its `shares`). Two curved spans
-sharing a layer with max |cosine| above `_CURVED_ORTHO_TOL = 1e-3` raise
+sharing a layer with max Mahalanobis |cosine| (`B_new · P_prevᵀ`) above `_CURVED_ORTHO_TOL = 1e-3` raise
 `OverlappingManifoldError` (422); disjoint layer clauses let one curved
 manifold appear twice (`m%a{0-3} + m%b{4-7}`). Each affine
 term then goes through `_lower_affine_subspaces`, the single affine lowering:
 mean-1 share normalization, `_orthogonalize_affine_against` the curved span at
-that layer (the curved term owns shared directions; κ is carried through the
+that layer (Mahalanobis-orthogonally, through the curved frames' read rows;
+the curved term owns shared directions; κ is carried through the
 re-orthonormalization; a fully contained span drops the layer),
 `eff_along = share_L · _SUBSPACE_GAIN`, and `kappa = requested_κ / eff_along`,
 so `eff_along · κ` is exactly the user's ablation coefficient and ablation
@@ -420,11 +421,11 @@ Recommended affine α is about 0.5, toward 1.0 for stronger expression.
 
 ### Hooks and installation
 
-`AffineOp` applies `h += c − ((h·Bₐᵀ − μBₐᵀ) ⊙ s) Bₐ`, with the fixed push
+`AffineOp` applies `h += c − ((h·Pₐᵀ − μPₐᵀ) ⊙ s) Bₐ`, with the fixed push
 `c = eff_along · target @ B` and the activation-dependent ablation restricted
-to nonzero-κ rows `Bₐ` (`s = eff_along · κ`). A pure push is one `add_`; a
-rank-1 ablation is a dot plus `addcmul_` (MPS dispatch makes this cheaper than
-a tiny GEMM). Constants are built in fp32 and cast once to the residual dtype
+to the nonzero-κ axes: read rows `Pₐ` measure, write rows `Bₐ` move
+(`s = eff_along · κ`). A pure push is one `add_`; a rank-1 ablation is a dot
+plus `addcmul_` (MPS dispatch makes this cheaper than a tiny GEMM). Constants are built in fp32 and cast once to the residual dtype
 (re-cast once if the residual is narrower). There is no norm cap on this path:
 a flat fit has no RBF to extrapolate.
 
@@ -503,7 +504,8 @@ All CPU, in `tests/steering/`: grammar and round trips
 `test_steering_context_ablation.py`), installed state and offset buffers
 (`test_steering_install.py`), affine lowering, gain, κ compensation and
 compiled/eager parity (`test_subspace_steering.py`), `AffineOp` against
-`subspace_inject` (`test_hooks_triggers.py`), curved lowering and foot state
+`subspace_inject` on a frame whose reads differ from its writes
+(`test_hooks_triggers.py`), curved lowering and foot state
 (`test_manifold_steering.py`), layer clauses through composition: coverage,
 ablation exactness, shares over the selection, 422s, curved restriction,
 compiled/eager parity and plan-cache keying (`test_layer_scoped_steering.py`).

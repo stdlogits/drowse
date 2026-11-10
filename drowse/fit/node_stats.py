@@ -214,7 +214,7 @@ def compute_store_reduced_covariances(
         for offset, size in zip(store.offsets, store.node_sizes, strict=True)
     ]
     for idx, sub in layer_subs.items():
-        basis_t = sub.basis.to(device="cpu", dtype=torch.float32).transpose(0, 1)
+        read_t = sub.read.to(device="cpu", dtype=torch.float32).transpose(0, 1)
         rank = sub.rank
         rows = store.flat_rows(idx)
         reduced_rows = torch.empty(store.total_rows, rank, dtype=torch.float32)
@@ -230,7 +230,7 @@ def compute_store_reduced_covariances(
             # the operation bounded and out-of-place even when the source row
             # store is already fp32 (where ``.to(float32)`` would alias it).
             torch.sub(rows[start:end], mean, out=centered)
-            reduced_rows[start:end] = centered @ basis_t
+            reduced_rows[start:end] = centered @ read_t
 
         for k, (start, end) in enumerate(boundaries):
             size = end - start

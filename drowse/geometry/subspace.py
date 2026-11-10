@@ -1,10 +1,21 @@
 """Per-layer manifold subspaces and the fits that produce them.
 
-A :class:`LayerSubspace` is one layer's frame: an affine PCA subspace of the
-activation space (``mean`` + orthonormal ``basis`` rows), optionally carrying
-an RBF surface from the manifold's embedded domain coordinates into that
-subspace's reduced coordinates (a curved fit), and optionally a
-fuzzy-manifold sigma field (the within-node tube thickness).
+A :class:`LayerSubspace` is one layer's frame: an affine subspace of the
+activation space (``mean`` + ``basis`` write rows + their dual ``read`` rows),
+optionally carrying an RBF surface from the manifold's embedded domain
+coordinates into that subspace's reduced coordinates (a curved fit), and
+optionally a fuzzy-manifold sigma field (the within-node tube thickness).
+
+**Writes and reads are typed.**  ``basis`` rows are activation-space
+*vectors*: a reduced coordinate ``c`` writes ``c @ basis`` into the residual
+stream.  ``read`` rows are the dual *covectors*: ``(h − mean) @ readᵀ`` reads
+``h``'s reduced coordinate.  A fitted frame is Mahalanobis-orthonormal
+(``basis Σ⁻¹ basisᵀ = I``) with ``read = basis Σ⁻¹``, so ``read @ basisᵀ = I``,
+``basisᵀ read`` is the Mahalanobis-orthogonal projector onto the span, and
+every reduced-coordinate norm is a Mahalanobis norm.  A two-node fit writes
+along the difference of means ``δ`` and reads with the LDA covector ``Σ⁻¹δ``;
+ablating its axis is LEACE.  Without a whitener (tests, the behavior-space fit)
+the frame is Euclidean-orthonormal and ``read == basis``.
 
 The two fits share the basis selection (:func:`pca_basis`, whitened/Fisher
 when a covering whitener is supplied) and the neutral-anchored frame; only
@@ -43,8 +54,10 @@ DEFAULT_N_COMPONENTS = 64
 class LayerSubspace:
     """Per-layer reduced frame and RBF interpolant for one manifold.
 
-    ``mean`` and ``basis`` define an affine PCA subspace of the
-    activation space; ``node_params`` / ``rbf_weights`` / ``poly_coeffs``
+    ``mean`` and ``basis`` define an affine subspace of the activation space
+    (``basis`` rows are the write vectors, ``read`` rows their dual covectors,
+    ``read @ basisᵀ = I``; see the module docstring); ``node_params`` /
+    ``rbf_weights`` / ``poly_coeffs``
     define the ``r**3`` RBF interpolant from the manifold's embedded
     domain coordinates to that subspace's reduced coordinates.
     ``coord_offset`` / ``coord_scale`` carry the unit-box normalization
@@ -57,7 +70,7 @@ class LayerSubspace:
     ``n = R``).  Ordinary fits use the identity authoring→reduced map;
     rectangular cross-model transfers may carry an explicit ``affine_map`` so
     ``manifold_point(c) = mean + c @ affine_map @ basis`` while ``basis`` stays
-    orthonormal.  The
+    Mahalanobis-orthonormal.  The
     affine case has ``H_n ≡ 0`` (the surface fills its subspace), so
     ``subspace_inject`` takes an analytic shortcut that skips the
     Gauss-Newton foot solve, the RBF eval, and the tangent Gram-solve —
@@ -67,8 +80,9 @@ class LayerSubspace:
     :attr:`is_affine`.
     """
 
-    mean: torch.Tensor                  # (D,)   centering mean over the node centroids
-    basis: torch.Tensor                 # (R, D) orthonormal PCA rows
+    mean: torch.Tensor                  # (D,)   the anchor's projection into the span
+    basis: torch.Tensor                 # (R, D) write rows (vectors), M-orthonormal
+    read: torch.Tensor                  # (R, D) read rows (covectors), read @ basisᵀ = I
     node_params: torch.Tensor | None    # (K, m) normalized embedded coords; None = affine
     rbf_weights: torch.Tensor | None    # (K, R) RBF weights; None = affine
     poly_coeffs: torch.Tensor | None    # (m+1, R) affine polynomial coeffs; None = affine
@@ -76,7 +90,7 @@ class LayerSubspace:
     coord_scale: torch.Tensor           # (m,)   unit-box normalization scale
     node_coords: torch.Tensor | None = None
     # (K, R) per-layer **real, neutral-anchored** reduced node coordinates
-    # ``(c_i − ν*)·basisᵀ`` — affine (flat) subspaces only; ``None`` on a
+    # ``(c_i − ν*)·readᵀ`` — affine (flat) subspaces only; ``None`` on a
     # curved subspace (which carries the shared ``Manifold.node_coords`` +
     # RBF instead).  This is the per-layer steer target source: a flat
     # subspace's pole / node sits at distance ∝ ‖δ_L‖ from the neutral
@@ -86,9 +100,9 @@ class LayerSubspace:
     affine_map: torch.Tensor | None = None
     # (m, R) authoring-to-reduced coordinate map for affine subspaces.  ``None``
     # is the canonical identity map (m == R). Cross-model transfer may need a
-    # non-isometric map after orthonormalizing a rectangular mapped basis; this
-    # explicit factor preserves the exact world surface without weakening the
-    # runtime's orthonormal-basis invariant.
+    # non-isometric map after re-orthonormalizing a mapped basis in the target
+    # metric; this explicit factor preserves the exact world surface without
+    # weakening the runtime's orthonormal-frame invariant.
     sigma_rbf_weights: torch.Tensor | None = None
     sigma_poly_coeffs: torch.Tensor | None = None
     # The **fuzzy-manifold σ-field** (raw curved subspaces only). A separate
@@ -131,6 +145,20 @@ class LayerSubspace:
         rank, dim = self.basis.shape
         if self.mean.shape[0] != dim:
             raise ValueError("LayerSubspace mean dimension must match basis width")
+        if self.read.shape != self.basis.shape:
+            raise ValueError("LayerSubspace read rows must have the basis shape (R, D)")
+        # Duality is the frame's structural invariant (reads recover the
+        # coordinates the basis writes).  Non-finite values are a different
+        # corruption, rejected by the finiteness guards at load and export.
+        biorth = self.read.to(torch.float32) @ self.basis.to(torch.float32).T
+        error = (
+            biorth - torch.eye(rank, dtype=biorth.dtype, device=biorth.device)
+        ).abs().max()
+        if bool(torch.isfinite(error)) and float(error) > 1e-3:
+            raise ValueError(
+                "LayerSubspace read rows must be dual to its basis "
+                f"(max |read·basisᵀ − I| = {float(error):.3g})"
+            )
         if self.coord_offset.ndim != 1 or self.coord_scale.ndim != 1:
             raise ValueError("LayerSubspace coordinate normalization must be vectors")
         if self.coord_offset.shape != self.coord_scale.shape:
@@ -191,17 +219,18 @@ class LayerSubspace:
         cls,
         mean: torch.Tensor,
         basis: torch.Tensor,
+        read: torch.Tensor,
         *,
         node_coords: torch.Tensor | None = None,
         affine_map: torch.Tensor | None = None,
     ) -> "LayerSubspace":
-        """Build a flat (affine, no-RBF) subspace from ``mean`` + ``basis``.
+        """Build a flat (affine, no-RBF) subspace from ``mean`` + ``basis``/``read``.
 
         By default authoring coordinates map to reduced coordinates by identity
         (``coord_offset = 0``, ``coord_scale = 1``), so
         ``eval_at(c) = c @ basis + mean`` exactly.  ``affine_map`` optionally
         supplies an ``(m, R)`` map after cross-model reparameterization.
-        ``basis`` is ``(R, D)``;
+        ``basis`` and its dual ``read`` are ``(R, D)``;
         the implied intrinsic dimension is ``n = R`` (the surface fills the
         span).  Backs the folded-vector / flat-subspace representation.
         ``node_coords`` ``(K, R)`` carries the per-layer real
@@ -220,6 +249,7 @@ class LayerSubspace:
         return cls(
             mean=mean,
             basis=basis,
+            read=read,
             node_params=None,
             rbf_weights=None,
             poly_coeffs=None,
@@ -232,11 +262,12 @@ class LayerSubspace:
     def select_axes(self, kept: Sequence[int]) -> "LayerSubspace":
         """Restrict an affine subspace to a subset of its basis rows (DLS prune).
 
-        Slices ``basis`` + ``node_coords`` to the ``kept`` axis indices and
-        recomputes ``mean`` as the projection of the *same* anchor into the
+        Slices ``basis``/``read`` + ``node_coords`` to the ``kept`` axis indices
+        and recomputes ``mean`` as the projection of the *same* anchor into the
         reduced span (``mean' = P_{basis[kept]}(anchor)``) — recovered from the
         stored ``mean`` without the raw anchor, since the anchor's per-axis
-        coords are ``mean @ basisᵀ`` (the basis is orthonormal).  Affine only
+        coords are ``mean @ readᵀ``.  Kept rows of an orthonormal frame stay
+        orthonormal and dual, so no re-orthonormalization runs.  Affine only
         — a curved subspace's per-axis pruning would force an RBF re-fit, so
         the split is flat-yes / curved-no.  ``kept`` indexes into
         ``[0, rank)``; an empty ``kept`` is a caller error (drop the layer).
@@ -263,7 +294,8 @@ class LayerSubspace:
                 f"select_axes: kept axes must be unique indices in [0, {self.rank})"
             )
         basis_k = self.basis[idx].contiguous()                 # (|kept|, D)
-        anchor_coords = self.mean @ self.basis.T               # (R,) anchor coords
+        read_k = self.read[idx].contiguous()                   # (|kept|, D)
+        anchor_coords = self.mean @ self.read.T                # (R,) anchor coords
         mean_k = anchor_coords[idx] @ basis_k                  # P_{basis[kept]}(anchor)
         nc_k = (
             self.node_coords[:, idx].contiguous()
@@ -280,7 +312,7 @@ class LayerSubspace:
         else:
             amap_k = None
         return LayerSubspace.affine(
-            mean_k, basis_k, node_coords=nc_k, affine_map=amap_k,
+            mean_k, basis_k, read_k, node_coords=nc_k, affine_map=amap_k,
         )
 
     def rbf_params(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -308,6 +340,7 @@ class LayerSubspace:
         return LayerSubspace(
             mean=self.mean.to(device=device, dtype=dtype),
             basis=self.basis.to(device=device, dtype=dtype),
+            read=self.read.to(device=device, dtype=dtype),
             node_params=_cast(self.node_params),
             rbf_weights=_cast(self.rbf_weights),
             poly_coeffs=_cast(self.poly_coeffs),
@@ -350,8 +383,8 @@ class LayerSubspace:
         Interpolates the per-node ``log σ`` field through the σ-RBF over the
         same normalized ``node_params``, then exponentiates — so the result is
         a positive ``(..,)`` thickness in the layer's reduced-coordinate units
-        (the same units ``H_n`` is measured in, since the basis is
-        orthonormal).  ``normalized=True`` takes coords already mapped through
+        (the same units ``H_n`` is measured in: Mahalanobis, since the frame
+        is Mahalanobis-orthonormal).  ``normalized=True`` takes coords already mapped through
         :meth:`_normalize` (the injection kernel has them in hand).  Returns
         an all-zeros ``(..,)`` when the subspace carries no σ-field
         (:attr:`has_sigma` false): affine and SAE-curved fits.  Hot-path safe
@@ -456,6 +489,20 @@ class StackedRbf:
         return torch.exp(rbf_part + poly_part).reshape(-1)
 
 
+def dual_read(basis: torch.Tensor, read: torch.Tensor) -> torch.Tensor:
+    """``read`` corrected to be exactly dual to ``basis`` (``read @ basisᵀ = I``).
+
+    A frame's reads come from a Woodbury ``Σ⁻¹``, whose fp32 relative error
+    grows along the high-variance directions it divides out, so
+    ``read @ basisᵀ`` drifts from ``I`` by ~1e-3 on real activations.  One
+    small ``(R, R)`` solve, ``(read @ basisᵀ)⁻¹ read``, restores duality while
+    keeping the reads in their own span and the write rows untouched.
+    Compose- and fit-time only.
+    """
+    gram = read @ basis.transpose(0, 1)
+    return torch.linalg.solve(gram, read).contiguous()
+
+
 def pca_basis(
     X: torch.Tensor,
     *,
@@ -464,27 +511,34 @@ def pca_basis(
     layer: int | None = None,
     whitened_gram: torch.Tensor | None = None,
     whitened_rows: torch.Tensor | None = None,
-) -> tuple[torch.Tensor, float]:
-    """μ-centered PCA basis — whitened/Fisher, or Euclidean without a whitener.
+) -> tuple[torch.Tensor, torch.Tensor, float]:
+    """μ-centered PCA frame — whitened, or Euclidean without a whitener.
 
     ``X`` is the ``(K, D)`` **μ-centered** centroid scatter (never the neutral
     anchor: anchor-centering injects the neutral offset as a spurious axis and
-    breaks PCA@2 ≡ DiM).  Returns ``(basis, ev_ratio)``: ``basis`` is ``(R, D)``
-    orthonormal rows, ``R = min(n_components, K-1, rank)``.
+    breaks PCA@2 ≡ DiM).  Returns ``(basis, read, ev_ratio)``: ``basis`` the
+    ``(R, D)`` write rows, ``read`` their dual ``(R, D)`` read rows
+    (``read @ basisᵀ = I``), ``R = min(n_components, K-1, rank)``.
 
-    With ``whitener``/``layer`` the basis is the Fisher discriminant — the
-    generalized eigenproblem ``(S_b, Σ)`` via the Woodbury ``Σ⁻¹``: eigvecs
-    ``a`` of ``G = X Σ⁻¹ Xᵀ`` give directions ``Σ⁻¹ Xᵀ a``, re-expressed in a
-    Euclidean-orthonormal basis by QR (span-preserving) so the hot path is
-    unchanged.  Dividing by background variance cancels the rogue
-    (massive-activation) dims raw PCA chases.  ``ev_ratio`` is the retained
-    fraction of whitened between-variance.  ``whitened_gram`` / ``whitened_rows``
-    may supply a precomputed ``X Σ⁻¹ Xᵀ`` / ``Σ⁻¹X`` so a fit shares one
-    Woodbury application across Gram, basis, and layout anchoring.
+    With ``whitener``/``layer`` this is PCA in the whitened space mapped back
+    with the right types — equivalently the Fisher discriminant of
+    ``(S_b, Σ)``.  The eigenvectors ``a`` of ``G = X Σ⁻¹ Xᵀ`` (eigenvalues
+    ``μ``) give the write rows ``Xᵀa/√μ``: combinations of the node
+    displacements themselves, Mahalanobis-orthonormal by construction
+    (``aᵀ G a = μ``).  The read rows are ``Σ⁻¹`` of those, ``aᵀ(Σ⁻¹X)/√μ``:
+    the Fisher/LDA covectors.  At ``K = 2`` the frame writes along the
+    difference of means ``δ`` and reads with ``Σ⁻¹δ``.  Dividing by background
+    variance is what ranks the axes (rogue, massive-activation channels carry
+    little whitened between-variance); it never changes a write direction into
+    a covector.  ``ev_ratio`` is the retained fraction of whitened
+    between-variance.  ``whitened_gram`` / ``whitened_rows`` may supply a
+    precomputed ``X Σ⁻¹ Xᵀ`` / ``Σ⁻¹X`` so a fit shares one Woodbury
+    application across Gram, frame, and layout anchoring.
 
-    Without a whitener: ordinary SVD of ``X`` (raw inter-node variance).  Only
-    tests and offline diagnostics take this branch; every activation-space fit
-    in the pipeline passes a covering whitener.
+    Without a whitener: ordinary SVD of ``X`` (raw inter-node variance), an
+    orthonormal frame with ``read = basis``.  Only tests and the
+    behavior-space fit take this branch; every activation-space fit in the
+    pipeline passes a covering whitener.
     """
     K = int(X.shape[0])
     if whitener is not None and layer is not None:
@@ -510,15 +564,11 @@ def pca_basis(
                     f"whitened_rows shape {tuple(sinv_x.shape)} does not match "
                     f"centered scatter shape {tuple(X.shape)}"
                 )
-            directions = A[:, top].transpose(0, 1) @ sinv_x
         else:
-            XtA = X.transpose(0, 1) @ A[:, top]         # (D, R) = Xᵀ a_r
-            directions = whitener.apply_inv(
-                layer, XtA.transpose(0, 1).contiguous(),
-            )                                           # (R, D) = Σ⁻¹ Xᵀ a_r
-        basis = torch.linalg.qr(
-            directions.transpose(0, 1)
-        ).Q.transpose(0, 1).contiguous()                # (R, D)
+            sinv_x = whitener.apply_inv(layer, X.contiguous())   # (K, D) = Σ⁻¹ X
+        coeff = A[:, top].transpose(0, 1) / mu_pos[top].clamp_min(1e-30).sqrt().unsqueeze(1)
+        basis = (coeff @ X.to(dtype=torch.float32, device="cpu")).contiguous()  # aᵀX/√μ
+        read = dual_read(basis, coeff @ sinv_x)                 # (R, D) = aᵀΣ⁻¹X/√μ
         total_w = float(mu_pos.sum().item())
         retained_w = float(mu_pos[top].sum().item())
         ev_ratio = retained_w / total_w if total_w > 1e-12 else 1.0
@@ -527,10 +577,11 @@ def pca_basis(
         rank = int((1e-6 * S[0].clamp(min=1e-12) < S).sum().item())
         R = max(1, min(n_components, K - 1, rank))
         basis = Vh[:R].contiguous()                     # (R, D)
+        read = basis.clone()
         total_var = float(S.pow(2).sum().item())
         retained_var = float(S[:R].pow(2).sum().item())
         ev_ratio = retained_var / total_var if total_var > 1e-12 else 1.0
-    return basis, ev_ratio
+    return basis, read, ev_ratio
 
 
 @dataclass(frozen=True)
@@ -559,30 +610,33 @@ def _frame(
     neutral_mean: torch.Tensor | None,
     whitened_gram: torch.Tensor | None,
     whitened_rows: torch.Tensor | None,
-    basis_override: torch.Tensor | None,
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
-    """Shared basis + anchor of both fits: ``(mu, X, basis, anchor, ev_ratio)``.
+    basis_override: "tuple[torch.Tensor, torch.Tensor] | None",
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, float]:
+    """Shared frame + anchor of both fits: ``(mu, X, basis, read, anchor, ev_ratio)``.
 
-    The basis comes from the μ-centered scatter (the PCA@2 ≡ DiM caveat); the
-    frame anchors at ``neutral_mean`` when given, else at the centroid mean.
+    The frame comes from the μ-centered scatter (the PCA@2 ≡ DiM caveat); it
+    anchors at ``neutral_mean`` when given, else at the centroid mean.
+    ``basis_override`` is a precomputed ``(basis, read)`` pair (the frames
+    :func:`~drowse.geometry.topology.select_topology` already solved).
     """
     mu = centroids.mean(dim=0)
     X = centroids - mu
     if basis_override is None:
-        basis, ev_ratio = pca_basis(
+        basis, read, ev_ratio = pca_basis(
             X, n_components=n_components, whitener=whitener, layer=layer,
             whitened_gram=whitened_gram, whitened_rows=whitened_rows,
         )
     else:
-        basis = basis_override[: min(n_components, basis_override.shape[0])].to(
-            device="cpu", dtype=torch.float32,
-        ).contiguous()
-        ev_ratio = 1.0  # the planned Fisher basis carries no diagnostic
+        planned_basis, planned_read = basis_override
+        width = min(n_components, int(planned_basis.shape[0]))
+        basis = planned_basis[:width].to(device="cpu", dtype=torch.float32).contiguous()
+        read = planned_read[:width].to(device="cpu", dtype=torch.float32).contiguous()
+        ev_ratio = 1.0  # the planned frame carries no diagnostic
     anchor = (
         neutral_mean.to(device=centroids.device, dtype=torch.float32).reshape(-1)
         if neutral_mean is not None else mu
     )
-    return mu, X, basis, anchor, ev_ratio
+    return mu, X, basis, read, anchor, ev_ratio
 
 
 def fit_affine_subspace(
@@ -595,40 +649,42 @@ def fit_affine_subspace(
     whitened_gram: torch.Tensor | None = None,
     whitened_rows: torch.Tensor | None = None,
     orient_to: int | None = 0,
-    basis_override: torch.Tensor | None = None,
+    basis_override: "tuple[torch.Tensor, torch.Tensor] | None" = None,
 ) -> LayerFit:
     """Fit a flat (affine, no-RBF) subspace from per-node centroids ``(K, D)``.
 
     ``fit_mode=pca`` produces these, and a steering vector is the ``K = 2``
-    case.  The basis is the μ-centered PCA (:func:`pca_basis`); the frame is
+    case.  The frame is the μ-centered PCA (:func:`pca_basis`),
     **neutral-anchored**:
 
-    - ``mean = P_basis(anchor)`` — the anchor's projection into the span;
-    - ``node_coords = (centroids − anchor)·basisᵀ`` — real, anchor-relative
-      reduced coords (neutral sits at coord 0, a node at distance ∝ ‖δ_L‖).
+    - ``mean = P_basis(anchor)`` — the anchor's projection into the span
+      (Mahalanobis-orthogonal, through the read rows);
+    - ``node_coords = (centroids − anchor)·readᵀ`` — real, anchor-relative
+      reduced coords (neutral sits at coord 0, a node at distance ∝ ‖δ_L‖_M).
 
-    ``orient_to`` flips each basis row so node ``orient_to``'s μ-centered
-    projection is non-negative (the ``K = 2`` node-0-is-pos case reproduces
-    DiM's ``+δ̂``); ``None`` keeps the raw SVD/QR sign.
+    ``orient_to`` flips each axis so node ``orient_to``'s μ-centered
+    coordinate is non-negative (the ``K = 2`` node-0-is-pos case reproduces
+    DiM's ``+δ``); ``None`` keeps the raw eigenvector sign.
     """
     centroids = centroids.to(torch.float32)
     K = int(centroids.shape[0])
     if K < 2:
         raise ManifoldSpecError(f"an affine subspace needs >= 2 nodes, got {K}")
-    mu, X, basis, anchor, ev_ratio = _frame(
+    mu, X, basis, read, anchor, ev_ratio = _frame(
         centroids, n_components=n_components, whitener=whitener, layer=layer,
         neutral_mean=neutral_mean, whitened_gram=whitened_gram,
         whitened_rows=whitened_rows, basis_override=basis_override,
     )
     if orient_to is not None:
-        proj = basis @ (centroids[orient_to] - mu)      # (R,)
-        signs = torch.where(proj < 0, -1.0, 1.0)        # flip rows facing away
-        basis = (basis * signs.unsqueeze(1)).contiguous()
-    mean = (anchor @ basis.T) @ basis                   # P_basis(anchor) (D,)
-    node_coords = (centroids - anchor) @ basis.T        # (K, R) anchor-relative
+        proj = read @ (centroids[orient_to] - mu)       # (R,)
+        signs = torch.where(proj < 0, -1.0, 1.0).unsqueeze(1)  # flip axes facing away
+        basis = (basis * signs).contiguous()
+        read = (read * signs).contiguous()
+    mean = (anchor @ read.T) @ basis                    # P_basis(anchor) (D,)
+    node_coords = (centroids - anchor) @ read.T         # (K, R) anchor-relative
     return LayerFit(
-        subspace=LayerSubspace.affine(mean, basis, node_coords=node_coords),
-        mu_coords=X @ basis.T,
+        subspace=LayerSubspace.affine(mean, basis, read, node_coords=node_coords),
+        mu_coords=X @ read.T,
         explained_variance=ev_ratio,
     )
 
@@ -647,8 +703,12 @@ def subspace_share(
     spread of the node centroids around their *own* mean, restricted to the
     subspace and measured in the Mahalanobis metric.  Anchor-independent — the
     budget measures signal spread, not where neutral sits.  The apply path
-    normalizes it to mean 1 across layers.  At ``K = 2`` / ``R = 1`` this is
-    ``‖δ_L‖_M / √2``, so the normalized profile is the DiM one exactly.
+    normalizes it to mean 1 across layers.  ``basis`` must be the write rows
+    (vectors).  A fitted frame is Mahalanobis-orthonormal, so ``M_R ≈ I`` and
+    this is the node spread's Frobenius norm; the Gram keeps the formula exact
+    for a frame measured in another metric (transfer re-bakes in the target
+    one).  At ``K = 2`` / ``R = 1`` it is ``‖δ_L‖_M / √2``, so the normalized
+    profile is the DiM one exactly.
     """
     mu_coords = mu_coords.to(torch.float32)
     if mu_coords.ndim == 1:
@@ -669,7 +729,7 @@ def fit_curved_subspace(
     neutral_mean: torch.Tensor | None = None,
     whitened_gram: torch.Tensor | None = None,
     whitened_rows: torch.Tensor | None = None,
-    basis_override: torch.Tensor | None = None,
+    basis_override: "tuple[torch.Tensor, torch.Tensor] | None" = None,
 ) -> LayerFit:
     """Fit a PCA subspace + ``r**3`` RBF surface for one layer (curved).
 
@@ -694,21 +754,21 @@ def fit_curved_subspace(
         layout if isinstance(layout, RbfFitPlan)
         else RbfFitPlan.build(layout, smoothing=smoothing)
     )
-    mu, X, basis, anchor, ev_ratio = _frame(
+    mu, X, basis, read, anchor, ev_ratio = _frame(
         centroids, n_components=n_components, whitener=whitener, layer=layer,
         neutral_mean=neutral_mean, whitened_gram=whitened_gram,
         whitened_rows=whitened_rows, basis_override=basis_override,
     )
-    mean = (anchor @ basis.T) @ basis           # P_basis(anchor) (D,)
-    # Project the μ-centered roster once; the anchor-relative RBF targets
+    mean = (anchor @ read.T) @ basis            # P_basis(anchor) (D,)
+    # Read the μ-centered roster once; the anchor-relative RBF targets
     # differ only by one reduced offset.
-    mu_coords = X @ basis.T
-    coords = mu_coords + ((mu - anchor) @ basis.T)
+    mu_coords = X @ read.T
+    coords = mu_coords + ((mu - anchor) @ read.T)
     fit = plan.fit(coords, smoothing=smoothing)
     sub = LayerSubspace(
         # Each layer's persistent payload owns these tiny tensors: safetensors
         # rejects aliases across keys.
-        mean=mean, basis=basis, node_params=plan.node_params.clone(),
+        mean=mean, basis=basis, read=read, node_params=plan.node_params.clone(),
         rbf_weights=fit.weights, poly_coeffs=fit.poly,
         coord_offset=plan.coord_offset.clone(),
         coord_scale=plan.coord_scale.clone(),
@@ -724,6 +784,7 @@ __all__ = [
     "LayerFit",
     "LayerSubspace",
     "StackedRbf",
+    "dual_read",
     "fit_affine_subspace",
     "fit_curved_subspace",
     "pca_basis",

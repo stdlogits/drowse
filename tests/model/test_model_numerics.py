@@ -141,7 +141,7 @@ def test_steering_manager_matches_independent_block_intervention(model: Any, abl
     mean = torch.linspace(-.1, .1, dim)
     target = torch.tensor([.03, 0. if ablate else -.02])
     kappa = torch.tensor([0., .7 if ablate else 0.])
-    sub = LayerSubspace.affine(mean, basis)
+    sub = LayerSubspace.affine(mean, basis, basis.clone())
     synth = SynthesizedSubspace({1: sub}, {1: target}, {1: 1.}, {1: kappa})
     plan = SteeringPlan()
     plan.add_subspace("test", synth)

@@ -109,8 +109,10 @@ assigns steering to roles; raw mode is one buffer for base models.
 
 In Drowse, you extract concepts as **manifolds** or **subspaces**.
 
-- A 1D flat subspace is just a steering vector.
-- A higher-rank flat subspace is a group of orthogonal steering vectors.
+- A 1D flat subspace is just a steering vector: the difference of the two
+  poles' means.
+- A higher-rank flat subspace is a group of steering vectors, orthogonal in
+  the model's Mahalanobis metric.
 - A curved manifold fits a nonlinear surface and lets you steer along it.
 
 ### Bundled concepts
@@ -162,7 +164,7 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 | leading number | Steering coefficient; omitted terms default to `0.5` |
 | `~` | Keep the component shared with another direction (Mahalanobis) |
 | `\|` | Remove the component shared with another direction (Mahalanobis) |
-| `!` | Mean-ablate a direction or a unit; a bare `!x` ablates fully |
+| `!` | Ablate a direction toward neutral (LEACE: reads with the whitened covector, edits along the direction) or mean-ablate a unit; a bare `!x` ablates fully |
 | `%label` or `%x,y,…` | Choose a named node or coordinates on a manifold |
 | `{12-20}`, `{4-8,20}`, `{workspace}` | Act only at these layers (after the selector, before `@`) |
 | `@prompt`, `@response`, `@after`, `@thinking`, … | Restrict the token phase where a term applies |
@@ -204,7 +206,12 @@ Drowse first has the model answer a shared set of baseline prompts as each conce
 then it takes the resulting hidden states and fits them to either a curved manifold
 or a flat subspace.
 
-Layer allocation uses a Mahalanobis metric estimated from neutral activations.
+Fitting, layer allocation and reads use a Mahalanobis metric estimated from
+neutral activations. Each fitted frame keeps two row sets: write rows, the
+directions steering adds (for a two-pole concept, the difference of means),
+and read rows, the whitened covectors that measure a coordinate (the LDA
+direction). A full `!` ablation reads with one and edits along the other,
+which is LEACE.
 Discriminative layer selection removes flat axes that fail to straddle the neutral
 baseline across the fitted nodes.
 

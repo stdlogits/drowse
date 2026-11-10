@@ -146,16 +146,18 @@ def test_a_scoped_term_steers_exactly_its_layers(
 
 @pytest.mark.usefixtures("isolated_home")
 def test_a_scoped_ablation_keeps_its_exact_coefficient(tiny_session: Any) -> None:
-    """``0.4 !a{1,3}`` keeps 60% of the neutral-centered component along ``a``
-    at layers 1 and 3, exactly as the unscoped ablation does everywhere."""
+    """``0.4 !a{1,3}`` keeps 60% of the neutral-centered reading along ``a``'s
+    covector ``Σ⁻¹a`` at layers 1 and 3, exactly as the unscoped ablation does
+    everywhere."""
     profile = register_vectors(tiny_session, "a")["a"]
     means = tiny_session.layer_means
+    whitener = tiny_session.whitener
     for expr, layers in (("0.4 !a{1,3}", (1, 3)), ("0.4 !a", (0, 1, 2, 3))):
         with tiny_session.steering(expr):
             captured = _capture(tiny_session)
         assert _touched(captured) == set(layers)
         for L in layers:
-            d = profile[L].to(torch.float32)
+            d = whitener.apply_inv(L, profile[L].to(torch.float32)).to(torch.float32)
             mu = means[L].to(torch.float32) @ d
             before, after = (captured[L][i].to(torch.float32) @ d - mu for i in (0, 1))
             assert torch.allclose(after, 0.6 * before, rtol=1e-4, atol=1e-4), (expr, L)

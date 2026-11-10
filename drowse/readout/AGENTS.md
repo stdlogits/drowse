@@ -234,8 +234,14 @@ fit's `mahalanobis_share`, normalized):
 | `nearest` | top-`top_n` by raw whitened distance, reported ÷ `label_scale` | same |
 | `assignment` | `softmax(−d²/2τ² − R·log τ)`, top-`top_n` | same |
 
+- `M_R⁻¹ B Σ⁻¹(h − mean)` is the Mahalanobis-orthogonal projection's
+  coordinate in the frame's write rows `B` (vectors). A fitted frame is
+  Mahalanobis-orthonormal, so `M_R ≈ I` and this is the frame's `read`
+  (the LDA covector `Σ⁻¹δ` at K = 2); the session whitener keeps it exact if
+  the neutral cache changed since the fit. A curved fit's reduced node values
+  (`eval_at` and the overlay) read through `sub.read`.
 - Coordinates are domain-frame: each layer's reduced coord is mapped to the
-  domain before averaging (raw per-layer coords are in `‖δ_L‖` units). Rank-1
+  domain before averaging (raw per-layer coords are in `‖δ_L‖_M` units). Rank-1
   reads `1.0` at the positive node. Periodic, sphere, Klein and projective
   domains average in the embedding and map back; a near-zero mean falls back to
   the highest-share layer's coordinate instead of inventing a midpoint.
@@ -250,7 +256,7 @@ fit's `mahalanobis_share`, normalized):
   precomputed at attach.
 - `neutral` (`NEUTRAL_LABEL`) is a virtual candidate: the frame anchor in the
   same whitened metric (zero for affine fits, the baked `origin` through
-  `eval_at → basis → chol` for curved). It rides `node_white_aug` as the last
+  `eval_at → read → chol` for curved). It rides `node_white_aug` as the last
   candidate in both paths, is never a stored node, and is suppressed when the
   manifold has a real node named `neutral`.
 - `depth_com`/`depth_spread` need `n_layers` at construction; mass is
@@ -318,7 +324,7 @@ gates are the sole consumer and final readings are off. The binding freezes
 names only. `is_live` (default on) is the all-or-nothing per-token switch;
 `set_live` rejects extras with `TypeError`. `probe_hash` is sha256 over
 fp32 bytes: the folded direction for a foldable fit, else per-layer
-mean/basis/node coords, recorded when the probe is attached or swapped (inside
+mean/basis/read/node coords, recorded when the probe is attached or swapped (inside
 the exclusive section), so the lock-free transcript export only looks it up.
 Attach likewise takes the listing's node coords and the inspector's geometry
 payload (`monitor_attach.py::probe_geometry_payload`, served by

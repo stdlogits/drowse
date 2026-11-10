@@ -965,7 +965,9 @@ def _flat_manifold(
         q, _ = torch.linalg.qr(a)          # (D, R) orthonormal columns
         basis = q[:, :R].T.contiguous()    # (R, D) orthonormal rows
         mean = torch.randn(dim) * 0.1 + float(layer_idx + 1)
-        layers[layer_idx] = LayerSubspace.affine(mean, basis, node_coords=rc)
+        layers[layer_idx] = LayerSubspace.affine(
+            mean, basis, basis.clone(), node_coords=rc,
+        )
         share[layer_idx] = 1.0 + 0.3 * layer_idx
     return Manifold(
         name=name,

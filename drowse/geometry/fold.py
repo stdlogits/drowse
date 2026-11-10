@@ -7,7 +7,8 @@ move between the two shapes:
   neutral-anchored one-pole ray (a derived direction: a merge, a ``~``/``|``
   projection, a registered profile read as a probe);
 - :func:`is_foldable_vector_manifold` / :func:`folded_directions` read a
-  fitted ray back as per-layer directions (``δ̂_L · share_L``);
+  fitted ray back as per-layer directions (its write row scaled to
+  ``‖·‖_M = share_L``);
 - :func:`project_profile` is the LEACE ``~``/``|`` projection of one direction
   profile against another in the Mahalanobis metric.
 """
@@ -46,16 +47,18 @@ def fold_directions_to_subspace(
     pole centroids, a derived direction (a ``merge`` linear-combination, a
     `~`/`|` projection of one concept onto another) has no pole pair — just a
     direction to push along.
-    So the subspace is neutral-anchored at ``mean = P_basis(ν_L) = (ν_L·d̂)d̂``
-    (the neutral mean projected into the 1-D span, §5) with a single ``+`` pole
-    node; steering ``along`` toward the pole pushes the running activation's
-    ``d̂`` component away from neutral, and ``!`` (``along``-to-coord-0) slides
-    it back to neutral, i.e. ablates the direction.
+    The direction is a write vector: the ray writes along ``d`` and reads
+    with its covector ``Σ⁻¹d``, in a Mahalanobis-unit frame
+    (``basis = d/‖d‖_M``, ``read = Σ⁻¹d/‖d‖_M``).  So the subspace is
+    neutral-anchored at ``mean = P_basis(ν_L) = (ν_L·read)·basis`` (the
+    neutral mean projected into the 1-D span, §5) with a single ``+`` pole
+    node; steering ``along`` toward the pole pushes the running activation
+    along ``d`` away from neutral, and ``!`` (``along``-to-coord-0) slides its
+    ``Σ⁻¹d`` reading back to neutral, i.e. LEACE-erases the direction.
 
-    Per layer: ``basis = d̂_L``; ``LayerSubspace.node_coords = [[‖d_L‖]]`` —
-    the real coord of the pole, a step of ``‖d_L‖`` along ``d̂`` from the
-    neutral origin (coord 0). ``share = ‖d_L‖_M``: the whitened direction
-    magnitude itself is the budget (a single
+    Per layer: ``LayerSubspace.node_coords = [[‖d_L‖_M]]`` — the real coord
+    of the pole, so the pole sits exactly at ``ν + d`` in the span.
+    ``share = ‖d_L‖_M``: the whitened direction magnitude itself is the budget (a single
     direction has no node cloud to take a μ-centered spread over, so this is
     *not* :func:`~drowse.geometry.subspace.subspace_share`'s √2-scaled form; the
     apply-time normalization handles the cross-layer scale). No
@@ -90,19 +93,25 @@ def fold_directions_to_subspace(
     mahalanobis_share: dict[int, float] = {}
     for idx in present:
         d = directions[idx].to(torch.float32).reshape(-1)
-        norm = float(d.norm())
-        if norm <= 1e-12:
+        if float(d.norm()) <= 1e-12:
             continue
-        basis = (d / norm).reshape(1, -1)          # (1, D) unit d̂
+        sinv_d = whitener.apply_inv(idx, d).to(device=d.device, dtype=torch.float32)
+        norm_m = float((d @ sinv_d).clamp_min(0.0).sqrt())
+        if norm_m <= 1e-12:
+            continue
+        basis = (d / norm_m).reshape(1, -1)        # (1, D) Mahalanobis-unit write
+        read = (sinv_d / norm_m).reshape(1, -1)    # (1, D) its dual read
         nu = neutral_means[idx].to(
             device=d.device, dtype=torch.float32,
         ).reshape(-1)
         # Neutral-anchored: mean = P_basis(ν) (off-span part of ν dropped);
-        # the pole sits at the real coord ‖d‖ along d̂ from the origin.
-        mean = (nu @ basis.T) @ basis
-        node_coords_L = torch.tensor([[norm]], dtype=torch.float32, device=d.device)
-        layers[idx] = LayerSubspace.affine(mean, basis, node_coords=node_coords_L)
-        mahalanobis_share[idx] = float(whitener.mahalanobis_norm(idx, d))
+        # the pole sits at the real coord ‖d‖_M from the origin, i.e. at ν + d.
+        mean = (nu @ read.T) @ basis
+        node_coords_L = torch.tensor([[norm_m]], dtype=torch.float32, device=d.device)
+        layers[idx] = LayerSubspace.affine(
+            mean, basis, read, node_coords=node_coords_L,
+        )
+        mahalanobis_share[idx] = norm_m
 
     if not layers:
         raise ValueError("cannot fold a direction profile containing only zero vectors")
@@ -148,12 +157,14 @@ def is_foldable_vector_manifold(manifold: Manifold) -> bool:
 def folded_directions(manifold: Manifold) -> dict[int, torch.Tensor]:
     """Direction view of a folded (affine ``R = 1``) vector manifold.
 
-    Returns ``{L: δ̂_L · share_L}`` — each layer's unit direction scaled by its
-    Mahalanobis share — the in-memory steering-vector shape behind
-    ``extract()``'s :class:`Profile`, ``manifold compare``/``why``, ``merge``,
-    and GGUF export.  The manifold stays the only stored artifact.  Exact for
-    scale-invariant reads (per-layer and aggregate cosine); proportional for
-    cross-concept magnitude.
+    Returns ``{L: basis_L · share_L}`` — each layer's Mahalanobis-unit write
+    row (a fitted ray's difference-of-means direction ``δ``) scaled so its
+    Mahalanobis norm is the layer's share — the in-memory steering-vector
+    shape behind ``extract()``'s :class:`Profile`, ``manifold
+    compare``/``why``, ``merge``, and GGUF export.  The manifold stays the only
+    stored artifact.  Exact for scale-invariant reads (per-layer and aggregate
+    cosine); proportional for cross-concept magnitude, and proportional to the
+    per-layer displacement drowse's injection writes.
 
     Raises :class:`ValueError` on a curved or multi-dim manifold — the
     single-direction view is only meaningful for an ``R = 1`` ray.
