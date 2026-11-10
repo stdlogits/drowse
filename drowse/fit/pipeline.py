@@ -798,16 +798,9 @@ class FitInputs:
         return bool(sidecar.sae_full_coverage)
 
     def base_metadata(
-        self, *, method: str, fitted_layers: list[int], subspace_metric: str,
+        self, *, method: str, fitted_layers: list[int],
     ) -> dict[str, Any]:
-        """The sidecar keys every fit writes.
-
-        ``subspace_metric`` is a basis *label*: the monopolar fold keeps the
-        raw δ̂ basis (``concept − ν`` cancels common-mode by differencing, like
-        DiM) and reports ``euclidean``; every other fit selects a whitened
-        basis.  The share is always Mahalanobis — the whitener gate guarantees
-        it.
-        """
+        """The sidecar keys every fit writes."""
         ident = self.identity
         metadata: dict[str, Any] = {
             "method": method,
@@ -820,9 +813,6 @@ class FitInputs:
             "baseline_prompts_sha256": ident.baseline_prompts_sha256,
             "fitted_layers": fitted_layers,
             "fit_policy_version": MANIFOLD_FIT_POLICY_VERSION,
-            # Provenance only (nothing branches on these at load).
-            "share_metric": "mahalanobis",
-            "subspace_metric": subspace_metric,
         }
         backend = self.sae_backend
         if backend is not None:
@@ -1342,7 +1332,6 @@ class ManifoldExtractionPipeline:
                 else "manifold_monopolar"
             ),
             fitted_layers=list(fit_layers),
-            subspace_metric="euclidean",
         )
         metadata.update({
             "fit_mode": mf.fit_mode,
@@ -1448,7 +1437,6 @@ class ManifoldExtractionPipeline:
         metadata = inputs.base_metadata(
             method=geometry.method,
             fitted_layers=sorted(layer_subs),
-            subspace_metric="mahalanobis",
         )
         # Diagnostic layer profile: the whitened between-node spread
         # ``tr(G_L)`` — surfaced by `manifold show`, consumed by nothing.

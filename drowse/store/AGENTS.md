@@ -88,7 +88,7 @@ provenance only, and an unknown key raises. Provenance is all-or-nothing against
 | `method` | `fit_mode` | required block |
 | --- | --- | --- |
 | `manifold_pca`, `manifold_sae` | authored | |
-| `manifold_monopolar[_sae]` | pca | 1-node ray, `subspace_metric = euclidean` |
+| `manifold_monopolar[_sae]` | pca | 1-node ray (`concept − ν`) |
 | `manifold_discover_{pca,spectral,auto}` | its own | auto: `resolved_fit_mode`, `topology_winner`, `topology_candidates` |
 | `manifold_discover_sae` | any discover | |
 | `manifold_procrustes_transfer` | any | `source_model_id`, `source_model_fingerprint` |

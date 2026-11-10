@@ -375,8 +375,7 @@ corpora `tests/session/test_generate_responses.py`, session bake
 `tests/session/test_session_bake.py`, neutral cache
 `tests/store/test_neutral_cache.py`, neutral unit statistics
 `tests/units/test_unit_stats.py`, DLS golden
-`tests/browser/test_browser_parity.py`, GPU `tests/gpu/test_smoke.py` and
-`tests/gpu/test_session.py`.
+`tests/browser/test_browser_parity.py`, GPU `tests/gpu/test_smoke.py`.
 
 ## Deliberately absent
 

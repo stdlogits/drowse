@@ -393,7 +393,6 @@ class Extraction:
             metadata={
                 "method": "manifold_pca",
                 "name": ret_name,
-                "share_metric": manifold.metadata.get("share_metric"),
             },
         )
         self._events.emit(ManifoldExtracted(

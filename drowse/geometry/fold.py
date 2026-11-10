@@ -130,7 +130,6 @@ def fold_directions_to_subspace(
         node_kinds=[None],
         mahalanobis_share=mahalanobis_share,
     )
-    manifold.metadata["share_metric"] = "mahalanobis"
     manifold.validate_runtime_geometry()
     return manifold
 

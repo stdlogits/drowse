@@ -376,14 +376,13 @@ def test_sidecar_schema_is_exactly_five_fields(tmp_path: Path) -> None:
 def test_extract_shaped_profile_round_trips(tmp_path: Path) -> None:
     """The Profile ``DrowseSession.extract`` returns saves and loads.
 
-    ``extract`` stamps ``{"method": "manifold_pca", "name": ..., "share_metric":
-    ...}`` on the folded 2-node manifold view; the schema has to take that shape
-    verbatim, and the loaded metadata has to save again unchanged.
+    ``extract`` stamps ``{"method": "manifold_pca", "name": ...}`` on the
+    folded 2-node manifold view; the schema has to take that shape verbatim,
+    and the loaded metadata has to save again unchanged.
     """
     extract_metadata = {
         "method": "manifold_pca",
         "name": "confident.uncertain",
-        "share_metric": "mahalanobis",
     }
     profile = Profile(_mk(layers=(0, 3)), metadata=extract_metadata)
     first = tmp_path / "extract.safetensors"
@@ -392,7 +391,6 @@ def test_extract_shaped_profile_round_trips(tmp_path: Path) -> None:
     loaded = Profile.load(first)
     assert loaded.metadata["method"] == "manifold_pca"
     assert loaded.metadata["name"] == "confident.uncertain"
-    assert loaded.metadata["share_metric"] == "mahalanobis"
 
     # load -> save round-trip: the writer-stamped identity fields the reader
     # hands back must not read as unknown metadata on the way in again.

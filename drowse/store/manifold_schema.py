@@ -619,8 +619,6 @@ class ManifoldSidecar:
     fit_policy_version: Optional[int] = None
     # ``mahalanobis`` on an ordinary fit; a monopolar fold labels its raw-δ̂
     # basis ``euclidean`` (a basis-selection label, not a metric fallback).
-    share_metric: Optional[str] = None
-    subspace_metric: Optional[str] = None
     # Curved-fit summaries: GCV smoothing ``{L: {lambda, edf, gcv}}`` and the
     # fuzzy-manifold tube ``{L: {sigma_mean, sigma_min, sigma_max, lambda}}``.
     rbf_smoothing_per_layer: dict[str, Any] = field(default_factory=dict)
@@ -839,11 +837,17 @@ def _non_negative_int(value: Any) -> bool:
 def validate_sidecar_payload(
     data: Any, *, location: str = "manifold sidecar",
 ) -> dict[str, Any]:
-    """Validate every field of the exact current fitted-sidecar contract."""
+    """Validate every field of the current fitted-sidecar contract.
+
+    Keys the contract no longer names (retired provenance) are dropped, so
+    removing a field never strands an existing fit; every current field must
+    be present.
+    """
     from drowse.geometry.domains import validate_domain_spec
 
-    if not isinstance(data, dict) or set(data) != SIDECAR_FIELDS:
-        raise ManifoldFormatError(f"{location} does not match the current exact schema")
+    if not isinstance(data, dict) or not SIDECAR_FIELDS <= set(data):
+        raise ManifoldFormatError(f"{location} does not match the current schema")
+    data = {key: data[key] for key in SIDECAR_FIELDS}
     validate_manifold_format_version(data["format_version"], location=location)
     try:
         validate_domain_spec(data["domain"])
@@ -881,7 +885,7 @@ def validate_sidecar_payload(
     nullable_strings = (
         "nodes_sha256", "sae_release", "sae_revision", "sae_fingerprint",
         "model_fingerprint", "model_source_fingerprint", "capture_sha256",
-        "share_metric", "subspace_metric", "resolved_fit_mode",
+        "resolved_fit_mode",
         "topology_winner", "bake_policy", "source_model_id",
         "source_model_fingerprint",
     )

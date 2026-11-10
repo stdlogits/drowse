@@ -239,8 +239,6 @@ def test_monopolar_discover_fit_exports_and_installs(tmp_path: Path) -> None:
             "nodes_sha256": mf.nodes_sha256(),
             "model_fingerprint": "test-model",
             "fit_policy_version": MANIFOLD_FIT_POLICY_VERSION,
-            "share_metric": "mahalanobis",
-            "subspace_metric": "euclidean",
         },
     )
     mf.update_file_hashes(tensor, tensor.with_suffix(".json"))

@@ -2,10 +2,7 @@
 ``LoomNode.mean_logprob`` aggregation.
 
 Mostly CPU-only structural tests since the new surfaces are typed
-dataclasses + composition logic that doesn't need a model on disk. The
-end-to-end "captured logprob matches log_softmax" check would require a
-real model load and lives in ``test_session.py`` (GPU-gated) once it's
-sensible to add there.
+dataclasses + composition logic that doesn't need a model on disk.
 """
 from __future__ import annotations
 

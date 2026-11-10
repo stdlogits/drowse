@@ -1512,10 +1512,6 @@ def test_discover_pca_produces_affine_subspaces(tmp_path: Path) -> None:
         assert sub.node_coords is not None            # real per-layer coords
         assert sub.node_coords.shape[0] == 5          # one row per node
         assert sub.node_coords.shape[1] == sub.rank   # (K, R)
-    # subspace_metric is always "mahalanobis": the stub carries a covering
-    # whitener and there is no Euclidean fit path.
-    sidecar = json.loads((folder / Path(tensor_filename("stub-model")).with_suffix(".json").name).read_text())
-    assert sidecar["subspace_metric"] == "mahalanobis"
 
 
 def test_discover_pca_layout_is_neutral_centered(tmp_path: Path) -> None:

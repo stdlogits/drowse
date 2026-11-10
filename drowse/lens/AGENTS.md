@@ -733,5 +733,3 @@ the per-layer softmax probability `p_l(v)`.
   (`LensHarness`, `lens_instrument(**kw)`, `lens_kwargs(**kw)`,
   `FakeCapture`), which builds a real `LensInstrument` with session-shaped
   dependencies. Generation-boundary tests use `tiny_session`.
-  `tests/gpu/test_jlens_gpu.py` micro-fits a real model (SmolLM2-360M or
-  `DROWSE_TEST_MODEL`).
