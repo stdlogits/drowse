@@ -63,27 +63,39 @@ def _canonical_trigger(trigger: Trigger) -> Trigger:
 #                      (periodic ``BoxDomain``: unweighted, clamped to [0, 1])
 #   ``onto``           ``eff_onto_L  = clamp(onto · share_L · _MANIFOLD_ONTO_GAIN, 0, 1)``
 
-# Affine ``along`` gain (prototype).  ``synthesize_subspace`` emits a
-# whitened-unit target per push term, so the average per-layer whitened push is
-# ``GAIN·α`` for every target.  Live-calibrated on a gemma-4-12b α-sweep
-# (``formal.casual%formal``, ``personas%caveman``, ``personas%hacker``): the
-# dead→expressive transition sits at ``E = GAIN·α ≈ 7-8`` for every target,
-# but the coherence ceiling varies ~2× (hacker breaks at ``E ≈ 12``, caveman
-# ``≈ 17``, formal past ``22``) — the per-target coherence variance a scalar
-# gain cannot unify.  Coherence-first: recommended ``α ≈ 0.5`` lands at
-# ``E ≈ 8``, so ``GAIN = 16``; ``α ≈ 1.0`` is the strong / over-steered zone.
-_SUBSPACE_GAIN = 16.0
+# Affine ``along`` gain.  ``synthesize_subspace`` emits a whitened-unit target
+# per push term, so the average per-layer whitened push is ``GAIN·α`` for every
+# target.  First live-calibrated at 16 on a gemma-4-12b α-sweep
+# (``formal.casual%formal``, ``personas%caveman``, ``personas%hacker``) when
+# frames wrote along the LDA covector ``Σ⁻¹δ``: dead→expressive at
+# ``16·α ≈ 7-8``, coherence ceilings ~2× apart, so ``α ≈ 0.5`` expressive and
+# ``α ≈ 1.0`` strong / over-steered.  Typed frames write along ``δ``, which moves
+# the concept's reading furthest per unit of Mahalanobis displacement and so
+# disrupts more per unit: re-calibrated to keep those α bands by matching the
+# neutral-text NLL cost of the old code at α ∈ {0.25, 0.5, 1} (six bipolar
+# concepts on SmolLM2-360M, gemma-3-4b, Llama-3.1-8B and gemma-4-12b,
+# teacher-forced).  The new α with equal cost was 0.47–0.48× the old one,
+# stable across α (per model 0.44–0.55, gemma-4-12b the highest), hence 8.  At
+# matched cost the ``δ`` write buys more pole preference for most concepts.
+_SUBSPACE_GAIN = 8.0
 
 # Curved ``along`` gain.  The curved target is raw node coordinates and the
 # kernel translates the foot by ``eff_along·(target − origin)``, so
 # ``eff_along`` is a fraction of the way to the node (``1.0`` lands on it);
 # ``norm_cap = 3·‖h‖`` bounds off-domain RBF extrapolation past it.
-# Live-calibrated on a stateless gemma-4-12b ``months_loop%january`` sweep:
-# ``along = 1.0`` at gain 4 lands the vivid coherent sweet spot.  Periodic
-# ``BoxDomain`` fits drop share-weighting and clamp ``eff_along`` to [0, 1]
-# per layer — share ∈ [0.19, 1.47] × 4 would send layers past the node, each
-# wrapping to a different one.
-_MANIFOLD_ALONG_GAIN = 4.0
+# First live-calibrated at 4 on a stateless gemma-4-12b ``months_loop%january``
+# sweep (``along = 1.0`` the vivid coherent sweet spot) when frames read and
+# wrote along covectors: a curved surface then passed through the centroids'
+# projections onto the covector span, shorter than the centroids themselves.
+# Typed frames pass through the true centroids, so the same fraction moves
+# 2–3× further.  Re-calibrated to 2 by matching the old code's neutral-text
+# NLL cost on spectral ``emotions%{happy,angry,calm}`` (SmolLM2-360M,
+# gemma-4-12b): equal-cost ``along`` was 0.35–0.80× the old one, geo-mean
+# ~0.55, the same halving as the affine gain.  Periodic ``BoxDomain`` fits
+# drop share-weighting and clamp ``eff_along`` to [0, 1] per layer — share ∈
+# [0.19, 1.47] × gain would send layers past the node, each wrapping to a
+# different one.
+_MANIFOLD_ALONG_GAIN = 2.0
 
 # ``onto`` gain (curved off-surface collapse only).  The off-surface residual
 # carries per-token variation, so too much ``onto`` erases it and degenerates

@@ -1098,8 +1098,8 @@ executable statement of why a boundary is strict.
 - **Per-target coherence.** Whitened-unit targets unify push *strength* across
   targets, but not *coherence*: a hard persona such as `hacker` shatters at
   roughly half the effective gain a robust concept tolerates (about 2×).
-  `_SUBSPACE_GAIN = 16.0` is the coherence-first compromise and is tagged a
-  prototype; tune α down per target.
+  `_SUBSPACE_GAIN` (8.0 since fit policy 2) is the coherence-first
+  compromise; tune α down per target.
 - **Low-α drift.** A steering trajectory can pass through neighboring attractor
   basins at low displacement (`personas%hacker` surfacing a cyber-security
   cluster before locking into the persona). That is signal about the model's

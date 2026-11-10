@@ -577,13 +577,15 @@ the per-layer softmax probability `p_l(v)`.
   reading furthest per unit of Mahalanobis displacement, and folded it reads
   with `Σ⁻¹Σu = u` again, so `!jlens/<word>` zeroes exactly the token's
   reading (LEACE). On real models `Σu` is mostly `u` restricted to the
-  neutral activations' span (cosine about 0.15 with `u`), so the push
-  calibration below predates fit policy 2. A word must be one token: the leading-space piece is tried first,
+  neutral activations' span (cosine about 0.15 with `u`). A word must be one token: the leading-space piece is tried first,
   and the match must survive a decode round trip (else `MultiTokenWordError`
   lists the pieces). `#<id>` is bounds-checked against the unembedding
-  (`InvalidTokenIdError`). Lens atoms run hot. On gemma-3-4b α ≈ 0.3 was the
-  coherent sweet spot and α ≥ 0.5 over-steered into repetition, because the
-  atom is one sharp token direction rather than a distributed contrast.
+  (`InvalidTokenIdError`). Lens atoms run hot, because the atom is one sharp
+  token direction rather than a distributed contrast. On gemma-3-4b the
+  pre-policy-2 atom was coherent at α ≈ 0.3 and over-steered from 0.5; the
+  raised atom at the current gain reaches that α ≈ 0.3 neutral-text cost at
+  α ≈ 0.08–0.23 (median about 0.1) while moving the token's log-probability as
+  much or more, so start near α ≈ 0.1.
 - **`slens/` atom.** `slens/<word>` or `slens/#<id>` resolves through the
   registry's `slens` resolver into `register_input_direction`: the footprint
   `K_l ẽ_v` at the S lens's `out` site on every layer it holds (steering

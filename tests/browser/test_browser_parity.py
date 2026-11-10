@@ -73,7 +73,12 @@ from drowse.server import create_app
 from drowse.store import selectors
 from drowse.units.instrument import UnitsInstrument
 from drowse.steering.grammar import SteeringExprError, parse_expr, referenced_selectors
-from drowse.steering.hooks import CurvedGroup, _lower_affine_subspaces
+from drowse.steering.hooks import (
+    _MANIFOLD_ALONG_GAIN,
+    _MANIFOLD_ONTO_GAIN,
+    CurvedGroup,
+    _lower_affine_subspaces,
+)
 from drowse.steering.triggers import TriggerContext
 from tests.support.composer import SteeringRig
 from tests.support.manifolds import circle_centroids, stamp_current_geometry
@@ -96,8 +101,8 @@ COMPOSED_LOWERING = json.loads(
     ).read_text()
 )
 
-@pytest.mark.parametrize("case", COMPOSED_LOWERING["cases"], ids=lambda case: case["name"])
-def test_browser_composed_affine_lowering_matches_python(case: dict[str, object]) -> None:
+def _composed_lowering_layers(case: dict[str, Any]) -> list[dict[str, Any]]:
+    """A composed-lowering case's per-layer outputs, from its inputs."""
     whitener, means = _whitener()
     pushes = []
     for term in cast(list[dict[str, Any]], case["terms"]):
@@ -118,18 +123,34 @@ def test_browser_composed_affine_lowering_matches_python(case: dict[str, object]
 
     synthesized = synthesize_subspace(pushes, [], means, whitener=whitener)
     lowered = _lower_affine_subspaces(synthesized)
+    rows = []
     for expected in cast(list[dict[str, Any]], case["expectedLayers"]):
         layer = expected["layer"]
         actual = lowered[layer]
         world_target = actual.target @ actual.subspace.basis
         target = float(world_target.norm())
-        basis = world_target / target
-        delta = actual.eff_along * world_target
-        assert basis.tolist() == pytest.approx(expected["basis"], abs=1e-6)
-        assert actual.subspace.mean.tolist() == pytest.approx(expected["neutral"], abs=1e-7)
-        assert target == pytest.approx(expected["target"], abs=1e-6)
-        assert actual.eff_along == pytest.approx(expected["along"], abs=1e-6)
-        assert delta.tolist() == pytest.approx(expected["delta"], abs=1e-5)
+        rows.append({
+            "layer": layer,
+            "basis": (world_target / target).tolist(),
+            "neutral": actual.subspace.mean.tolist(),
+            "target": target,
+            "along": actual.eff_along,
+            "delta": (actual.eff_along * world_target).tolist(),
+        })
+    return rows
+
+
+@pytest.mark.parametrize("case", COMPOSED_LOWERING["cases"], ids=lambda case: case["name"])
+def test_browser_composed_affine_lowering_matches_python(case: dict[str, Any]) -> None:
+    for expected, actual in zip(
+        case["expectedLayers"], _composed_lowering_layers(case), strict=True,
+    ):
+        assert actual["layer"] == expected["layer"]
+        assert actual["basis"] == pytest.approx(expected["basis"], abs=1e-6)
+        assert actual["neutral"] == pytest.approx(expected["neutral"], abs=1e-7)
+        assert actual["target"] == pytest.approx(expected["target"], abs=1e-6)
+        assert actual["along"] == pytest.approx(expected["along"], abs=1e-6)
+        assert actual["delta"] == pytest.approx(expected["delta"], abs=1e-5)
 
 def _whitener() -> tuple[LayerWhitener, dict[int, torch.Tensor]]:
     return _ppca_whitener(COMPOSED_LOWERING["whiteners"])
@@ -244,8 +265,9 @@ AFFINE_LOWERING = json.loads(
     ).read_text()
 )
 
-def test_browser_affine_lowering_fixture_matches_python() -> None:
-    layers = AFFINE_LOWERING["layers"]
+def _rank_one_lowering_layers(fixture: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rank-one lowering golden's per-layer target and budget, from its inputs."""
+    layers = fixture["layers"]
     basis = {
         row["layer"]: torch.tensor([row["basis"]], dtype=torch.float32)
         for row in layers
@@ -262,18 +284,27 @@ def test_browser_affine_lowering_fixture_matches_python() -> None:
     }
     whitener = isotropic_whitener(means, len(layers[0]["basis"]))
     synthesized = synthesize_subspace(
-        [(basis, coordinates, AFFINE_LOWERING["coefficient"])],
+        [(basis, coordinates, fixture["coefficient"])],
         [],
         means,
         whitener=whitener,
     )
     lowered = _lower_affine_subspaces(synthesized)
-
+    out = []
     for row in layers:
         layer = lowered[row["layer"]]
-        assert layer.target.tolist() == pytest.approx([row["expectedTarget"]])
-        assert layer.eff_along == pytest.approx(row["expectedAlong"])
         assert layer.kappa.tolist() == [0.0]
+        out.append({**row, "expectedTarget": float(layer.target[0]),
+                    "expectedAlong": layer.eff_along})
+    return out
+
+
+def test_browser_affine_lowering_fixture_matches_python() -> None:
+    for expected, actual in zip(
+        AFFINE_LOWERING["layers"], _rank_one_lowering_layers(AFFINE_LOWERING), strict=True,
+    ):
+        assert actual["expectedTarget"] == pytest.approx(expected["expectedTarget"])
+        assert actual["expectedAlong"] == pytest.approx(expected["expectedAlong"])
 
 
 # ---------------------------------------------------------------------------
@@ -336,7 +367,8 @@ def _affine_fisher_expected(fixture: dict[str, Any]) -> dict[str, Any]:
 
 
 def regenerate_affine_goldens() -> None:
-    """Recompute the Fisher-fit and ablation-lowering goldens from their inputs."""
+    """Recompute the affine goldens' outputs from their inputs: the Fisher fit,
+    the ablation, rank-one and composed lowerings."""
     # Only the ``expected`` block (the last key) is recomputed; the inputs
     # above it keep their row-per-sample layout.
     text = AFFINE_FISHER.read_text()
@@ -349,6 +381,27 @@ def regenerate_affine_goldens() -> None:
     ablation = json.loads(path.read_text())
     ablation.update(schemaVersion=2, layers=_ablation_lowering_layers(ablation))
     path.write_text(_golden_json(ablation) + "\n")
+    path = GOLDENS / "affine-rank-one-lowering-v1.json"
+    rank_one = json.loads(path.read_text())
+    rank_one["layers"] = _rank_one_lowering_layers(rank_one)
+    path.write_text(_golden_json(rank_one) + "\n")
+    # The composed golden keeps its own layout, and its gain-free fields carry
+    # last-digit noise across platforms: patch only ``along`` and ``delta`` in
+    # place, in file order.
+    path = GOLDENS / "affine-composed-lowering-v1.json"
+    text = path.read_text()
+    cursor = 0
+    for case in json.loads(text)["cases"]:
+        for expected, actual in zip(
+            case["expectedLayers"], _composed_lowering_layers(case), strict=True,
+        ):
+            for key in ("along", "delta"):
+                old = f'"{key}": {json.dumps(expected[key])}'
+                at = text.index(old, cursor)
+                new = f'"{key}": {json.dumps(actual[key])}'
+                text = text[:at] + new + text[at + len(old):]
+                cursor = at + len(new)
+    path.write_text(text)
 
 
 def test_browser_affine_fisher_fixture_matches_python_source_of_truth() -> None:
@@ -749,8 +802,13 @@ def test_browser_term_layers_fixture_matches_python() -> None:
     assert responses["0.5 z"]["terms"][0]["share"][2] == 0.0
     scoped = next(case for case in fixture["cases"] if case["expression"] == "0.3,0.5 mood%n1{0}")
     assert scoped["curvedShares"] == [{"manifold": "mood", "layers": [0], "share": [1.0]}]
-    # The kernel's coefficients: along · share · 4 and min(1, onto · share · 0.5) per layer.
-    assert scoped["curvedGroups"] == [{"layer": 0, "along": pytest.approx(1.2), "onto": pytest.approx(0.25)}]
+    # The kernel's coefficients: along · share · _MANIFOLD_ALONG_GAIN and
+    # min(1, onto · share · _MANIFOLD_ONTO_GAIN) per layer (along 0.3, onto 0.5, share 1).
+    assert scoped["curvedGroups"] == [{
+        "layer": 0,
+        "along": pytest.approx(0.3 * _MANIFOLD_ALONG_GAIN),
+        "onto": pytest.approx(0.5 * _MANIFOLD_ONTO_GAIN),
+    }]
     assert scoped["response"]["terms"][0]["layers"] == [0]
     assert len(scoped["response"]["terms"][0]["share"]) == 2
     assert [t["key"] for t in responses["0.2 a{1} + 0.3 a{1} + 0.25 a + 0.5 a{2}@response"]["terms"]] == ["a{1}", "a", "a{2}"]

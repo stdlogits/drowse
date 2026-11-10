@@ -130,7 +130,7 @@ def test_final_residual_identity_lens_matches_model_logits(model: Any):
 
 @pytest.mark.parametrize("ablate", [False, True])
 def test_steering_manager_matches_independent_block_intervention(model: Any, ablate: bool):
-    from drowse.steering.hooks import SteeringManager, SteeringPlan
+    from drowse.steering.hooks import _SUBSPACE_GAIN, SteeringManager, SteeringPlan
     from drowse.geometry.subspace import LayerSubspace
     from drowse.geometry.inject import SynthesizedSubspace
 
@@ -157,7 +157,9 @@ def test_steering_manager_matches_independent_block_intervention(model: Any, abl
         h = output[0] if isinstance(output, tuple) else output
         values = h.detach().numpy().astype(np.float64)
         coords = (values - mean.numpy()) @ basis.numpy().T
-        expected = values + (16 * target.numpy() - kappa.numpy() * coords) @ basis.numpy()
+        expected = values + (
+            _SUBSPACE_GAIN * target.numpy() - kappa.numpy() * coords
+        ) @ basis.numpy()
         replaced = torch.tensor(expected, dtype=h.dtype)
         return (replaced, *output[1:]) if isinstance(output, tuple) else replaced
 
