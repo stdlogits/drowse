@@ -34,6 +34,7 @@ from drowse.store.manifold_schema import (
     SIDECAR_FIELDS,
     ManifoldFormatError,
     ManifoldSidecar,
+    StaleFitError,
 )
 
 log = logging.getLogger(__name__)
@@ -402,12 +403,12 @@ def _load_manifold_locked(
     ):
         folder_view = ManifoldFolder.load(path.parent)
         if sidecar["nodes_sha256"] != folder_view.nodes_sha256():
-            raise ManifoldFormatError(
+            raise StaleFitError(
                 f"fitted manifold {path.name} is stale for the live corpus/"
                 "domain/template inputs; refit before loading"
             )
         if sidecar["fit_policy_version"] != MANIFOLD_FIT_POLICY_VERSION:
-            raise ManifoldFormatError(
+            raise StaleFitError(
                 f"fitted manifold {path.name} uses an older numerical fit "
                 "policy; refit it with the current drowse"
             )

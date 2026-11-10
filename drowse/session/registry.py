@@ -452,7 +452,8 @@ class ArtifactRegistry:
         every namespace (and refuses a collision).  The loaded manifold is
         validated against the live weights and capture inputs, then promoted
         onto the model device in fp32.  Raises
-        :class:`ManifoldNotRegisteredError` on a miss or a stale fit.
+        :class:`ManifoldNotRegisteredError` on a miss or a stale fit (an older
+        format, fit policy or corpus), which the probe paths refit in place.
         """
         loaded = self._manifolds.get(key)
         if loaded is not None:
@@ -477,7 +478,7 @@ class ArtifactRegistry:
             tensor_filename_for_variant,
         )
         from drowse.model.fingerprint import loaded_model_fingerprint
-        from drowse.store.manifold_schema import sidecar_is_current
+        from drowse.store.manifold_schema import StaleFitError, sidecar_is_current
         from drowse.store.manifold_tensors import load_manifold
 
         model_id = self._binding.model_id
@@ -524,7 +525,13 @@ class ArtifactRegistry:
                 f"Qualify it with a namespace."
             )
         tensor_path = matches[0][1]
-        manifold = load_manifold(tensor_path)
+        try:
+            manifold = load_manifold(tensor_path)
+        except StaleFitError as stale:
+            raise ManifoldNotRegisteredError(
+                f"manifold '{key}' needs a refit for {model_id} ({stale}); "
+                f"run `drowse manifold fit`"
+            ) from stale
         metadata = manifold.metadata
         live_fingerprint = loaded_model_fingerprint(self._binding.model, model_id)
         if transferred_from is not None:

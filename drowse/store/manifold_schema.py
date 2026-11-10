@@ -34,6 +34,12 @@ class ManifoldFormatError(ValueError, DrowseError):
     """Raised when a manifold folder is malformed."""
 
 
+class StaleFitError(ManifoldFormatError):
+    """A fitted pair that is not current for its folder's corpus or for the
+    fit policy.  A refit replaces it; the session registry reads it as a miss,
+    so the probe and default-roster paths refit in place."""
+
+
 class BakedManifoldError(ValueError, DrowseError):
     """Raised when an operation invalid for a corpus-less baked manifold runs.
 
