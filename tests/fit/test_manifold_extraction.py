@@ -1445,7 +1445,7 @@ def test_discover_pca_produces_custom_domain(tmp_path: Path) -> None:
 
 def test_discover_pca_produces_affine_subspaces(tmp_path: Path) -> None:
     """PCA discover fits a **flat affine** subspace per layer (no RBF surface)
-    — the 4.0 reclassification (ARCHITECTURE §1/§5): a personas-shaped artifact
+    — the 4.0 reclassification (ARCHITECTURE §3.1/§5.3): a personas-shaped artifact
     is a rank-k flat subspace, not a curved manifold.  Each layer carries the
     real per-layer node coords ``(K, R)``; the basis is whitened/Fisher (the
     stub handle carries a covering synthetic whitener — activation-space fits
@@ -1666,7 +1666,7 @@ def test_discover_subspace_inject_translates_by_target(tmp_path: Path) -> None:
 
 def test_discover_pca_two_node_is_steering_vector(tmp_path: Path) -> None:
     """A 2-node ``fit_mode=pca`` folder *is* a difference-of-means steering
-    vector — the 4.0 unification (ARCHITECTURE §1/§5, "a vector = a 2-node
+    vector — the 4.0 unification (ARCHITECTURE §3.1/§5.3, "a vector = a 2-node
     folder").  K=2 ⇒ a rank-1 affine subspace; the RBF poisedness floor
     ``min_nodes(1)=3`` does **not** gate the flat path (only ``k+1=2``
     centroids are needed to span a 1-D subspace).  Each layer's two node

@@ -676,7 +676,7 @@ def _resolve_fit_geometry(
         # The flat (``pca``) path fits an *affine* subspace with no RBF —
         # it only needs ``k+1`` affinely-independent centroids to span a
         # k-dim subspace, so a rank-1 (k=1) fit is valid at K=2: that is a
-        # difference-of-means steering vector (ARCHITECTURE §1/§5, "a
+        # difference-of-means steering vector (ARCHITECTURE §3.1/§5.3, "a
         # vector = a 2-node fit_mode=pca folder").
         if mf.fit_mode == "pca":
             floor = k + 1

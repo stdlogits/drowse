@@ -504,5 +504,8 @@ def _load_manifold_locked(
         mahalanobis_share=mahalanobis_share,
         origin=origin,
     )
-    manifold.validate_runtime_geometry()
+    try:
+        manifold.validate_runtime_geometry()
+    except ValueError as exc:
+        raise ManifoldFormatError(f"fitted manifold {path.name}: {exc}") from exc
     return manifold

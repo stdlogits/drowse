@@ -77,17 +77,14 @@ def _remove_unreferenced_capture_groups(
     capture_groups: set[tuple[str, str]],
 ) -> None:
     """Garbage-collect content-addressed captures only after the last owner."""
-    from drowse.base.atomic import artifact_has_live_lease, artifact_lock
+    from drowse.base.atomic import artifact_lock
 
     for safe_model, capture_sha in capture_groups:
         cache_dir = models_dir() / safe_model / "manifold_capture"
         # The capture lock spans cache publication through fitted-sidecar
         # publication; scanning and deleting under it means GC cannot race a
-        # folder that is about to establish ownership.  A fit still consuming
-        # mapped row shards holds a process lease; a later pass reaps it.
+        # folder that is about to establish ownership.
         with artifact_lock(cache_dir / capture_sha):
-            if artifact_has_live_lease(cache_dir / capture_sha):
-                continue
             if _capture_group_is_referenced(safe_model, capture_sha):
                 continue
             for cached in cache_dir.glob(f"{capture_sha}.*"):
