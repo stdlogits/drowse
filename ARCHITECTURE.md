@@ -367,7 +367,7 @@ in `drowse/steering/AGENTS.md`. In brief:
 | `x{12-20}`, `x{4-8,20}`, `x{workspace}` | act only at these layers (any term kind) |
 | `@response`, `@after`, `@first:N`, … | restrict the token phase or window |
 | `@when:probe>t` | fire only while a read-side scalar holds |
-| `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces |
+| `jlens/<word>`, `sae/<id>` | instrument atoms in reserved namespaces (a lens atom is a read `u`, steered along its raised vector `Σu`) |
 | `neuron/L8n344`, `!head/L20h17` | model units: a neuron push along its write (a one-layer profile through the one kernel), a unit mean-ablation (`UnitAblationTerm` → a `UnitOp` pre-hook replacing the unit's activation by its neutral mean) |
 
 ### 6.2 Resolution and composition

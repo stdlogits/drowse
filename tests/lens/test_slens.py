@@ -81,8 +81,11 @@ def test_slens_atom_is_the_footprint_and_steers(make_tiny_session: Any) -> None:
     a = _token(session, "a")
     profile = session.registry.ensure_profile_registered("slens/a")
     assert sorted(profile) == list(range(len(session.layers)))
+    whitener = session.whitener
     for layer, vector in profile.items():
-        expected = lens.matrix(layer, "out") @ _centred(session, a)
+        # The footprint is a read; the atom is its raised steering vector.
+        footprint = lens.matrix(layer, "out") @ _centred(session, a)
+        expected = whitener.apply(layer, footprint)
         assert torch.allclose(vector.cpu(), expected, atol=1e-5)
     by_id = session.registry.ensure_profile_registered(f"slens/#{a}")
     assert all(torch.allclose(by_id[L], profile[L]) for L in profile)
@@ -595,6 +598,7 @@ def _harness(session: Any) -> LensHarness:
     harness = LensHarness(
         model=session.model, tokenizer=session.tokenizer, layers=session.layers,
         model_id=session.model_id, neutral_means={"out": session.layer_means},
+        whitener=session.whitener,
     )
     d = int(session.model.get_input_embeddings().weight.shape[1])
     gen = torch.Generator().manual_seed(11)
@@ -833,7 +837,8 @@ def test_slens_atom_resolution_runs_in_the_exclusive_section(make_tiny_session: 
     assert "slens/" in harness.exclusive_messages[0]
     entered = len(harness.exclusive_messages)
     profile = harness.profiles["slens/a"]
-    expected = lens.matrix(1, "out") @ _centred(session, _token(session, "a"))
+    footprint = lens.matrix(1, "out") @ _centred(session, _token(session, "a"))
+    expected = session.whitener.apply(1, footprint)
     assert torch.allclose(profile[1].cpu(), expected, atol=1e-5)
     # Idempotent: a registered atom does no model work.
     harness.lens.register_input_direction("a")

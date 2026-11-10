@@ -1349,26 +1349,57 @@ class LensInstrument:
                 )
         return out
 
-    def register_direction(self, word: str) -> str:
-        """Register ``W_U[v] @ J_l`` for a single-token word (or ``#<id>``)
-        as the profile ``jlens/<word>`` and return its name.
+    def _raised(self, name: str, reads: dict[int, torch.Tensor]) -> dict[int, torch.Tensor]:
+        """A lens atom's steering profile: its read covectors raised to vectors.
 
-        The direction steers and ablates exactly like an extracted vector;
-        this is the resolver behind the lazy ``jlens/`` steering atom.  A
-        ``jlens/<word>`` *probe* reads the readout channel instead.
+        ``W_U[v] @ J_l`` and ``K_l ẽ_v`` are *reads* (they score a residual by
+        a dot product), while a profile is a write.  The write that moves a
+        read ``u`` furthest per unit of Mahalanobis displacement is ``Σu``;
+        folded, it reads with ``Σ⁻¹Σu = u`` again, so a push raises the token's
+        reading and ``!`` zeroes exactly that reading (LEACE).  Needs the
+        session whitener over every layer, like any steering composition.
+        """
+        from drowse.errors import WhitenerError
+
+        whitener = self._whitener()
+        layers = sorted(reads)
+        if whitener is None or not whitener.covers_all(layers):
+            raise WhitenerError(
+                f"{name} needs a Mahalanobis whitener covering its layers "
+                f"{layers}: a lens atom is a read, and steering writes along "
+                "its whitener-raised vector"
+            )
+        return {
+            layer: whitener.apply(layer, u).to(device=u.device, dtype=u.dtype)
+            for layer, u in reads.items()
+        }
+
+    def register_direction(self, word: str) -> str:
+        """Register the raised ``Σ (W_U[v] @ J_l)`` for a single-token word (or
+        ``#<id>``) as the profile ``jlens/<word>`` and return its name.
+
+        ``W_U[v] @ J_l`` is the token's lens read; the profile is the vector
+        that read raises to (:meth:`_raised`), so it steers and ablates exactly
+        like an extracted vector and ``!jlens/<word>`` zeroes the token's
+        reading.  This is the resolver behind the lazy ``jlens/`` steering
+        atom.  A ``jlens/<word>`` *probe* reads the readout channel instead.
         Idempotent; every fitted layer.
         """
         name = f"jlens/{word}"
         if name in self._registry.profiles:
             return name
         lens = self._require()
-        self._registry.put_profile(name, self.runtime.token_directions(lens, word))
+        reads = self.runtime.token_directions(lens, word)
+        self._registry.put_profile(name, self._raised(name, reads))
         self._on_change(())
         return name
 
     def register_input_direction(self, word: str) -> str:
-        """Register the footprint ``K_l ẽ_v`` of a single-token word (or
-        ``#<id>``) as the profile ``slens/<word>`` and return its name.
+        """Register the raised footprint ``Σ (K_l ẽ_v)`` of a single-token
+        word (or ``#<id>``) as the profile ``slens/<word>`` and return its name.
+
+        The footprint is the token's S read (a covector); the profile is the
+        vector it raises to (:meth:`_raised`).
 
         The S-family lens's ``out`` site, every layer it holds: steering
         injects at block outputs, so the atom pushes the residual toward
@@ -1401,7 +1432,7 @@ class LensInstrument:
                     )
                     for layer in layers
                 }
-        self._registry.put_profile(name, directions)
+        self._registry.put_profile(name, self._raised(name, directions))
         self._on_change(())
         return name
 

@@ -172,8 +172,10 @@ def test_token_id_atom_steers_and_probes_the_vocab_id(make_tiny_session: Any) ->
     by_id = session.registry.ensure_profile_registered(key)
     expected = lens.token_direction(gid, get_unembedding(session.model))
     assert set(by_id) == set(expected)
+    whitener = session.whitener
     for layer, vec in by_id.items():
-        assert torch.allclose(vec, expected[layer])
+        # The atom is the token's read raised to its steering vector, Σu.
+        assert torch.allclose(vec, whitener.apply(layer, expected[layer]), atol=1e-6)
     by_word = session.registry.ensure_profile_registered("jlens/g")
     for layer, vec in by_id.items():
         assert torch.allclose(vec, by_word[layer])
@@ -185,6 +187,73 @@ def test_token_id_atom_steers_and_probes_the_vocab_id(make_tiny_session: Any) ->
     assert spec["word"] == f"#{gid}"
     with session.steering(f"0.3 jlens/g@when:jlens/#{gid}>0.01"):
         assert session._read_plane.resolve_gates().lens_keys == {f"jlens/#{gid}"}
+
+
+def test_a_lens_atom_resolves_inside_generate_on_a_cold_session(
+    make_tiny_session: Any,
+) -> None:
+    """Regression: raising a ``jlens/`` atom needs the whitener, and a scope
+    opened inside ``generate`` on a cold session refused to build it
+    (``ConcurrentExtractionError``).  Scope opening now makes the neutral
+    baseline resident before resolving."""
+    from drowse import SamplingConfig
+
+    session = make_tiny_session(warm=False)  # no whitener built yet
+    session.lens.fit(_TINY_PROMPTS)
+    result = session.generate(
+        "hi", steering="0.5 jlens/g",
+        sampling=SamplingConfig(max_tokens=4, seed=1), stateless=True,
+    )
+    assert "jlens/g" in (result.first.applied_steering or "")
+
+
+def test_ablating_a_lens_atom_zeroes_the_tokens_reading(make_tiny_session: Any) -> None:
+    """Regression: a ``jlens/`` atom is a read ``u``.  Folded as if it were a
+    write, ``!jlens/g`` pinned the ``Σ⁻¹u`` reading instead of the token's own.
+    The atom is now raised to ``Σu``, so the ablation pins exactly ``u·h`` to
+    neutral's at every fitted layer and edits along ``Σu``."""
+    from drowse.model.readout import get_unembedding
+
+    session = make_tiny_session()
+    lens = session.lens.fit(_TINY_PROMPTS)
+    whitener = session.whitener
+    means = session.layer_means
+    gid = int(session.tokenizer.encode("g", add_special_tokens=False)[0])
+    reads = lens.token_direction(gid, get_unembedding(session.model))
+    seen: dict[int, list[torch.Tensor]] = {}
+
+    def _hook(layer: int, prepend: bool) -> Any:
+        def hook(_module: Any, _inputs: Any, output: Any) -> None:
+            hidden = output[0] if isinstance(output, tuple) else output
+            row = hidden[0].detach().float().clone()
+            if prepend:
+                seen[layer] = [row]
+            else:
+                seen[layer].append(row)
+        return hook
+
+    ids = session.tokenizer("a line of text", return_tensors="pt").input_ids
+    with session.steering("!jlens/g"):
+        handles = [
+            module.register_forward_hook(_hook(layer, prepend), prepend=prepend)
+            for layer, module in enumerate(session.layers)
+            for prepend in (True, False)
+        ]
+        try:
+            with torch.inference_mode():
+                session.model(ids)
+        finally:
+            for handle in handles:
+                handle.remove()
+    for layer, u in reads.items():
+        before, after = seen[layer]
+        u = u.float().cpu()
+        neutral = float(means[layer].float().cpu() @ u)
+        assert torch.allclose(after @ u, torch.full((after.shape[0],), neutral), atol=1e-4)
+        raised = whitener.apply(layer, u)
+        edit = after - before
+        along = ((edit @ raised) / (raised @ raised)).unsqueeze(-1) * raised
+        assert torch.allclose(edit, along, atol=1e-4)
 
 
 def test_token_id_atom_rejects_ids_outside_the_vocab(make_tiny_session: Any) -> None:

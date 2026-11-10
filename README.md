@@ -170,8 +170,8 @@ across Python, YAML, OpenAI, Ollama, or the native API.
 | `@prompt`, `@response`, `@after`, `@thinking`, … | Restrict the token phase where a term applies |
 | `@first:N`, `@after:N` | Restrict a term to a counted decode window |
 | `@when:<probe><op><value>` | Apply a term only while a live probe gate is true |
-| `jlens/<word>`, `jlens/#<id>`, `sae/<id>` | Steer toward saying a token (its R-lens direction) or along an SAE decoder row |
-| `slens/<word>`, `slens/#<id>` | Steer toward having read a token: its S-lens footprint at each layer |
+| `jlens/<word>`, `jlens/#<id>`, `sae/<id>` | Steer toward saying a token (the whitener-raised vector of its R-lens read) or along an SAE decoder row |
+| `slens/<word>`, `slens/#<id>` | Steer toward having read a token: its S-lens footprint at each layer, raised to a vector |
 | `neuron/L8n344`, `head/L20h17` | A unit: push along a neuron's write, or mean-ablate a neuron or head (`!head/L20h17`) |
 
 A bare pole or node label such as `formal` or `pirate` resolves to its concept

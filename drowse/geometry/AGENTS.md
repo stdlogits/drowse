@@ -349,10 +349,15 @@ layer whose centered rows or `K` are non-finite is left out, which is why
 `store/neutral.py::load_neutral_whitener` from the fp32 neutral cache, or by
 the session's lazy neutral state.
 
-Primitives: `apply_inv`, `whiten(layer, rows)` (the whitened coordinates
+Primitives: `apply_inv` (`Σ⁻¹v`, lowering a vector to its covector), `apply`
+(`Σv = λv + Xᵀ(Xv)/N`, raising a read to its write; the lens atoms),
+`whiten(layer, rows)` (the whitened coordinates of vectors,
 `W v`, `W = Σ^{-1/2} = (1/√λ)(I − V diag(g) Vᵀ)` from the thin SVD of `X`,
 cached per layer, never D×D; whitened dot products are Mahalanobis, and the
-lens decompositions fold `W` into their dictionaries),
+lens decompositions fold `W` into their neuron dictionary and the target),
+`whiten_dual(layer, rows)` (the whitened coordinates of covectors,
+`Σ^{1/2} u = √λ(I + V diag(g/(1−g)) Vᵀ) u`, exactly inverse to `whiten`, so a
+read pairs with a vector as before whitening; the token dictionaries),
 `mahalanobis_norm(s)`, `mahalanobis_cosine`,
 `leace_project` (Belrose et al. 2023; `~` keeps `⟨b, d⟩_M/⟨d, d⟩_M · d`, `|`
 erases it), `subspace_gram(layer, B) = B Σ⁻¹ Bᵀ` (the reduced metric behind the

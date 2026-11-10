@@ -568,10 +568,17 @@ the per-layer softmax probability `p_l(v)`.
   case-sensitive (`jlens/Paris` ≠ `jlens/paris`), take no `:variant`, skip the
   manifold tiers, and no manifold may be authored or installed under them.
 - **Steering atom.** `jlens/<word>` or `jlens/#<id>` resolves lazily through
-  the registry's `jlens` atom resolver into `register_direction`. That yields
-  `W_U[v] @ J_l` on every fitted layer (`W_U P J_l` under an OPT projection),
-  registered as an ordinary profile that pushes, ablates and composes like
-  any term. A word must be one token: the leading-space piece is tried first,
+  the registry's `jlens` atom resolver into `register_direction`. That takes
+  the token's read `u = W_U[v] @ J_l` on every fitted layer (`W_U P J_l`
+  under an OPT projection) and registers its raised vector `Σu`
+  (`LayerWhitener.apply`, the session whitener, required) as an ordinary
+  profile that pushes, ablates and composes like any term. A read is a
+  covector and a profile is a write: `Σu` is the write that moves the token's
+  reading furthest per unit of Mahalanobis displacement, and folded it reads
+  with `Σ⁻¹Σu = u` again, so `!jlens/<word>` zeroes exactly the token's
+  reading (LEACE). On real models `Σu` is mostly `u` restricted to the
+  neutral activations' span (cosine about 0.15 with `u`), so the push
+  calibration below predates fit policy 2. A word must be one token: the leading-space piece is tried first,
   and the match must survive a decode round trip (else `MultiTokenWordError`
   lists the pieces). `#<id>` is bounds-checked against the unembedding
   (`InvalidTokenIdError`). Lens atoms run hot. On gemma-3-4b α ≈ 0.3 was the
@@ -580,7 +587,8 @@ the per-layer softmax probability `p_l(v)`.
 - **`slens/` atom.** `slens/<word>` or `slens/#<id>` resolves through the
   registry's `slens` resolver into `register_input_direction`: the footprint
   `K_l ẽ_v` at the S lens's `out` site on every layer it holds (steering
-  injects at block outputs), an ordinary profile that pushes, ablates, takes a
+  injects at block outputs), a read raised to `Σ K_l ẽ_v` as `jlens/` atoms
+  are, an ordinary profile that pushes, ablates, takes a
   `{…}` layer clause and goes through the whitener exactly as a `jlens/` atom
   does. `jlens/` steers toward saying a token, `slens/` toward having read it;
   they are different directions. No S lens is `LensNotFittedError` (404, names
@@ -655,9 +663,16 @@ the per-layer softmax probability `p_l(v)`.
   `TokensOut` (`W_U J_l`, the R family) or `TokensIn` (`K_l ẽ_v` at the S
   lens's `out` site, masked tokens scoring `-inf`). It is Mahalanobis like
   every activation-space metric: a dictionary is built over the session's
-  `LayerWhitener` at its layer and holds its matrix whitened once (`J_l W`,
-  `W K_l`, `W = Σ^{-1/2}` from `LayerWhitener.whiten`), `coords` maps the
-  target there, so selection, the NNLS fit and `share` are all whitened. A
+  `LayerWhitener` at its layer and holds its matrix whitened once, `coords`
+  maps the target there (`Σ^{-1/2}`, the target is a vector), so selection,
+  the NNLS fit and `share` are all whitened. Atoms enter by type: token atoms
+  are reads and take `Σ^{+1/2}` (`J_l Σ^{1/2}`, `Σ^{1/2} K_l`,
+  `LayerWhitener.whiten_dual`), neuron writes are vectors and take
+  `Σ^{-1/2}`. So a token's selection score is its reading of the residual
+  over that reading's neutral standard deviation, and decomposing a raised
+  `jlens/`/`slens/` atom recovers its own token exactly. Read atoms share
+  their high-variance components, so the tiny `k × k` solve runs in fp64,
+  and selection stops once the residual is negligible. A
   whitener that is missing or misses a layer raises `WhitenerError`
   (`runtime.require_decompose_whitener`); the instrument takes the whitener
   getter by injection (`whitener=`, the session's lazy neutral state). The

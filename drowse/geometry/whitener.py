@@ -316,6 +316,23 @@ class LayerWhitener:
         out = (rows - KXv @ X) / lam         # (B, D)
         return out.reshape(original_shape).to(dtype=v_in_dtype)
 
+    def apply(self, layer: int, v: torch.Tensor) -> torch.Tensor:
+        """Return ``Σ_L v`` (the regularized covariance), the inverse of :meth:`apply_inv`.
+
+        ``Σ_reg = λI + XᵀX/N``, applied as ``λv + Xᵀ(Xv)/N``: ``O(ND)``, no
+        ``D × D`` matrix.  This is the index-raising map from a read
+        (covector) to the write (vector) that moves it furthest per unit of
+        Mahalanobis displacement — the lens atoms' steering direction.
+        Promoted to fp32 on CPU like :meth:`apply_inv`; output keeps ``v``'s
+        dtype and shape.
+        """
+        dim = self._require(layer, int(v.shape[-1]))
+        v_in_dtype = v.dtype
+        rows = v.to(dtype=torch.float32, device="cpu").reshape(-1, dim)
+        X = self._X[layer]
+        out = self._lambda[layer] * rows + (rows @ X.transpose(0, 1)) @ X / int(X.shape[0])
+        return out.reshape(v.shape).to(dtype=v_in_dtype)
+
     def woodbury_factors(
         self, layer: int, *, device: torch.device, dtype: torch.dtype,
     ) -> tuple[torch.Tensor, torch.Tensor, float]:
@@ -421,6 +438,24 @@ class LayerWhitener:
         V, g = self._root_factors(layer)
         flat = rows.to(dtype=torch.float32, device="cpu").reshape(-1, dim)
         out = (flat - ((flat @ V) * g) @ V.transpose(0, 1)) / math.sqrt(self._lambda[layer])
+        return out.reshape(rows.shape).to(dtype=rows.dtype)
+
+    def whiten_dual(self, layer: int, rows: torch.Tensor) -> torch.Tensor:
+        """Whitened coordinates ``Σ_L^{1/2} u`` of each *covector* row ``u``.
+
+        The dual of :meth:`whiten`: a read ``u`` pairs with a vector ``v`` as
+        ``u · v = (Σ^{1/2}u) · (Σ^{-1/2}v)``, so in whitened coordinates a
+        covector carries ``Σ^{1/2}``, and dot products of dual-whitened rows
+        are the dual metric ``uᵀ Σ u``.  ``Σ^{1/2} = √λ (I + V diag(g/(1−g)) Vᵀ)``
+        inverts :meth:`whiten`'s factor exactly; low rank on the identity,
+        never ``D × D``.  Promoted to fp32 on CPU; output keeps ``rows``'
+        dtype and shape.
+        """
+        dim = self._require(layer, int(rows.shape[-1]))
+        V, g = self._root_factors(layer)
+        h = g / (1.0 - g)
+        flat = rows.to(dtype=torch.float32, device="cpu").reshape(-1, dim)
+        out = (flat + ((flat @ V) * h) @ V.transpose(0, 1)) * math.sqrt(self._lambda[layer])
         return out.reshape(rows.shape).to(dtype=rows.dtype)
 
     def mahalanobis_norms(self, layer: int, rows: torch.Tensor) -> torch.Tensor:
