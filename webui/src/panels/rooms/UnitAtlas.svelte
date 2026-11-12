@@ -250,8 +250,10 @@
     if (!hit || !field || !plot) { hideTip(); return; }
     const cell = fieldCell(layout, hit.layer, hit.index, totals[hit.layer]);
     const box = plot.getBoundingClientRect();
+    // The first waits for the pointer to rest, as every tip does; once one shows, the rest follow the pointer at once.
     showTip(new DOMRect(box.left + cell.x, box.top + cell.y, Math.max(1, cell.w), Math.max(1, cell.h)),
-      { body: unitTitle(unitRef("neuron", hit.layer, hit.index)), sub: signedValue(field.layers[hit.layer][hit.index] ?? 0) });
+      { body: unitTitle(unitRef("neuron", hit.layer, hit.index)), sub: signedValue(field.layers[hit.layer][hit.index] ?? 0) },
+      { wait: true });
   }
   /** A column's own button: its layer, or (All, by pointer) the neuron in the cell under it. */
   function chooseColumn(event: MouseEvent, L: number): void {

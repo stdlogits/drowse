@@ -201,7 +201,7 @@ lib/webmcp/           WebMCP tools, loaded only when document.modelContext exist
 lib/style/, lib/theme.ts (createTheme({ key: "drowse.theme" })), lib/ui/ shared primitives
 ```
 
-Design is Ledger, from `@stdlogits/ledger` (pinned as the v0.1.4 tag's GitHub tarball: a git
+Design is Ledger, from `@stdlogits/ledger` (pinned as the v0.1.5 tag's GitHub tarball: a git
 dependency fails because Ledger's gallery `build` script makes npm prepare it, which Node 24's
 npm refuses; `@sveltejs/vite-plugin-svelte` 7.3.1). Its `DESIGN.md` is the design; it supplies
 tokens, Wix Madefor, motion, the tip, the theme and pieces (Segmented, Tabs, Switch,
