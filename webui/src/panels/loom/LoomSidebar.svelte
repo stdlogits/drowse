@@ -1626,10 +1626,10 @@
       </div>
       <div class="loom-view-controls" role="group" aria-label="Loom view controls">
         <button type="button" class="step" onclick={() => zoomView(camera.zoom - 0.12)} data-cursor="zoom-out"
-          disabled={camera.zoom <= LOOM_MIN_ZOOM} aria-label="Zoom out">−</button>
+          disabled={camera.zoom <= LOOM_MIN_ZOOM} aria-label="Zoom out"><Icon name="minus" /></button>
         <output class="meta" aria-label="Loom zoom"><RollingNumber value={Math.round(camera.zoom * 100)} />%</output>
         <button type="button" class="step" onclick={() => zoomView(camera.zoom + 0.12)} data-cursor="zoom-in"
-          disabled={camera.zoom >= LOOM_MAX_ZOOM} aria-label="Zoom in">+</button>
+          disabled={camera.zoom >= LOOM_MAX_ZOOM} aria-label="Zoom in"><Icon name="plus" /></button>
         <button type="button" class="dw-text" onclick={() => fitView()} aria-label="Fit whole loom">Fit</button>
         <button type="button" class="dw-text" onclick={centerCurrent} aria-label="Center current path">Current</button>
       </div>
