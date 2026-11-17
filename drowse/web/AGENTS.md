@@ -44,8 +44,11 @@ npm run build        # vite build into ../drowse/web/dist + check-build-isolatio
   `dist/`. `emptyOutDir` wipes `dist/` each build.
 - `webui/public/` holds the brand set (the closed eye on Ledger's depth ramp): the two
   `drowse-mark-*.svg`, `favicon.svg`, committed rasters drawn from it (`favicon.ico`,
-  `icons/*`) and `social/drowse.png` (drawn by `node scripts/social-card.mjs`). drowse.ai copies
-  the set. `scripts/dashboard-assets.mjs::shipsInDashboard` keeps `social/`, `icons/` and
+  `icons/*`) and `social/drowse.png`, the link card: a painting with the name set over it, as
+  Ledger draws a card. `node scripts/social-card.mjs` paints it (`scripts/paint/harbour.py`, on
+  Ledger's paint: Python with numpy, scipy and Pillow) and sets its type (`scripts/social-card.html`),
+  both from `scripts/social-card.json`, the card's readings. drowse.ai copies the set, and publishes
+  the alt text recorded in `social-card.html`. `scripts/dashboard-assets.mjs::shipsInDashboard` keeps `social/`, `icons/` and
   `favicon.svg` out of the dashboard; `scripts/check-build-isolation.mjs` fails the build on
   hosted leaks (`sw.js`, manifest, `_headers`, wasm, MLC/WebLLM files, a PWA bootstrap).
 - `lib/data/sae-descriptions/` ships as `assets/gemma-3-{270m,1b,4b}-it.json` to label local
